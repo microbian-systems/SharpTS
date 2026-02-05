@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-04 (Added spreading iterators: `[...arr.entries()]`, `[...set]`, `[...map]`; Added destructuring in for...of: `for (const [i, val] of arr.entries())`; Fixed string concat optimizer bug; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
+**Last Updated:** 2026-02-04 (Added Array.copyWithin(); Added spreading iterators: `[...arr.entries()]`, `[...set]`, `[...map]`; Added destructuring in for...of: `for (const [i, val] of arr.entries())`; Fixed string concat optimizer bug; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
 
 ## Legend
 - ✅ Implemented
@@ -209,7 +209,7 @@ This document tracks TypeScript language features and their implementation statu
 | `console.log` | ✅ | Multiple arguments, printf-style format specifiers (%s, %d, %i, %f, %o, %O, %j, %%) |
 | `Math` object | ✅ | PI, E, abs, floor, ceil, round, sqrt, sin, cos, tan, log, exp, sign, trunc, pow, min, max, random |
 | String methods | ✅ | length, charAt, substring, indexOf, toUpperCase, toLowerCase, trim, replace, split, includes, startsWith, endsWith, slice, repeat, padStart, padEnd, charCodeAt, concat, lastIndexOf, trimStart, trimEnd, replaceAll, at |
-| Array methods | ✅ | push, pop, shift, unshift, reverse, slice, concat, map, filter, forEach, find, findIndex, findLast, findLastIndex, some, every, reduce, reduceRight, includes, indexOf, join, sort, toSorted, toReversed, with, flat, flatMap, splice, toSpliced, at, fill, entries, keys, values |
+| Array methods | ✅ | push, pop, shift, unshift, reverse, slice, concat, map, filter, forEach, find, findIndex, findLast, findLastIndex, some, every, reduce, reduceRight, includes, indexOf, join, sort, toSorted, toReversed, with, flat, flatMap, splice, toSpliced, at, fill, copyWithin, entries, keys, values |
 | `JSON.parse`/`stringify` | ✅ | With reviver, replacer, indentation, class instances, toJSON(), BigInt TypeError |
 | `Object.keys`/`values`/`entries`/`fromEntries`/`hasOwn` | ✅ | Full support for object literals and class instances |
 | `Array.isArray` | ✅ | Type guard for array detection |
@@ -324,7 +324,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 |---------|--------|-------|
 | `eval()` | ❌ | No dynamic code evaluation |
 | `Function` constructor | ❌ | Cannot create functions from strings |
-| `queueMicrotask()` | ❌ | Not implemented |
+| `queueMicrotask()` | ✅ | Schedules microtask for execution |
 
 ### Object Static Methods
 
@@ -350,7 +350,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | `entries()` | ✅ | Returns iterator of [index, value] pairs |
 | `keys()` | ✅ | Returns iterator of indices |
 | `values()` | ✅ | Returns iterator of values |
-| `copyWithin()` | ❌ | |
+| `copyWithin()` | ✅ | Copies array elements within the array |
 
 ### String Methods & Static
 

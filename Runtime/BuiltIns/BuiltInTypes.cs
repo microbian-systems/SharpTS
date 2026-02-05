@@ -152,6 +152,10 @@ public static class BuiltInTypes
                 [elementType, NumberType, NumberType],
                 new TypeInfo.Array(elementType),
                 RequiredParams: 1),  // value required, start and end optional
+            "copyWithin" => new TypeInfo.Function(
+                [NumberType, NumberType, NumberType],
+                new TypeInfo.Array(elementType),
+                RequiredParams: 1),  // target required, start and end optional
             "entries" => new TypeInfo.Function([],
                 new TypeInfo.Iterator(TypeInfo.Tuple.FromTypes([NumberType, elementType], 2))),
             "keys" => new TypeInfo.Function([],

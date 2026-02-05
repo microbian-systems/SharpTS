@@ -2108,6 +2108,7 @@ public partial class RuntimeEmitter
         EmitArrayWith(typeBuilder, runtime);
         EmitArrayAt(typeBuilder, runtime);
         EmitArrayFill(typeBuilder, runtime);
+        EmitArrayCopyWithin(typeBuilder, runtime);
         EmitArrayEntries(typeBuilder, runtime);
         EmitArrayKeys(typeBuilder, runtime);
         EmitArrayValues(typeBuilder, runtime);

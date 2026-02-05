@@ -39,6 +39,7 @@ public static class ArrayBuiltIns
             .Method("with", 2, With)
             .Method("at", 1, At)
             .Method("fill", 1, 3, Fill)
+            .Method("copyWithin", 1, 3, CopyWithin)
             .Method("entries", 0, Entries)
             .Method("keys", 0, Keys)
             .Method("values", 0, Values)
@@ -840,6 +841,57 @@ public static class ArrayBuiltIns
         for (int i = actualStart; i < actualEnd; i++)
         {
             arr.Elements[i] = value;
+        }
+
+        return arr;
+    }
+
+    private static object? CopyWithin(Interpreter _, SharpTSArray arr, List<object?> args)
+    {
+        // Frozen arrays cannot be modified
+        if (arr.IsFrozen)
+        {
+            return arr;
+        }
+
+        int len = arr.Elements.Count;
+        if (len == 0) return arr;
+
+        // Parse target (required first argument)
+        int relTarget = args.Count > 0 ? ToIntegerOrInfinity(args[0], 0) : 0;
+        int to = relTarget < 0 ? Math.Max(len + relTarget, 0) : Math.Min(relTarget, len);
+
+        // Parse start (optional, default 0)
+        int relStart = args.Count > 1 ? ToIntegerOrInfinity(args[1], 0) : 0;
+        int from = relStart < 0 ? Math.Max(len + relStart, 0) : Math.Min(relStart, len);
+
+        // Parse end (optional, default length)
+        int relEnd = args.Count > 2 ? ToIntegerOrInfinity(args[2], len) : len;
+        int final = relEnd < 0 ? Math.Max(len + relEnd, 0) : Math.Min(relEnd, len);
+
+        // Calculate count
+        int count = Math.Min(final - from, len - to);
+
+        if (count > 0)
+        {
+            // Handle overlapping regions correctly
+            // If copying forward would overwrite source data, copy backward
+            if (from < to && to < from + count)
+            {
+                // Copy backward
+                for (int i = count - 1; i >= 0; i--)
+                {
+                    arr.Elements[to + i] = arr.Elements[from + i];
+                }
+            }
+            else
+            {
+                // Copy forward
+                for (int i = 0; i < count; i++)
+                {
+                    arr.Elements[to + i] = arr.Elements[from + i];
+                }
+            }
         }
 
         return arr;

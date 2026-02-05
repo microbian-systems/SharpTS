@@ -184,6 +184,11 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFill);
                 return true;
 
+            case "copyWithin":
+                EmitArgsArray(emitter, arguments);
+                il.Emit(OpCodes.Call, ctx.Runtime!.ArrayCopyWithin);
+                return true;
+
             case "entries":
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayEntries);
                 return true;
