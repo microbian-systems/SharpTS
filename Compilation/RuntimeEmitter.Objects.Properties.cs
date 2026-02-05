@@ -927,6 +927,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(dictLabel);
+        // Check for getter accessor via PropertyDescriptorStore before regular property lookup
+        var getterLocal = il.DeclareLocal(_types.Object);
+        var noGetterLabel = il.DefineLabel();
+
+        // Check PropertyDescriptorStore.TryGetGetter(obj, name, out getter)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, getterLocal);
+        var tryGetGetterMethod = typeof(PropertyDescriptorStore).GetMethod("TryGetGetter", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        il.Emit(OpCodes.Call, tryGetGetterMethod!);
+        il.Emit(OpCodes.Brfalse, noGetterLabel);
+
+        // Getter exists - invoke it via helper method
+        il.Emit(OpCodes.Ldloc, getterLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        var invokeGetterMethod = typeof(RuntimeTypes).GetMethod("InvokeGetterAccessor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        il.Emit(OpCodes.Call, invokeGetterMethod!);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(noGetterLabel);
+
         // dict.TryGetValue(name, out value) ? value : null
         var valueLocal = il.DeclareLocal(_types.Object);
         var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
@@ -1288,6 +1309,36 @@ public partial class RuntimeEmitter
 
         // Actually set the property
         il.MarkLabel(doSetLabel);
+
+        // Check for setter accessor via PropertyDescriptorStore before regular property set
+        var setterLocal = il.DeclareLocal(_types.Object);
+        var noSetterLabel = il.DefineLabel();
+
+        // Check PropertyDescriptorStore.TryGetSetter(obj, name, out setter)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, setterLocal);
+        var tryGetSetterMethod = typeof(PropertyDescriptorStore).GetMethod("TryGetSetter", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        il.Emit(OpCodes.Call, tryGetSetterMethod!);
+        il.Emit(OpCodes.Brfalse, noSetterLabel);
+
+        // Setter exists - invoke it via helper method
+        il.Emit(OpCodes.Ldloc, setterLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_2);
+        var invokeSetterMethod = typeof(RuntimeTypes).GetMethod("InvokeSetterAccessor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        il.Emit(OpCodes.Call, invokeSetterMethod!);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(noSetterLabel);
+
+        // Check if property is writable via PropertyDescriptorStore
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        var isWritableMethod = typeof(PropertyDescriptorStore).GetMethod("IsWritable", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        il.Emit(OpCodes.Call, isWritableMethod!);
+        il.Emit(OpCodes.Brfalse, nullLabel); // Not writable - silently return
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);

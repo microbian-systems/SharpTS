@@ -29,6 +29,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public TypeCategory RuntimeCategory => TypeCategory.Instance;
     private readonly Dictionary<string, object?> _fields = [];
     private readonly Dictionary<SharpTSSymbol, object?> _symbolFields = new();
+    private Dictionary<string, PropertyDescriptorFlags>? _descriptors;
     private Interpreter? _interpreter;
 
     // Property lookup caches to avoid expensive inheritance chain walks
@@ -305,7 +306,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     /// <summary>
     /// Sets a field value directly without invoking setters.
     /// Used for bracket notation assignment and constructor initialization.
-    /// Respects frozen/sealed state.
+    /// Respects frozen/sealed state and writable flags.
     /// </summary>
     public void SetRawField(string name, object? value)
     {
@@ -320,12 +321,19 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             return;
         }
 
+        // Check writable flag for properties defined via defineProperty
+        if (exists && _descriptors?.TryGetValue(name, out var flags) == true && flags.HasExplicitDescriptor && !flags.Writable)
+        {
+            return;
+        }
+
         _fields[name] = value;
     }
 
     /// <summary>
     /// Sets a field value directly with strict mode behavior.
-    /// In strict mode, throws TypeError for modifications to frozen objects or new properties on sealed objects.
+    /// In strict mode, throws TypeError for modifications to frozen objects, new properties on sealed objects,
+    /// or assignments to non-writable properties.
     /// </summary>
     public void SetRawFieldStrict(string name, object? value, bool strictMode)
     {
@@ -344,6 +352,16 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             if (strictMode)
             {
                 throw new Exception($"TypeError: Cannot add property '{name}' to a sealed object");
+            }
+            return;
+        }
+
+        // Check writable flag for properties defined via defineProperty
+        if (exists && _descriptors?.TryGetValue(name, out var flags) == true && flags.HasExplicitDescriptor && !flags.Writable)
+        {
+            if (strictMode)
+            {
+                throw new Exception($"TypeError: Cannot assign to read only property '{name}'");
             }
             return;
         }
@@ -471,6 +489,109 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public bool HasSymbolProperty(SharpTSSymbol symbol)
     {
         return _symbolFields.ContainsKey(symbol);
+    }
+
+    /// <summary>
+    /// Defines or modifies a property with the given descriptor.
+    /// Returns true on success, false if the operation is not allowed.
+    /// Note: For class instances, this only affects instance fields, not class methods/getters/setters.
+    /// </summary>
+    public bool DefineProperty(string name, SharpTSPropertyDescriptor descriptor)
+    {
+        // Get existing descriptor flags if any
+        bool hasExisting = _fields.ContainsKey(name);
+        PropertyDescriptorFlags existingFlags = default;
+
+        if (hasExisting && _descriptors?.TryGetValue(name, out existingFlags) != true)
+        {
+            existingFlags = PropertyDescriptorFlags.Default;
+        }
+
+        // Check if we can modify the property
+        if (hasExisting && existingFlags.HasExplicitDescriptor && !existingFlags.Configurable)
+        {
+            if (descriptor.Writable != existingFlags.Writable ||
+                descriptor.Enumerable != existingFlags.Enumerable ||
+                descriptor.Configurable != existingFlags.Configurable)
+            {
+                return false;
+            }
+            if (!existingFlags.Writable && descriptor.Value != null)
+            {
+                var currentValue = _fields.TryGetValue(name, out var v) ? v : null;
+                if (!ReferenceEquals(currentValue, descriptor.Value) &&
+                    (currentValue == null || !currentValue.Equals(descriptor.Value)))
+                {
+                    return false;
+                }
+            }
+        }
+
+        // Check sealed/frozen state
+        if (IsFrozen)
+        {
+            return false;
+        }
+        if (IsSealed && !hasExisting)
+        {
+            return false;
+        }
+
+        // Store the descriptor flags
+        _descriptors ??= new Dictionary<string, PropertyDescriptorFlags>();
+        _descriptors[name] = PropertyDescriptorFlags.ForDefineProperty(
+            descriptor.Writable,
+            descriptor.Enumerable,
+            descriptor.Configurable
+        );
+
+        // Set the value (class instances only support data properties via defineProperty)
+        _fields[name] = descriptor.Value;
+
+        // Update lookup cache
+        _lookupCache[name] = new PropertyResolution { Type = ResolutionType.Field };
+
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the property descriptor for the given property name.
+    /// Returns null if the property doesn't exist as an own property.
+    /// Note: Only returns descriptors for instance fields, not class methods/getters/setters.
+    /// </summary>
+    public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
+    {
+        if (!_fields.ContainsKey(name))
+        {
+            return null;
+        }
+
+        // Get descriptor flags (defaults if not explicitly set)
+        PropertyDescriptorFlags flags = default;
+        if (_descriptors?.TryGetValue(name, out flags) != true)
+        {
+            flags = PropertyDescriptorFlags.Default;
+        }
+
+        return new SharpTSPropertyDescriptor
+        {
+            Value = _fields[name],
+            Writable = flags.Writable,
+            Enumerable = flags.Enumerable,
+            Configurable = flags.Configurable
+        };
+    }
+
+    /// <summary>
+    /// Gets the descriptor flags for a property, or default flags if not explicitly set.
+    /// </summary>
+    public PropertyDescriptorFlags GetPropertyFlags(string name)
+    {
+        if (_descriptors?.TryGetValue(name, out var flags) == true)
+        {
+            return flags;
+        }
+        return PropertyDescriptorFlags.Default;
     }
 
     public override string ToString() => _klass.Name + " instance";

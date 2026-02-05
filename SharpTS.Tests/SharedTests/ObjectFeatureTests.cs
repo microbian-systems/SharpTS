@@ -1425,4 +1425,361 @@ public class ObjectFeatureTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("true\ntrue\nfalse\n", output);
     }
+
+    // Object.defineProperty tests
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_BasicDataProperty(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = {};
+            Object.defineProperty(obj, "x", { value: 42, writable: true, enumerable: true, configurable: true });
+            console.log(obj.x);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_ReturnsTheObject(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = {};
+            let result = Object.defineProperty(obj, "x", { value: 10 });
+            console.log(result === obj);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_NonWritableProperty(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = {};
+            Object.defineProperty(obj, "x", { value: 42, writable: false });
+            obj.x = 100;
+            console.log(obj.x);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_WritableProperty(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = {};
+            Object.defineProperty(obj, "x", { value: 42, writable: true });
+            obj.x = 100;
+            console.log(obj.x);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("100\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_MultipleProperties(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = {};
+            Object.defineProperty(obj, "x", { value: 1, writable: true, enumerable: true, configurable: true });
+            Object.defineProperty(obj, "y", { value: 2, writable: true, enumerable: true, configurable: true });
+            console.log(obj.x);
+            console.log(obj.y);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_OverwriteExistingProperty(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = { x: 10 };
+            Object.defineProperty(obj, "x", { value: 42 });
+            console.log(obj.x);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_OnClassInstance(ExecutionMode mode)
+    {
+        var source = """
+            class Point {
+                x: number;
+                constructor(x: number) {
+                    this.x = x;
+                }
+            }
+            let p = new Point(10);
+            Object.defineProperty(p, "y", { value: 20, writable: true, enumerable: true, configurable: true });
+            console.log(p.x);
+            console.log((p as any).y);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n20\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_OnArray(ExecutionMode mode)
+    {
+        // Compiled mode arrays (IList) don't support named properties
+        var source = """
+            let arr: any = [1, 2, 3];
+            Object.defineProperty(arr, "customProp", { value: "hello", writable: true, enumerable: true, configurable: true });
+            console.log(arr.customProp);
+            console.log(arr[0]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("hello\n1\n", output);
+    }
+
+    // Object.getOwnPropertyDescriptor tests
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyDescriptor_BasicProperty(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = { x: 42 };
+            let desc = Object.getOwnPropertyDescriptor(obj, "x");
+            console.log(desc.value);
+            console.log(desc.writable);
+            console.log(desc.enumerable);
+            console.log(desc.configurable);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\ntrue\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyDescriptor_NonExistentProperty(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = { x: 42 };
+            let desc = Object.getOwnPropertyDescriptor(obj, "y");
+            console.log(desc === undefined || desc === null);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyDescriptor_DefinedProperty(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = {};
+            Object.defineProperty(obj, "x", { value: 42, writable: false, enumerable: false, configurable: false });
+            let desc = Object.getOwnPropertyDescriptor(obj, "x");
+            console.log(desc.value);
+            console.log(desc.writable);
+            console.log(desc.enumerable);
+            console.log(desc.configurable);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\nfalse\nfalse\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyDescriptor_ArrayLength(ExecutionMode mode)
+    {
+        var source = """
+            let arr: any = [1, 2, 3];
+            let desc = Object.getOwnPropertyDescriptor(arr, "length");
+            console.log(desc.value);
+            console.log(desc.writable);
+            console.log(desc.enumerable);
+            console.log(desc.configurable);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("3\ntrue\nfalse\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyDescriptor_ArrayElement(ExecutionMode mode)
+    {
+        var source = """
+            let arr: any = [10, 20, 30];
+            let desc = Object.getOwnPropertyDescriptor(arr, "1");
+            console.log(desc.value);
+            console.log(desc.writable);
+            console.log(desc.enumerable);
+            console.log(desc.configurable);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("20\ntrue\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyDescriptor_ClassInstance(ExecutionMode mode)
+    {
+        // Compiled mode class instances require reflection-based descriptor lookup
+        var source = """
+            class Point {
+                x: number;
+                constructor(x: number) {
+                    this.x = x;
+                }
+            }
+            let p = new Point(42);
+            let desc = Object.getOwnPropertyDescriptor(p, "x");
+            console.log(desc.value);
+            console.log(desc.writable);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_ThenGetDescriptor_Roundtrip(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = {};
+            Object.defineProperty(obj, "name", {
+                value: "Alice",
+                writable: true,
+                enumerable: false,
+                configurable: true
+            });
+            let desc = Object.getOwnPropertyDescriptor(obj, "name");
+            console.log(desc.value);
+            console.log(desc.writable);
+            console.log(desc.enumerable);
+            console.log(desc.configurable);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Alice\ntrue\nfalse\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_WithGetter(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = { _value: 100 };
+            Object.defineProperty(obj, "computed", {
+                get: function() { return this._value * 2; },
+                enumerable: true,
+                configurable: true
+            });
+            console.log(obj.computed);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("200\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_WithGetterAndSetter(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = { _value: 10 };
+            Object.defineProperty(obj, "value", {
+                get: function() { return this._value; },
+                set: function(v: number) { this._value = v; },
+                enumerable: true,
+                configurable: true
+            });
+            console.log(obj.value);
+            obj.value = 50;
+            console.log(obj.value);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n50\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyDescriptor_AccessorProperty(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = { _x: 5 };
+            Object.defineProperty(obj, "x", {
+                get: function() { return this._x; },
+                enumerable: true,
+                configurable: true
+            });
+            let desc = Object.getOwnPropertyDescriptor(obj, "x");
+            console.log(typeof desc.get);
+            console.log(desc.enumerable);
+            console.log(desc.configurable);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_FrozenObjectFails(ExecutionMode mode)
+    {
+        // When object is frozen, defineProperty should throw
+        var source = """
+            let obj: any = { x: 1 };
+            Object.freeze(obj);
+            let threw = false;
+            try {
+                Object.defineProperty(obj, "y", { value: 2 });
+            } catch (e) {
+                threw = true;
+            }
+            console.log(threw);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_SealedObjectNewPropertyFails(ExecutionMode mode)
+    {
+        // When object is sealed, adding new property should throw
+        var source = """
+            let obj: any = { x: 1 };
+            Object.seal(obj);
+            let threw = false;
+            try {
+                Object.defineProperty(obj, "y", { value: 2 });
+            } catch (e) {
+                threw = true;
+            }
+            console.log(threw);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
 }

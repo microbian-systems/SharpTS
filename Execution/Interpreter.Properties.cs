@@ -352,6 +352,12 @@ public partial class Interpreter
             return accessor.GetProperty(memberName);
         }
 
+        // Handle named properties on arrays (added via Object.defineProperty)
+        if (obj is SharpTSArray array && array.HasNamedProperty(memberName))
+        {
+            return array.GetNamedProperty(memberName);
+        }
+
         // Handle built-in instance members: strings, arrays, Math, Promise
         if (obj != null)
         {

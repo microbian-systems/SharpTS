@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-04 (Added DataView with full API support; Added Array.copyWithin(); Added spreading iterators: `[...arr.entries()]`, `[...set]`, `[...map]`; Added destructuring in for...of: `for (const [i, val] of arr.entries())`; Fixed string concat optimizer bug; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
+**Last Updated:** 2026-02-05 (Added Object.defineProperty() and Object.getOwnPropertyDescriptor() with full interpreter support; compiled mode supports basic value setting; Added DataView with full API support; Added Array.copyWithin(); Added spreading iterators: `[...arr.entries()]`, `[...set]`, `[...map]`; Added destructuring in for...of: `for (const [i, val] of arr.entries())`; Fixed string concat optimizer bug; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
 
 ## Legend
 - ✅ Implemented
@@ -332,8 +332,8 @@ This section documents JavaScript/TypeScript features that are **not currently i
 |---------|--------|-------|
 | `Object.create()` | ❌ | |
 | `Object.is()` | ✅ | Same-value comparison; handles NaN and +0/-0 edge cases |
-| `Object.getOwnPropertyDescriptor()` | ❌ | |
-| `Object.defineProperty()` | ❌ | |
+| `Object.getOwnPropertyDescriptor()` | ✅ | Full support in both interpreter and compiled mode |
+| `Object.defineProperty()` | ✅ | Full support including accessor properties (get/set) and descriptor flags in both modes |
 | `Object.getPrototypeOf()` | ❌ | |
 | `Object.setPrototypeOf()` | ❌ | |
 | `Object.getOwnPropertyNames()` | ❌ | Use `Object.keys()` |
@@ -385,6 +385,9 @@ This section documents JavaScript/TypeScript features that are **not currently i
 ### Type Checker Limitations
 
 - Type alias declarations are lazily validated - errors in type alias definitions (e.g., `type R = ReturnType<string, number>;` with wrong arg count) are only caught when the alias is used, not at declaration time. TypeScript catches these at declaration.
+
+### Recently Fixed Bugs (2026-02-05)
+- ~~Property descriptors in compiled mode~~ - Fixed: `Object.defineProperty()` and `Object.getOwnPropertyDescriptor()` now fully support accessor properties (get/set) and descriptor flags (writable, enumerable, configurable) in compiled mode via `PropertyDescriptorStore`.
 
 ### Recently Fixed Bugs (2026-02-04)
 - ~~Spreading iterators~~ - Fixed: Type checker now allows spreading any iterable type (`[...arr.entries()]`, `[...mySet]`, `[...myMap]`, `[..."hello"]`, `[...generator()]`).

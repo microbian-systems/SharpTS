@@ -109,6 +109,12 @@ public static partial class RuntimeTypes
         // Dictionary (object literal)
         if (TryGetDictionary(obj, out var dict))
         {
+            // Check for accessor property (getter) defined via Object.defineProperty
+            if (PropertyDescriptorStore.TryGetGetter(obj, name, out var getter))
+            {
+                return InvokeAccessor(getter, obj);
+            }
+
             if (dict!.TryGetValue(name, out var value))
             {
                 // If it's a TSFunction with a display class, bind 'this' to the dictionary
@@ -186,6 +192,20 @@ public static partial class RuntimeTypes
         // Dictionary
         if (TryGetDictionary(obj, out var dict))
         {
+            // Check for accessor property (setter) defined via Object.defineProperty
+            if (PropertyDescriptorStore.TryGetSetter(obj, name, out var setter))
+            {
+                InvokeAccessor(setter, obj, value);
+                return;
+            }
+
+            // Check if property is writable
+            if (!PropertyDescriptorStore.IsWritable(obj, name))
+            {
+                // In non-strict mode, silently fail
+                return;
+            }
+
             dict![name] = value;
             return;
         }
@@ -216,6 +236,12 @@ public static partial class RuntimeTypes
         // Object/Dictionary with string key
         if (TryGetDictionary(obj, out var dict) && index is string key)
         {
+            // Check for accessor property (getter) defined via Object.defineProperty
+            if (PropertyDescriptorStore.TryGetGetter(obj, key, out var getter))
+            {
+                return InvokeAccessor(getter, obj);
+            }
+
             if (dict!.TryGetValue(key, out var value))
             {
                 // Bind 'this' for object method shorthand functions
@@ -308,6 +334,20 @@ public static partial class RuntimeTypes
         // Object/Dictionary with string key
         if (TryGetDictionary(obj, out var dict) && index is string key)
         {
+            // Check for accessor property (setter) defined via Object.defineProperty
+            if (PropertyDescriptorStore.TryGetSetter(obj, key, out var setter))
+            {
+                InvokeAccessor(setter, obj, value);
+                return;
+            }
+
+            // Check if property is writable
+            if (!PropertyDescriptorStore.IsWritable(obj, key))
+            {
+                // In non-strict mode, silently fail
+                return;
+            }
+
             dict![key] = value;
             return;
         }
@@ -337,6 +377,139 @@ public static partial class RuntimeTypes
                 list[idx] = value;
             }
         }
+    }
+
+    /// <summary>
+    /// Invokes a getter accessor function with the given 'this' binding.
+    /// </summary>
+    private static object? InvokeAccessor(object? accessor, object? thisArg)
+    {
+        if (accessor == null) return null;
+
+        // TSFunction (compiled arrow/function)
+        if (accessor is TSFunction tsFunc)
+        {
+            tsFunc.BindThis(thisArg);
+            return tsFunc.Invoke();
+        }
+
+        // Try reflection for any callable with Invoke/InvokeWithThis methods
+        var accessorType = accessor.GetType();
+
+        // First, try InvokeWithThis which handles HasOwnThis functions
+        var invokeWithThisMethod = accessorType.GetMethod("InvokeWithThis");
+        if (invokeWithThisMethod != null)
+        {
+            var iwtParams = invokeWithThisMethod.GetParameters();
+            // InvokeWithThis(object thisArg, object[] args)
+            if (iwtParams.Length == 2 &&
+                iwtParams[0].ParameterType == typeof(object) &&
+                iwtParams[1].ParameterType == typeof(object[]))
+            {
+                return invokeWithThisMethod.Invoke(accessor, [thisArg, Array.Empty<object>()]);
+            }
+        }
+
+        // Fall back to BindThis + Invoke for arrow functions that capture 'this'
+        var invokeMethod = accessorType.GetMethod("Invoke");
+        if (invokeMethod != null)
+        {
+            // Bind 'this' if possible
+            var bindMethod = accessorType.GetMethod("BindThis");
+            bindMethod?.Invoke(accessor, [thisArg]);
+
+            var parameters = invokeMethod.GetParameters();
+
+            // Handle no parameters or all optional parameters
+            if (parameters.Length == 0 || parameters.All(p => p.IsOptional))
+            {
+                return invokeMethod.Invoke(accessor, null);
+            }
+
+            // Handle single object[] parameter (like $TSFunction.Invoke(object[] args))
+            if (parameters.Length == 1 && parameters[0].ParameterType == typeof(object[]))
+            {
+                return invokeMethod.Invoke(accessor, [Array.Empty<object>()]);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Invokes a setter accessor function with the given 'this' binding and value.
+    /// </summary>
+    private static void InvokeAccessor(object? accessor, object? thisArg, object? value)
+    {
+        if (accessor == null) return;
+
+        // TSFunction (compiled arrow/function)
+        if (accessor is TSFunction tsFunc)
+        {
+            tsFunc.BindThis(thisArg);
+            tsFunc.Invoke(value);
+            return;
+        }
+
+        // Try reflection for any callable with Invoke/InvokeWithThis methods
+        var accessorType = accessor.GetType();
+
+        // First, try InvokeWithThis which handles HasOwnThis functions
+        var invokeWithThisMethod = accessorType.GetMethod("InvokeWithThis");
+        if (invokeWithThisMethod != null)
+        {
+            var iwtParams = invokeWithThisMethod.GetParameters();
+            // InvokeWithThis(object thisArg, object[] args)
+            if (iwtParams.Length == 2 &&
+                iwtParams[0].ParameterType == typeof(object) &&
+                iwtParams[1].ParameterType == typeof(object[]))
+            {
+                invokeWithThisMethod.Invoke(accessor, [thisArg, new object?[] { value }]);
+                return;
+            }
+        }
+
+        // Fall back to BindThis + Invoke for arrow functions that capture 'this'
+        var invokeMethod = accessorType.GetMethod("Invoke");
+        if (invokeMethod != null)
+        {
+            // Bind 'this' if possible
+            var bindMethod = accessorType.GetMethod("BindThis");
+            bindMethod?.Invoke(accessor, [thisArg]);
+
+            // Invoke with the value
+            var parameters = invokeMethod.GetParameters();
+            if (parameters.Length >= 1)
+            {
+                // Handle single object[] parameter (like $TSFunction.Invoke(object[] args))
+                if (parameters[0].ParameterType == typeof(object[]))
+                {
+                    invokeMethod.Invoke(accessor, [new object?[] { value }]);
+                }
+                else
+                {
+                    invokeMethod.Invoke(accessor, [value]);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Invokes a getter accessor function with the given 'this' binding.
+    /// Public helper method for use by emitted code.
+    /// </summary>
+    public static object? InvokeGetterAccessor(object? accessor, object? thisArg)
+    {
+        return InvokeAccessor(accessor, thisArg);
+    }
+
+    /// <summary>
+    /// Invokes a setter accessor function with the given 'this' binding and value.
+    /// Public helper method for use by emitted code.
+    /// </summary>
+    public static void InvokeSetterAccessor(object? accessor, object? thisArg, object? value)
+    {
+        InvokeAccessor(accessor, thisArg, value);
     }
 
     #endregion

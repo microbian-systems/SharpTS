@@ -1,3 +1,4 @@
+using SharpTS.Compilation;
 using SharpTS.Execution;
 using SharpTS.Runtime.Types;
 
@@ -18,6 +19,8 @@ public static class ObjectBuiltIns
             .Method("seal", 1, Seal)
             .Method("isFrozen", 1, IsFrozen)
             .Method("isSealed", 1, IsSealed)
+            .Method("defineProperty", 3, DefineProperty)
+            .Method("getOwnPropertyDescriptor", 2, GetOwnPropertyDescriptor)
             .Build();
 
     /// <summary>
@@ -227,6 +230,13 @@ public static class ObjectBuiltIns
             case SharpTSArray arr:
                 arr.Freeze();
                 return arr;
+            case Dictionary<string, object?> dict:
+                // Use PropertyDescriptorStore for compiled dictionaries
+                PropertyDescriptorStore.Freeze(dict);
+                return dict;
+            case System.Collections.IDictionary idict:
+                PropertyDescriptorStore.Freeze(idict);
+                return idict;
             default:
                 // Non-objects are returned unchanged (JavaScript behavior)
                 return args[0];
@@ -247,6 +257,13 @@ public static class ObjectBuiltIns
             case SharpTSArray arr:
                 arr.Seal();
                 return arr;
+            case Dictionary<string, object?> dict:
+                // Use PropertyDescriptorStore for compiled dictionaries
+                PropertyDescriptorStore.Seal(dict);
+                return dict;
+            case System.Collections.IDictionary idict:
+                PropertyDescriptorStore.Seal(idict);
+                return idict;
             default:
                 // Non-objects are returned unchanged (JavaScript behavior)
                 return args[0];
@@ -261,6 +278,8 @@ public static class ObjectBuiltIns
             SharpTSObject obj => obj.IsFrozen,
             SharpTSInstance inst => inst.IsFrozen,
             SharpTSArray arr => arr.IsFrozen,
+            Dictionary<string, object?> dict => PropertyDescriptorStore.IsFrozen(dict),
+            System.Collections.IDictionary idict => PropertyDescriptorStore.IsFrozen(idict),
             // Non-extensible primitives are considered frozen in JavaScript
             _ => true
         };
@@ -274,9 +293,129 @@ public static class ObjectBuiltIns
             SharpTSObject obj => obj.IsSealed,
             SharpTSInstance inst => inst.IsSealed,
             SharpTSArray arr => arr.IsSealed,
+            Dictionary<string, object?> dict => PropertyDescriptorStore.IsSealed(dict),
+            System.Collections.IDictionary idict => PropertyDescriptorStore.IsSealed(idict),
             // Non-extensible primitives are considered sealed in JavaScript
             _ => true
         };
+    }
+
+    /// <summary>
+    /// Object.defineProperty(obj, prop, descriptor) - defines a new property or modifies an existing one.
+    /// </summary>
+    private static object? DefineProperty(Interpreter _, List<object?> args)
+    {
+        var target = args[0];
+        var propertyKey = args[1]?.ToString() ?? "";
+        var descriptorArg = args[2];
+
+        if (target == null)
+        {
+            throw new Exception("TypeError: Object.defineProperty called on null or undefined");
+        }
+
+        if (descriptorArg == null)
+        {
+            throw new Exception("TypeError: Property description must be an object");
+        }
+
+        // Parse descriptor from object - use FromAnyObject to handle any object type
+        SharpTSPropertyDescriptor descriptor = SharpTSPropertyDescriptor.FromAnyObject(descriptorArg);
+
+        bool success;
+        switch (target)
+        {
+            case SharpTSObject obj:
+                success = obj.DefineProperty(propertyKey, descriptor);
+                break;
+            case SharpTSInstance inst:
+                success = inst.DefineProperty(propertyKey, descriptor);
+                break;
+            case SharpTSArray arr:
+                // Arrays can have properties defined on them
+                success = arr.DefineProperty(propertyKey, descriptor);
+                break;
+            case Dictionary<string, object?> dict:
+                // Compiled mode: Dictionary<string, object?> for any-typed object literals
+                var compiledDesc = CompiledPropertyDescriptor.FromAny(descriptorArg);
+                success = PropertyDescriptorStore.DefineProperty(dict, propertyKey, compiledDesc);
+                break;
+            default:
+                throw new Exception("TypeError: Object.defineProperty called on non-object");
+        }
+
+        if (!success)
+        {
+            throw new Exception($"TypeError: Cannot define property '{propertyKey}': object is not extensible or property is not configurable");
+        }
+
+        return target;
+    }
+
+    /// <summary>
+    /// Object.getOwnPropertyDescriptor(obj, prop) - returns the property descriptor for an own property.
+    /// </summary>
+    private static object? GetOwnPropertyDescriptor(Interpreter _, List<object?> args)
+    {
+        var target = args[0];
+        var propertyKey = args[1]?.ToString() ?? "";
+
+        if (target == null)
+        {
+            throw new Exception("TypeError: Object.getOwnPropertyDescriptor called on null or undefined");
+        }
+
+        SharpTSPropertyDescriptor? descriptor = target switch
+        {
+            SharpTSObject obj => obj.GetOwnPropertyDescriptor(propertyKey),
+            SharpTSInstance inst => inst.GetOwnPropertyDescriptor(propertyKey),
+            SharpTSArray arr => arr.GetOwnPropertyDescriptor(propertyKey),
+            Dictionary<string, object?> dict => GetDictionaryPropertyDescriptor(dict, propertyKey),
+            _ => null
+        };
+
+        if (descriptor == null)
+        {
+            return null;
+        }
+
+        // Return as an object
+        return descriptor.ToObject();
+    }
+
+    /// <summary>
+    /// Gets property descriptor for a compiled Dictionary<string, object?>.
+    /// </summary>
+    private static SharpTSPropertyDescriptor? GetDictionaryPropertyDescriptor(Dictionary<string, object?> dict, string propertyKey)
+    {
+        // First check PropertyDescriptorStore for explicitly defined descriptors
+        var compiledDesc = PropertyDescriptorStore.GetPropertyDescriptor(dict, propertyKey);
+        if (compiledDesc != null)
+        {
+            return new SharpTSPropertyDescriptor
+            {
+                Value = compiledDesc.Value,
+                Get = compiledDesc.Getter as ISharpTSCallable,
+                Set = compiledDesc.Setter as ISharpTSCallable,
+                Writable = compiledDesc.Writable,
+                Enumerable = compiledDesc.Enumerable,
+                Configurable = compiledDesc.Configurable
+            };
+        }
+
+        // Fall back to checking if property exists in dictionary (default data descriptor)
+        if (dict.TryGetValue(propertyKey, out var value))
+        {
+            return new SharpTSPropertyDescriptor
+            {
+                Value = value,
+                Writable = true,
+                Enumerable = true,
+                Configurable = true
+            };
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -306,5 +445,345 @@ public static class ObjectBuiltIns
         }
 
         return new SharpTSObject(result);
+    }
+
+    /// <summary>
+    /// Runtime helper for Object.defineProperty called from compiled code.
+    /// </summary>
+    public static object? RuntimeDefineProperty(object? target, object? propertyKey, object? descriptorArg)
+    {
+        var propKey = propertyKey?.ToString() ?? "";
+
+        if (target == null)
+        {
+            throw new Exception("TypeError: Object.defineProperty called on null or undefined");
+        }
+
+        if (descriptorArg == null)
+        {
+            throw new Exception("TypeError: Property description must be an object");
+        }
+
+        // Parse descriptor from object - use FromAnyObject to handle both SharpTSObject and compiled $Object
+        SharpTSPropertyDescriptor descriptor = SharpTSPropertyDescriptor.FromAnyObject(descriptorArg);
+
+        bool success;
+        switch (target)
+        {
+            case SharpTSObject obj:
+                success = obj.DefineProperty(propKey, descriptor);
+                break;
+            case SharpTSInstance inst:
+                success = inst.DefineProperty(propKey, descriptor);
+                break;
+            case SharpTSArray arr:
+                success = arr.DefineProperty(propKey, descriptor);
+                break;
+            case Dictionary<string, object?> dict:
+                // Handle compiled object literals (e.g., let obj: any = {})
+                // Use PropertyDescriptorStore for full descriptor support
+                // Parse directly from raw descriptor to preserve TSFunction getters/setters
+                var compiledDesc = CompiledPropertyDescriptor.FromAny(descriptorArg);
+                success = PropertyDescriptorStore.DefineProperty(target, propKey, compiledDesc);
+                break;
+            case System.Collections.IDictionary dict:
+                // Handle other dictionary types
+                // Parse directly from raw descriptor to preserve TSFunction getters/setters
+                var compiledDesc2 = CompiledPropertyDescriptor.FromAny(descriptorArg);
+                success = PropertyDescriptorStore.DefineProperty(target, propKey, compiledDesc2);
+                break;
+            case System.Collections.IList list:
+                // Handle compiled arrays
+                success = TryDefinePropertyOnList(list, propKey, descriptor);
+                break;
+            default:
+                // Try to handle compiled $Object type using reflection
+                success = TryDefinePropertyViaReflection(target, propKey, descriptor);
+                break;
+        }
+
+        if (!success)
+        {
+            throw new Exception($"TypeError: Cannot define property '{propKey}': object is not extensible or property is not configurable");
+        }
+
+        return target;
+    }
+
+    /// <summary>
+    /// Attempts to define a property on a compiled array (IList).
+    /// </summary>
+    private static bool TryDefinePropertyOnList(System.Collections.IList list, string propKey, SharpTSPropertyDescriptor descriptor)
+    {
+        // Only support numeric indices for arrays
+        if (int.TryParse(propKey, out int index) && index >= 0)
+        {
+            // Expand list if needed
+            while (list.Count <= index)
+            {
+                list.Add(null);
+            }
+            list[index] = descriptor.Value;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Attempts to define a property on a compiled $Object using reflection.
+    /// </summary>
+    private static bool TryDefinePropertyViaReflection(object target, string propKey, SharpTSPropertyDescriptor descriptor)
+    {
+        var type = target.GetType();
+
+        // Check if this looks like a compiled $Object (has SetProperty method)
+        var methods = type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        System.Reflection.MethodInfo? setPropertyMethod = null;
+
+        foreach (var m in methods)
+        {
+            if (m.Name == "SetProperty")
+            {
+                var parms = m.GetParameters();
+                if (parms.Length == 2 && parms[0].ParameterType == typeof(string))
+                {
+                    setPropertyMethod = m;
+                    break;
+                }
+            }
+        }
+
+        if (setPropertyMethod != null)
+        {
+            // For compiled objects, we just set the value directly
+            // Full descriptor support would require modifying the compiled type
+            setPropertyMethod.Invoke(target, [propKey, descriptor.Value]);
+            return true;
+        }
+
+        // Fallback: check if the type has a _fields dictionary (compiled $Object)
+        var fieldsField = type.GetField("_fields", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (fieldsField != null)
+        {
+            var fieldsValue = fieldsField.GetValue(target);
+            if (fieldsValue is System.Collections.IDictionary dict)
+            {
+                dict[propKey] = descriptor.Value;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Runtime helper for Object.getOwnPropertyDescriptor called from compiled code.
+    /// </summary>
+    public static object? RuntimeGetOwnPropertyDescriptor(object? target, object? propertyKey)
+    {
+        var propKey = propertyKey?.ToString() ?? "";
+
+        if (target == null)
+        {
+            throw new Exception("TypeError: Object.getOwnPropertyDescriptor called on null or undefined");
+        }
+
+        // Special handling for Dictionary<string, object?> to preserve $TSFunction getters/setters
+        // (which don't implement ISharpTSCallable)
+        if (target is Dictionary<string, object?> dict)
+        {
+            // Check PropertyDescriptorStore for explicitly defined descriptor
+            var storedDesc = PropertyDescriptorStore.GetPropertyDescriptor(dict, propKey);
+            if (storedDesc != null)
+            {
+                // Use CompiledPropertyDescriptor.ToObject() directly to preserve getter/setter types
+                return storedDesc.ToObject();
+            }
+
+            // Fall back to checking the dictionary directly
+            if (dict.TryGetValue(propKey, out var value))
+            {
+                var desc = new SharpTSPropertyDescriptor
+                {
+                    Value = value,
+                    Writable = true,
+                    Enumerable = true,
+                    Configurable = true
+                };
+                return desc.ToObject();
+            }
+            return null;
+        }
+
+        SharpTSPropertyDescriptor? descriptor = target switch
+        {
+            SharpTSObject obj => obj.GetOwnPropertyDescriptor(propKey),
+            SharpTSInstance inst => inst.GetOwnPropertyDescriptor(propKey),
+            SharpTSArray arr => arr.GetOwnPropertyDescriptor(propKey),
+            System.Collections.IDictionary idict => GetDescriptorFromIDictionary(idict, propKey),
+            System.Collections.IList list => GetDescriptorFromList(list, propKey),
+            _ => TryGetPropertyDescriptorViaReflection(target, propKey)
+        };
+
+        if (descriptor == null)
+        {
+            return null;
+        }
+
+        // Return as an object
+        return descriptor.ToObject();
+    }
+
+    /// <summary>
+    /// Gets a property descriptor from a Dictionary<string, object?>.
+    /// </summary>
+    private static SharpTSPropertyDescriptor? GetDescriptorFromDictionary(Dictionary<string, object?> dict, string propKey)
+    {
+        // Check PropertyDescriptorStore for explicitly defined descriptor
+        var storedDesc = PropertyDescriptorStore.GetPropertyDescriptor(dict, propKey);
+        if (storedDesc != null)
+        {
+            return new SharpTSPropertyDescriptor
+            {
+                Value = storedDesc.Value,
+                Get = storedDesc.Getter as ISharpTSCallable,
+                Set = storedDesc.Setter as ISharpTSCallable,
+                Writable = storedDesc.Writable,
+                Enumerable = storedDesc.Enumerable,
+                Configurable = storedDesc.Configurable
+            };
+        }
+
+        // Fall back to checking the dictionary directly
+        if (!dict.TryGetValue(propKey, out var value))
+        {
+            return null;
+        }
+        return new SharpTSPropertyDescriptor
+        {
+            Value = value,
+            Writable = true,
+            Enumerable = true,
+            Configurable = true
+        };
+    }
+
+    /// <summary>
+    /// Gets a property descriptor from an IList (compiled arrays).
+    /// </summary>
+    private static SharpTSPropertyDescriptor? GetDescriptorFromList(System.Collections.IList list, string propKey)
+    {
+        // Handle "length" property
+        if (propKey == "length")
+        {
+            return new SharpTSPropertyDescriptor
+            {
+                Value = (double)list.Count,
+                Writable = true,
+                Enumerable = false,
+                Configurable = false
+            };
+        }
+
+        // Handle numeric index
+        if (int.TryParse(propKey, out int index) && index >= 0 && index < list.Count)
+        {
+            return new SharpTSPropertyDescriptor
+            {
+                Value = list[index],
+                Writable = true,
+                Enumerable = true,
+                Configurable = true
+            };
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets a property descriptor from an IDictionary.
+    /// </summary>
+    private static SharpTSPropertyDescriptor? GetDescriptorFromIDictionary(System.Collections.IDictionary dict, string propKey)
+    {
+        // Check PropertyDescriptorStore for explicitly defined descriptor
+        var storedDesc = PropertyDescriptorStore.GetPropertyDescriptor(dict, propKey);
+        if (storedDesc != null)
+        {
+            return new SharpTSPropertyDescriptor
+            {
+                Value = storedDesc.Value,
+                Get = storedDesc.Getter as ISharpTSCallable,
+                Set = storedDesc.Setter as ISharpTSCallable,
+                Writable = storedDesc.Writable,
+                Enumerable = storedDesc.Enumerable,
+                Configurable = storedDesc.Configurable
+            };
+        }
+
+        // Fall back to checking the dictionary directly
+        if (!dict.Contains(propKey))
+        {
+            return null;
+        }
+        return new SharpTSPropertyDescriptor
+        {
+            Value = dict[propKey],
+            Writable = true,
+            Enumerable = true,
+            Configurable = true
+        };
+    }
+
+    /// <summary>
+    /// Attempts to get a property descriptor from a compiled $Object using reflection.
+    /// </summary>
+    private static SharpTSPropertyDescriptor? TryGetPropertyDescriptorViaReflection(object target, string propKey)
+    {
+        var type = target.GetType();
+        var methods = type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+        // Find HasProperty and GetProperty methods
+        System.Reflection.MethodInfo? hasPropertyMethod = null;
+        System.Reflection.MethodInfo? getPropertyMethod = null;
+
+        foreach (var m in methods)
+        {
+            if (m.Name == "HasProperty")
+            {
+                var parms = m.GetParameters();
+                if (parms.Length == 1 && parms[0].ParameterType == typeof(string))
+                {
+                    hasPropertyMethod = m;
+                }
+            }
+            else if (m.Name == "GetProperty")
+            {
+                var parms = m.GetParameters();
+                if (parms.Length == 1 && parms[0].ParameterType == typeof(string))
+                {
+                    getPropertyMethod = m;
+                }
+            }
+        }
+
+        if (hasPropertyMethod != null && getPropertyMethod != null)
+        {
+            var hasProperty = (bool?)hasPropertyMethod.Invoke(target, [propKey]);
+            if (hasProperty != true)
+            {
+                return null;
+            }
+
+            var value = getPropertyMethod.Invoke(target, [propKey]);
+            return new SharpTSPropertyDescriptor
+            {
+                Value = value,
+                Writable = true,
+                Enumerable = true,
+                Configurable = true
+            };
+        }
+
+        return null;
     }
 }

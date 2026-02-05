@@ -1625,7 +1625,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits Object.freeze(obj) - freezes an object to prevent property changes.
-    /// Uses ConditionalWeakTable to track frozen objects for compiled code.
+    /// Uses PropertyDescriptorStore to track frozen objects for compiled code.
     /// Signature: object ObjectFreeze(object obj)
     /// </summary>
     private void EmitObjectFreeze(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder frozenObjectsField, FieldBuilder sealedObjectsField)
@@ -1640,22 +1640,21 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var returnLabel = il.DefineLabel();
-        var addToTableLabel = il.DefineLabel();
 
         // If obj is null, just return it
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnLabel);
 
-        // Add to frozen objects table
+        // Call PropertyDescriptorStore.Freeze(obj) to track in unified store
+        il.Emit(OpCodes.Ldarg_0);
+        var freezeMethod = typeof(PropertyDescriptorStore).GetMethod("Freeze", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        il.Emit(OpCodes.Call, freezeMethod!);
+
+        // Also add to legacy frozen objects table for backward compatibility
         il.Emit(OpCodes.Ldsfld, frozenObjectsField);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);  // true
         il.Emit(OpCodes.Box, _types.Boolean);
-        var addMethod = _types.ConditionalWeakTable.GetMethod("AddOrUpdate")
-            ?? _types.ConditionalWeakTable.GetMethod("Add");
-        // ConditionalWeakTable doesn't have AddOrUpdate, we'll use GetOrCreateValue pattern
-        // Instead, use GetValue with a factory or just Add with a check
-        // For simplicity, let's use a try pattern - Add throws if already present, so catch
         var addOrUpdateMethod = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<object, object>)
             .GetMethod("AddOrUpdate");
         if (addOrUpdateMethod != null)
@@ -1664,8 +1663,6 @@ public partial class RuntimeEmitter
         }
         else
         {
-            // Fallback: use GetOrCreateValue doesn't work, just try Add and ignore exception
-            // Actually, let's use the indexer set which should work
             var setItem = _types.ConditionalWeakTable.GetMethod("set_Item")
                 ?? _types.ConditionalWeakTable.GetProperty("Item")?.GetSetMethod();
             if (setItem != null)
@@ -1674,7 +1671,6 @@ public partial class RuntimeEmitter
             }
             else
             {
-                // Last resort: just pop and continue
                 il.Emit(OpCodes.Pop);
                 il.Emit(OpCodes.Pop);
                 il.Emit(OpCodes.Pop);
@@ -1713,6 +1709,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits Object.seal(obj) - seals an object to prevent property addition/removal.
+    /// Uses PropertyDescriptorStore to track sealed objects for compiled code.
     /// Signature: object ObjectSeal(object obj)
     /// </summary>
     private void EmitObjectSeal(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder sealedObjectsField)
@@ -1732,7 +1729,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnLabel);
 
-        // Add to sealed objects table
+        // Call PropertyDescriptorStore.Seal(obj) to track in unified store
+        il.Emit(OpCodes.Ldarg_0);
+        var sealMethod = typeof(PropertyDescriptorStore).GetMethod("Seal", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        il.Emit(OpCodes.Call, sealMethod!);
+
+        // Also add to legacy sealed objects table for backward compatibility
         il.Emit(OpCodes.Ldsfld, sealedObjectsField);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -1884,6 +1886,66 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, valueLocal);
         var tryGetValue = _types.ConditionalWeakTable.GetMethod("TryGetValue");
         il.Emit(OpCodes.Callvirt, tryGetValue!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.defineProperty(obj, prop, descriptor) - defines or modifies a property.
+    /// Signature: object ObjectDefineProperty(object obj, object prop, object descriptor)
+    /// </summary>
+    private void EmitObjectDefineProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectDefineProperty",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]
+        );
+        runtime.ObjectDefineProperty = method;
+
+        var il = method.GetILGenerator();
+
+        // Call the static helper method in ObjectBuiltIns
+        // This helper handles all the complex logic
+        il.Emit(OpCodes.Ldarg_0); // obj
+        il.Emit(OpCodes.Ldarg_1); // prop
+        il.Emit(OpCodes.Ldarg_2); // descriptor
+
+        // Call runtime helper
+        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
+            "RuntimeDefineProperty",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
+        );
+        il.Emit(OpCodes.Call, helperMethod!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.getOwnPropertyDescriptor(obj, prop) - gets a property descriptor.
+    /// Signature: object ObjectGetOwnPropertyDescriptor(object obj, object prop)
+    /// </summary>
+    private void EmitObjectGetOwnPropertyDescriptor(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectGetOwnPropertyDescriptor",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]
+        );
+        runtime.ObjectGetOwnPropertyDescriptor = method;
+
+        var il = method.GetILGenerator();
+
+        // Call the static helper method
+        il.Emit(OpCodes.Ldarg_0); // obj
+        il.Emit(OpCodes.Ldarg_1); // prop
+
+        // Call runtime helper
+        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
+            "RuntimeGetOwnPropertyDescriptor",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
+        );
+        il.Emit(OpCodes.Call, helperMethod!);
         il.Emit(OpCodes.Ret);
     }
 }

@@ -274,5 +274,160 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
         return true;
     }
 
+    // Property descriptor storage for named properties (arrays can have non-numeric properties too)
+    private Dictionary<string, object?>? _namedProperties;
+    private Dictionary<string, PropertyDescriptorFlags>? _descriptors;
+
+    /// <summary>
+    /// Gets a named property value from the array.
+    /// </summary>
+    public object? GetNamedProperty(string name)
+    {
+        if (_namedProperties?.TryGetValue(name, out var value) == true)
+        {
+            return value;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Checks if a named property exists on the array.
+    /// </summary>
+    public bool HasNamedProperty(string name)
+    {
+        return _namedProperties?.ContainsKey(name) ?? false;
+    }
+
+    /// <summary>
+    /// Sets a named property value on the array.
+    /// </summary>
+    public void SetNamedProperty(string name, object? value)
+    {
+        _namedProperties ??= new Dictionary<string, object?>();
+        _namedProperties[name] = value;
+    }
+
+    /// <summary>
+    /// Defines or modifies a property with the given descriptor.
+    /// For arrays, this supports both numeric indices and named properties.
+    /// </summary>
+    public bool DefineProperty(string name, SharpTSPropertyDescriptor descriptor)
+    {
+        if (IsFrozen)
+        {
+            return false;
+        }
+
+        // Check if it's a numeric index
+        if (int.TryParse(name, out int index) && index >= 0)
+        {
+            // For numeric indices, we only support data properties
+            if (descriptor.Get != null || descriptor.Set != null)
+            {
+                // Arrays don't support accessor properties on indices
+                return false;
+            }
+
+            // Expand array if needed (but not if sealed and index is beyond current length)
+            if (index >= Elements.Count)
+            {
+                if (IsSealed)
+                {
+                    return false;
+                }
+                // Expand array with nulls
+                while (Elements.Count <= index)
+                {
+                    Elements.Add(null);
+                }
+            }
+
+            Elements[index] = descriptor.Value;
+
+            // Store descriptor flags
+            _descriptors ??= new Dictionary<string, PropertyDescriptorFlags>();
+            _descriptors[name] = PropertyDescriptorFlags.ForDefineProperty(
+                descriptor.Writable,
+                descriptor.Enumerable,
+                descriptor.Configurable
+            );
+            return true;
+        }
+
+        // Named property (non-numeric)
+        if (IsSealed && (_namedProperties == null || !_namedProperties.ContainsKey(name)))
+        {
+            return false;
+        }
+
+        _namedProperties ??= new Dictionary<string, object?>();
+        _namedProperties[name] = descriptor.Value;
+
+        _descriptors ??= new Dictionary<string, PropertyDescriptorFlags>();
+        _descriptors[name] = PropertyDescriptorFlags.ForDefineProperty(
+            descriptor.Writable,
+            descriptor.Enumerable,
+            descriptor.Configurable
+        );
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the property descriptor for the given property name.
+    /// Returns null if the property doesn't exist.
+    /// </summary>
+    public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
+    {
+        // Special case for 'length'
+        if (name == "length")
+        {
+            return new SharpTSPropertyDescriptor
+            {
+                Value = (double)Elements.Count,
+                Writable = true,
+                Enumerable = false,
+                Configurable = false
+            };
+        }
+
+        // Check if it's a numeric index
+        if (int.TryParse(name, out int index) && index >= 0 && index < Elements.Count)
+        {
+            PropertyDescriptorFlags flags = default;
+            if (_descriptors?.TryGetValue(name, out flags) != true)
+            {
+                flags = PropertyDescriptorFlags.Default;
+            }
+
+            return new SharpTSPropertyDescriptor
+            {
+                Value = Elements[index],
+                Writable = flags.Writable,
+                Enumerable = flags.Enumerable,
+                Configurable = flags.Configurable
+            };
+        }
+
+        // Check named properties
+        if (_namedProperties?.TryGetValue(name, out var value) == true)
+        {
+            PropertyDescriptorFlags flags = default;
+            if (_descriptors?.TryGetValue(name, out flags) != true)
+            {
+                flags = PropertyDescriptorFlags.Default;
+            }
+
+            return new SharpTSPropertyDescriptor
+            {
+                Value = value,
+                Writable = flags.Writable,
+                Enumerable = flags.Enumerable,
+                Configurable = flags.Configurable
+            };
+        }
+
+        return null;
+    }
+
     public override string ToString() => $"[{string.Join(", ", Elements.Select(e => e?.ToString() ?? "null"))}]";
 }

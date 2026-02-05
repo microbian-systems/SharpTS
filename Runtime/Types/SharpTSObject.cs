@@ -19,6 +19,7 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
     private readonly Dictionary<SharpTSSymbol, object?> _symbolFields = new();
     private Dictionary<string, ISharpTSCallable>? _getters;
     private Dictionary<string, ISharpTSCallable>? _setters;
+    private Dictionary<string, PropertyDescriptorFlags>? _descriptors;
 
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Record;
@@ -85,11 +86,18 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             return;
         }
 
-        bool exists = _fields.ContainsKey(name);
+        bool exists = _fields.ContainsKey(name) || HasGetter(name);
         if (IsSealed && !exists)
         {
             // Sealed objects silently ignore new property additions
             SloppyModeWarnings.Warn("add to sealed", $"Property addition to sealed object '{name}' ignored");
+            return;
+        }
+
+        // Check writable flag for properties defined via defineProperty
+        if (exists && _descriptors?.TryGetValue(name, out var flags) == true && flags.HasExplicitDescriptor && !flags.Writable)
+        {
+            SloppyModeWarnings.Warn("write to non-writable", $"Assignment to non-writable property '{name}' ignored");
             return;
         }
 
@@ -127,7 +135,7 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             return;
         }
 
-        bool exists = _fields.ContainsKey(name);
+        bool exists = _fields.ContainsKey(name) || HasGetter(name);
         if (IsSealed && !exists)
         {
             if (strictMode)
@@ -135,6 +143,17 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
                 throw StrictModeErrors.TypeError($"Cannot add property '{name}' to a sealed object");
             }
             SloppyModeWarnings.Warn("add to sealed", $"Property addition to sealed object '{name}' ignored");
+            return;
+        }
+
+        // Check writable flag for properties defined via defineProperty
+        if (exists && _descriptors?.TryGetValue(name, out var flags) == true && flags.HasExplicitDescriptor && !flags.Writable)
+        {
+            if (strictMode)
+            {
+                throw StrictModeErrors.TypeError($"Cannot assign to read only property '{name}'");
+            }
+            SloppyModeWarnings.Warn("write to non-writable", $"Assignment to non-writable property '{name}' ignored");
             return;
         }
 
@@ -321,6 +340,167 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             return false;
         }
         return _symbolFields.Remove(symbol);
+    }
+
+    /// <summary>
+    /// Defines or modifies a property with the given descriptor.
+    /// Returns true on success, false if the operation is not allowed.
+    /// </summary>
+    public bool DefineProperty(string name, SharpTSPropertyDescriptor descriptor)
+    {
+        // Get existing descriptor flags if any
+        bool hasExisting = _fields.ContainsKey(name) || HasGetter(name) || HasSetter(name);
+        PropertyDescriptorFlags existingFlags = default;
+
+        if (hasExisting && _descriptors?.TryGetValue(name, out existingFlags) != true)
+        {
+            // Existing property without explicit descriptor - use defaults
+            existingFlags = PropertyDescriptorFlags.Default;
+        }
+
+        // Check if we can modify the property
+        if (hasExisting && existingFlags.HasExplicitDescriptor && !existingFlags.Configurable)
+        {
+            // Non-configurable property - limited modifications allowed
+            // Can only change value if writable, cannot change other attributes
+            if (descriptor.Get != null || descriptor.Set != null)
+            {
+                // Cannot change accessor on non-configurable property
+                return false;
+            }
+            if (descriptor.Writable != existingFlags.Writable ||
+                descriptor.Enumerable != existingFlags.Enumerable ||
+                descriptor.Configurable != existingFlags.Configurable)
+            {
+                // Cannot change attributes on non-configurable property
+                return false;
+            }
+            if (!existingFlags.Writable && descriptor.Value != null)
+            {
+                // Cannot change value of non-writable, non-configurable property
+                var currentValue = _fields.TryGetValue(name, out var v) ? v : null;
+                if (!ReferenceEquals(currentValue, descriptor.Value) &&
+                    (currentValue == null || !currentValue.Equals(descriptor.Value)))
+                {
+                    return false;
+                }
+            }
+        }
+
+        // Check sealed/frozen state
+        if (IsFrozen)
+        {
+            return false;
+        }
+        if (IsSealed && !hasExisting)
+        {
+            return false;
+        }
+
+        // Store the descriptor flags
+        _descriptors ??= new Dictionary<string, PropertyDescriptorFlags>();
+        _descriptors[name] = PropertyDescriptorFlags.ForDefineProperty(
+            descriptor.Writable,
+            descriptor.Enumerable,
+            descriptor.Configurable
+        );
+
+        // Apply the descriptor
+        if (descriptor.Get != null || descriptor.Set != null)
+        {
+            // Accessor property - remove any data property value
+            _fields.Remove(name);
+
+            if (descriptor.Get != null)
+            {
+                DefineGetter(name, descriptor.Get);
+            }
+            else
+            {
+                _getters?.Remove(name);
+            }
+
+            if (descriptor.Set != null)
+            {
+                DefineSetter(name, descriptor.Set);
+            }
+            else
+            {
+                _setters?.Remove(name);
+            }
+        }
+        else
+        {
+            // Data property - remove any accessor
+            _getters?.Remove(name);
+            _setters?.Remove(name);
+
+            // Only set value if provided in descriptor
+            if (descriptor.Value != null || !hasExisting)
+            {
+                _fields[name] = descriptor.Value;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the property descriptor for the given property name.
+    /// Returns null if the property doesn't exist.
+    /// </summary>
+    public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
+    {
+        bool hasDataProperty = _fields.ContainsKey(name);
+        bool hasGetter = HasGetter(name);
+        bool hasSetter = HasSetter(name);
+
+        if (!hasDataProperty && !hasGetter && !hasSetter)
+        {
+            return null;
+        }
+
+        // Get descriptor flags (defaults if not explicitly set)
+        PropertyDescriptorFlags flags = default;
+        if (_descriptors?.TryGetValue(name, out flags) != true)
+        {
+            flags = PropertyDescriptorFlags.Default;
+        }
+
+        if (hasGetter || hasSetter)
+        {
+            // Accessor property
+            return new SharpTSPropertyDescriptor
+            {
+                Get = GetGetter(name),
+                Set = GetSetter(name),
+                Enumerable = flags.Enumerable,
+                Configurable = flags.Configurable
+            };
+        }
+        else
+        {
+            // Data property
+            return new SharpTSPropertyDescriptor
+            {
+                Value = _fields[name],
+                Writable = flags.Writable,
+                Enumerable = flags.Enumerable,
+                Configurable = flags.Configurable
+            };
+        }
+    }
+
+    /// <summary>
+    /// Gets the descriptor flags for a property, or default flags if not explicitly set.
+    /// </summary>
+    public PropertyDescriptorFlags GetPropertyFlags(string name)
+    {
+        if (_descriptors?.TryGetValue(name, out var flags) == true)
+        {
+            return flags;
+        }
+        return PropertyDescriptorFlags.Default;
     }
 
     public override string ToString() => $"{{ {string.Join(", ", _fields.Select(f => $"{f.Key}: {f.Value}"))} }}";

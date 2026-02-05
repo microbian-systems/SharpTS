@@ -118,6 +118,46 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Runtime!.ObjectIsSealed);
                 il.Emit(OpCodes.Box, typeof(bool));
                 return true;
+            case "defineProperty":
+                // Object.defineProperty(obj, prop, descriptor) - defines a property
+                // First argument (obj) is already on the stack
+                // Emit second argument (property name)
+                if (arguments.Count > 1)
+                {
+                    emitter.EmitExpression(arguments[1]);
+                    emitter.EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldnull);
+                }
+                // Emit third argument (descriptor)
+                if (arguments.Count > 2)
+                {
+                    emitter.EmitExpression(arguments[2]);
+                    emitter.EmitBoxIfNeeded(arguments[2]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ObjectDefineProperty);
+                return true;
+            case "getOwnPropertyDescriptor":
+                // Object.getOwnPropertyDescriptor(obj, prop) - gets a property descriptor
+                // First argument (obj) is already on the stack
+                // Emit second argument (property name)
+                if (arguments.Count > 1)
+                {
+                    emitter.EmitExpression(arguments[1]);
+                    emitter.EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ObjectGetOwnPropertyDescriptor);
+                return true;
             default:
                 // Pop the argument we pushed and return false
                 il.Emit(OpCodes.Pop);
