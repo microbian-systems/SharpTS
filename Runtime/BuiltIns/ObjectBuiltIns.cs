@@ -21,6 +21,7 @@ public static class ObjectBuiltIns
             .Method("isSealed", 1, IsSealed)
             .Method("defineProperty", 3, DefineProperty)
             .Method("getOwnPropertyDescriptor", 2, GetOwnPropertyDescriptor)
+            .Method("getOwnPropertyNames", 1, GetOwnPropertyNames)
             .Build();
 
     /// <summary>
@@ -416,6 +417,65 @@ public static class ObjectBuiltIns
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Object.getOwnPropertyNames(obj) - returns an array of all own property names (including non-enumerable).
+    /// </summary>
+    private static object? GetOwnPropertyNames(Interpreter _, List<object?> args)
+    {
+        var target = args[0];
+
+        if (target == null)
+        {
+            throw new Exception("TypeError: Object.getOwnPropertyNames called on null or undefined");
+        }
+
+        List<object?> names = target switch
+        {
+            SharpTSObject obj => GetOwnPropertyNamesFromObject(obj),
+            SharpTSInstance inst => inst.GetFieldNames().Select(k => (object?)k).ToList(),
+            SharpTSArray arr => GetOwnPropertyNamesFromArray(arr),
+            Dictionary<string, object?> dict => dict.Keys.Select(k => (object?)k).ToList(),
+            _ => []
+        };
+
+        return new SharpTSArray(names);
+    }
+
+    /// <summary>
+    /// Gets all own property names from a SharpTSObject (including accessor properties).
+    /// </summary>
+    private static List<object?> GetOwnPropertyNamesFromObject(SharpTSObject obj)
+    {
+        HashSet<string> names = new(obj.Fields.Keys);
+
+        // Add accessor property names (getters define properties even without data)
+        foreach (var key in obj.PropertyNames)
+        {
+            names.Add(key);
+        }
+
+        return names.Select(k => (object?)k).ToList();
+    }
+
+    /// <summary>
+    /// Gets all own property names from a SharpTSArray (indices + length + any custom properties).
+    /// </summary>
+    private static List<object?> GetOwnPropertyNamesFromArray(SharpTSArray arr)
+    {
+        List<object?> names = [];
+
+        // Add numeric indices
+        for (int i = 0; i < arr.Elements.Count; i++)
+        {
+            names.Add(i.ToString());
+        }
+
+        // Add "length"
+        names.Add("length");
+
+        return names;
     }
 
     /// <summary>

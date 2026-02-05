@@ -72,6 +72,62 @@ public static partial class RuntimeTypes
         return [];
     }
 
+    /// <summary>
+    /// Object.getOwnPropertyNames() - returns all own property names (including non-enumerable).
+    /// Unlike GetKeys(), this returns ALL string-keyed own properties regardless of enumerability.
+    /// </summary>
+    public static List<object?> GetOwnPropertyNames(object? obj)
+    {
+        if (obj is Dictionary<string, object?> dict)
+        {
+            return dict.Keys.Select(k => (object?)k).ToList();
+        }
+        if (obj is List<object?> list)
+        {
+            // Arrays have numeric indices as property names plus "length"
+            List<object?> names = [];
+            for (int i = 0; i < list.Count; i++)
+            {
+                names.Add(i.ToString());
+            }
+            names.Add("length");
+            return names;
+        }
+        // For compiled class instances, get names from typed backing fields AND _fields dictionary
+        if (obj != null)
+        {
+            List<object?> names = [];
+            var type = obj.GetType();
+
+            // Get typed backing fields (fields starting with __)
+            foreach (var backingField in type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                if (backingField.Name.StartsWith("__"))
+                {
+                    // Extract property name by removing __ prefix
+                    string propName = backingField.Name[2..];
+                    names.Add(propName);
+                }
+            }
+
+            // Also get names from _fields dictionary (for dynamic properties and generic type fields)
+            var fieldsField = type.GetField("_fields", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (fieldsField != null && fieldsField.GetValue(obj) is Dictionary<string, object?> fields)
+            {
+                foreach (var key in fields.Keys)
+                {
+                    if (!names.Contains(key))
+                    {
+                        names.Add(key);
+                    }
+                }
+            }
+
+            return names;
+        }
+        return [];
+    }
+
     public static List<object?> SpreadArray(object? arr)
     {
         if (arr is List<object?> list)

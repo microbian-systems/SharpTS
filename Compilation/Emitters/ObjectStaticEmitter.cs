@@ -158,6 +158,10 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
                 }
                 il.Emit(OpCodes.Call, ctx.Runtime!.ObjectGetOwnPropertyDescriptor);
                 return true;
+            case "getOwnPropertyNames":
+                // Object.getOwnPropertyNames(obj) - gets all own property names
+                il.Emit(OpCodes.Call, ctx.Runtime!.GetOwnPropertyNames);
+                return true;
             default:
                 // Pop the argument we pushed and return false
                 il.Emit(OpCodes.Pop);

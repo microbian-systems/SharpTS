@@ -355,6 +355,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    private void EmitGetOwnPropertyNames(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetOwnPropertyNames",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.ListOfObject,
+            [_types.Object]
+        );
+        runtime.GetOwnPropertyNames = method;
+
+        var il = method.GetILGenerator();
+
+        // Call the static helper method in RuntimeTypes
+        il.Emit(OpCodes.Ldarg_0); // obj
+
+        var helperMethod = typeof(RuntimeTypes).GetMethod(
+            "GetOwnPropertyNames",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
+        );
+        il.Emit(OpCodes.Call, helperMethod!);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitSpreadArray(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(

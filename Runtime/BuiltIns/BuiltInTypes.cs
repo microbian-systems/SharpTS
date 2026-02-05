@@ -184,6 +184,7 @@ public static class BuiltInTypes
             "seal" => new TypeInfo.Function([AnyType], AnyType),    // Returns the sealed object
             "isFrozen" => new TypeInfo.Function([AnyType], BooleanType),
             "isSealed" => new TypeInfo.Function([AnyType], BooleanType),
+            "getOwnPropertyNames" => new TypeInfo.Function([AnyType], new TypeInfo.Array(StringType)),
             _ => null
         };
     }

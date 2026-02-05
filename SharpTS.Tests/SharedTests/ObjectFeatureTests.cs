@@ -1782,4 +1782,166 @@ public class ObjectFeatureTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("true\n", output);
     }
+
+    // Object.getOwnPropertyNames tests
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyNames_BasicObject(ExecutionMode mode)
+    {
+        var source = """
+            let obj: { a: number, b: number, c: number } = { a: 1, b: 2, c: 3 };
+            let names: string[] = Object.getOwnPropertyNames(obj);
+            console.log(names.length);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyNames_EmptyObject(ExecutionMode mode)
+    {
+        var source = """
+            let obj: {} = {};
+            let names: string[] = Object.getOwnPropertyNames(obj);
+            console.log(names.length);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyNames_Array(ExecutionMode mode)
+    {
+        var source = """
+            let arr: number[] = [1, 2, 3];
+            let names: string[] = Object.getOwnPropertyNames(arr);
+            // Should include "0", "1", "2", "length"
+            console.log(names.includes("0"));
+            console.log(names.includes("1"));
+            console.log(names.includes("2"));
+            console.log(names.includes("length"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyNames_ClassInstance(ExecutionMode mode)
+    {
+        var source = """
+            class Person {
+                name: string;
+                age: number;
+                constructor(n: string, a: number) {
+                    this.name = n;
+                    this.age = a;
+                }
+            }
+            let p = new Person("Alice", 30);
+            let names: string[] = Object.getOwnPropertyNames(p);
+            console.log(names.length);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyNames_ReturnsStrings(ExecutionMode mode)
+    {
+        var source = """
+            let obj: { x: number } = { x: 42 };
+            let names: string[] = Object.getOwnPropertyNames(obj);
+            console.log(typeof names[0]);
+            console.log(names[0]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("string\nx\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyNames_WithMixedTypes(ExecutionMode mode)
+    {
+        var source = """
+            let obj: { name: string, age: number, active: boolean } = { name: "Alice", age: 30, active: true };
+            let names: string[] = Object.getOwnPropertyNames(obj);
+            console.log(names.length);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyNames_IncludesNonEnumerableProperties(ExecutionMode mode)
+    {
+        // Unlike Object.keys(), getOwnPropertyNames should include non-enumerable properties
+        var source = """
+            let obj: any = {};
+            Object.defineProperty(obj, "hidden", { value: 42, enumerable: false });
+            Object.defineProperty(obj, "visible", { value: 100, enumerable: true });
+            let names: string[] = Object.getOwnPropertyNames(obj);
+            console.log(names.includes("hidden"));
+            console.log(names.includes("visible"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyNames_DoesNotIncludeMethods(ExecutionMode mode)
+    {
+        // Methods defined on the class should NOT appear in getOwnPropertyNames
+        // Note: This test uses interpreter only since compiled class instances
+        // use different property storage mechanisms
+        var source = """
+            class Person {
+                name: string;
+                constructor(n: string) {
+                    this.name = n;
+                }
+                greet(): string {
+                    return "Hello";
+                }
+            }
+            let p = new Person("Alice");
+            let names: string[] = Object.getOwnPropertyNames(p);
+            console.log(names.includes("name"));
+            console.log(names.includes("greet"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyNames_IncludesDefinedProperties(ExecutionMode mode)
+    {
+        // Both getOwnPropertyNames and keys include properties added via defineProperty
+        // Note: In this codebase, Object.keys() does not filter non-enumerable properties
+        var source = """
+            let obj: any = { visible: 1 };
+            Object.defineProperty(obj, "hidden", { value: 2, enumerable: false });
+            let names: string[] = Object.getOwnPropertyNames(obj);
+            console.log(names.length);
+            console.log(names.includes("visible"));
+            console.log(names.includes("hidden"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2\ntrue\ntrue\n", output);
+    }
 }

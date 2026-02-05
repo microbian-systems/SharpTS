@@ -2058,6 +2058,7 @@ public partial class RuntimeEmitter
         EmitGetLength(typeBuilder, runtime);
         EmitGetElement(typeBuilder, runtime);
         EmitGetKeys(typeBuilder, runtime);
+        EmitGetOwnPropertyNames(typeBuilder, runtime);
         EmitGetValues(typeBuilder, runtime);
         EmitGetEntries(typeBuilder, runtime);
         EmitObjectFromEntries(typeBuilder, runtime);
