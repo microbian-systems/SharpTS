@@ -25,6 +25,7 @@ public partial class RuntimeEmitter
         var symbolKeyLabel = il.DefineLabel();
         var classInstanceLabel = il.DefineLabel();
         var typedArrayLabel = il.DefineLabel();
+        var kvpLabel = il.DefineLabel();
         var nullLabel = il.DefineLabel();
 
         // null check on obj
@@ -51,6 +52,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ArrayType);
         il.Emit(OpCodes.Brtrue, arrayLabel);
+
+        // KeyValuePair<object, object> (Map entries when spread into array)
+        var kvpType = _types.MakeGenericType(_types.KeyValuePairOpen, _types.Object, _types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, kvpType);
+        il.Emit(OpCodes.Brtrue, kvpLabel);
 
         // String
         il.Emit(OpCodes.Ldarg_0);
@@ -125,6 +132,40 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ArrayType, "GetValue", _types.Int32));
+        il.Emit(OpCodes.Ret);
+
+        // KeyValuePair<object, object> handler (Map entries spread into array)
+        // Treats the pair as [key, value] tuple: index 0 = Key, index 1 = Value
+        il.MarkLabel(kvpLabel);
+        var kvpLocal = il.DeclareLocal(kvpType);
+        // Unbox the KeyValuePair
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, kvpType);
+        il.Emit(OpCodes.Stloc, kvpLocal);
+        // Convert index to int
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+        // Check if index is 0: return Key
+        var kvpIndex1Label = il.DefineLabel();
+        var kvpReturnNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, kvpIndex1Label); // If not 0, check for 1
+        // Index is 0: return Key
+        il.Emit(OpCodes.Pop); // Remove the index
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(kvpType, "Key").GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+        // Check if index is 1: return Value
+        il.MarkLabel(kvpIndex1Label);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Bne_Un, kvpReturnNullLabel); // If not 1, return null
+        // Index is 1: return Value
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(kvpType, "Value").GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+        // Index is neither 0 nor 1: return null
+        il.MarkLabel(kvpReturnNullLabel);
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(stringLabel);

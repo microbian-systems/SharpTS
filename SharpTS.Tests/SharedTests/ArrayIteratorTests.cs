@@ -616,6 +616,67 @@ public class ArrayIteratorTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ArrayDestructuring_MapWithTypedValues(ExecutionMode mode)
+    {
+        // Tests destructuring Map entries with typed key/value
+        var source = """
+            let map = new Map<string, number>();
+            map.set("alpha", 1);
+            map.set("beta", 2);
+            map.set("gamma", 3);
+            let sum = 0;
+            let keys: string[] = [];
+            for (const [k, v] of map) {
+                keys.push(k);
+                sum += v;
+            }
+            console.log(keys.join(","));
+            console.log(sum);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("alpha,beta,gamma\n6\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ArrayDestructuring_NestedArrays(ExecutionMode mode)
+    {
+        // Tests destructuring nested arrays in for...of
+        var source = """
+            let data = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+            let results: string[] = [];
+            for (const [a, b, c] of data) {
+                results.push(a + "-" + b + "-" + c);
+            }
+            console.log(results.join("; "));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1-2-3; 4-5-6; 7-8-9\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ArrayDestructuring_ArrayEntries_Computation(ExecutionMode mode)
+    {
+        // Tests using destructured values in computation
+        var source = """
+            let arr = [10, 20, 30, 40];
+            let sum = 0;
+            for (const [idx, val] of arr.entries()) {
+                sum += idx * val;
+            }
+            console.log(sum);
+            """;
+
+        // 0*10 + 1*20 + 2*30 + 3*40 = 0 + 20 + 60 + 120 = 200
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("200\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ForAwaitOf_ArrayDestructuring(ExecutionMode mode)
     {
         var source = """
@@ -707,8 +768,6 @@ public class ArrayIteratorTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Spread_Map_CreatesArrayOfTuples(ExecutionMode mode)
     {
-        // Note: Compiled mode has a pre-existing bug with nested array access from Map iteration.
-        // This test verifies the spread itself works (correct length and stringification).
         var source = """
             let myMap = new Map();
             myMap.set("x", 10);
@@ -720,6 +779,65 @@ public class ArrayIteratorTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("2\n[x, 10]; [y, 20]\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_Map_NestedElementAccess(ExecutionMode mode)
+    {
+        // Tests that arr[i][0] and arr[i][1] work correctly on spread Map entries
+        // This specifically tests the KeyValuePair indexing fix in compiled mode
+        var source = """
+            let myMap = new Map<string, number>();
+            myMap.set("a", 100);
+            myMap.set("b", 200);
+            let arr = [...myMap];
+            console.log(arr[0][0]);
+            console.log(arr[0][1]);
+            console.log(arr[1][0]);
+            console.log(arr[1][1]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("a\n100\nb\n200\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_MapEntries_NestedElementAccess(ExecutionMode mode)
+    {
+        // Tests explicit .entries() call with nested access
+        var source = """
+            let myMap = new Map<string, number>();
+            myMap.set("x", 1);
+            myMap.set("y", 2);
+            let arr = [...myMap.entries()];
+            console.log(arr[0][0] + "=" + arr[0][1]);
+            console.log(arr[1][0] + "=" + arr[1][1]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("x=1\ny=2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_Map_AccessInLoop(ExecutionMode mode)
+    {
+        // Tests iterating over spread Map entries with element access
+        var source = """
+            let myMap = new Map<string, number>();
+            myMap.set("one", 1);
+            myMap.set("two", 2);
+            myMap.set("three", 3);
+            let arr = [...myMap];
+            for (let i = 0; i < arr.length; i++) {
+                console.log(arr[i][0] + ":" + arr[i][1]);
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("one:1\ntwo:2\nthree:3\n", output);
     }
 
     [Theory]

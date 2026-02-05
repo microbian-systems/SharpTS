@@ -128,6 +128,24 @@ public static partial class RuntimeTypes
             return name == "length" ? (double)list.Count : null;
         }
 
+        // SharpTSArray (interpreter array type used by Map/Set entries)
+        if (obj is SharpTSArray tsArr)
+        {
+            return name == "length" ? (double)tsArr.Elements.Count : null;
+        }
+
+        // KeyValuePair<object, object> (compiled Map entries) - treat as [key, value] tuple
+        if (obj is KeyValuePair<object, object?> kvp)
+        {
+            return name == "length" ? 2.0 : null;
+        }
+
+        // KeyValuePair<object, object> non-nullable variant
+        if (obj is KeyValuePair<object, object> kvpNonNull)
+        {
+            return name == "length" ? 2.0 : null;
+        }
+
         // String
         if (obj is string s)
         {
@@ -231,6 +249,34 @@ public static partial class RuntimeTypes
             if (obj is List<object?> list && idx >= 0 && idx < list.Count)
             {
                 return list[idx];
+            }
+
+            // SharpTSArray (interpreter array type used by Map/Set entries)
+            if (obj is SharpTSArray tsArr && idx >= 0 && idx < tsArr.Elements.Count)
+            {
+                return tsArr.Get(idx);
+            }
+
+            // KeyValuePair<object, object> (compiled Map entries) - treat as [key, value] tuple
+            if (obj is KeyValuePair<object, object?> kvp)
+            {
+                return idx switch
+                {
+                    0 => kvp.Key,
+                    1 => kvp.Value,
+                    _ => null
+                };
+            }
+
+            // KeyValuePair<object, object> non-nullable variant
+            if (obj is KeyValuePair<object, object> kvpNonNull)
+            {
+                return idx switch
+                {
+                    0 => kvpNonNull.Key,
+                    1 => kvpNonNull.Value,
+                    _ => null
+                };
             }
 
             // Native .NET arrays (e.g., string[] from command line args)
