@@ -162,6 +162,21 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
                 // Object.getOwnPropertyNames(obj) - gets all own property names
                 il.Emit(OpCodes.Call, ctx.Runtime!.GetOwnPropertyNames);
                 return true;
+            case "create":
+                // Object.create(proto, propertiesObject?) - creates a new object with prototype
+                // First argument (proto) is already on the stack
+                // Emit second argument (propertiesObject) - optional
+                if (arguments.Count > 1)
+                {
+                    emitter.EmitExpression(arguments[1]);
+                    emitter.EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ObjectCreate);
+                return true;
             default:
                 // Pop the argument we pushed and return false
                 il.Emit(OpCodes.Pop);

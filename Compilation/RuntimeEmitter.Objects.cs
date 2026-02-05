@@ -1948,5 +1948,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, helperMethod!);
         il.Emit(OpCodes.Ret);
     }
+
+    /// <summary>
+    /// Emits Object.create(proto, propertiesObject?) - creates a new object with prototype.
+    /// Signature: object ObjectCreate(object proto, object propertiesObject)
+    /// </summary>
+    private void EmitObjectCreate(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectCreate",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]
+        );
+        runtime.ObjectCreate = method;
+
+        var il = method.GetILGenerator();
+
+        // Call the static helper method in ObjectBuiltIns
+        il.Emit(OpCodes.Ldarg_0); // proto
+        il.Emit(OpCodes.Ldarg_1); // propertiesObject
+
+        // Call runtime helper
+        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
+            "RuntimeCreate",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
+        );
+        il.Emit(OpCodes.Call, helperMethod!);
+        il.Emit(OpCodes.Ret);
+    }
 }
 

@@ -2071,6 +2071,7 @@ public partial class RuntimeEmitter
         EmitObjectIsSealed(typeBuilder, runtime, sealedObjectsField);
         EmitObjectDefineProperty(typeBuilder, runtime);
         EmitObjectGetOwnPropertyDescriptor(typeBuilder, runtime);
+        EmitObjectCreate(typeBuilder, runtime);
         EmitIsArray(typeBuilder, runtime);
         EmitSpreadArray(typeBuilder, runtime);
         EmitConcatArrays(typeBuilder, runtime);

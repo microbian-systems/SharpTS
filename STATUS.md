@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-05 (Added Object.getOwnPropertyNames() for interpreter and compiled mode; Added Object.defineProperty() and Object.getOwnPropertyDescriptor() with full interpreter support; compiled mode supports basic value setting; Added DataView with full API support; Added Array.copyWithin(); Added spreading iterators: `[...arr.entries()]`, `[...set]`, `[...map]`; Added destructuring in for...of: `for (const [i, val] of arr.entries())`; Fixed string concat optimizer bug; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
+**Last Updated:** 2026-02-05 (Added Object.create() with prototype copying and propertiesObject support; Added Object.getOwnPropertyNames() for interpreter and compiled mode; Added Object.defineProperty() and Object.getOwnPropertyDescriptor() with full interpreter support; compiled mode supports basic value setting; Added DataView with full API support; Added Array.copyWithin(); Added spreading iterators: `[...arr.entries()]`, `[...set]`, `[...map]`; Added destructuring in for...of: `for (const [i, val] of arr.entries())`; Fixed string concat optimizer bug; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
 
 ## Legend
 - ✅ Implemented
@@ -330,7 +330,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `Object.create()` | ❌ | |
+| `Object.create()` | ✅ | Creates new object with prototype; supports propertiesObject argument for defining properties via descriptors |
 | `Object.is()` | ✅ | Same-value comparison; handles NaN and +0/-0 edge cases |
 | `Object.getOwnPropertyDescriptor()` | ✅ | Full support in both interpreter and compiled mode |
 | `Object.defineProperty()` | ✅ | Full support including accessor properties (get/set) and descriptor flags in both modes |

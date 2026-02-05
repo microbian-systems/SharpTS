@@ -211,6 +211,7 @@ public class EmittedRuntime
     public MethodBuilder ObjectIsSealed { get; set; } = null!;
     public MethodBuilder ObjectDefineProperty { get; set; } = null!;
     public MethodBuilder ObjectGetOwnPropertyDescriptor { get; set; } = null!;
+    public MethodBuilder ObjectCreate { get; set; } = null!;
     public FieldBuilder FrozenObjectsField { get; set; } = null!;
     public FieldBuilder SealedObjectsField { get; set; } = null!;
 

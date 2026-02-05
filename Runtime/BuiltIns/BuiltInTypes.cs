@@ -185,6 +185,7 @@ public static class BuiltInTypes
             "isFrozen" => new TypeInfo.Function([AnyType], BooleanType),
             "isSealed" => new TypeInfo.Function([AnyType], BooleanType),
             "getOwnPropertyNames" => new TypeInfo.Function([AnyType], new TypeInfo.Array(StringType)),
+            "create" => new TypeInfo.Function([AnyType, AnyType], AnyType, RequiredParams: 1),  // proto required, propertiesObject optional
             _ => null
         };
     }

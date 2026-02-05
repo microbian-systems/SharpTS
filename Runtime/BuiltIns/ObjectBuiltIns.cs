@@ -22,6 +22,7 @@ public static class ObjectBuiltIns
             .Method("defineProperty", 3, DefineProperty)
             .Method("getOwnPropertyDescriptor", 2, GetOwnPropertyDescriptor)
             .Method("getOwnPropertyNames", 1, GetOwnPropertyNames)
+            .Method("create", 1, 2, Create)
             .Build();
 
     /// <summary>
@@ -845,5 +846,237 @@ public static class ObjectBuiltIns
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Object.create(proto, propertiesObject?) - creates a new object with the specified prototype.
+    /// Since SharpTS doesn't have a true prototype chain, this copies properties from proto
+    /// to simulate inheritance.
+    /// </summary>
+    private static object? Create(Interpreter _, List<object?> args)
+    {
+        var proto = args[0];
+        var propertiesObject = args.Count > 1 ? args[1] : null;
+
+        // Create a new empty object
+        var result = new SharpTSObject([]);
+
+        // If proto is not null, copy its properties (simulating prototype inheritance)
+        if (proto != null)
+        {
+            CopyPropertiesFrom(proto, result);
+        }
+
+        // If propertiesObject is provided, define properties using defineProperty semantics
+        if (propertiesObject != null)
+        {
+            DefinePropertiesFromDescriptors(propertiesObject, result);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Copies properties from a source object to a target SharpTSObject.
+    /// </summary>
+    private static void CopyPropertiesFrom(object source, SharpTSObject target)
+    {
+        switch (source)
+        {
+            case SharpTSObject srcObj:
+                foreach (var kv in srcObj.Fields)
+                {
+                    target.SetProperty(kv.Key, kv.Value);
+                }
+                // Copy getters and setters
+                foreach (var propName in srcObj.PropertyNames)
+                {
+                    var getter = srcObj.GetGetter(propName);
+                    var setter = srcObj.GetSetter(propName);
+                    if (getter != null)
+                        target.DefineGetter(propName, getter);
+                    if (setter != null)
+                        target.DefineSetter(propName, setter);
+                }
+                break;
+
+            case SharpTSInstance srcInst:
+                foreach (var key in srcInst.GetFieldNames())
+                {
+                    target.SetProperty(key, srcInst.GetRawField(key));
+                }
+                break;
+
+            case Dictionary<string, object?> dict:
+                foreach (var kv in dict)
+                {
+                    target.SetProperty(kv.Key, kv.Value);
+                }
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Defines properties on target using property descriptors from propertiesObject.
+    /// Each property in propertiesObject should be a descriptor object.
+    /// </summary>
+    private static void DefinePropertiesFromDescriptors(object propertiesObject, SharpTSObject target)
+    {
+        IEnumerable<KeyValuePair<string, object?>>? entries = propertiesObject switch
+        {
+            SharpTSObject obj => obj.Fields,
+            Dictionary<string, object?> dict => dict,
+            _ => null
+        };
+
+        if (entries == null) return;
+
+        foreach (var kv in entries)
+        {
+            if (kv.Value == null) continue;
+
+            var descriptor = SharpTSPropertyDescriptor.FromAnyObject(kv.Value);
+            target.DefineProperty(kv.Key, descriptor);
+        }
+    }
+
+    /// <summary>
+    /// Runtime helper for Object.create called from compiled code.
+    /// </summary>
+    public static object? RuntimeCreate(object? proto, object? propertiesObject)
+    {
+        // Create a new object - for compiled mode, use Dictionary<string, object?>
+        var result = new Dictionary<string, object?>();
+
+        // If proto is not null, copy its properties (simulating prototype inheritance)
+        if (proto != null)
+        {
+            RuntimeCopyPropertiesFrom(proto, result);
+        }
+
+        // If propertiesObject is provided, define properties using defineProperty semantics
+        if (propertiesObject != null)
+        {
+            RuntimeDefinePropertiesFromDescriptors(propertiesObject, result);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Copies properties from a source object to a target dictionary (compiled mode).
+    /// </summary>
+    private static void RuntimeCopyPropertiesFrom(object source, Dictionary<string, object?> target)
+    {
+        switch (source)
+        {
+            case SharpTSObject srcObj:
+                foreach (var kv in srcObj.Fields)
+                {
+                    target[kv.Key] = kv.Value;
+                }
+                break;
+
+            case SharpTSInstance srcInst:
+                foreach (var key in srcInst.GetFieldNames())
+                {
+                    target[key] = srcInst.GetRawField(key);
+                }
+                break;
+
+            case Dictionary<string, object?> dict:
+                foreach (var kv in dict)
+                {
+                    target[kv.Key] = kv.Value;
+                }
+                break;
+
+            case System.Collections.IDictionary idict:
+                foreach (System.Collections.DictionaryEntry entry in idict)
+                {
+                    target[entry.Key?.ToString() ?? ""] = entry.Value;
+                }
+                break;
+
+            default:
+                // Try reflection for compiled class instances
+                var type = source.GetType();
+
+                // First, get typed backing fields (fields starting with __) for compiled class instances
+                foreach (var backingField in type.GetFields(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
+                {
+                    if (backingField.Name.StartsWith("__"))
+                    {
+                        string pascalName = backingField.Name[2..]; // Remove __ prefix
+                        // Convert PascalCase back to camelCase (how TypeScript originally named it)
+                        string propName = ToCamelCase(pascalName);
+                        target[propName] = backingField.GetValue(source);
+                    }
+                }
+
+                // Also check for _fields dictionary (for dynamically added properties)
+                var fieldsField = type.GetField("_fields", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (fieldsField != null)
+                {
+                    var fieldsValue = fieldsField.GetValue(source);
+                    if (fieldsValue is System.Collections.IDictionary fieldsDict)
+                    {
+                        foreach (System.Collections.DictionaryEntry entry in fieldsDict)
+                        {
+                            target[entry.Key?.ToString() ?? ""] = entry.Value;
+                        }
+                    }
+                }
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Defines properties on target using property descriptors (compiled mode).
+    /// </summary>
+    private static void RuntimeDefinePropertiesFromDescriptors(object propertiesObject, Dictionary<string, object?> target)
+    {
+        IEnumerable<KeyValuePair<string, object?>>? entries = null;
+
+        if (propertiesObject is Dictionary<string, object?> dict)
+        {
+            entries = dict;
+        }
+        else if (propertiesObject is SharpTSObject obj)
+        {
+            entries = obj.Fields;
+        }
+        else if (propertiesObject is System.Collections.IDictionary idict)
+        {
+            var list = new List<KeyValuePair<string, object?>>();
+            foreach (System.Collections.DictionaryEntry entry in idict)
+            {
+                list.Add(new KeyValuePair<string, object?>(entry.Key?.ToString() ?? "", entry.Value));
+            }
+            entries = list;
+        }
+
+        if (entries == null) return;
+
+        foreach (var kv in entries)
+        {
+            if (kv.Value == null) continue;
+
+            // Parse the descriptor and extract value or getter/setter
+            var compiledDesc = CompiledPropertyDescriptor.FromAny(kv.Value);
+            PropertyDescriptorStore.DefineProperty(target, kv.Key, compiledDesc);
+        }
+    }
+
+    /// <summary>
+    /// Converts a PascalCase property name to camelCase.
+    /// </summary>
+    private static string ToCamelCase(string pascalCase)
+    {
+        if (string.IsNullOrEmpty(pascalCase))
+            return pascalCase;
+        if (char.IsLower(pascalCase[0]))
+            return pascalCase;
+        return char.ToLowerInvariant(pascalCase[0]) + pascalCase[1..];
     }
 }
