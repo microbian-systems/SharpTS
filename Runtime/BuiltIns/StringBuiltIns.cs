@@ -38,6 +38,7 @@ public static class StringBuiltIns
     private static readonly BuiltInStaticMemberLookup _staticLookup =
         BuiltInStaticBuilder.Create()
             .Method("raw", 1, int.MaxValue, StringRaw)
+            .Method("fromCharCode", 0, int.MaxValue, FromCharCode)
             .Build();
 
     public static object? GetMember(string receiver, string name)
@@ -385,5 +386,31 @@ public static class StringBuiltIns
         }
 
         return result.ToString();
+    }
+
+    /// <summary>
+    /// String.fromCharCode() implementation.
+    /// Creates a string from the specified sequence of UTF-16 code units.
+    /// </summary>
+    private static object? FromCharCode(Interpreter _, List<object?> args)
+    {
+        if (args.Count == 0) return "";
+
+        // Fast path for single character
+        if (args.Count == 1)
+        {
+            var code = args[0] is double d ? (int)d : 0;
+            return ((char)(code & 0xFFFF)).ToString();
+        }
+
+        // Multiple characters - use Span-based string creation
+        return string.Create(args.Count, args, static (span, argList) =>
+        {
+            for (int i = 0; i < argList.Count; i++)
+            {
+                var code = argList[i] is double d ? (int)d : 0;
+                span[i] = (char)(code & 0xFFFF);  // Truncate to 16-bit as per JavaScript spec
+            }
+        });
     }
 }

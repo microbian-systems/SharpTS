@@ -924,5 +924,79 @@ public partial class RuntimeEmitter
         il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Ret);
     }
+
+    private void EmitStringFromCharCode(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // StringFromCharCode(object[] args) -> string
+        // Creates a string from the specified sequence of UTF-16 code units
+        var method = typeBuilder.DefineMethod(
+            "StringFromCharCode",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.ObjectArray]
+        );
+        runtime.StringFromCharCode = method;
+
+        var il = method.GetILGenerator();
+        var lengthLocal = il.DeclareLocal(_types.Int32);
+        var charsLocal = il.DeclareLocal(_types.CharArray);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var emptyLabel = il.DefineLabel();
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        // if (args == null || args.Length == 0) return ""
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, emptyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, lengthLocal);
+        il.Emit(OpCodes.Ldloc, lengthLocal);
+        il.Emit(OpCodes.Brfalse, emptyLabel);
+
+        // chars = new char[length]
+        il.Emit(OpCodes.Ldloc, lengthLocal);
+        il.Emit(OpCodes.Newarr, _types.Char);
+        il.Emit(OpCodes.Stloc, charsLocal);
+
+        // for (i = 0; i < length; i++)
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, lengthLocal);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // chars[i] = (char)((int)(double)args[i] & 0xFFFF)
+        il.Emit(OpCodes.Ldloc, charsLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4, 0xFFFF);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Conv_U2);  // Convert to char
+        il.Emit(OpCodes.Stelem_I2);
+
+        // i++
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        // return new string(chars)
+        il.Emit(OpCodes.Ldloc, charsLocal);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.String, [_types.CharArray]));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(emptyLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ret);
+    }
 }
 

@@ -20,6 +20,27 @@ public static class BuiltInTypes
     private static readonly TypeInfo AnyType = new TypeInfo.Any();
     private static readonly TypeInfo BigIntType = new TypeInfo.BigInt();
 
+    /// <summary>
+    /// Type signatures for static methods on the String namespace
+    /// </summary>
+    public static TypeInfo? GetStringStaticMethodType(string name)
+    {
+        return name switch
+        {
+            "fromCharCode" => new TypeInfo.Function(
+                [new TypeInfo.Array(NumberType)],  // rest parameter for char codes
+                StringType,
+                RequiredParams: 0,
+                HasRestParam: true),
+            "raw" => new TypeInfo.Function(
+                [AnyType, new TypeInfo.Array(AnyType)],  // template strings array + substitutions
+                StringType,
+                RequiredParams: 1,
+                HasRestParam: true),
+            _ => null
+        };
+    }
+
     public static TypeInfo? GetStringMemberType(string name)
     {
         return name switch

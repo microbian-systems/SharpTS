@@ -532,6 +532,118 @@ public class StringMethodTests
 
     #endregion
 
+    #region String.fromCharCode Static Method
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCharCode_BasicUsage(ExecutionMode mode)
+    {
+        var source = """
+            console.log(String.fromCharCode(72, 101, 108, 108, 111));
+            console.log(String.fromCharCode(65));
+            console.log(String.fromCharCode(87, 111, 114, 108, 100));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Hello\nA\nWorld\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCharCode_NoArguments(ExecutionMode mode)
+    {
+        var source = """
+            console.log(String.fromCharCode());
+            console.log("empty:" + String.fromCharCode());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("\nempty:\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCharCode_SingleCharacter(ExecutionMode mode)
+    {
+        var source = """
+            console.log(String.fromCharCode(65));
+            console.log(String.fromCharCode(97));
+            console.log(String.fromCharCode(48));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("A\na\n0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCharCode_SpecialCharacters(ExecutionMode mode)
+    {
+        var source = """
+            console.log(String.fromCharCode(10));
+            console.log(String.fromCharCode(9));
+            console.log(String.fromCharCode(32));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("\n\n\t\n \n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCharCode_WithVariables(ExecutionMode mode)
+    {
+        var source = """
+            const h = 72;
+            const e = 101;
+            const l = 108;
+            const o = 111;
+            console.log(String.fromCharCode(h, e, l, l, o));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Hello\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCharCode_RoundTripWithCharCodeAt(ExecutionMode mode)
+    {
+        var source = """
+            const original = "Test";
+            const c0 = original.charCodeAt(0);
+            const c1 = original.charCodeAt(1);
+            const c2 = original.charCodeAt(2);
+            const c3 = original.charCodeAt(3);
+            const reconstructed = String.fromCharCode(c0, c1, c2, c3);
+            console.log(reconstructed);
+            console.log(original === reconstructed);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Test\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCharCode_LargeCodePoints(ExecutionMode mode)
+    {
+        // Values > 65535 should be truncated to 16-bit (& 0xFFFF)
+        var source = """
+            console.log(String.fromCharCode(65536));
+            console.log(String.fromCharCode(65537));
+            console.log(String.fromCharCode(65601));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        // 65536 & 0xFFFF = 0 (null char, prints as empty in console)
+        // 65537 & 0xFFFF = 1 (control char)
+        // 65601 & 0xFFFF = 65 = 'A'
+        Assert.Contains("A", output);
+    }
+
+    #endregion
+
     #region New Methods on Variable and Chained
 
     [Theory]

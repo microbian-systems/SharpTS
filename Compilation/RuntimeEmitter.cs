@@ -2125,6 +2125,7 @@ public partial class RuntimeEmitter
         EmitStringLastIndexOf(typeBuilder, runtime);
         EmitStringReplaceAll(typeBuilder, runtime);
         EmitStringAt(typeBuilder, runtime);
+        EmitStringFromCharCode(typeBuilder, runtime);
         // Object utilities
         EmitGetSuperMethod(typeBuilder, runtime);
         // EmitCreateException and EmitWrapException moved earlier (before Promise methods)

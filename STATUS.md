@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-04 (Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
+**Last Updated:** 2026-02-04 (Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
 
 ## Legend
 - ✅ Implemented
@@ -360,7 +360,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | `normalize()` | ❌ | Unicode normalization |
 | `localeCompare()` | ❌ | Locale-aware comparison |
 | `codePointAt()` | ❌ | Use `charCodeAt()` for BMP |
-| `String.fromCharCode()` | ❌ | |
+| `String.fromCharCode()` | ✅ | Creates string from UTF-16 code units |
 | `String.fromCodePoint()` | ❌ | |
 
 ### Reflect API (Standard)

@@ -150,6 +150,7 @@ public class TypeProvider
     public Type DoubleArray => MakeArrayType(Double);
     public Type Int32Array => MakeArrayType(Int32);
     public Type ByteArray => MakeArrayType(Byte);
+    public Type CharArray => MakeArrayType(Char);
     public Type StringSplitOptions => Resolve("System.StringSplitOptions");
 
     #endregion

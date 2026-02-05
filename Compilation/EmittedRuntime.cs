@@ -171,6 +171,7 @@ public class EmittedRuntime
     public MethodBuilder StringTrimEnd { get; set; } = null!;
     public MethodBuilder StringReplaceAll { get; set; } = null!;
     public MethodBuilder StringAt { get; set; } = null!;
+    public MethodBuilder StringFromCharCode { get; set; } = null!;
 
     // Object methods
     public MethodBuilder CreateObject { get; set; } = null!;
