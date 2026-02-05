@@ -2152,6 +2152,8 @@ public partial class RuntimeEmitter
         // Promise methods moved earlier (before GetProperty, which needs PromiseThen for typeof p.then)
         // Number methods
         EmitNumberMethods(typeBuilder, runtime);
+        // Microtask method (queueMicrotask) - must come before timer infrastructure so ProcessMicrotasks is available
+        EmitQueueMicrotaskMethod(typeBuilder, runtime);
         // Virtual timer infrastructure (must come before DateMethods which calls ProcessPendingTimers)
         EmitTimerQueueInfrastructure(typeBuilder, runtime);
         // Date methods

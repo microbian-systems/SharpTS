@@ -184,4 +184,30 @@ public partial class ILEmitter
     {
         return expr is Expr.Literal { Value: double };
     }
+
+    /// <summary>
+    /// Emits IL for queueMicrotask(callback).
+    /// Queues a microtask to be executed at the end of the current task,
+    /// before any macrotasks (setTimeout/setInterval callbacks).
+    /// Calls $Runtime.QueueMicrotask($TSFunction).
+    /// </summary>
+    internal void EmitQueueMicrotask(List<Expr> arguments)
+    {
+        // Emit callback - first argument
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        // Call $Runtime.QueueMicrotask(callback)
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.QueueMicrotask);
+
+        // queueMicrotask returns undefined
+        IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
+    }
 }

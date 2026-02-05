@@ -139,6 +139,12 @@ public partial class Interpreter : IDisposable
     // Volatile flag for O(1) "queue empty" check without acquiring lock
     private volatile bool _hasScheduledTimers;
 
+    // Microtask queue - FIFO queue for microtasks (queueMicrotask callbacks, Promise callbacks).
+    // Microtasks execute before any macrotasks (setTimeout/setInterval) - this is the JavaScript spec behavior.
+    // Processed after each top-level statement and in the event loop before processing timers.
+    private readonly Queue<Action> _microtaskQueue = new();
+    private readonly object _microtaskQueueLock = new();
+
     // Active handles counter - keeps the event loop alive while there are active operations.
     // Uses Interlocked operations for thread-safe lock-free access, consistent with _hasScheduledTimers.
     // Synchronization strategy: all counters/flags use lock-free atomic operations for reads/writes,
@@ -259,6 +265,56 @@ public partial class Interpreter : IDisposable
                 // during shutdown when multiple threads may be cleaning up concurrently.
                 System.Diagnostics.Debug.WriteLine("WakeEventLoop: Queue already completed, ignoring wake request.");
             }
+        }
+    }
+
+    /// <summary>
+    /// Queues a microtask to be executed at the end of the current task.
+    /// Microtasks execute before any macrotasks (setTimeout/setInterval callbacks).
+    /// This is the JavaScript spec behavior for queueMicrotask() and Promise callbacks.
+    /// </summary>
+    /// <param name="callback">The callback function to execute as a microtask.</param>
+    internal void QueueMicrotask(ISharpTSCallable callback)
+    {
+        lock (_microtaskQueueLock)
+        {
+            _microtaskQueue.Enqueue(() =>
+            {
+                if (!_isDisposed)
+                {
+                    try
+                    {
+                        callback.Call(this, []);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log uncaught exceptions from microtasks but don't crash
+                        Console.Error.WriteLine($"Uncaught exception in microtask: {ex.Message}");
+                    }
+                }
+            });
+        }
+        // Wake the event loop to process microtasks promptly
+        WakeEventLoop();
+    }
+
+    /// <summary>
+    /// Processes all pending microtasks. Microtasks can queue more microtasks,
+    /// which will be processed in the same flush (until the queue is empty).
+    /// This ensures JavaScript-compliant microtask semantics.
+    /// </summary>
+    internal void ProcessMicrotasks()
+    {
+        while (true)
+        {
+            Action? microtask;
+            lock (_microtaskQueueLock)
+            {
+                if (_microtaskQueue.Count == 0 || _isDisposed)
+                    return;
+                microtask = _microtaskQueue.Dequeue();
+            }
+            microtask();
         }
     }
 
@@ -389,6 +445,10 @@ public partial class Interpreter : IDisposable
                     }
                 }
 
+                // Process microtasks first (queueMicrotask, Promise callbacks)
+                // Microtasks always run before any macrotasks (timers)
+                ProcessMicrotasks();
+
                 // Process any due timers (setTimeout, setInterval callbacks)
                 ProcessPendingCallbacks();
 
@@ -450,6 +510,10 @@ public partial class Interpreter : IDisposable
     /// </summary>
     internal void ProcessPendingCallbacks()
     {
+        // Process microtasks first - they always run before any macrotask (timers)
+        // This ensures correct JavaScript event loop semantics during busy-wait loops
+        ProcessMicrotasks();
+
         // Quick checks before acquiring lock
         if (_isDisposed || !_hasScheduledTimers) return;
 

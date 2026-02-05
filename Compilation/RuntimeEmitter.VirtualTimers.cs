@@ -172,6 +172,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits: public static void ProcessPendingTimers()
     /// Checks and executes any timers that are due.
+    /// Microtasks are processed first (via ProcessMicrotasks) to ensure they run before macrotasks.
     /// </summary>
     private void EmitProcessPendingTimers(
         TypeBuilder runtimeType,
@@ -196,6 +197,10 @@ public partial class RuntimeEmitter
         var getItem = TypeBuilder.GetMethod(listType, listOpenGetItem);
         var listOpenRemoveAt = _types.ListOpen.GetMethod("RemoveAt")!;
         var removeAt = TypeBuilder.GetMethod(listType, listOpenRemoveAt);
+
+        // Process microtasks first - they always run before any macrotask (timers)
+        // This ensures correct JavaScript event loop semantics
+        il.Emit(OpCodes.Call, runtime.ProcessMicrotasks);
 
         // EnsureTimerInitialized();
         il.Emit(OpCodes.Call, runtime.EnsureTimerInitialized);

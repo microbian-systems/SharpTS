@@ -629,6 +629,122 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits: public static void QueueMicrotask($TSFunction callback)
+    /// Queues a microtask to be executed at the end of the current task,
+    /// before any macrotasks (setTimeout/setInterval callbacks).
+    /// </summary>
+    private void EmitQueueMicrotaskMethod(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        // Static field: Queue<$TSFunction> _microtaskQueue
+        var queueType = _types.MakeGenericType(_types.QueueOpen, runtime.TSFunctionType);
+        var microtaskQueueField = runtimeType.DefineField(
+            "_microtaskQueue",
+            queueType,
+            FieldAttributes.Private | FieldAttributes.Static
+        );
+        runtime.MicrotaskQueue = microtaskQueueField;
+
+        // Emit QueueMicrotask method
+        var method = runtimeType.DefineMethod(
+            "QueueMicrotask",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [runtime.TSFunctionType]
+        );
+        runtime.QueueMicrotask = method;
+
+        var il = method.GetILGenerator();
+        var hasQueueLabel = il.DefineLabel();
+
+        // if (_microtaskQueue == null) _microtaskQueue = new Queue<$TSFunction>();
+        il.Emit(OpCodes.Ldsfld, microtaskQueueField);
+        il.Emit(OpCodes.Brtrue_S, hasQueueLabel);
+
+        // _microtaskQueue = new Queue<$TSFunction>();
+        var queueOpenCtor = _types.QueueOpen.GetConstructor(Type.EmptyTypes)!;
+        var queueCtor = TypeBuilder.GetConstructor(queueType, queueOpenCtor);
+        il.Emit(OpCodes.Newobj, queueCtor);
+        il.Emit(OpCodes.Stsfld, microtaskQueueField);
+
+        il.MarkLabel(hasQueueLabel);
+
+        // _microtaskQueue.Enqueue(callback);
+        var queueOpenEnqueue = _types.QueueOpen.GetMethod("Enqueue")!;
+        var enqueueMethod = TypeBuilder.GetMethod(queueType, queueOpenEnqueue);
+        il.Emit(OpCodes.Ldsfld, microtaskQueueField);
+        il.Emit(OpCodes.Ldarg_0); // callback
+        il.Emit(OpCodes.Callvirt, enqueueMethod);
+
+        il.Emit(OpCodes.Ret);
+
+        // Emit ProcessMicrotasks method
+        EmitProcessMicrotasksMethod(runtimeType, runtime, microtaskQueueField, queueType);
+    }
+
+    /// <summary>
+    /// Emits: public static void ProcessMicrotasks()
+    /// Processes all pending microtasks until the queue is empty.
+    /// </summary>
+    private void EmitProcessMicrotasksMethod(TypeBuilder runtimeType, EmittedRuntime runtime, FieldBuilder microtaskQueueField, Type queueType)
+    {
+        var method = runtimeType.DefineMethod(
+            "ProcessMicrotasks",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            Type.EmptyTypes
+        );
+        runtime.ProcessMicrotasks = method;
+
+        var il = method.GetILGenerator();
+
+        var loopStartLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        // Get generic methods for Queue<$TSFunction>
+        var queueOpenCountGetter = _types.QueueOpen.GetProperty("Count")!.GetGetMethod()!;
+        var countGetter = TypeBuilder.GetMethod(queueType, queueOpenCountGetter);
+        var queueOpenDequeue = _types.QueueOpen.GetMethod("Dequeue")!;
+        var dequeueMethod = TypeBuilder.GetMethod(queueType, queueOpenDequeue);
+
+        var callbackLocal = il.DeclareLocal(runtime.TSFunctionType);
+
+        il.MarkLabel(loopStartLabel);
+
+        // if (_microtaskQueue == null || _microtaskQueue.Count == 0) return;
+        il.Emit(OpCodes.Ldsfld, microtaskQueueField);
+        il.Emit(OpCodes.Brfalse_S, doneLabel);
+
+        il.Emit(OpCodes.Ldsfld, microtaskQueueField);
+        il.Emit(OpCodes.Callvirt, countGetter);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble_S, doneLabel);
+
+        // callback = _microtaskQueue.Dequeue();
+        il.Emit(OpCodes.Ldsfld, microtaskQueueField);
+        il.Emit(OpCodes.Callvirt, dequeueMethod);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+
+        // try { callback.Invoke(new object[0]); } catch { }
+        var tryStart = il.BeginExceptionBlock();
+
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object); // new object[0]
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop); // Discard result
+
+        il.BeginCatchBlock(typeof(Exception));
+        il.Emit(OpCodes.Pop); // Discard exception
+        il.EndExceptionBlock();
+
+        // Continue loop
+        il.Emit(OpCodes.Br, loopStartLabel);
+
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits wrapper methods for timer functions that can be called via TSFunction invocation.
     /// These wrappers take object[] args and extract the callback, delay, and extra args.
     /// </summary>

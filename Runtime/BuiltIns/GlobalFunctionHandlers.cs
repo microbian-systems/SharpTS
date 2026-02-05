@@ -37,6 +37,9 @@ internal static class GlobalFunctionHandlers
         registry.Register(BuiltInNames.SetInterval, HandleSetInterval);
         registry.Register(BuiltInNames.ClearInterval, HandleClearInterval);
 
+        // Microtask function
+        registry.Register(BuiltInNames.QueueMicrotask, HandleQueueMicrotask);
+
         // Internal helper
         registry.Register(BuiltInNames.ObjectRest, HandleObjectRest);
 
@@ -304,6 +307,30 @@ internal static class GlobalFunctionHandlers
         }
         TimerBuiltIns.ClearInterval(handle);
         return null;
+    }
+
+    /// <summary>
+    /// Handle queueMicrotask(callback).
+    /// Queues a microtask to be executed at the end of the current task,
+    /// before any macrotasks (setTimeout/setInterval callbacks).
+    /// </summary>
+    private static async ValueTask<object?> HandleQueueMicrotask(
+        Func<Expr, ValueTask<object?>> evaluateArg,
+        IReadOnlyList<Expr> arguments,
+        Interpreter interpreter)
+    {
+        if (arguments.Count < 1)
+            throw new InterpreterException($"{BuiltInNames.QueueMicrotask}() requires exactly one argument (callback).");
+
+        var callbackValue = await evaluateArg(arguments[0]);
+        if (callbackValue is not ISharpTSCallable callback)
+            throw new InterpreterException($"{BuiltInNames.QueueMicrotask}() callback must be a function.");
+
+        // Queue the microtask for execution
+        interpreter.QueueMicrotask(callback);
+
+        // queueMicrotask returns undefined
+        return SharpTSUndefined.Instance;
     }
 
     /// <summary>

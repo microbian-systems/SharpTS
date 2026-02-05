@@ -20,6 +20,7 @@ public class TimerHandler : ICallHandler
             "clearTimeout" => EmitClearTimeout(emitter, call),
             "setInterval" => EmitSetInterval(emitter, call),
             "clearInterval" => EmitClearInterval(emitter, call),
+            "queueMicrotask" => EmitQueueMicrotask(emitter, call),
             _ => false
         };
     }
@@ -45,6 +46,12 @@ public class TimerHandler : ICallHandler
     private static bool EmitClearInterval(ILEmitter emitter, Expr.Call call)
     {
         emitter.EmitClearInterval(call.Arguments);
+        return true;
+    }
+
+    private static bool EmitQueueMicrotask(ILEmitter emitter, Expr.Call call)
+    {
+        emitter.EmitQueueMicrotask(call.Arguments);
         return true;
     }
 }

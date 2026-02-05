@@ -1133,6 +1133,7 @@ public partial class TypeChecker
         if (name.Lexeme == "setInterval") return new TypeInfo.Any(); // setInterval() global function
         if (name.Lexeme == "clearTimeout") return new TypeInfo.Any(); // clearTimeout() global function
         if (name.Lexeme == "clearInterval") return new TypeInfo.Any(); // clearInterval() global function
+        if (name.Lexeme == "queueMicrotask") return new TypeInfo.Any(); // queueMicrotask() global function
         if (name.Lexeme == "undefined") return new TypeInfo.Undefined(); // Global undefined
         if (name.Lexeme == "NaN") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER); // Global NaN
         if (name.Lexeme == "Infinity") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER); // Global Infinity

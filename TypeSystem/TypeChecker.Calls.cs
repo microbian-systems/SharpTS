@@ -375,6 +375,24 @@ public partial class TypeChecker
             return new TypeInfo.Void();
         }
 
+        // Handle queueMicrotask(callback)
+        if (call.Callee is Expr.Variable queueMicrotaskVar && queueMicrotaskVar.Name.Lexeme == "queueMicrotask")
+        {
+            if (call.Arguments.Count != 1)
+            {
+                throw new TypeCheckException("queueMicrotask() requires exactly one argument (callback).");
+            }
+
+            // Argument must be a function
+            var callbackType = CheckExpr(call.Arguments[0]);
+            if (callbackType is not TypeInfo.Function && callbackType is not TypeInfo.Any)
+            {
+                throw new TypeCheckException($"queueMicrotask() callback must be a function, got '{callbackType}'.");
+            }
+
+            return new TypeInfo.Void(); // queueMicrotask returns undefined
+        }
+
         // Handle __objectRest (internal helper for object rest patterns)
         if (call.Callee is Expr.Variable restVar && restVar.Name.Lexeme == "__objectRest")
         {

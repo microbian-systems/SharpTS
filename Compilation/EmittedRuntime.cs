@@ -355,6 +355,11 @@ public class EmittedRuntime
     public MethodBuilder SetInterval { get; set; } = null!;
     public MethodBuilder ClearInterval { get; set; } = null!;
 
+    // Microtask support
+    public MethodBuilder QueueMicrotask { get; set; } = null!;
+    public FieldBuilder MicrotaskQueue { get; set; } = null!;
+    public MethodBuilder ProcessMicrotasks { get; set; } = null!;
+
     // Virtual timer infrastructure (for single-threaded timer semantics)
     public Type VirtualTimerType { get; set; } = null!;
     public ConstructorBuilder VirtualTimerCtor { get; set; } = null!;
