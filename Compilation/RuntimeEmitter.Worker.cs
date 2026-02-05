@@ -18,6 +18,9 @@ public partial class RuntimeEmitter
         // SharedArrayBuffer constructor helper
         EmitSharedArrayBufferHelper(runtimeType, runtime);
 
+        // ArrayBuffer constructor helper
+        EmitArrayBufferHelper(runtimeType, runtime);
+
         // TypedArray constructor helpers
         EmitTypedArrayHelpers(runtimeType, runtime);
 
@@ -139,6 +142,134 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         runtime.TSSharedArrayBufferByteLengthGetter = method;
+    }
+
+    /// <summary>
+    /// Emits helper for creating ArrayBuffer.
+    /// public static object CreateArrayBuffer(double byteLength)
+    /// </summary>
+    private void EmitArrayBufferHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "CreateArrayBuffer",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Double]
+        );
+
+        var il = method.GetILGenerator();
+
+        // Get the SharpTSArrayBuffer type and constructor
+        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
+        var abCtor = abType.GetConstructor([typeof(int)])!;
+
+        // Convert double to int and create new ArrayBuffer
+        il.Emit(OpCodes.Ldarg_0);          // Load byteLength (double)
+        il.Emit(OpCodes.Conv_I4);           // Convert to int
+        il.Emit(OpCodes.Newobj, abCtor);   // new SharpTSArrayBuffer(byteLength)
+        il.Emit(OpCodes.Ret);
+
+        runtime.TSArrayBufferCtor = method;
+
+        // Also emit slice, byteLength, and isView helpers
+        EmitArrayBufferSlice(runtimeType, runtime);
+        EmitArrayBufferByteLength(runtimeType, runtime);
+        EmitArrayBufferIsView(runtimeType, runtime);
+    }
+
+    /// <summary>
+    /// Emits ArrayBuffer.slice(begin?, end?) helper.
+    /// </summary>
+    private void EmitArrayBufferSlice(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "ArrayBufferSlice",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Int32, _types.Int32]
+        );
+
+        var il = method.GetILGenerator();
+        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
+        var sliceMethod = abType.GetMethod("Slice", [typeof(int), typeof(int?)])!;
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, abType);
+        il.Emit(OpCodes.Ldarg_1);  // begin
+
+        // Convert end to nullable int (if end == int.MaxValue, treat as null for "use full length")
+        var endLabel = il.DefineLabel();
+        var callLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4, int.MaxValue);
+        il.Emit(OpCodes.Beq, endLabel);
+
+        // end is a real value - wrap in nullable
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Newobj, _types.NullableInt32Ctor);
+        il.Emit(OpCodes.Br, callLabel);
+
+        // end is MaxValue - use null
+        il.MarkLabel(endLabel);
+        var localNullableInt = il.DeclareLocal(typeof(int?));
+        il.Emit(OpCodes.Ldloca, localNullableInt);
+        il.Emit(OpCodes.Initobj, typeof(int?));
+        il.Emit(OpCodes.Ldloc, localNullableInt);
+
+        il.MarkLabel(callLabel);
+        il.Emit(OpCodes.Callvirt, sliceMethod);
+        il.Emit(OpCodes.Ret);
+
+        runtime.TSArrayBufferSlice = method;
+    }
+
+    /// <summary>
+    /// Emits ArrayBuffer.byteLength getter helper.
+    /// </summary>
+    private void EmitArrayBufferByteLength(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "ArrayBufferByteLength",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
+        var byteLengthGetter = abType.GetProperty("ByteLength")!.GetGetMethod()!;
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, abType);
+        il.Emit(OpCodes.Callvirt, byteLengthGetter);
+        il.Emit(OpCodes.Conv_R8);  // Convert int to double
+        il.Emit(OpCodes.Ret);
+
+        runtime.TSArrayBufferByteLengthGetter = method;
+    }
+
+    /// <summary>
+    /// Emits ArrayBuffer.isView static method helper.
+    /// </summary>
+    private void EmitArrayBufferIsView(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "ArrayBufferIsView",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
+        var isViewMethod = abType.GetMethod("IsView", BindingFlags.Public | BindingFlags.Static)!;
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, isViewMethod);
+        il.Emit(OpCodes.Ret);
+
+        runtime.TSArrayBufferIsView = method;
     }
 
     /// <summary>
@@ -363,11 +494,11 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits a helper that creates a TypedArray from an object (either a number for length, or a SharedArrayBuffer).
+    /// Emits a helper that creates a TypedArray from an object (either a number for length, SharedArrayBuffer, or ArrayBuffer).
     /// </summary>
     private void EmitTypedArrayFromObjectHelper(TypeBuilder runtimeType, EmittedRuntime runtime, string name, Type arrayType)
     {
-        // Create{name}FromObject(object arg) - handles number or SharedArrayBuffer
+        // Create{name}FromObject(object arg) - handles number, SharedArrayBuffer, or ArrayBuffer
         var method = runtimeType.DefineMethod(
             $"Create{name}FromObject",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -377,10 +508,13 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var sabType = typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer);
+        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
         var lengthCtor = arrayType.GetConstructor([typeof(int)])!;
         var sabCtor = arrayType.GetConstructor([sabType, typeof(int), typeof(int?)])!;
+        var abCtor = arrayType.GetConstructor([abType, typeof(int), typeof(int?)])!;
 
         var isSabLabel = il.DefineLabel();
+        var isAbLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
         // Check if arg is SharedArrayBuffer
@@ -388,7 +522,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, sabType);
         il.Emit(OpCodes.Brtrue, isSabLabel);
 
-        // Not a SharedArrayBuffer - treat as length
+        // Check if arg is ArrayBuffer
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, abType);
+        il.Emit(OpCodes.Brtrue, isAbLabel);
+
+        // Not a buffer - treat as length
         // Convert to double first, then to int
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
@@ -406,6 +545,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Initobj, typeof(int?));
         il.Emit(OpCodes.Ldloc, localNullableInt);  // length = null (use entire buffer)
         il.Emit(OpCodes.Newobj, sabCtor);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Is an ArrayBuffer - create view with default offset and length
+        il.MarkLabel(isAbLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, abType);
+        il.Emit(OpCodes.Ldc_I4_0);  // byteOffset = 0
+        var localNullableInt2 = il.DeclareLocal(typeof(int?));
+        il.Emit(OpCodes.Ldloca, localNullableInt2);
+        il.Emit(OpCodes.Initobj, typeof(int?));
+        il.Emit(OpCodes.Ldloc, localNullableInt2);  // length = null (use entire buffer)
+        il.Emit(OpCodes.Newobj, abCtor);
 
         il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);

@@ -833,6 +833,18 @@ public abstract record TypeInfo
     }
 
     /// <summary>
+    /// Represents an ArrayBuffer type for binary data storage.
+    /// ArrayBuffer provides fixed-length raw binary data buffer for single-threaded use.
+    /// </summary>
+    /// <param name="ByteLength">Optional fixed byte length if known at compile time.</param>
+    public record ArrayBuffer(int? ByteLength = null) : TypeInfo
+    {
+        public override string ToString() => ByteLength.HasValue
+            ? $"ArrayBuffer({ByteLength})"
+            : "ArrayBuffer";
+    }
+
+    /// <summary>
     /// Represents the Atomics global object for atomic operations.
     /// </summary>
     public record AtomicsNamespace() : TypeInfo

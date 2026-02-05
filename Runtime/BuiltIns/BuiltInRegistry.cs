@@ -648,6 +648,19 @@ public sealed class BuiltInRegistry
             GetMethod: name => WorkerBuiltIns.GetAtomicsMember(name) as BuiltInMethod
         ));
 
+        // Register ArrayBuffer namespace for static methods like isView
+        registry.RegisterNamespace(new BuiltInNamespace(
+            Name: "ArrayBuffer",
+            IsSingleton: false,
+            SingletonFactory: null,
+            GetMethod: name => name switch
+            {
+                "isView" => new BuiltInMethod("isView", 1, (_, _, args) =>
+                    SharpTSArrayBuffer.IsView(args.Count > 0 ? args[0] : null)),
+                _ => null
+            }
+        ));
+
         // Register Worker instance members (postMessage, terminate, on, etc.)
         registry.RegisterInstanceType(typeof(SharpTSWorker), (instance, name) =>
             ((SharpTSWorker)instance).GetMember(name));
@@ -672,6 +685,23 @@ public sealed class BuiltInRegistry
                     int begin = args.Count > 0 && args[0] is double b ? (int)b : 0;
                     int? end = args.Count > 1 && args[1] is double e ? (int)e : null;
                     return sab.Slice(begin, end);
+                }),
+                _ => null
+            };
+        });
+
+        // Register ArrayBuffer instance members
+        registry.RegisterInstanceType(typeof(SharpTSArrayBuffer), (instance, name) =>
+        {
+            var ab = (SharpTSArrayBuffer)instance;
+            return name switch
+            {
+                "byteLength" => (double)ab.ByteLength,
+                "slice" => new BuiltInMethod("slice", 1, 2, (interp, recv, args) =>
+                {
+                    int begin = args.Count > 0 && args[0] is double b ? (int)b : 0;
+                    int? end = args.Count > 1 && args[1] is double e ? (int)e : null;
+                    return ab.Slice(begin, end);
                 }),
                 _ => null
             };

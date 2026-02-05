@@ -19,6 +19,7 @@ public abstract class SharpTSTypedArray : ITypeCategorized
     protected readonly int _byteOffset;
     protected readonly int _length;  // In elements, not bytes
     protected readonly SharpTSSharedArrayBuffer? _sharedBuffer;
+    protected readonly SharpTSArrayBuffer? _arrayBuffer;
 
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Array;
@@ -59,6 +60,11 @@ public abstract class SharpTSTypedArray : ITypeCategorized
     public SharpTSSharedArrayBuffer? SharedBuffer => _sharedBuffer;
 
     /// <summary>
+    /// Gets the ArrayBuffer backing this array, or null if not using ArrayBuffer.
+    /// </summary>
+    public SharpTSArrayBuffer? ArrayBuffer => _arrayBuffer;
+
+    /// <summary>
     /// Gets the underlying buffer as a byte array.
     /// </summary>
     internal byte[] Buffer => _buffer;
@@ -69,6 +75,20 @@ public abstract class SharpTSTypedArray : ITypeCategorized
     protected SharpTSTypedArray(SharpTSSharedArrayBuffer buffer, int byteOffset, int length)
     {
         _sharedBuffer = buffer;
+        _arrayBuffer = null;
+        _buffer = buffer.GetBackingArray();
+        _byteOffset = byteOffset;
+        _length = length;
+        ValidateBounds();
+    }
+
+    /// <summary>
+    /// Creates a typed array over an ArrayBuffer.
+    /// </summary>
+    protected SharpTSTypedArray(SharpTSArrayBuffer buffer, int byteOffset, int length)
+    {
+        _sharedBuffer = null;
+        _arrayBuffer = buffer;
         _buffer = buffer.GetBackingArray();
         _byteOffset = byteOffset;
         _length = length;
@@ -84,6 +104,7 @@ public abstract class SharpTSTypedArray : ITypeCategorized
         _byteOffset = byteOffset;
         _length = length;
         _sharedBuffer = null;
+        _arrayBuffer = null;
         ValidateBounds();
     }
 
@@ -96,6 +117,7 @@ public abstract class SharpTSTypedArray : ITypeCategorized
         _byteOffset = 0;
         _buffer = new byte[length * BytesPerElement];
         _sharedBuffer = null;
+        _arrayBuffer = null;
     }
 
     private void ValidateBounds()
@@ -310,7 +332,7 @@ public abstract class SharpTSTypedArray : ITypeCategorized
             "byteLength" => (double)ByteLength,
             "byteOffset" => (double)ByteOffset,
             "BYTES_PER_ELEMENT" => (double)BytesPerElement,
-            "buffer" => _sharedBuffer ?? (object?)new SharpTSBuffer(_buffer),
+            "buffer" => _sharedBuffer ?? _arrayBuffer ?? (object?)new SharpTSBuffer(_buffer),
 
             "set" => new BuiltInMethod("set", 1, 2, (interp, recv, args) =>
             {
@@ -428,6 +450,8 @@ public class SharpTSInt8Array : SharpTSTypedArray
     public SharpTSInt8Array(int length) : base(length) { }
     public SharpTSInt8Array(SharpTSSharedArrayBuffer buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset)) { }
+    public SharpTSInt8Array(SharpTSArrayBuffer buffer, int byteOffset = 0, int? length = null)
+        : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset)) { }
     public SharpTSInt8Array(byte[] buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.Length - byteOffset)) { }
 
@@ -464,6 +488,8 @@ public class SharpTSInt8Array : SharpTSTypedArray
         int count = Math.Max(0, actualEnd - begin);
         if (_sharedBuffer != null)
             return new SharpTSInt8Array(_sharedBuffer, _byteOffset + begin, count);
+        if (_arrayBuffer != null)
+            return new SharpTSInt8Array(_arrayBuffer, _byteOffset + begin, count);
         return new SharpTSInt8Array(_buffer, _byteOffset + begin, count);
     }
 }
@@ -478,6 +504,8 @@ public class SharpTSUint8Array : SharpTSTypedArray
 
     public SharpTSUint8Array(int length) : base(length) { }
     public SharpTSUint8Array(SharpTSSharedArrayBuffer buffer, int byteOffset = 0, int? length = null)
+        : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset)) { }
+    public SharpTSUint8Array(SharpTSArrayBuffer buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset)) { }
     public SharpTSUint8Array(byte[] buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.Length - byteOffset)) { }
@@ -515,6 +543,8 @@ public class SharpTSUint8Array : SharpTSTypedArray
         int count = Math.Max(0, actualEnd - begin);
         if (_sharedBuffer != null)
             return new SharpTSUint8Array(_sharedBuffer, _byteOffset + begin, count);
+        if (_arrayBuffer != null)
+            return new SharpTSUint8Array(_arrayBuffer, _byteOffset + begin, count);
         return new SharpTSUint8Array(_buffer, _byteOffset + begin, count);
     }
 }
@@ -529,6 +559,8 @@ public class SharpTSUint8ClampedArray : SharpTSTypedArray
 
     public SharpTSUint8ClampedArray(int length) : base(length) { }
     public SharpTSUint8ClampedArray(SharpTSSharedArrayBuffer buffer, int byteOffset = 0, int? length = null)
+        : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset)) { }
+    public SharpTSUint8ClampedArray(SharpTSArrayBuffer buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset)) { }
     public SharpTSUint8ClampedArray(byte[] buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.Length - byteOffset)) { }
@@ -573,6 +605,8 @@ public class SharpTSUint8ClampedArray : SharpTSTypedArray
         int count = Math.Max(0, actualEnd - begin);
         if (_sharedBuffer != null)
             return new SharpTSUint8ClampedArray(_sharedBuffer, _byteOffset + begin, count);
+        if (_arrayBuffer != null)
+            return new SharpTSUint8ClampedArray(_arrayBuffer, _byteOffset + begin, count);
         return new SharpTSUint8ClampedArray(_buffer, _byteOffset + begin, count);
     }
 }
@@ -587,6 +621,8 @@ public class SharpTSInt16Array : SharpTSTypedArray
 
     public SharpTSInt16Array(int length) : base(length) { }
     public SharpTSInt16Array(SharpTSSharedArrayBuffer buffer, int byteOffset = 0, int? length = null)
+        : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 2) { }
+    public SharpTSInt16Array(SharpTSArrayBuffer buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 2) { }
     public SharpTSInt16Array(byte[] buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.Length - byteOffset) / 2) { }
@@ -642,6 +678,8 @@ public class SharpTSInt16Array : SharpTSTypedArray
         int count = Math.Max(0, actualEnd - begin);
         if (_sharedBuffer != null)
             return new SharpTSInt16Array(_sharedBuffer, _byteOffset + begin * 2, count);
+        if (_arrayBuffer != null)
+            return new SharpTSInt16Array(_arrayBuffer, _byteOffset + begin * 2, count);
         return new SharpTSInt16Array(_buffer, _byteOffset + begin * 2, count);
     }
 }
@@ -656,6 +694,8 @@ public class SharpTSUint16Array : SharpTSTypedArray
 
     public SharpTSUint16Array(int length) : base(length) { }
     public SharpTSUint16Array(SharpTSSharedArrayBuffer buffer, int byteOffset = 0, int? length = null)
+        : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 2) { }
+    public SharpTSUint16Array(SharpTSArrayBuffer buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 2) { }
     public SharpTSUint16Array(byte[] buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.Length - byteOffset) / 2) { }
@@ -711,6 +751,8 @@ public class SharpTSUint16Array : SharpTSTypedArray
         int count = Math.Max(0, actualEnd - begin);
         if (_sharedBuffer != null)
             return new SharpTSUint16Array(_sharedBuffer, _byteOffset + begin * 2, count);
+        if (_arrayBuffer != null)
+            return new SharpTSUint16Array(_arrayBuffer, _byteOffset + begin * 2, count);
         return new SharpTSUint16Array(_buffer, _byteOffset + begin * 2, count);
     }
 }
@@ -725,6 +767,8 @@ public class SharpTSInt32Array : SharpTSTypedArray
 
     public SharpTSInt32Array(int length) : base(length) { }
     public SharpTSInt32Array(SharpTSSharedArrayBuffer buffer, int byteOffset = 0, int? length = null)
+        : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 4) { }
+    public SharpTSInt32Array(SharpTSArrayBuffer buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 4) { }
     public SharpTSInt32Array(byte[] buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.Length - byteOffset) / 4) { }
@@ -788,6 +832,8 @@ public class SharpTSInt32Array : SharpTSTypedArray
         int count = Math.Max(0, actualEnd - begin);
         if (_sharedBuffer != null)
             return new SharpTSInt32Array(_sharedBuffer, _byteOffset + begin * 4, count);
+        if (_arrayBuffer != null)
+            return new SharpTSInt32Array(_arrayBuffer, _byteOffset + begin * 4, count);
         return new SharpTSInt32Array(_buffer, _byteOffset + begin * 4, count);
     }
 }
@@ -802,6 +848,8 @@ public class SharpTSUint32Array : SharpTSTypedArray
 
     public SharpTSUint32Array(int length) : base(length) { }
     public SharpTSUint32Array(SharpTSSharedArrayBuffer buffer, int byteOffset = 0, int? length = null)
+        : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 4) { }
+    public SharpTSUint32Array(SharpTSArrayBuffer buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 4) { }
     public SharpTSUint32Array(byte[] buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.Length - byteOffset) / 4) { }
@@ -856,6 +904,8 @@ public class SharpTSUint32Array : SharpTSTypedArray
         int count = Math.Max(0, actualEnd - begin);
         if (_sharedBuffer != null)
             return new SharpTSUint32Array(_sharedBuffer, _byteOffset + begin * 4, count);
+        if (_arrayBuffer != null)
+            return new SharpTSUint32Array(_arrayBuffer, _byteOffset + begin * 4, count);
         return new SharpTSUint32Array(_buffer, _byteOffset + begin * 4, count);
     }
 }
@@ -870,6 +920,8 @@ public class SharpTSFloat32Array : SharpTSTypedArray
 
     public SharpTSFloat32Array(int length) : base(length) { }
     public SharpTSFloat32Array(SharpTSSharedArrayBuffer buffer, int byteOffset = 0, int? length = null)
+        : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 4) { }
+    public SharpTSFloat32Array(SharpTSArrayBuffer buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 4) { }
     public SharpTSFloat32Array(byte[] buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.Length - byteOffset) / 4) { }
@@ -924,6 +976,8 @@ public class SharpTSFloat32Array : SharpTSTypedArray
         int count = Math.Max(0, actualEnd - begin);
         if (_sharedBuffer != null)
             return new SharpTSFloat32Array(_sharedBuffer, _byteOffset + begin * 4, count);
+        if (_arrayBuffer != null)
+            return new SharpTSFloat32Array(_arrayBuffer, _byteOffset + begin * 4, count);
         return new SharpTSFloat32Array(_buffer, _byteOffset + begin * 4, count);
     }
 }
@@ -938,6 +992,8 @@ public class SharpTSFloat64Array : SharpTSTypedArray
 
     public SharpTSFloat64Array(int length) : base(length) { }
     public SharpTSFloat64Array(SharpTSSharedArrayBuffer buffer, int byteOffset = 0, int? length = null)
+        : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 8) { }
+    public SharpTSFloat64Array(SharpTSArrayBuffer buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 8) { }
     public SharpTSFloat64Array(byte[] buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.Length - byteOffset) / 8) { }
@@ -992,6 +1048,8 @@ public class SharpTSFloat64Array : SharpTSTypedArray
         int count = Math.Max(0, actualEnd - begin);
         if (_sharedBuffer != null)
             return new SharpTSFloat64Array(_sharedBuffer, _byteOffset + begin * 8, count);
+        if (_arrayBuffer != null)
+            return new SharpTSFloat64Array(_arrayBuffer, _byteOffset + begin * 8, count);
         return new SharpTSFloat64Array(_buffer, _byteOffset + begin * 8, count);
     }
 }
@@ -1006,6 +1064,8 @@ public class SharpTSBigInt64Array : SharpTSTypedArray
 
     public SharpTSBigInt64Array(int length) : base(length) { }
     public SharpTSBigInt64Array(SharpTSSharedArrayBuffer buffer, int byteOffset = 0, int? length = null)
+        : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 8) { }
+    public SharpTSBigInt64Array(SharpTSArrayBuffer buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 8) { }
     public SharpTSBigInt64Array(byte[] buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.Length - byteOffset) / 8) { }
@@ -1081,6 +1141,8 @@ public class SharpTSBigInt64Array : SharpTSTypedArray
         int count = Math.Max(0, actualEnd - begin);
         if (_sharedBuffer != null)
             return new SharpTSBigInt64Array(_sharedBuffer, _byteOffset + begin * 8, count);
+        if (_arrayBuffer != null)
+            return new SharpTSBigInt64Array(_arrayBuffer, _byteOffset + begin * 8, count);
         return new SharpTSBigInt64Array(_buffer, _byteOffset + begin * 8, count);
     }
 }
@@ -1095,6 +1157,8 @@ public class SharpTSBigUint64Array : SharpTSTypedArray
 
     public SharpTSBigUint64Array(int length) : base(length) { }
     public SharpTSBigUint64Array(SharpTSSharedArrayBuffer buffer, int byteOffset = 0, int? length = null)
+        : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 8) { }
+    public SharpTSBigUint64Array(SharpTSArrayBuffer buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.ByteLength - byteOffset) / 8) { }
     public SharpTSBigUint64Array(byte[] buffer, int byteOffset = 0, int? length = null)
         : base(buffer, byteOffset, length ?? (buffer.Length - byteOffset) / 8) { }
@@ -1161,6 +1225,8 @@ public class SharpTSBigUint64Array : SharpTSTypedArray
         int count = Math.Max(0, actualEnd - begin);
         if (_sharedBuffer != null)
             return new SharpTSBigUint64Array(_sharedBuffer, _byteOffset + begin * 8, count);
+        if (_arrayBuffer != null)
+            return new SharpTSBigUint64Array(_arrayBuffer, _byteOffset + begin * 8, count);
         return new SharpTSBigUint64Array(_buffer, _byteOffset + begin * 8, count);
     }
 }

@@ -589,6 +589,7 @@ public partial class ILCompiler
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.AsyncGenerator>(new AsyncGeneratorEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.Error>(new ErrorEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.SharedArrayBuffer>(new SharedArrayBufferEmitter());
+        _typeEmitterRegistry.Register<TypeSystem.TypeInfo.ArrayBuffer>(new ArrayBufferEmitter());
 
         // Static type emitters
         _typeEmitterRegistry.RegisterStatic("Math", new MathStaticEmitter());
@@ -603,6 +604,7 @@ public partial class ILCompiler
         _typeEmitterRegistry.RegisterStatic("process", new ProcessStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("globalThis", new GlobalThisStaticEmitter(_typeEmitterRegistry));
         _typeEmitterRegistry.RegisterStatic("Atomics", new AtomicsStaticEmitter());
+        _typeEmitterRegistry.RegisterStatic("ArrayBuffer", new ArrayBufferStaticEmitter());
 
         // Built-in module emitters
         _builtInModuleEmitterRegistry.Register(new PathModuleEmitter());

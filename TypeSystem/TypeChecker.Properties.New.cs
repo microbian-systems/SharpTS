@@ -280,6 +280,24 @@ public partial class TypeChecker
             return new TypeInfo.SharedArrayBuffer();
         }
 
+        // Handle new ArrayBuffer(byteLength) constructor
+        if (isSimpleName && simpleClassName == "ArrayBuffer")
+        {
+            // ArrayBuffer accepts 1 argument (byteLength)
+            if (newExpr.Arguments.Count != 1)
+            {
+                throw new TypeCheckException("ArrayBuffer constructor requires exactly 1 argument (byteLength).");
+            }
+
+            var byteLengthType = CheckExpr(newExpr.Arguments[0]);
+            if (!IsNumber(byteLengthType) && byteLengthType is not TypeInfo.Any)
+            {
+                throw new TypeCheckException($" ArrayBuffer byteLength must be a number, got '{byteLengthType}'.");
+            }
+
+            return new TypeInfo.ArrayBuffer();
+        }
+
         // Handle TypedArray constructors (Int8Array, Uint8Array, etc.)
         if (isSimpleName && simpleClassName != null && IsTypedArrayName(simpleClassName))
         {

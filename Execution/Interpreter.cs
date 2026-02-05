@@ -63,6 +63,9 @@ public partial class Interpreter : IDisposable
 
             // SharedArrayBuffer constructor
             [BuiltInNames.SharedArrayBuffer] = WorkerBuiltIns.SharedArrayBufferConstructor,
+
+            // ArrayBuffer constructor
+            [BuiltInNames.ArrayBuffer] = WorkerBuiltIns.ArrayBufferConstructor,
         };
 
         // Add TypedArray constructors using centralized names

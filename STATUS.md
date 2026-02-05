@@ -299,10 +299,9 @@ This document tracks TypeScript language features and their implementation statu
 | **Shared Memory** | | |
 | `SharedArrayBuffer` | ✅ | Shared memory for worker threads |
 | `Atomics` | ✅ | load, store, add, sub, and, or, xor, exchange, compareExchange, wait, notify |
+| `ArrayBuffer` | ✅ | Non-shared binary buffer: constructor, byteLength, slice(), isView() |
 | **Not Implemented** | | |
-| `ArrayBuffer` constructor | ❌ | TypedArrays create internal buffers; no standalone ArrayBuffer class |
 | `DataView` | ❌ | No DataView class |
-| `Uint8ClampedArray` | ❌ | |
 
 ---
 

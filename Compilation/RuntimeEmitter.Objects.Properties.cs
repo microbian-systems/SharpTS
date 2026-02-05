@@ -789,6 +789,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
         il.Emit(OpCodes.Brtrue, promiseLabel);
 
+        // TypedArray - call GetMember(name)
+        var typedArrayLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, typeof(SharpTS.Runtime.Types.SharpTSTypedArray));
+        il.Emit(OpCodes.Brtrue, typedArrayLabel);
+
         // Default - try to access _fields dictionary via reflection for class instances
         var classInstanceLabel = il.DefineLabel();
         il.Emit(OpCodes.Br, classInstanceLabel);
@@ -799,6 +805,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
+        il.Emit(OpCodes.Ret);
+
+        // TypedArray handler - call typedArray.GetMember(name)
+        il.MarkLabel(typedArrayLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSTypedArray));
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, typeof(SharpTS.Runtime.Types.SharpTSTypedArray).GetMethod("GetMember", [typeof(string)])!);
         il.Emit(OpCodes.Ret);
 
         // Namespace handler - call ns.Get(name)

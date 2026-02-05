@@ -1142,6 +1142,7 @@ public partial class TypeChecker
         // Worker Threads globals
         if (name.Lexeme == "structuredClone") return new TypeInfo.Any(); // structuredClone() global function
         if (name.Lexeme == "SharedArrayBuffer") return new TypeInfo.Any(); // SharedArrayBuffer constructor
+        if (name.Lexeme == "ArrayBuffer") return new TypeInfo.Any(); // ArrayBuffer constructor
         if (name.Lexeme == "Atomics") return new TypeInfo.Any(); // Atomics static object
         if (name.Lexeme == "MessageChannel") return new TypeInfo.Any(); // MessageChannel constructor
         // TypedArray constructors

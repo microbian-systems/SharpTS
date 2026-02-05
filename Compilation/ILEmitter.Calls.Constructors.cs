@@ -191,6 +191,13 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new ArrayBuffer(...) constructor
+        if (isSimpleName && simpleClassName == "ArrayBuffer")
+        {
+            EmitNewArrayBuffer(n.Arguments);
+            return;
+        }
+
         // Special case: new Worker(...) constructor
         if (isSimpleName && simpleClassName == "Worker")
         {
@@ -970,6 +977,24 @@ public partial class ILEmitter
     }
 
     /// <summary>
+    /// Emits code for new ArrayBuffer(...) construction.
+    /// </summary>
+    private void EmitNewArrayBuffer(List<Expr> arguments)
+    {
+        if (arguments.Count == 0)
+        {
+            IL.Emit(OpCodes.Ldc_R8, 0.0);
+        }
+        else
+        {
+            EmitExpressionAsDouble(arguments[0]);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.TSArrayBufferCtor);
+        SetStackUnknown();
+    }
+
+    /// <summary>
     /// Emits code for new Worker(...) construction.
     /// </summary>
     private void EmitNewWorker(List<Expr> arguments)
@@ -1069,9 +1094,19 @@ public partial class ILEmitter
         else if (arguments.Count >= 2)
         {
             // new TypedArray(buffer, byteOffset?, length?)
-            // Assume first argument is SharedArrayBuffer
+            // Buffer can be either SharedArrayBuffer or ArrayBuffer - need runtime dispatch
+            var sabType = typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer);
+            var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
+
+            // Emit buffer argument
             EmitExpression(arguments[0]);
-            IL.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer));
+            EmitBoxIfNeeded(arguments[0]);
+            var bufferLocal = IL.DeclareLocal(Types.Object);
+            IL.Emit(OpCodes.Stloc, bufferLocal);
+
+            // Compute byteOffset and length once
+            var byteOffsetLocal = IL.DeclareLocal(Types.Int32);
+            var lengthLocal = IL.DeclareLocal(typeof(int?));
 
             // byteOffset
             if (arguments.Count > 1)
@@ -1083,6 +1118,7 @@ public partial class ILEmitter
             {
                 IL.Emit(OpCodes.Ldc_I4_0);
             }
+            IL.Emit(OpCodes.Stloc, byteOffsetLocal);
 
             // length (nullable)
             if (arguments.Count > 2)
@@ -1093,14 +1129,40 @@ public partial class ILEmitter
             }
             else
             {
-                var localNullableInt = IL.DeclareLocal(typeof(int?));
-                IL.Emit(OpCodes.Ldloca, localNullableInt);
+                var tempNullableInt = IL.DeclareLocal(typeof(int?));
+                IL.Emit(OpCodes.Ldloca, tempNullableInt);
                 IL.Emit(OpCodes.Initobj, typeof(int?));
-                IL.Emit(OpCodes.Ldloc, localNullableInt);
+                IL.Emit(OpCodes.Ldloc, tempNullableInt);
             }
+            IL.Emit(OpCodes.Stloc, lengthLocal);
 
-            var ctor = arrayType.GetConstructor([typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer), typeof(int), typeof(int?)])!;
-            IL.Emit(OpCodes.Newobj, ctor);
+            // Check if buffer is SharedArrayBuffer
+            var isArrayBufferLabel = IL.DefineLabel();
+            var endLabel = IL.DefineLabel();
+
+            IL.Emit(OpCodes.Ldloc, bufferLocal);
+            IL.Emit(OpCodes.Isinst, sabType);
+            IL.Emit(OpCodes.Brfalse, isArrayBufferLabel);
+
+            // SharedArrayBuffer path
+            IL.Emit(OpCodes.Ldloc, bufferLocal);
+            IL.Emit(OpCodes.Castclass, sabType);
+            IL.Emit(OpCodes.Ldloc, byteOffsetLocal);
+            IL.Emit(OpCodes.Ldloc, lengthLocal);
+            var sabCtor = arrayType.GetConstructor([sabType, typeof(int), typeof(int?)])!;
+            IL.Emit(OpCodes.Newobj, sabCtor);
+            IL.Emit(OpCodes.Br, endLabel);
+
+            // ArrayBuffer path
+            IL.MarkLabel(isArrayBufferLabel);
+            IL.Emit(OpCodes.Ldloc, bufferLocal);
+            IL.Emit(OpCodes.Castclass, abType);
+            IL.Emit(OpCodes.Ldloc, byteOffsetLocal);
+            IL.Emit(OpCodes.Ldloc, lengthLocal);
+            var abCtor = arrayType.GetConstructor([abType, typeof(int), typeof(int?)])!;
+            IL.Emit(OpCodes.Newobj, abCtor);
+
+            IL.MarkLabel(endLabel);
         }
 
         SetStackUnknown();

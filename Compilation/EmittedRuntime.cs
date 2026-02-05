@@ -1230,6 +1230,14 @@ public class EmittedRuntime
     public MethodBuilder TSSharedArrayBufferByteLengthGetter { get; set; } = null!;
     public MethodBuilder TSSharedArrayBufferSlice { get; set; } = null!;
 
+    // $ArrayBuffer type - emitted for standalone support
+    // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSArrayBuffer
+    public Type TSArrayBufferType { get; set; } = null!;
+    public MethodBuilder TSArrayBufferCtor { get; set; } = null!;
+    public MethodBuilder TSArrayBufferByteLengthGetter { get; set; } = null!;
+    public MethodBuilder TSArrayBufferSlice { get; set; } = null!;
+    public MethodBuilder TSArrayBufferIsView { get; set; } = null!;
+
     // TypedArray base type and common methods
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSTypedArray
     public Type TSTypedArrayBaseType { get; set; } = null!;

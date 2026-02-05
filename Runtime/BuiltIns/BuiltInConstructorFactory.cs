@@ -45,7 +45,8 @@ public static class BuiltInConstructorFactory
         BuiltInNames.IsTypedArrayName(name) ||
         BuiltInNames.IsErrorTypeName(name) ||
         name == BuiltInNames.MessageChannel ||
-        name == BuiltInNames.SharedArrayBuffer;
+        name == BuiltInNames.SharedArrayBuffer ||
+        name == BuiltInNames.ArrayBuffer;
 
     /// <summary>
     /// Creates a built-in object using the appropriate constructor.
@@ -83,6 +84,11 @@ public static class BuiltInConstructorFactory
         if (name == BuiltInNames.SharedArrayBuffer)
         {
             return WorkerBuiltIns.SharedArrayBufferConstructor.Call(interpreter!, args.ToList());
+        }
+
+        if (name == BuiltInNames.ArrayBuffer)
+        {
+            return WorkerBuiltIns.ArrayBufferConstructor.Call(interpreter!, args.ToList());
         }
 
         return null;

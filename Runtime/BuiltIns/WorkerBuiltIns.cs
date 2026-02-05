@@ -38,6 +38,11 @@ public static class WorkerBuiltIns
     public static ISharpTSCallable SharedArrayBufferConstructor => new SharedArrayBufferConstructorImpl();
 
     /// <summary>
+    /// Creates an ArrayBuffer constructor function.
+    /// </summary>
+    public static ISharpTSCallable ArrayBufferConstructor => new ArrayBufferConstructorImpl();
+
+    /// <summary>
     /// Creates a MessageChannel constructor function.
     /// </summary>
     public static ISharpTSCallable MessageChannelConstructor => new MessageChannelConstructor();
@@ -49,36 +54,47 @@ public static class WorkerBuiltIns
     {
         "Int8Array" => new TypedArrayConstructorImpl<SharpTSInt8Array>(
             len => new SharpTSInt8Array(len),
+            (buf, off, len) => new SharpTSInt8Array(buf, off, len),
             (buf, off, len) => new SharpTSInt8Array(buf, off, len)),
         "Uint8Array" => new TypedArrayConstructorImpl<SharpTSUint8Array>(
             len => new SharpTSUint8Array(len),
+            (buf, off, len) => new SharpTSUint8Array(buf, off, len),
             (buf, off, len) => new SharpTSUint8Array(buf, off, len)),
         "Uint8ClampedArray" => new TypedArrayConstructorImpl<SharpTSUint8ClampedArray>(
             len => new SharpTSUint8ClampedArray(len),
+            (buf, off, len) => new SharpTSUint8ClampedArray(buf, off, len),
             (buf, off, len) => new SharpTSUint8ClampedArray(buf, off, len)),
         "Int16Array" => new TypedArrayConstructorImpl<SharpTSInt16Array>(
             len => new SharpTSInt16Array(len),
+            (buf, off, len) => new SharpTSInt16Array(buf, off, len),
             (buf, off, len) => new SharpTSInt16Array(buf, off, len)),
         "Uint16Array" => new TypedArrayConstructorImpl<SharpTSUint16Array>(
             len => new SharpTSUint16Array(len),
+            (buf, off, len) => new SharpTSUint16Array(buf, off, len),
             (buf, off, len) => new SharpTSUint16Array(buf, off, len)),
         "Int32Array" => new TypedArrayConstructorImpl<SharpTSInt32Array>(
             len => new SharpTSInt32Array(len),
+            (buf, off, len) => new SharpTSInt32Array(buf, off, len),
             (buf, off, len) => new SharpTSInt32Array(buf, off, len)),
         "Uint32Array" => new TypedArrayConstructorImpl<SharpTSUint32Array>(
             len => new SharpTSUint32Array(len),
+            (buf, off, len) => new SharpTSUint32Array(buf, off, len),
             (buf, off, len) => new SharpTSUint32Array(buf, off, len)),
         "Float32Array" => new TypedArrayConstructorImpl<SharpTSFloat32Array>(
             len => new SharpTSFloat32Array(len),
+            (buf, off, len) => new SharpTSFloat32Array(buf, off, len),
             (buf, off, len) => new SharpTSFloat32Array(buf, off, len)),
         "Float64Array" => new TypedArrayConstructorImpl<SharpTSFloat64Array>(
             len => new SharpTSFloat64Array(len),
+            (buf, off, len) => new SharpTSFloat64Array(buf, off, len),
             (buf, off, len) => new SharpTSFloat64Array(buf, off, len)),
         "BigInt64Array" => new TypedArrayConstructorImpl<SharpTSBigInt64Array>(
             len => new SharpTSBigInt64Array(len),
+            (buf, off, len) => new SharpTSBigInt64Array(buf, off, len),
             (buf, off, len) => new SharpTSBigInt64Array(buf, off, len)),
         "BigUint64Array" => new TypedArrayConstructorImpl<SharpTSBigUint64Array>(
             len => new SharpTSBigUint64Array(len),
+            (buf, off, len) => new SharpTSBigUint64Array(buf, off, len),
             (buf, off, len) => new SharpTSBigUint64Array(buf, off, len)),
         _ => throw new Exception($"Unknown TypedArray type: {typeName}")
     };
@@ -115,19 +131,51 @@ internal class SharedArrayBufferConstructorImpl : ISharpTSCallable
 }
 
 /// <summary>
+/// ArrayBuffer constructor implementation.
+/// </summary>
+internal class ArrayBufferConstructorImpl : ISharpTSCallable
+{
+    public int Arity() => 1;
+
+    public object? Call(Interpreter interpreter, List<object?> arguments)
+    {
+        if (arguments.Count == 0 || arguments[0] is not double length)
+            throw new Exception("ArrayBuffer constructor requires a length argument");
+
+        return new SharpTSArrayBuffer((int)length);
+    }
+
+    public object? GetProperty(string name)
+    {
+        return name switch
+        {
+            "isView" => new BuiltInMethod("isView", 1, (_, _, args) =>
+            {
+                return SharpTSArrayBuffer.IsView(args.Count > 0 ? args[0] : null);
+            }),
+            "prototype" => null,
+            _ => null
+        };
+    }
+}
+
+/// <summary>
 /// Generic TypedArray constructor implementation.
 /// </summary>
 internal class TypedArrayConstructorImpl<T> : ISharpTSCallable where T : SharpTSTypedArray
 {
     private readonly Func<int, T> _createFromLength;
     private readonly Func<SharpTSSharedArrayBuffer, int, int?, T> _createFromSharedBuffer;
+    private readonly Func<SharpTSArrayBuffer, int, int?, T> _createFromArrayBuffer;
 
     public TypedArrayConstructorImpl(
         Func<int, T> createFromLength,
-        Func<SharpTSSharedArrayBuffer, int, int?, T> createFromSharedBuffer)
+        Func<SharpTSSharedArrayBuffer, int, int?, T> createFromSharedBuffer,
+        Func<SharpTSArrayBuffer, int, int?, T> createFromArrayBuffer)
     {
         _createFromLength = createFromLength;
         _createFromSharedBuffer = createFromSharedBuffer;
+        _createFromArrayBuffer = createFromArrayBuffer;
     }
 
     public int Arity() => 1;
@@ -149,6 +197,14 @@ internal class TypedArrayConstructorImpl<T> : ISharpTSCallable where T : SharpTS
             int byteOffset = arguments.Count > 1 && arguments[1] is double bo ? (int)bo : 0;
             int? len = arguments.Count > 2 && arguments[2] is double l ? (int)l : null;
             return _createFromSharedBuffer(sab, byteOffset, len);
+        }
+
+        // new Int32Array(arrayBuffer, byteOffset?, length?)
+        if (arguments[0] is SharpTSArrayBuffer ab)
+        {
+            int byteOffset = arguments.Count > 1 && arguments[1] is double bo ? (int)bo : 0;
+            int? len = arguments.Count > 2 && arguments[2] is double l ? (int)l : null;
+            return _createFromArrayBuffer(ab, byteOffset, len);
         }
 
         // new Int32Array(array) - copy from another array
