@@ -144,6 +144,7 @@ public static class BuiltInTypes
             "entries" => new TypeInfo.Function([AnyType], new TypeInfo.Array(AnyType)),
             "fromEntries" => new TypeInfo.Function([AnyType], AnyType),
             "hasOwn" => new TypeInfo.Function([AnyType, StringType], BooleanType),
+            "is" => new TypeInfo.Function([AnyType, AnyType], BooleanType),
             "assign" => new TypeInfo.Function([AnyType], AnyType),  // target, ...sources
             "freeze" => new TypeInfo.Function([AnyType], AnyType),  // Returns the frozen object
             "seal" => new TypeInfo.Function([AnyType], AnyType),    // Returns the sealed object

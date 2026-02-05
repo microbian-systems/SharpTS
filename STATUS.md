@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-04 (Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
+**Last Updated:** 2026-02-04 (Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
 
 ## Legend
 - ✅ Implemented
@@ -332,7 +332,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | Feature | Status | Notes |
 |---------|--------|-------|
 | `Object.create()` | ❌ | |
-| `Object.is()` | ❌ | Use `===` or manual NaN check |
+| `Object.is()` | ✅ | Same-value comparison; handles NaN and +0/-0 edge cases |
 | `Object.getOwnPropertyDescriptor()` | ❌ | |
 | `Object.defineProperty()` | ❌ | |
 | `Object.getPrototypeOf()` | ❌ | |

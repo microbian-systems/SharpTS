@@ -2062,6 +2062,7 @@ public partial class RuntimeEmitter
         EmitGetEntries(typeBuilder, runtime);
         EmitObjectFromEntries(typeBuilder, runtime);
         EmitObjectHasOwn(typeBuilder, runtime);
+        EmitObjectIs(typeBuilder, runtime);
         EmitObjectAssign(typeBuilder, runtime);
         EmitObjectFreeze(typeBuilder, runtime, frozenObjectsField, sealedObjectsField);
         EmitObjectSeal(typeBuilder, runtime, sealedObjectsField);

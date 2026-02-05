@@ -12,6 +12,7 @@ public static class ObjectBuiltIns
             .Method("entries", 1, Entries)
             .Method("fromEntries", 1, FromEntries)
             .Method("hasOwn", 2, HasOwn)
+            .Method("is", 2, Is)
             .Method("assign", 1, int.MaxValue, Assign)
             .Method("freeze", 1, Freeze)
             .Method("seal", 1, Seal)
@@ -109,6 +110,56 @@ public static class ObjectBuiltIns
             SharpTSInstance inst => inst.GetFieldNames().Contains(key),
             _ => false
         };
+    }
+
+    /// <summary>
+    /// Object.is(value1, value2) - determines whether two values are the same value.
+    /// Unlike === operator:
+    /// - Object.is(NaN, NaN) returns true
+    /// - Object.is(-0, +0) returns false
+    /// </summary>
+    private static object? Is(Interpreter _, List<object?> args)
+    {
+        var value1 = args[0];
+        var value2 = args[1];
+
+        // Handle null/undefined cases
+        if (value1 is null && value2 is null)
+            return true;
+        if (value1 is null || value2 is null)
+            return false;
+
+        // Handle number cases (NaN and -0/+0)
+        if (value1 is double d1 && value2 is double d2)
+        {
+            // NaN === NaN should be true for Object.is
+            if (double.IsNaN(d1) && double.IsNaN(d2))
+                return true;
+
+            // +0 and -0 should be different for Object.is
+            if (d1 == 0.0 && d2 == 0.0)
+            {
+                // Check if signs are the same using 1/x trick
+                // 1/+0 = +Infinity, 1/-0 = -Infinity
+                return 1.0 / d1 == 1.0 / d2;
+            }
+
+            return d1 == d2;
+        }
+
+        // Handle bigint cases
+        if (value1 is System.Numerics.BigInteger bi1 && value2 is System.Numerics.BigInteger bi2)
+            return bi1 == bi2;
+
+        // For all other types, use reference equality for objects, value equality for primitives
+        if (value1 is string s1 && value2 is string s2)
+            return s1 == s2;
+
+        if (value1 is bool b1 && value2 is bool b2)
+            return b1 == b2;
+
+        // Reference equality for objects
+        return ReferenceEquals(value1, value2);
     }
 
     private static object? Assign(Interpreter _, List<object?> args)

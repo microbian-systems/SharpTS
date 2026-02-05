@@ -1328,6 +1328,168 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits Object.is(value1, value2) - determines whether two values are the same value.
+    /// Unlike === operator:
+    /// - Object.is(NaN, NaN) returns true
+    /// - Object.is(-0, +0) returns false
+    /// Signature: bool ObjectIs(object value1, object value2)
+    /// </summary>
+    private void EmitObjectIs(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectIs",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object, _types.Object]
+        );
+        runtime.ObjectIs = method;
+
+        var il = method.GetILGenerator();
+
+        var bothNullLabel = il.DefineLabel();
+        var oneNullLabel = il.DefineLabel();
+        var checkDoubleLabel = il.DefineLabel();
+        var notBothDoubleLabel = il.DefineLabel();
+        var checkNaNLabel = il.DefineLabel();
+        var notNaNLabel = il.DefineLabel();
+        var checkZeroLabel = il.DefineLabel();
+        var notZeroLabel = il.DefineLabel();
+        var returnTrueLabel = il.DefineLabel();
+        var returnFalseLabel = il.DefineLabel();
+        var checkStringLabel = il.DefineLabel();
+        var notStringLabel = il.DefineLabel();
+        var checkBoolLabel = il.DefineLabel();
+        var notBoolLabel = il.DefineLabel();
+        var referenceEqualLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        var d1Local = il.DeclareLocal(_types.Double);
+        var d2Local = il.DeclareLocal(_types.Double);
+
+        // Check if both null
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, checkDoubleLabel);
+        // value1 is null
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, returnTrueLabel);  // both null
+        il.Emit(OpCodes.Br, returnFalseLabel);       // only value1 is null
+
+        // Check if both are double
+        il.MarkLabel(checkDoubleLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, returnFalseLabel);  // value2 is null but value1 isn't
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, checkStringLabel);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, returnFalseLabel);  // value1 is double but value2 isn't
+
+        // Both are doubles - unbox them
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Stloc, d1Local);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Stloc, d2Local);
+
+        // Check if both are NaN
+        il.Emit(OpCodes.Ldloc, d1Local);
+        il.Emit(OpCodes.Call, _types.GetMethod(typeof(double), "IsNaN", _types.Double));
+        il.Emit(OpCodes.Brfalse, checkZeroLabel);
+
+        il.Emit(OpCodes.Ldloc, d2Local);
+        il.Emit(OpCodes.Call, _types.GetMethod(typeof(double), "IsNaN", _types.Double));
+        il.Emit(OpCodes.Brtrue, returnTrueLabel);  // Both NaN -> true
+        il.Emit(OpCodes.Br, returnFalseLabel);     // Only d1 is NaN -> false
+
+        // Check if both are zero (need to distinguish +0 and -0)
+        il.MarkLabel(checkZeroLabel);
+        il.Emit(OpCodes.Ldloc, d1Local);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Bne_Un, notZeroLabel);
+
+        il.Emit(OpCodes.Ldloc, d2Local);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Bne_Un, returnFalseLabel);  // d1 is 0 but d2 isn't
+
+        // Both are zero - compare 1/d1 == 1/d2 to distinguish +0 and -0
+        il.Emit(OpCodes.Ldc_R8, 1.0);
+        il.Emit(OpCodes.Ldloc, d1Local);
+        il.Emit(OpCodes.Div);
+        il.Emit(OpCodes.Ldc_R8, 1.0);
+        il.Emit(OpCodes.Ldloc, d2Local);
+        il.Emit(OpCodes.Div);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Not zero - normal double comparison
+        il.MarkLabel(notZeroLabel);
+        il.Emit(OpCodes.Ldloc, d1Local);
+        il.Emit(OpCodes.Ldloc, d2Local);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Check if both are string
+        il.MarkLabel(checkStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, checkBoolLabel);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, returnFalseLabel);
+
+        // Both strings - compare with string.Equals
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String));
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Check if both are bool
+        il.MarkLabel(checkBoolLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, referenceEqualLabel);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, returnFalseLabel);
+
+        // Both booleans - compare
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Reference equality for objects
+        il.MarkLabel(referenceEqualLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Return true
+        il.MarkLabel(returnTrueLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Return false
+        il.MarkLabel(returnFalseLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits Object.assign(target, sources) - copies properties from sources to target.
     /// Signature: object ObjectAssign(object target, List&lt;object&gt; sources)
     /// </summary>

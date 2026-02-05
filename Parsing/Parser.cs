@@ -261,7 +261,7 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
             TokenType.ENUM or TokenType.EXPORT or TokenType.EXTENDS or TokenType.FALSE or
             TokenType.FINALLY or TokenType.FOR or TokenType.FROM or TokenType.FUNCTION or
             TokenType.GET or TokenType.IF or TokenType.IMPLEMENTS or TokenType.IMPORT or
-            TokenType.IN or TokenType.INSTANCEOF or TokenType.INTERFACE or TokenType.LET or
+            TokenType.IN or TokenType.INSTANCEOF or TokenType.INTERFACE or TokenType.IS or TokenType.LET or
             TokenType.NEVER or TokenType.NEW or TokenType.NULL or TokenType.OF or TokenType.OVERRIDE or
             TokenType.PRIVATE or TokenType.PROTECTED or TokenType.PUBLIC or TokenType.READONLY or
             TokenType.RETURN or TokenType.SET or TokenType.STATIC or TokenType.SUPER or

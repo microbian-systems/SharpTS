@@ -62,6 +62,22 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
                 // Box the bool result for consistency with other methods
                 il.Emit(OpCodes.Box, typeof(bool));
                 return true;
+            case "is":
+                // is takes 2 arguments: value1 and value2
+                // First argument is already on the stack, emit second argument
+                if (arguments.Count > 1)
+                {
+                    emitter.EmitExpression(arguments[1]);
+                    emitter.EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ObjectIs);
+                // Box the bool result for consistency with other methods
+                il.Emit(OpCodes.Box, typeof(bool));
+                return true;
             case "assign":
                 // Object.assign(target, ...sources)
                 // First argument (target) is already on the stack

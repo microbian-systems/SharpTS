@@ -1235,4 +1235,194 @@ public class ObjectFeatureTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("3\n1\n", output);
     }
+
+    // Object.is tests
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_SameNumbers(ExecutionMode mode)
+    {
+        var source = """
+            console.log(Object.is(1, 1));
+            console.log(Object.is(42, 42));
+            console.log(Object.is(-5, -5));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_DifferentNumbers(ExecutionMode mode)
+    {
+        var source = """
+            console.log(Object.is(1, 2));
+            console.log(Object.is(42, 43));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_NaN_ReturnsTrue(ExecutionMode mode)
+    {
+        // Object.is(NaN, NaN) should be true (this differs from === in standard JavaScript)
+        var source = """
+            console.log(Object.is(NaN, NaN));
+            console.log(Object.is(NaN, 0));
+            console.log(Object.is(NaN, "NaN"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_PositiveAndNegativeZero_ReturnsFalse(ExecutionMode mode)
+    {
+        // Unlike ===, Object.is(+0, -0) should be false
+        var source = """
+            console.log(Object.is(0, -0));
+            console.log(Object.is(-0, 0));
+            console.log(0 === -0);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\nfalse\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_SameZeros(ExecutionMode mode)
+    {
+        var source = """
+            console.log(Object.is(0, 0));
+            console.log(Object.is(-0, -0));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_NullComparison(ExecutionMode mode)
+    {
+        var source = """
+            console.log(Object.is(null, null));
+            console.log(Object.is(null, undefined));
+            console.log(Object.is(null, 0));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_UndefinedComparison(ExecutionMode mode)
+    {
+        var source = """
+            console.log(Object.is(undefined, undefined));
+            console.log(Object.is(undefined, null));
+            console.log(Object.is(undefined, 0));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_StringComparison(ExecutionMode mode)
+    {
+        var source = """
+            console.log(Object.is("hello", "hello"));
+            console.log(Object.is("hello", "world"));
+            console.log(Object.is("", ""));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_BooleanComparison(ExecutionMode mode)
+    {
+        var source = """
+            console.log(Object.is(true, true));
+            console.log(Object.is(false, false));
+            console.log(Object.is(true, false));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_ObjectReferenceEquality(ExecutionMode mode)
+    {
+        var source = """
+            let obj1: { x: number } = { x: 1 };
+            let obj2: { x: number } = { x: 1 };
+            let obj3 = obj1;
+            console.log(Object.is(obj1, obj1));
+            console.log(Object.is(obj1, obj2));
+            console.log(Object.is(obj1, obj3));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_ArrayReferenceEquality(ExecutionMode mode)
+    {
+        var source = """
+            let arr1: number[] = [1, 2, 3];
+            let arr2: number[] = [1, 2, 3];
+            let arr3 = arr1;
+            console.log(Object.is(arr1, arr1));
+            console.log(Object.is(arr1, arr2));
+            console.log(Object.is(arr1, arr3));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_MixedTypes(ExecutionMode mode)
+    {
+        var source = """
+            console.log(Object.is(1, "1"));
+            console.log(Object.is(true, 1));
+            console.log(Object.is(null, undefined));
+            console.log(Object.is(0, false));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\nfalse\nfalse\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Is_Infinity(ExecutionMode mode)
+    {
+        var source = """
+            console.log(Object.is(Infinity, Infinity));
+            console.log(Object.is(-Infinity, -Infinity));
+            console.log(Object.is(Infinity, -Infinity));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\nfalse\n", output);
+    }
 }

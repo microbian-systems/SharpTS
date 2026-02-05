@@ -196,6 +196,7 @@ public class EmittedRuntime
     public MethodBuilder WarnSloppyDeleteVariable { get; set; } = null!;
     public MethodBuilder ObjectFromEntries { get; set; } = null!;
     public MethodBuilder ObjectHasOwn { get; set; } = null!;
+    public MethodBuilder ObjectIs { get; set; } = null!;
     public MethodBuilder ObjectAssign { get; set; } = null!;
     public MethodBuilder ObjectFreeze { get; set; } = null!;
     public MethodBuilder ObjectSeal { get; set; } = null!;
