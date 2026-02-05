@@ -66,6 +66,9 @@ public partial class Interpreter : IDisposable
 
             // ArrayBuffer constructor
             [BuiltInNames.ArrayBuffer] = WorkerBuiltIns.ArrayBufferConstructor,
+
+            // DataView constructor
+            [BuiltInNames.DataView] = WorkerBuiltIns.DataViewConstructor,
         };
 
         // Add TypedArray constructors using centralized names

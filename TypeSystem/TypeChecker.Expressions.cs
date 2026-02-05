@@ -1145,6 +1145,7 @@ public partial class TypeChecker
         if (name.Lexeme == "ArrayBuffer") return new TypeInfo.Any(); // ArrayBuffer constructor
         if (name.Lexeme == "Atomics") return new TypeInfo.Any(); // Atomics static object
         if (name.Lexeme == "MessageChannel") return new TypeInfo.Any(); // MessageChannel constructor
+        if (name.Lexeme == "DataView") return new TypeInfo.Any(); // DataView constructor
         // TypedArray constructors
         if (name.Lexeme is "Int8Array" or "Uint8Array" or "Uint8ClampedArray"
             or "Int16Array" or "Uint16Array" or "Int32Array" or "Uint32Array"

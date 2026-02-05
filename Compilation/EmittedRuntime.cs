@@ -1239,6 +1239,36 @@ public class EmittedRuntime
     public MethodBuilder TSArrayBufferSlice { get; set; } = null!;
     public MethodBuilder TSArrayBufferIsView { get; set; } = null!;
 
+    // $DataView type - emitted for standalone support
+    // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSDataView
+    public Type TSDataViewType { get; set; } = null!;
+    public MethodBuilder TSDataViewCtor { get; set; } = null!;
+    public MethodBuilder TSDataViewByteLengthGetter { get; set; } = null!;
+    public MethodBuilder TSDataViewByteOffsetGetter { get; set; } = null!;
+    public MethodBuilder TSDataViewBufferGetter { get; set; } = null!;
+    // Getter methods
+    public MethodBuilder TSDataViewGetInt8 { get; set; } = null!;
+    public MethodBuilder TSDataViewGetUint8 { get; set; } = null!;
+    public MethodBuilder TSDataViewGetInt16 { get; set; } = null!;
+    public MethodBuilder TSDataViewGetUint16 { get; set; } = null!;
+    public MethodBuilder TSDataViewGetInt32 { get; set; } = null!;
+    public MethodBuilder TSDataViewGetUint32 { get; set; } = null!;
+    public MethodBuilder TSDataViewGetFloat32 { get; set; } = null!;
+    public MethodBuilder TSDataViewGetFloat64 { get; set; } = null!;
+    public MethodBuilder TSDataViewGetBigInt64 { get; set; } = null!;
+    public MethodBuilder TSDataViewGetBigUint64 { get; set; } = null!;
+    // Setter methods
+    public MethodBuilder TSDataViewSetInt8 { get; set; } = null!;
+    public MethodBuilder TSDataViewSetUint8 { get; set; } = null!;
+    public MethodBuilder TSDataViewSetInt16 { get; set; } = null!;
+    public MethodBuilder TSDataViewSetUint16 { get; set; } = null!;
+    public MethodBuilder TSDataViewSetInt32 { get; set; } = null!;
+    public MethodBuilder TSDataViewSetUint32 { get; set; } = null!;
+    public MethodBuilder TSDataViewSetFloat32 { get; set; } = null!;
+    public MethodBuilder TSDataViewSetFloat64 { get; set; } = null!;
+    public MethodBuilder TSDataViewSetBigInt64 { get; set; } = null!;
+    public MethodBuilder TSDataViewSetBigUint64 { get; set; } = null!;
+
     // TypedArray base type and common methods
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSTypedArray
     public Type TSTypedArrayBaseType { get; set; } = null!;

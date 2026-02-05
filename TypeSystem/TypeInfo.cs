@@ -845,6 +845,16 @@ public abstract record TypeInfo
     }
 
     /// <summary>
+    /// Represents a DataView type for reading/writing binary data with explicit endianness control.
+    /// </summary>
+    /// <param name="ByteLength">Optional fixed byte length if known at compile time.</param>
+    /// <param name="ByteOffset">Optional byte offset if known at compile time.</param>
+    public record DataView(int? ByteLength = null, int? ByteOffset = null) : TypeInfo
+    {
+        public override string ToString() => "DataView";
+    }
+
+    /// <summary>
     /// Represents the Atomics global object for atomic operations.
     /// </summary>
     public record AtomicsNamespace() : TypeInfo

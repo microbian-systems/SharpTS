@@ -198,6 +198,13 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new DataView(...) constructor
+        if (isSimpleName && simpleClassName == "DataView")
+        {
+            EmitNewDataView(n.Arguments);
+            return;
+        }
+
         // Special case: new Worker(...) constructor
         if (isSimpleName && simpleClassName == "Worker")
         {
@@ -991,6 +998,45 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Call, _ctx.Runtime!.TSArrayBufferCtor);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits code for new DataView(...) construction.
+    /// </summary>
+    private void EmitNewDataView(List<Expr> arguments)
+    {
+        if (arguments.Count == 0)
+        {
+            throw new CompileException("DataView constructor requires at least 1 argument (buffer).");
+        }
+
+        // Emit buffer (ArrayBuffer or SharedArrayBuffer)
+        EmitExpression(arguments[0]);
+        EmitBoxIfNeeded(arguments[0]);
+
+        // Emit byteOffset (default 0)
+        if (arguments.Count > 1)
+        {
+            EmitExpressionAsDouble(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldc_R8, 0.0);
+        }
+
+        // Emit byteLength (default null)
+        if (arguments.Count > 2)
+        {
+            EmitExpression(arguments[2]);
+            EmitBoxIfNeeded(arguments[2]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.TSDataViewCtor);
         SetStackUnknown();
     }
 

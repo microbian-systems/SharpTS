@@ -590,6 +590,7 @@ public partial class ILCompiler
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.Error>(new ErrorEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.SharedArrayBuffer>(new SharedArrayBufferEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.ArrayBuffer>(new ArrayBufferEmitter());
+        _typeEmitterRegistry.Register<TypeSystem.TypeInfo.DataView>(new DataViewEmitter());
 
         // Static type emitters
         _typeEmitterRegistry.RegisterStatic("Math", new MathStaticEmitter());

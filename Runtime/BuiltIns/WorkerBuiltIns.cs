@@ -43,6 +43,11 @@ public static class WorkerBuiltIns
     public static ISharpTSCallable ArrayBufferConstructor => new ArrayBufferConstructorImpl();
 
     /// <summary>
+    /// Creates a DataView constructor function.
+    /// </summary>
+    public static ISharpTSCallable DataViewConstructor => new DataViewConstructorImpl();
+
+    /// <summary>
     /// Creates a MessageChannel constructor function.
     /// </summary>
     public static ISharpTSCallable MessageChannelConstructor => new MessageChannelConstructor();
@@ -258,4 +263,44 @@ public class AtomicsSingleton
     public object? GetMember(string name) => SharpTSAtomics.GetMember(name);
 
     public override string ToString() => "Atomics";
+}
+
+/// <summary>
+/// DataView constructor implementation.
+/// </summary>
+internal class DataViewConstructorImpl : ISharpTSCallable
+{
+    public int Arity() => 1;
+
+    public object? Call(Interpreter interpreter, List<object?> arguments)
+    {
+        if (arguments.Count == 0)
+            throw new Exception("DataView constructor requires at least 1 argument (buffer)");
+
+        int byteOffset = arguments.Count > 1 && arguments[1] is double bo ? (int)bo : 0;
+        int? byteLength = arguments.Count > 2 && arguments[2] is double bl ? (int)bl : null;
+
+        // new DataView(arrayBuffer, byteOffset?, byteLength?)
+        if (arguments[0] is SharpTSArrayBuffer ab)
+        {
+            return new SharpTSDataView(ab, byteOffset, byteLength);
+        }
+
+        // new DataView(sharedArrayBuffer, byteOffset?, byteLength?)
+        if (arguments[0] is SharpTSSharedArrayBuffer sab)
+        {
+            return new SharpTSDataView(sab, byteOffset, byteLength);
+        }
+
+        throw new Exception("TypeError: First argument to DataView constructor must be an ArrayBuffer or SharedArrayBuffer");
+    }
+
+    public object? GetProperty(string name)
+    {
+        return name switch
+        {
+            "prototype" => null,
+            _ => null
+        };
+    }
 }

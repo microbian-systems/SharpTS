@@ -21,6 +21,9 @@ public partial class RuntimeEmitter
         // ArrayBuffer constructor helper
         EmitArrayBufferHelper(runtimeType, runtime);
 
+        // DataView constructor helper
+        EmitDataViewHelper(runtimeType, runtime);
+
         // TypedArray constructor helpers
         EmitTypedArrayHelpers(runtimeType, runtime);
 
@@ -270,6 +273,298 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         runtime.TSArrayBufferIsView = method;
+    }
+
+    /// <summary>
+    /// Emits helper for creating DataView.
+    /// public static object CreateDataView(object buffer, double byteOffset, object byteLength)
+    /// </summary>
+    private void EmitDataViewHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
+        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
+        var sabType = typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer);
+
+        var method = runtimeType.DefineMethod(
+            "CreateDataView",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Double, _types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var dvCtorAB = dvType.GetConstructor([abType, typeof(int), typeof(int?)])!;
+        var dvCtorSAB = dvType.GetConstructor([sabType, typeof(int), typeof(int?)])!;
+
+        var isSabLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // Check if buffer is SharedArrayBuffer
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, sabType);
+        il.Emit(OpCodes.Brtrue, isSabLabel);
+
+        // ArrayBuffer path
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, abType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Conv_I4);
+        EmitNullableIntFromObject(il, 2);
+        il.Emit(OpCodes.Newobj, dvCtorAB);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // SharedArrayBuffer path
+        il.MarkLabel(isSabLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, sabType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Conv_I4);
+        EmitNullableIntFromObject(il, 2);
+        il.Emit(OpCodes.Newobj, dvCtorSAB);
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ret);
+
+        runtime.TSDataViewCtor = method;
+
+        // Emit property getters
+        EmitDataViewByteLength(runtimeType, runtime);
+        EmitDataViewByteOffset(runtimeType, runtime);
+        EmitDataViewBuffer(runtimeType, runtime);
+
+        // Emit getter methods
+        EmitDataViewGetter(runtimeType, runtime, "GetInt8", "getInt8", false);
+        EmitDataViewGetter(runtimeType, runtime, "GetUint8", "getUint8", false);
+        EmitDataViewGetter(runtimeType, runtime, "GetInt16", "getInt16", true);
+        EmitDataViewGetter(runtimeType, runtime, "GetUint16", "getUint16", true);
+        EmitDataViewGetter(runtimeType, runtime, "GetInt32", "getInt32", true);
+        EmitDataViewGetter(runtimeType, runtime, "GetUint32", "getUint32", true);
+        EmitDataViewGetter(runtimeType, runtime, "GetFloat32", "getFloat32", true);
+        EmitDataViewGetter(runtimeType, runtime, "GetFloat64", "getFloat64", true);
+        EmitDataViewBigIntGetter(runtimeType, runtime, "GetBigInt64", "getBigInt64");
+        EmitDataViewBigIntGetter(runtimeType, runtime, "GetBigUint64", "getBigUint64");
+
+        // Emit setter methods
+        EmitDataViewSetter(runtimeType, runtime, "SetInt8", "setInt8", false);
+        EmitDataViewSetter(runtimeType, runtime, "SetUint8", "setUint8", false);
+        EmitDataViewSetter(runtimeType, runtime, "SetInt16", "setInt16", true);
+        EmitDataViewSetter(runtimeType, runtime, "SetUint16", "setUint16", true);
+        EmitDataViewSetter(runtimeType, runtime, "SetInt32", "setInt32", true);
+        EmitDataViewSetter(runtimeType, runtime, "SetUint32", "setUint32", true);
+        EmitDataViewSetter(runtimeType, runtime, "SetFloat32", "setFloat32", true);
+        EmitDataViewSetter(runtimeType, runtime, "SetFloat64", "setFloat64", true);
+        EmitDataViewSetter(runtimeType, runtime, "SetBigInt64", "setBigInt64", true);
+        EmitDataViewSetter(runtimeType, runtime, "SetBigUint64", "setBigUint64", true);
+    }
+
+    private void EmitNullableIntFromObject(ILGenerator il, int argIndex)
+    {
+        var hasValueLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg, argIndex);
+        il.Emit(OpCodes.Brfalse, hasValueLabel);
+
+        // Has value - unbox and wrap in nullable
+        il.Emit(OpCodes.Ldarg, argIndex);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Newobj, _types.NullableInt32Ctor);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Null
+        il.MarkLabel(hasValueLabel);
+        var localNullableInt = il.DeclareLocal(typeof(int?));
+        il.Emit(OpCodes.Ldloca, localNullableInt);
+        il.Emit(OpCodes.Initobj, typeof(int?));
+        il.Emit(OpCodes.Ldloc, localNullableInt);
+
+        il.MarkLabel(endLabel);
+    }
+
+    private void EmitDataViewByteLength(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "DataViewByteLength",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
+        var getter = dvType.GetProperty("ByteLength")!.GetGetMethod()!;
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, dvType);
+        il.Emit(OpCodes.Callvirt, getter);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+
+        runtime.TSDataViewByteLengthGetter = method;
+    }
+
+    private void EmitDataViewByteOffset(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "DataViewByteOffset",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
+        var getter = dvType.GetProperty("ByteOffset")!.GetGetMethod()!;
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, dvType);
+        il.Emit(OpCodes.Callvirt, getter);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+
+        runtime.TSDataViewByteOffsetGetter = method;
+    }
+
+    private void EmitDataViewBuffer(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "DataViewBuffer",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
+        var getter = dvType.GetProperty("Buffer")!.GetGetMethod()!;
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, dvType);
+        il.Emit(OpCodes.Callvirt, getter);
+        il.Emit(OpCodes.Ret);
+
+        runtime.TSDataViewBufferGetter = method;
+    }
+
+    private void EmitDataViewGetter(TypeBuilder runtimeType, EmittedRuntime runtime, string runtimeMethodName, string jsMethodName, bool hasEndianness)
+    {
+        var paramTypes = hasEndianness
+            ? new[] { _types.Object, _types.Int32, _types.Boolean }
+            : new[] { _types.Object, _types.Int32 };
+
+        var method = runtimeType.DefineMethod(
+            $"DataView{runtimeMethodName}",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            paramTypes
+        );
+
+        var il = method.GetILGenerator();
+        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
+
+        var getterParams = hasEndianness
+            ? new[] { typeof(int), typeof(bool) }
+            : new[] { typeof(int) };
+        var getter = dvType.GetMethod(runtimeMethodName, getterParams)!;
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, dvType);
+        il.Emit(OpCodes.Ldarg_1);
+        if (hasEndianness)
+        {
+            il.Emit(OpCodes.Ldarg_2);
+        }
+        il.Emit(OpCodes.Callvirt, getter);
+        il.Emit(OpCodes.Ret);
+
+        // Store in runtime
+        switch (jsMethodName)
+        {
+            case "getInt8": runtime.TSDataViewGetInt8 = method; break;
+            case "getUint8": runtime.TSDataViewGetUint8 = method; break;
+            case "getInt16": runtime.TSDataViewGetInt16 = method; break;
+            case "getUint16": runtime.TSDataViewGetUint16 = method; break;
+            case "getInt32": runtime.TSDataViewGetInt32 = method; break;
+            case "getUint32": runtime.TSDataViewGetUint32 = method; break;
+            case "getFloat32": runtime.TSDataViewGetFloat32 = method; break;
+            case "getFloat64": runtime.TSDataViewGetFloat64 = method; break;
+        }
+    }
+
+    private void EmitDataViewBigIntGetter(TypeBuilder runtimeType, EmittedRuntime runtime, string runtimeMethodName, string jsMethodName)
+    {
+        var method = runtimeType.DefineMethod(
+            $"DataView{runtimeMethodName}",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.BigInteger,
+            [_types.Object, _types.Int32, _types.Boolean]
+        );
+
+        var il = method.GetILGenerator();
+        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
+        var getter = dvType.GetMethod(runtimeMethodName, [typeof(int), typeof(bool)])!;
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, dvType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, getter);
+        il.Emit(OpCodes.Ret);
+
+        switch (jsMethodName)
+        {
+            case "getBigInt64": runtime.TSDataViewGetBigInt64 = method; break;
+            case "getBigUint64": runtime.TSDataViewGetBigUint64 = method; break;
+        }
+    }
+
+    private void EmitDataViewSetter(TypeBuilder runtimeType, EmittedRuntime runtime, string runtimeMethodName, string jsMethodName, bool hasEndianness)
+    {
+        var paramTypes = hasEndianness
+            ? new[] { _types.Object, _types.Int32, _types.Object, _types.Boolean }
+            : new[] { _types.Object, _types.Int32, _types.Object };
+
+        var method = runtimeType.DefineMethod(
+            $"DataView{runtimeMethodName}",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            paramTypes
+        );
+
+        var il = method.GetILGenerator();
+        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
+
+        var setterParams = hasEndianness
+            ? new[] { typeof(int), typeof(object), typeof(bool) }
+            : new[] { typeof(int), typeof(object) };
+        var setter = dvType.GetMethod(runtimeMethodName, setterParams)!;
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, dvType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        if (hasEndianness)
+        {
+            il.Emit(OpCodes.Ldarg_3);
+        }
+        il.Emit(OpCodes.Callvirt, setter);
+        il.Emit(OpCodes.Ret);
+
+        // Store in runtime
+        switch (jsMethodName)
+        {
+            case "setInt8": runtime.TSDataViewSetInt8 = method; break;
+            case "setUint8": runtime.TSDataViewSetUint8 = method; break;
+            case "setInt16": runtime.TSDataViewSetInt16 = method; break;
+            case "setUint16": runtime.TSDataViewSetUint16 = method; break;
+            case "setInt32": runtime.TSDataViewSetInt32 = method; break;
+            case "setUint32": runtime.TSDataViewSetUint32 = method; break;
+            case "setFloat32": runtime.TSDataViewSetFloat32 = method; break;
+            case "setFloat64": runtime.TSDataViewSetFloat64 = method; break;
+            case "setBigInt64": runtime.TSDataViewSetBigInt64 = method; break;
+            case "setBigUint64": runtime.TSDataViewSetBigUint64 = method; break;
+        }
     }
 
     /// <summary>

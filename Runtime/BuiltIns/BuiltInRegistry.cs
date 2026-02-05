@@ -731,6 +731,129 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSBigUint64Array), (instance, name) =>
             ((SharpTSTypedArray)instance).GetMember(name));
 
+        // Register DataView instance members
+        registry.RegisterInstanceType(typeof(SharpTSDataView), (instance, name) =>
+        {
+            var dv = (SharpTSDataView)instance;
+            return name switch
+            {
+                "buffer" => dv.Buffer,
+                "byteOffset" => (double)dv.ByteOffset,
+                "byteLength" => (double)dv.ByteLength,
+                "getInt8" => new BuiltInMethod("getInt8", 1, (_, _, args) =>
+                    dv.GetInt8(args.Count > 0 && args[0] is double d ? (int)d : 0)),
+                "getUint8" => new BuiltInMethod("getUint8", 1, (_, _, args) =>
+                    dv.GetUint8(args.Count > 0 && args[0] is double d ? (int)d : 0)),
+                "getInt16" => new BuiltInMethod("getInt16", 1, 2, (_, _, args) =>
+                    dv.GetInt16(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 && args[1] is bool le ? le : false)),
+                "getUint16" => new BuiltInMethod("getUint16", 1, 2, (_, _, args) =>
+                    dv.GetUint16(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 && args[1] is bool le ? le : false)),
+                "getInt32" => new BuiltInMethod("getInt32", 1, 2, (_, _, args) =>
+                    dv.GetInt32(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 && args[1] is bool le ? le : false)),
+                "getUint32" => new BuiltInMethod("getUint32", 1, 2, (_, _, args) =>
+                    dv.GetUint32(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 && args[1] is bool le ? le : false)),
+                "getFloat32" => new BuiltInMethod("getFloat32", 1, 2, (_, _, args) =>
+                    dv.GetFloat32(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 && args[1] is bool le ? le : false)),
+                "getFloat64" => new BuiltInMethod("getFloat64", 1, 2, (_, _, args) =>
+                    dv.GetFloat64(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 && args[1] is bool le ? le : false)),
+                "getBigInt64" => new BuiltInMethod("getBigInt64", 1, 2, (_, _, args) =>
+                    dv.GetBigInt64(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 && args[1] is bool le ? le : false)),
+                "getBigUint64" => new BuiltInMethod("getBigUint64", 1, 2, (_, _, args) =>
+                    dv.GetBigUint64(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 && args[1] is bool le ? le : false)),
+                "setInt8" => new BuiltInMethod("setInt8", 2, (_, _, args) =>
+                {
+                    dv.SetInt8(args.Count > 0 && args[0] is double d ? (int)d : 0, args.Count > 1 ? args[1] : null);
+                    return SharpTSUndefined.Instance;
+                }),
+                "setUint8" => new BuiltInMethod("setUint8", 2, (_, _, args) =>
+                {
+                    dv.SetUint8(args.Count > 0 && args[0] is double d ? (int)d : 0, args.Count > 1 ? args[1] : null);
+                    return SharpTSUndefined.Instance;
+                }),
+                "setInt16" => new BuiltInMethod("setInt16", 2, 3, (_, _, args) =>
+                {
+                    dv.SetInt16(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 ? args[1] : null,
+                        args.Count > 2 && args[2] is bool le ? le : false);
+                    return SharpTSUndefined.Instance;
+                }),
+                "setUint16" => new BuiltInMethod("setUint16", 2, 3, (_, _, args) =>
+                {
+                    dv.SetUint16(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 ? args[1] : null,
+                        args.Count > 2 && args[2] is bool le ? le : false);
+                    return SharpTSUndefined.Instance;
+                }),
+                "setInt32" => new BuiltInMethod("setInt32", 2, 3, (_, _, args) =>
+                {
+                    dv.SetInt32(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 ? args[1] : null,
+                        args.Count > 2 && args[2] is bool le ? le : false);
+                    return SharpTSUndefined.Instance;
+                }),
+                "setUint32" => new BuiltInMethod("setUint32", 2, 3, (_, _, args) =>
+                {
+                    dv.SetUint32(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 ? args[1] : null,
+                        args.Count > 2 && args[2] is bool le ? le : false);
+                    return SharpTSUndefined.Instance;
+                }),
+                "setFloat32" => new BuiltInMethod("setFloat32", 2, 3, (_, _, args) =>
+                {
+                    dv.SetFloat32(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 ? args[1] : null,
+                        args.Count > 2 && args[2] is bool le ? le : false);
+                    return SharpTSUndefined.Instance;
+                }),
+                "setFloat64" => new BuiltInMethod("setFloat64", 2, 3, (_, _, args) =>
+                {
+                    dv.SetFloat64(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 ? args[1] : null,
+                        args.Count > 2 && args[2] is bool le ? le : false);
+                    return SharpTSUndefined.Instance;
+                }),
+                "setBigInt64" => new BuiltInMethod("setBigInt64", 2, 3, (_, _, args) =>
+                {
+                    dv.SetBigInt64(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 ? args[1] : null,
+                        args.Count > 2 && args[2] is bool le ? le : false);
+                    return SharpTSUndefined.Instance;
+                }),
+                "setBigUint64" => new BuiltInMethod("setBigUint64", 2, 3, (_, _, args) =>
+                {
+                    dv.SetBigUint64(
+                        args.Count > 0 && args[0] is double d ? (int)d : 0,
+                        args.Count > 1 ? args[1] : null,
+                        args.Count > 2 && args[2] is bool le ? le : false);
+                    return SharpTSUndefined.Instance;
+                }),
+                _ => null
+            };
+        });
+
         // Register Atomics singleton member lookup
         registry.RegisterInstanceType(typeof(AtomicsSingleton), (instance, name) =>
             ((AtomicsSingleton)instance).GetMember(name));

@@ -298,6 +298,37 @@ public partial class TypeChecker
             return new TypeInfo.ArrayBuffer();
         }
 
+        // Handle new DataView(buffer, byteOffset?, byteLength?) constructor
+        if (isSimpleName && simpleClassName == "DataView")
+        {
+            // DataView requires at least 1 argument (buffer) and up to 3
+            if (newExpr.Arguments.Count < 1 || newExpr.Arguments.Count > 3)
+            {
+                throw new TypeCheckException("DataView constructor requires 1-3 arguments (buffer, byteOffset?, byteLength?).");
+            }
+
+            // First argument must be ArrayBuffer or SharedArrayBuffer
+            var bufferType = CheckExpr(newExpr.Arguments[0]);
+            if (bufferType is not TypeInfo.ArrayBuffer
+                && bufferType is not TypeInfo.SharedArrayBuffer
+                && bufferType is not TypeInfo.Any)
+            {
+                throw new TypeCheckException($"DataView buffer must be an ArrayBuffer or SharedArrayBuffer, got '{bufferType}'.");
+            }
+
+            // Optional byteOffset and byteLength arguments must be numbers
+            for (int i = 1; i < newExpr.Arguments.Count; i++)
+            {
+                var argType = CheckExpr(newExpr.Arguments[i]);
+                if (!IsNumber(argType) && argType is not TypeInfo.Any)
+                {
+                    throw new TypeCheckException($"DataView constructor argument {i + 1} must be a number, got '{argType}'.");
+                }
+            }
+
+            return new TypeInfo.DataView();
+        }
+
         // Handle TypedArray constructors (Int8Array, Uint8Array, etc.)
         if (isSimpleName && simpleClassName != null && IsTypedArrayName(simpleClassName))
         {

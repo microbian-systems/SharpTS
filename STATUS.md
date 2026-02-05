@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-04 (Added Array.copyWithin(); Added spreading iterators: `[...arr.entries()]`, `[...set]`, `[...map]`; Added destructuring in for...of: `for (const [i, val] of arr.entries())`; Fixed string concat optimizer bug; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
+**Last Updated:** 2026-02-04 (Added DataView with full API support; Added Array.copyWithin(); Added spreading iterators: `[...arr.entries()]`, `[...set]`, `[...map]`; Added destructuring in for...of: `for (const [i, val] of arr.entries())`; Fixed string concat optimizer bug; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
 
 ## Legend
 - ✅ Implemented
@@ -301,7 +301,7 @@ This document tracks TypeScript language features and their implementation statu
 | `Atomics` | ✅ | load, store, add, sub, and, or, xor, exchange, compareExchange, wait, notify |
 | `ArrayBuffer` | ✅ | Non-shared binary buffer: constructor, byteLength, slice(), isView() |
 | **Not Implemented** | | |
-| `DataView` | ❌ | No DataView class |
+| `DataView` | ✅ | Full API: constructor, properties (buffer, byteLength, byteOffset), getter/setter methods with endianness support |
 
 ---
 

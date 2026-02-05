@@ -107,15 +107,16 @@ public class SharpTSArrayBuffer : ITypeCategorized
     /// Checks if the argument is a TypedArray or DataView (a view over an ArrayBuffer).
     /// </summary>
     /// <param name="arg">The value to check.</param>
-    /// <returns>True if arg is a TypedArray instance.</returns>
+    /// <returns>True if arg is a TypedArray or DataView instance.</returns>
     public static bool IsView(object? arg)
     {
         // TypedArray instances are views
         if (arg is SharpTSTypedArray)
             return true;
 
-        // DataView would also be a view, but it's not implemented yet
-        // When DataView is added, check for it here
+        // DataView instances are views
+        if (arg is SharpTSDataView)
+            return true;
 
         return false;
     }
