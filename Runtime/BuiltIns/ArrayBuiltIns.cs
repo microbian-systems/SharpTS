@@ -37,6 +37,7 @@ public static class ArrayBuiltIns
             .Method("toReversed", 0, ToReversed)
             .Method("with", 2, With)
             .Method("at", 1, At)
+            .Method("fill", 1, 3, Fill)
             .Build();
 
     public static object? GetMember(SharpTSArray receiver, string name)
@@ -763,6 +764,37 @@ public static class ArrayBuiltIns
         if (actualIndex < 0 || actualIndex >= len)
             return null;
         return arr.Elements[actualIndex];
+    }
+
+    private static object? Fill(Interpreter _, SharpTSArray arr, List<object?> args)
+    {
+        // Frozen arrays cannot be modified
+        if (arr.IsFrozen)
+        {
+            return arr;
+        }
+
+        int len = arr.Elements.Count;
+        if (len == 0) return arr;
+
+        // Get fill value (required first argument)
+        var value = args.Count > 0 ? args[0] : null;
+
+        // Parse start index (optional, default 0)
+        int relStart = args.Count > 1 ? ToIntegerOrInfinity(args[1], 0) : 0;
+        int actualStart = relStart < 0 ? Math.Max(len + relStart, 0) : Math.Min(relStart, len);
+
+        // Parse end index (optional, default length)
+        int relEnd = args.Count > 2 ? ToIntegerOrInfinity(args[2], len) : len;
+        int actualEnd = relEnd < 0 ? Math.Max(len + relEnd, 0) : Math.Min(relEnd, len);
+
+        // Fill the range
+        for (int i = actualStart; i < actualEnd; i++)
+        {
+            arr.Elements[i] = value;
+        }
+
+        return arr;
     }
 
     private static bool IsUndefined(object? obj)

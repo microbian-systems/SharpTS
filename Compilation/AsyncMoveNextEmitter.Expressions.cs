@@ -502,7 +502,7 @@ public partial class AsyncMoveNextEmitter
                 // Array-only methods
                 if (methodName is "pop" or "shift" or "unshift" or "map" or "filter" or "forEach"
                     or "push" or "find" or "findIndex" or "some" or "every" or "reduce" or "join"
-                    or "reverse")
+                    or "reverse" or "fill")
                 {
                     var arrayStrategy = _ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Array(new TypeSystem.TypeInfo.Any()));
                     if (arrayStrategy != null && arrayStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))

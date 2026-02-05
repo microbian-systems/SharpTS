@@ -174,6 +174,11 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayAt);
                 return true;
 
+            case "fill":
+                EmitArgsArray(emitter, arguments);
+                il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFill);
+                return true;
+
             default:
                 return false;
         }

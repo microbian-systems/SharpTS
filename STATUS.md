@@ -346,7 +346,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `fill()` | ❌ | |
+| `fill()` | ✅ | |
 | `copyWithin()` | ❌ | |
 | `entries()` | ❌ | Use `forEach` or `for...of` |
 | `keys()` | ❌ | Use index-based iteration |

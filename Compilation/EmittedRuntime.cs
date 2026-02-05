@@ -146,6 +146,7 @@ public class EmittedRuntime
     public MethodBuilder ArrayToReversed { get; set; } = null!;
     public MethodBuilder ArrayWith { get; set; } = null!;
     public MethodBuilder ArrayAt { get; set; } = null!;
+    public MethodBuilder ArrayFill { get; set; } = null!;
 
     // String methods
     public MethodBuilder StringCharAt { get; set; } = null!;

@@ -2105,6 +2105,7 @@ public partial class RuntimeEmitter
         EmitArrayToReversed(typeBuilder, runtime);
         EmitArrayWith(typeBuilder, runtime);
         EmitArrayAt(typeBuilder, runtime);
+        EmitArrayFill(typeBuilder, runtime);
         // String methods
         EmitStringCharAt(typeBuilder, runtime);
         EmitStringSubstring(typeBuilder, runtime);
