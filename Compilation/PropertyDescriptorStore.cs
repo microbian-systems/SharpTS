@@ -144,6 +144,7 @@ public static class PropertyDescriptorStore
         var state = _frozenSealedState.GetOrCreateValue(obj);
         state.IsFrozen = true;
         state.IsSealed = true;
+        state.IsExtensible = false;
     }
 
     /// <summary>
@@ -153,6 +154,26 @@ public static class PropertyDescriptorStore
     {
         var state = _frozenSealedState.GetOrCreateValue(obj);
         state.IsSealed = true;
+        state.IsExtensible = false;
+    }
+
+    /// <summary>
+    /// Prevents adding new properties to an object.
+    /// </summary>
+    public static void PreventExtensions(object obj)
+    {
+        var state = _frozenSealedState.GetOrCreateValue(obj);
+        state.IsExtensible = false;
+    }
+
+    /// <summary>
+    /// Checks if an object is extensible (can have new properties added).
+    /// </summary>
+    public static bool IsExtensible(object obj)
+    {
+        if (_frozenSealedState.TryGetValue(obj, out var state))
+            return state.IsExtensible;
+        return true; // Objects are extensible by default
     }
 
     /// <summary>
@@ -178,12 +199,25 @@ public static class PropertyDescriptorStore
     {
         if (_frozenSealedState.TryGetValue(obj, out var state))
         {
-            if (state.IsFrozen || state.IsSealed)
+            if (!state.IsExtensible)
             {
                 // Check if property already exists
                 if (obj is Dictionary<string, object?> dict)
                 {
                     return dict.ContainsKey(propertyKey);
+                }
+                if (obj is System.Collections.IDictionary idict)
+                {
+                    return idict.Contains(propertyKey);
+                }
+                if (obj is List<object?> list)
+                {
+                    // For arrays, only numeric indices can be accessed
+                    if (int.TryParse(propertyKey, out int index))
+                    {
+                        return index >= 0 && index < list.Count;
+                    }
+                    return false;
                 }
                 if (_descriptors.TryGetValue(obj, out var descriptors) && descriptors.ContainsKey(propertyKey))
                 {
@@ -194,6 +228,51 @@ public static class PropertyDescriptorStore
         }
         return true;
     }
+
+    /// <summary>
+    /// Stores symbol-keyed properties for compiled objects.
+    /// </summary>
+    private static readonly ConditionalWeakTable<object, Dictionary<SharpTS.Runtime.Types.SharpTSSymbol, object?>> _symbolStorage = new();
+
+    /// <summary>
+    /// Stores prototype references for compiled objects.
+    /// </summary>
+    private static readonly ConditionalWeakTable<object, PrototypeInfo> _prototypeStore = new();
+
+    /// <summary>
+    /// Gets all symbol keys from an object.
+    /// </summary>
+    public static IEnumerable<SharpTS.Runtime.Types.SharpTSSymbol> GetSymbolKeys(object obj)
+    {
+        if (_symbolStorage.TryGetValue(obj, out var symbols))
+            return symbols.Keys;
+        return [];
+    }
+
+    /// <summary>
+    /// Sets the prototype of an object.
+    /// </summary>
+    public static void SetPrototype(object obj, object? proto)
+    {
+        var info = _prototypeStore.GetOrCreateValue(obj);
+        info.Prototype = proto;
+    }
+
+    /// <summary>
+    /// Gets the prototype of an object.
+    /// </summary>
+    public static object? GetPrototype(object obj)
+    {
+        return _prototypeStore.TryGetValue(obj, out var info) ? info.Prototype : null;
+    }
+}
+
+/// <summary>
+/// Holds the prototype reference for an object.
+/// </summary>
+internal class PrototypeInfo
+{
+    public object? Prototype { get; set; }
 }
 
 /// <summary>
@@ -306,10 +385,11 @@ public class CompiledPropertyDescriptor
 }
 
 /// <summary>
-/// Tracks frozen/sealed state for compiled objects.
+/// Tracks frozen/sealed/extensible state for compiled objects.
 /// </summary>
 internal class FrozenSealedState
 {
     public bool IsFrozen { get; set; }
     public bool IsSealed { get; set; }
+    public bool IsExtensible { get; set; } = true;
 }

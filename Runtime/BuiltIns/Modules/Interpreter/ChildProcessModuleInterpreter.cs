@@ -161,7 +161,10 @@ public static class ChildProcessModuleInterpreter
         if (options == null)
             return null;
         var value = options.GetProperty(name);
-        return value?.ToString();
+        // Handle null and undefined as "not set"
+        if (value == null || value is SharpTSUndefined)
+            return null;
+        return value.ToString();
     }
 
     private static double GetDoubleOption(SharpTSObject? options, string name, double defaultValue)

@@ -6,14 +6,15 @@ namespace SharpTS.Compilation;
 public partial class RuntimeEmitter
 {
     /// <summary>
-    /// Emits frozen/sealed check for array mutation methods.
-    /// If frozen (or sealed when checkSealed=true), branches to returnLabel.
+    /// Emits frozen/sealed/extensibility check for array mutation methods.
+    /// If frozen (or sealed when checkSealed=true, or non-extensible when checkExtensible=true), branches to returnLabel.
     /// </summary>
     private void EmitArrayFrozenSealedCheck(
         ILGenerator il,
         EmittedRuntime runtime,
         Label returnLabel,
-        bool checkSealed = true)
+        bool checkSealed = true,
+        bool checkExtensible = true)
     {
         var checkLocal = il.DeclareLocal(_types.Object);
 
@@ -36,6 +37,16 @@ public partial class RuntimeEmitter
                 _types.ConditionalWeakTable, "TryGetValue",
                 _types.Object, _types.Object.MakeByRefType()));
             il.Emit(OpCodes.Brtrue, returnLabel);
+        }
+
+        if (checkExtensible)
+        {
+            // Check extensibility via PropertyDescriptorStore.IsExtensible
+            // If NOT extensible, branch to return
+            var isExtensibleMethod = typeof(PropertyDescriptorStore).GetMethod("IsExtensible", [typeof(object)])!;
+            il.Emit(OpCodes.Ldarg_0);  // list
+            il.Emit(OpCodes.Call, isExtensibleMethod);
+            il.Emit(OpCodes.Brfalse, returnLabel);  // If false (not extensible), branch to return
         }
     }
 
@@ -404,8 +415,8 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var frozenLabel = il.DefineLabel();
 
-        // Check frozen ONLY (sealed allows reordering, no length change)
-        EmitArrayFrozenSealedCheck(il, runtime, frozenLabel, checkSealed: false);
+        // Check frozen ONLY (sealed/non-extensible allows reordering, no length change)
+        EmitArrayFrozenSealedCheck(il, runtime, frozenLabel, checkSealed: false, checkExtensible: false);
 
         // list.Reverse()
         il.Emit(OpCodes.Ldarg_0);
@@ -686,8 +697,8 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var frozenLabel = il.DefineLabel();
 
-        // Check frozen ONLY (sealed allows reordering, no length change)
-        EmitArrayFrozenSealedCheck(il, runtime, frozenLabel, checkSealed: false);
+        // Check frozen ONLY (sealed/non-extensible allows reordering, no length change)
+        EmitArrayFrozenSealedCheck(il, runtime, frozenLabel, checkSealed: false, checkExtensible: false);
 
         // Use a simple in-place insertion sort for stability
         // This is efficient enough for typical use cases and guarantees stability
@@ -1770,8 +1781,8 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var frozenLabel = il.DefineLabel();
 
-        // Check frozen ONLY (sealed allows modification of existing elements)
-        EmitArrayFrozenSealedCheck(il, runtime, frozenLabel, checkSealed: false);
+        // Check frozen ONLY (sealed/non-extensible allows modification of existing elements)
+        EmitArrayFrozenSealedCheck(il, runtime, frozenLabel, checkSealed: false, checkExtensible: false);
 
         // Local variables
         var lenLocal = il.DeclareLocal(_types.Int32);
@@ -1960,8 +1971,8 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var frozenLabel = il.DefineLabel();
 
-        // Check frozen ONLY (sealed allows modification of existing elements)
-        EmitArrayFrozenSealedCheck(il, runtime, frozenLabel, checkSealed: false);
+        // Check frozen ONLY (sealed/non-extensible allows modification of existing elements)
+        EmitArrayFrozenSealedCheck(il, runtime, frozenLabel, checkSealed: false, checkExtensible: false);
 
         // Local variables
         var lenLocal = il.DeclareLocal(_types.Int32);        // len

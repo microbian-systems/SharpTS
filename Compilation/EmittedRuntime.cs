@@ -212,8 +212,15 @@ public class EmittedRuntime
     public MethodBuilder ObjectDefineProperty { get; set; } = null!;
     public MethodBuilder ObjectGetOwnPropertyDescriptor { get; set; } = null!;
     public MethodBuilder ObjectCreate { get; set; } = null!;
+    public MethodBuilder ObjectPreventExtensions { get; set; } = null!;
+    public MethodBuilder ObjectIsExtensible { get; set; } = null!;
+    public MethodBuilder GetOwnPropertySymbols { get; set; } = null!;
+    public MethodBuilder ObjectGetPrototypeOf { get; set; } = null!;
+    public MethodBuilder ObjectSetPrototypeOf { get; set; } = null!;
     public FieldBuilder FrozenObjectsField { get; set; } = null!;
     public FieldBuilder SealedObjectsField { get; set; } = null!;
+    public FieldBuilder NonExtensibleObjectsField { get; set; } = null!;
+    public FieldBuilder PrototypeStoreField { get; set; } = null!;
 
     // Resource disposal for using declarations
     public MethodBuilder DisposeResource { get; set; } = null!;

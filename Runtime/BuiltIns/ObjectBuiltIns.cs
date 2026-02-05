@@ -23,6 +23,11 @@ public static class ObjectBuiltIns
             .Method("getOwnPropertyDescriptor", 2, GetOwnPropertyDescriptor)
             .Method("getOwnPropertyNames", 1, GetOwnPropertyNames)
             .Method("create", 1, 2, Create)
+            .Method("preventExtensions", 1, PreventExtensions)
+            .Method("isExtensible", 1, IsExtensibleMethod)
+            .Method("getOwnPropertySymbols", 1, GetOwnPropertySymbols)
+            .Method("getPrototypeOf", 1, GetPrototypeOf)
+            .Method("setPrototypeOf", 2, SetPrototypeOf)
             .Build();
 
     /// <summary>
@@ -861,6 +866,9 @@ public static class ObjectBuiltIns
         // Create a new empty object
         var result = new SharpTSObject([]);
 
+        // Store the prototype reference
+        result.Prototype = proto;
+
         // If proto is not null, copy its properties (simulating prototype inheritance)
         if (proto != null)
         {
@@ -947,6 +955,9 @@ public static class ObjectBuiltIns
     {
         // Create a new object - for compiled mode, use Dictionary<string, object?>
         var result = new Dictionary<string, object?>();
+
+        // Store the prototype reference
+        PropertyDescriptorStore.SetPrototype(result, proto);
 
         // If proto is not null, copy its properties (simulating prototype inheritance)
         if (proto != null)
@@ -1078,5 +1089,304 @@ public static class ObjectBuiltIns
         if (char.IsLower(pascalCase[0]))
             return pascalCase;
         return char.ToLowerInvariant(pascalCase[0]) + pascalCase[1..];
+    }
+
+    /// <summary>
+    /// Object.preventExtensions(obj) - prevents new properties from being added to an object.
+    /// Unlike freeze/seal, existing properties can still be modified and deleted.
+    /// </summary>
+    private static object? PreventExtensions(Interpreter _, List<object?> args)
+    {
+        switch (args[0])
+        {
+            case SharpTSObject obj:
+                obj.PreventExtensions();
+                return obj;
+            case SharpTSInstance inst:
+                inst.PreventExtensions();
+                return inst;
+            case SharpTSArray arr:
+                arr.PreventExtensions();
+                return arr;
+            case Dictionary<string, object?> dict:
+                PropertyDescriptorStore.PreventExtensions(dict);
+                return dict;
+            case System.Collections.IDictionary idict:
+                PropertyDescriptorStore.PreventExtensions(idict);
+                return idict;
+            default:
+                // Non-objects are returned unchanged (JavaScript behavior)
+                return args[0];
+        }
+    }
+
+    /// <summary>
+    /// Object.isExtensible(obj) - returns whether new properties can be added to an object.
+    /// </summary>
+    private static object? IsExtensibleMethod(Interpreter _, List<object?> args)
+    {
+        return args[0] switch
+        {
+            SharpTSObject obj => obj.IsExtensible,
+            SharpTSInstance inst => inst.IsExtensible,
+            SharpTSArray arr => arr.IsExtensible,
+            Dictionary<string, object?> dict => PropertyDescriptorStore.IsExtensible(dict),
+            System.Collections.IDictionary idict => PropertyDescriptorStore.IsExtensible(idict),
+            // Primitives are not extensible
+            _ => false
+        };
+    }
+
+    /// <summary>
+    /// Object.getOwnPropertySymbols(obj) - returns an array of symbol-keyed properties.
+    /// </summary>
+    private static object? GetOwnPropertySymbols(Interpreter _, List<object?> args)
+    {
+        if (args[0] == null)
+            throw new Exception("TypeError: Cannot convert null to object");
+
+        List<object?> symbols = args[0] switch
+        {
+            SharpTSObject obj => obj.GetSymbolPropertyNames().Select(s => (object?)s).ToList(),
+            SharpTSInstance inst => inst.GetSymbolPropertyNames().Select(s => (object?)s).ToList(),
+            Dictionary<string, object?> dict => PropertyDescriptorStore.GetSymbolKeys(dict)
+                                                  .Select(s => (object?)s).ToList(),
+            _ => []
+        };
+        return new SharpTSArray(symbols);
+    }
+
+    /// <summary>
+    /// Object.getPrototypeOf(obj) - returns the prototype of an object.
+    /// </summary>
+    private static object? GetPrototypeOf(Interpreter _, List<object?> args)
+    {
+        if (args[0] == null)
+            throw new Exception("TypeError: Cannot convert null to object");
+
+        return args[0] switch
+        {
+            SharpTSObject obj => obj.Prototype,
+            SharpTSInstance inst => inst.Prototype,
+            SharpTSArray => null, // Arrays have Array.prototype (simplified to null)
+            Dictionary<string, object?> dict => PropertyDescriptorStore.GetPrototype(dict),
+            _ => null // Primitives return null (simplified)
+        };
+    }
+
+    /// <summary>
+    /// Object.setPrototypeOf(obj, proto) - sets the prototype of an object.
+    /// </summary>
+    private static object? SetPrototypeOf(Interpreter _, List<object?> args)
+    {
+        var target = args[0];
+        var proto = args.Count > 1 ? args[1] : null;
+
+        if (target == null)
+            throw new Exception("TypeError: Cannot convert null to object");
+
+        switch (target)
+        {
+            case SharpTSObject obj:
+                if (!obj.IsExtensible)
+                    throw new Exception("TypeError: Object is not extensible");
+                obj.Prototype = proto;
+                // Copy properties from new prototype if non-null
+                if (proto != null)
+                    CopyPropertiesFrom(proto, obj);
+                return obj;
+
+            case SharpTSInstance:
+                // Cannot change prototype of class instances
+                throw new Exception("TypeError: Cannot set prototype of class instance");
+
+            case Dictionary<string, object?> dict:
+                if (!PropertyDescriptorStore.IsExtensible(dict))
+                    throw new Exception("TypeError: Object is not extensible");
+                PropertyDescriptorStore.SetPrototype(dict, proto);
+                if (proto != null)
+                    RuntimeCopyPropertiesFrom(proto, dict);
+                return dict;
+
+            default:
+                // Non-objects return unchanged (JavaScript behavior)
+                return target;
+        }
+    }
+
+    /// <summary>
+    /// Runtime helper for Object.preventExtensions called from compiled code.
+    /// </summary>
+    public static object? RuntimePreventExtensions(object? obj)
+    {
+        switch (obj)
+        {
+            case SharpTSObject tsObj:
+                tsObj.PreventExtensions();
+                return tsObj;
+            case SharpTSInstance inst:
+                inst.PreventExtensions();
+                return inst;
+            case SharpTSArray arr:
+                arr.PreventExtensions();
+                return arr;
+            case Dictionary<string, object?> dict:
+                PropertyDescriptorStore.PreventExtensions(dict);
+                return dict;
+            case List<object?> list:
+                // Compiled arrays are List<object?>
+                PropertyDescriptorStore.PreventExtensions(list);
+                return list;
+            case System.Collections.IDictionary idict:
+                PropertyDescriptorStore.PreventExtensions(idict);
+                return idict;
+            case System.Collections.IList ilist:
+                // Compiled arrays might also be IList
+                PropertyDescriptorStore.PreventExtensions(ilist);
+                return ilist;
+            default:
+                // For compiled class instances, use PropertyDescriptorStore
+                if (obj != null && IsCompiledClassInstance(obj))
+                {
+                    PropertyDescriptorStore.PreventExtensions(obj);
+                }
+                return obj;
+        }
+    }
+
+    /// <summary>
+    /// Runtime helper for Object.isExtensible called from compiled code.
+    /// </summary>
+    public static bool RuntimeIsExtensible(object? obj)
+    {
+        return obj switch
+        {
+            SharpTSObject tsObj => tsObj.IsExtensible,
+            SharpTSInstance inst => inst.IsExtensible,
+            SharpTSArray arr => arr.IsExtensible,
+            Dictionary<string, object?> dict => PropertyDescriptorStore.IsExtensible(dict),
+            List<object?> list => PropertyDescriptorStore.IsExtensible(list),
+            System.Collections.IDictionary idict => PropertyDescriptorStore.IsExtensible(idict),
+            System.Collections.IList ilist => PropertyDescriptorStore.IsExtensible(ilist),
+            null => false,
+            _ when IsPrimitive(obj) => false,
+            _ when IsCompiledClassInstance(obj) => PropertyDescriptorStore.IsExtensible(obj),
+            _ => false
+        };
+    }
+
+    /// <summary>
+    /// Checks if an object is a primitive value (not extensible).
+    /// </summary>
+    private static bool IsPrimitive(object? obj)
+    {
+        return obj is double or int or float or decimal or string or bool or char;
+    }
+
+    /// <summary>
+    /// Checks if an object is a compiled class instance (has _fields dictionary).
+    /// </summary>
+    private static bool IsCompiledClassInstance(object obj)
+    {
+        var type = obj.GetType();
+        // Compiled class instances typically have a _fields field
+        var fieldsField = type.GetField("_fields", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        return fieldsField != null;
+    }
+
+    /// <summary>
+    /// Runtime helper for Object.getOwnPropertySymbols called from compiled code.
+    /// Returns a List<object?> for compiled code compatibility (not SharpTSArray).
+    /// </summary>
+    public static object? RuntimeGetOwnPropertySymbols(object? obj)
+    {
+        if (obj == null)
+            throw new Exception("TypeError: Cannot convert null to object");
+
+        List<object?> symbols = obj switch
+        {
+            SharpTSObject tsObj => tsObj.GetSymbolPropertyNames().Select(s => (object?)s).ToList(),
+            SharpTSInstance inst => inst.GetSymbolPropertyNames().Select(s => (object?)s).ToList(),
+            // For compiled objects (Dictionary or other), check RuntimeTypes symbol storage first,
+            // then fall back to PropertyDescriptorStore for interpreted objects
+            Dictionary<string, object?> dict => GetCompiledSymbolKeys(dict),
+            _ => GetCompiledSymbolKeys(obj)
+        };
+        // Return List<object?> for compiled code (not SharpTSArray which is for interpreted mode)
+        return symbols;
+    }
+
+    /// <summary>
+    /// Gets symbol keys from an object, checking RuntimeTypes first (for compiled code)
+    /// then PropertyDescriptorStore (for interpreted objects).
+    /// </summary>
+    private static List<object?> GetCompiledSymbolKeys(object obj)
+    {
+        // Try RuntimeTypes._symbolStorage first (used by compiled code)
+        var compiledSymbols = SharpTS.Compilation.RuntimeTypes.GetSymbolKeys(obj).ToList();
+        if (compiledSymbols.Count > 0)
+        {
+            return compiledSymbols.Select(s => (object?)s).ToList();
+        }
+
+        // Fall back to PropertyDescriptorStore (used by interpreted code)
+        return PropertyDescriptorStore.GetSymbolKeys(obj).Select(s => (object?)s).ToList();
+    }
+
+    /// <summary>
+    /// Runtime helper for Object.getPrototypeOf called from compiled code.
+    /// </summary>
+    public static object? RuntimeGetPrototypeOf(object? obj)
+    {
+        if (obj == null)
+            throw new Exception("TypeError: Cannot convert null to object");
+
+        return obj switch
+        {
+            SharpTSObject tsObj => tsObj.Prototype,
+            SharpTSInstance inst => inst.Prototype,
+            SharpTSArray => null,
+            Dictionary<string, object?> dict => PropertyDescriptorStore.GetPrototype(dict),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Runtime helper for Object.setPrototypeOf called from compiled code.
+    /// </summary>
+    public static object? RuntimeSetPrototypeOf(object? target, object? proto)
+    {
+        if (target == null)
+            throw new Exception("TypeError: Cannot convert null to object");
+
+        switch (target)
+        {
+            case SharpTSObject obj:
+                if (!obj.IsExtensible)
+                    throw new Exception("TypeError: Object is not extensible");
+                obj.Prototype = proto;
+                if (proto != null)
+                    CopyPropertiesFrom(proto, obj);
+                return obj;
+
+            case SharpTSInstance:
+                throw new Exception("TypeError: Cannot set prototype of class instance");
+
+            case Dictionary<string, object?> dict:
+                if (!PropertyDescriptorStore.IsExtensible(dict))
+                    throw new Exception("TypeError: Object is not extensible");
+                PropertyDescriptorStore.SetPrototype(dict, proto);
+                if (proto != null)
+                    RuntimeCopyPropertiesFrom(proto, dict);
+                return dict;
+
+            default:
+                // Check for compiled class instances
+                if (target != null && IsCompiledClassInstance(target))
+                {
+                    throw new Exception("TypeError: Cannot set prototype of class instance");
+                }
+                return target;
+        }
     }
 }

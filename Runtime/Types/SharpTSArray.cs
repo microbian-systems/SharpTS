@@ -41,12 +41,18 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
     public bool IsSealed { get; private set; }
 
     /// <summary>
+    /// Whether this array is extensible (can have new elements/properties added).
+    /// </summary>
+    public bool IsExtensible { get; private set; } = true;
+
+    /// <summary>
     /// Freezes this array, preventing any element changes.
     /// </summary>
     public void Freeze()
     {
         IsFrozen = true;
         IsSealed = true; // Frozen implies sealed
+        IsExtensible = false; // Frozen implies non-extensible
     }
 
     /// <summary>
@@ -55,6 +61,15 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
     public void Seal()
     {
         IsSealed = true;
+        IsExtensible = false;
+    }
+
+    /// <summary>
+    /// Prevents adding new elements/properties to this array.
+    /// </summary>
+    public void PreventExtensions()
+    {
+        IsExtensible = false;
     }
 
     public object? Get(int index)

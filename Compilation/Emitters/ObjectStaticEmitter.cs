@@ -177,6 +177,38 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
                 }
                 il.Emit(OpCodes.Call, ctx.Runtime!.ObjectCreate);
                 return true;
+            case "preventExtensions":
+                // Object.preventExtensions(obj) - prevents adding new properties
+                il.Emit(OpCodes.Call, ctx.Runtime!.ObjectPreventExtensions);
+                return true;
+            case "isExtensible":
+                // Object.isExtensible(obj) - returns whether object can have new properties
+                il.Emit(OpCodes.Call, ctx.Runtime!.ObjectIsExtensible);
+                il.Emit(OpCodes.Box, typeof(bool));
+                return true;
+            case "getOwnPropertySymbols":
+                // Object.getOwnPropertySymbols(obj) - returns array of symbol-keyed properties
+                il.Emit(OpCodes.Call, ctx.Runtime!.GetOwnPropertySymbols);
+                return true;
+            case "getPrototypeOf":
+                // Object.getPrototypeOf(obj) - returns the prototype
+                il.Emit(OpCodes.Call, ctx.Runtime!.ObjectGetPrototypeOf);
+                return true;
+            case "setPrototypeOf":
+                // Object.setPrototypeOf(obj, proto) - sets the prototype
+                // First argument (obj) is already on the stack
+                // Emit second argument (proto)
+                if (arguments.Count > 1)
+                {
+                    emitter.EmitExpression(arguments[1]);
+                    emitter.EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ObjectSetPrototypeOf);
+                return true;
             default:
                 // Pop the argument we pushed and return false
                 il.Emit(OpCodes.Pop);

@@ -93,7 +93,7 @@ public class StrictModeTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("1\nnull\n", output); // Property addition silently ignored (null used for missing properties)
+        Assert.Equal("1\nundefined\n", output); // Property addition silently ignored (undefined for missing properties)
     }
 
     // Frozen array tests

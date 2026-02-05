@@ -165,6 +165,19 @@ public static partial class RuntimeTypes
         return _symbolStorage.GetOrCreateValue(obj);
     }
 
+    /// <summary>
+    /// Gets all symbol keys from an object's symbol storage.
+    /// Used by Object.getOwnPropertySymbols for compiled objects.
+    /// </summary>
+    public static IEnumerable<object> GetSymbolKeys(object obj)
+    {
+        if (_symbolStorage.TryGetValue(obj, out var symbolDict))
+        {
+            return symbolDict.Keys;
+        }
+        return [];
+    }
+
     public static void RegisterType(string name, Type type)
     {
         _compiledTypes[name] = type;

@@ -35,12 +35,23 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
     public bool IsSealed { get; private set; }
 
     /// <summary>
+    /// Whether this object is extensible (can have new properties added).
+    /// </summary>
+    public bool IsExtensible { get; private set; } = true;
+
+    /// <summary>
+    /// The prototype object (set via Object.create or Object.setPrototypeOf).
+    /// </summary>
+    public object? Prototype { get; set; }
+
+    /// <summary>
     /// Freezes this object, preventing any property changes.
     /// </summary>
     public void Freeze()
     {
         IsFrozen = true;
         IsSealed = true; // Frozen implies sealed
+        IsExtensible = false; // Frozen implies non-extensible
     }
 
     /// <summary>
@@ -49,6 +60,23 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
     public void Seal()
     {
         IsSealed = true;
+        IsExtensible = false;
+    }
+
+    /// <summary>
+    /// Prevents adding new properties to this object.
+    /// </summary>
+    public void PreventExtensions()
+    {
+        IsExtensible = false;
+    }
+
+    /// <summary>
+    /// Gets all symbol-keyed property names.
+    /// </summary>
+    public IEnumerable<SharpTSSymbol> GetSymbolPropertyNames()
+    {
+        return _symbolFields.Keys;
     }
 
     /// <summary>
@@ -66,7 +94,8 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
         {
             return value;
         }
-        return null;
+        // Non-existent properties return undefined, not null (JavaScript semantics)
+        return SharpTSUndefined.Instance;
     }
 
     /// <inheritdoc />
@@ -87,10 +116,10 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
         }
 
         bool exists = _fields.ContainsKey(name) || HasGetter(name);
-        if (IsSealed && !exists)
+        if (!IsExtensible && !exists)
         {
-            // Sealed objects silently ignore new property additions
-            SloppyModeWarnings.Warn("add to sealed", $"Property addition to sealed object '{name}' ignored");
+            // Non-extensible objects silently ignore new property additions
+            SloppyModeWarnings.Warn("add to non-extensible", $"Property addition to non-extensible object '{name}' ignored");
             return;
         }
 
@@ -136,13 +165,13 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
         }
 
         bool exists = _fields.ContainsKey(name) || HasGetter(name);
-        if (IsSealed && !exists)
+        if (!IsExtensible && !exists)
         {
             if (strictMode)
             {
-                throw StrictModeErrors.TypeError($"Cannot add property '{name}' to a sealed object");
+                throw StrictModeErrors.TypeError($"Cannot add property '{name}' to a non-extensible object");
             }
-            SloppyModeWarnings.Warn("add to sealed", $"Property addition to sealed object '{name}' ignored");
+            SloppyModeWarnings.Warn("add to non-extensible", $"Property addition to non-extensible object '{name}' ignored");
             return;
         }
 
@@ -269,7 +298,7 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
         }
 
         bool exists = _symbolFields.ContainsKey(symbol);
-        if (IsSealed && !exists)
+        if (!IsExtensible && !exists)
         {
             return;
         }
@@ -292,11 +321,11 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
         }
 
         bool exists = _symbolFields.ContainsKey(symbol);
-        if (IsSealed && !exists)
+        if (!IsExtensible && !exists)
         {
             if (strictMode)
             {
-                throw new Exception($"TypeError: Cannot add symbol property to a sealed object");
+                throw new Exception($"TypeError: Cannot add symbol property to a non-extensible object");
             }
             return;
         }
@@ -387,12 +416,12 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             }
         }
 
-        // Check sealed/frozen state
+        // Check sealed/frozen/extensible state
         if (IsFrozen)
         {
             return false;
         }
-        if (IsSealed && !hasExisting)
+        if (!IsExtensible && !hasExisting)
         {
             return false;
         }

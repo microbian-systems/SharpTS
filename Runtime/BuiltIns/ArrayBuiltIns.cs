@@ -50,8 +50,8 @@ public static class ArrayBuiltIns
 
     private static object? Push(Interpreter _, SharpTSArray arr, List<object?> args)
     {
-        // Frozen/sealed arrays cannot have elements added
-        if (arr.IsFrozen || arr.IsSealed)
+        // Frozen/sealed/non-extensible arrays cannot have elements added
+        if (arr.IsFrozen || arr.IsSealed || !arr.IsExtensible)
         {
             return (double)arr.Elements.Count;
         }
@@ -87,8 +87,8 @@ public static class ArrayBuiltIns
 
     private static object? Unshift(Interpreter _, SharpTSArray arr, List<object?> args)
     {
-        // Frozen/sealed arrays cannot have elements added
-        if (arr.IsFrozen || arr.IsSealed)
+        // Frozen/sealed/non-extensible arrays cannot have elements added
+        if (arr.IsFrozen || arr.IsSealed || !arr.IsExtensible)
         {
             return (double)arr.Elements.Count;
         }

@@ -334,12 +334,12 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | `Object.is()` | ✅ | Same-value comparison; handles NaN and +0/-0 edge cases |
 | `Object.getOwnPropertyDescriptor()` | ✅ | Full support in both interpreter and compiled mode |
 | `Object.defineProperty()` | ✅ | Full support including accessor properties (get/set) and descriptor flags in both modes |
-| `Object.getPrototypeOf()` | ❌ | |
-| `Object.setPrototypeOf()` | ❌ | |
+| `Object.getPrototypeOf()` | ✅ | Returns prototype of an object |
+| `Object.setPrototypeOf()` | ✅ | Sets prototype of an object |
 | `Object.getOwnPropertyNames()` | ✅ | Returns all own property names including non-enumerable |
-| `Object.getOwnPropertySymbols()` | ❌ | |
-| `Object.preventExtensions()` | ❌ | |
-| `Object.isExtensible()` | ❌ | |
+| `Object.getOwnPropertySymbols()` | ✅ | Returns array of symbol-keyed properties |
+| `Object.preventExtensions()` | ✅ | Prevents adding new properties to an object |
+| `Object.isExtensible()` | ✅ | Returns whether object allows new properties |
 
 ### Array Methods
 

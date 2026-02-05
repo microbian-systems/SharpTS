@@ -1953,7 +1953,7 @@ public partial class RuntimeEmitter
     /// Emits Object.create(proto, propertiesObject?) - creates a new object with prototype.
     /// Signature: object ObjectCreate(object proto, object propertiesObject)
     /// </summary>
-    private void EmitObjectCreate(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    private void EmitObjectCreate(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder prototypeStoreField)
     {
         var method = typeBuilder.DefineMethod(
             "ObjectCreate",
@@ -1972,6 +1972,179 @@ public partial class RuntimeEmitter
         // Call runtime helper
         var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
             "RuntimeCreate",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
+        );
+        il.Emit(OpCodes.Call, helperMethod!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.preventExtensions(obj) - prevents adding new properties.
+    /// Signature: object ObjectPreventExtensions(object obj)
+    /// </summary>
+    private void EmitObjectPreventExtensions(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder nonExtensibleObjectsField, FieldBuilder frozenObjectsField, FieldBuilder sealedObjectsField)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectPreventExtensions",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.ObjectPreventExtensions = method;
+
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Ldarg_0);
+        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
+            "RuntimePreventExtensions",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
+        );
+        il.Emit(OpCodes.Call, helperMethod!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.isExtensible(obj) - returns whether object can have new properties.
+    /// Signature: bool ObjectIsExtensible(object obj)
+    /// </summary>
+    private void EmitObjectIsExtensible(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder nonExtensibleObjectsField, FieldBuilder frozenObjectsField, FieldBuilder sealedObjectsField)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectIsExtensible",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object]
+        );
+        runtime.ObjectIsExtensible = method;
+
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Ldarg_0);
+        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
+            "RuntimeIsExtensible",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
+        );
+        il.Emit(OpCodes.Call, helperMethod!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.getOwnPropertySymbols(obj) - returns array of symbol-keyed properties.
+    /// Signature: object GetOwnPropertySymbols(object obj)
+    /// Uses the compiled assembly's GetSymbolDict to retrieve symbol keys.
+    /// </summary>
+    private void EmitGetOwnPropertySymbols(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetOwnPropertySymbols",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.GetOwnPropertySymbols = method;
+
+        var il = method.GetILGenerator();
+
+        // Create the result list
+        // var result = new List<object?>();
+        var resultLocal = il.DeclareLocal(_types.ListOfObjectNullable);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObjectNullable));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // Get symbol dictionary: var symbolDict = GetSymbolDict(obj);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        var symbolDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        il.Emit(OpCodes.Stloc, symbolDictLocal);
+
+        // Get keys and iterate: foreach (var key in symbolDict.Keys) result.Add(key);
+        // symbolDict.Keys
+        il.Emit(OpCodes.Ldloc, symbolDictLocal);
+        var keysProperty = _types.DictionaryObjectObject.GetProperty("Keys")!.GetGetMethod()!;
+        il.Emit(OpCodes.Callvirt, keysProperty);
+
+        // Get enumerator
+        var keysCollectionType = keysProperty.ReturnType;
+        var getEnumeratorMethod = keysCollectionType.GetMethod("GetEnumerator")!;
+        il.Emit(OpCodes.Callvirt, getEnumeratorMethod);
+        var enumeratorType = getEnumeratorMethod.ReturnType;
+        var enumeratorLocal = il.DeclareLocal(enumeratorType);
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        // Loop: while (enumerator.MoveNext())
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        var moveNextMethod = enumeratorType.GetMethod("MoveNext")!;
+        il.Emit(OpCodes.Call, moveNextMethod);
+        il.Emit(OpCodes.Brfalse, loopEnd);
+
+        // result.Add(enumerator.Current);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        var currentProperty = enumeratorType.GetProperty("Current")!.GetGetMethod()!;
+        il.Emit(OpCodes.Call, currentProperty);
+        var addMethod = _types.ListOfObjectNullable.GetMethod("Add", [_types.Object])!;
+        il.Emit(OpCodes.Callvirt, addMethod);
+
+        il.Emit(OpCodes.Br, loopStart);
+        il.MarkLabel(loopEnd);
+
+        // Return result
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.getPrototypeOf(obj) - returns the prototype of an object.
+    /// Signature: object ObjectGetPrototypeOf(object obj)
+    /// </summary>
+    private void EmitObjectGetPrototypeOf(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder prototypeStoreField)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectGetPrototypeOf",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.ObjectGetPrototypeOf = method;
+
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Ldarg_0);
+        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
+            "RuntimeGetPrototypeOf",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
+        );
+        il.Emit(OpCodes.Call, helperMethod!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.setPrototypeOf(obj, proto) - sets the prototype of an object.
+    /// Signature: object ObjectSetPrototypeOf(object obj, object proto)
+    /// </summary>
+    private void EmitObjectSetPrototypeOf(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder prototypeStoreField, FieldBuilder nonExtensibleObjectsField)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectSetPrototypeOf",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]
+        );
+        runtime.ObjectSetPrototypeOf = method;
+
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
+            "RuntimeSetPrototypeOf",
             System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
         );
         il.Emit(OpCodes.Call, helperMethod!);

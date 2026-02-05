@@ -51,12 +51,24 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public bool IsSealed { get; private set; }
 
     /// <summary>
+    /// Whether this instance is extensible (can have new properties added).
+    /// </summary>
+    public bool IsExtensible { get; private set; } = true;
+
+    /// <summary>
+    /// The prototype of this class instance.
+    /// For class instances, this is null as SharpTS doesn't implement a full prototype chain for classes.
+    /// </summary>
+    public object? Prototype => null;
+
+    /// <summary>
     /// Freezes this instance, preventing any property changes.
     /// </summary>
     public void Freeze()
     {
         IsFrozen = true;
         IsSealed = true; // Frozen implies sealed
+        IsExtensible = false; // Frozen implies non-extensible
     }
 
     /// <summary>
@@ -65,6 +77,23 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public void Seal()
     {
         IsSealed = true;
+        IsExtensible = false;
+    }
+
+    /// <summary>
+    /// Prevents adding new properties to this instance.
+    /// </summary>
+    public void PreventExtensions()
+    {
+        IsExtensible = false;
+    }
+
+    /// <summary>
+    /// Gets all symbol-keyed property names.
+    /// </summary>
+    public IEnumerable<SharpTSSymbol> GetSymbolPropertyNames()
+    {
+        return _symbolFields.Keys;
     }
 
     private enum ResolutionType
@@ -144,7 +173,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             ResolutionType.Getter => ((SharpTSFunction)resolution.Function!).Bind(this).Call(_interpreter!, []),
             ResolutionType.Field => _fields[propName],
             ResolutionType.Method => GetOrCreateBoundMethod(propName, resolution.Function!),
-            ResolutionType.NotFound => throw new Exception($"Undefined property '{propName}'."),
+            ResolutionType.NotFound => SharpTSUndefined.Instance, // JavaScript semantics: missing properties return undefined
             _ => throw new InvalidOperationException("Unknown resolution type")
         };
     }
@@ -175,11 +204,11 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             return;
         }
 
-        // Check sealed state for new property addition
+        // Check extensibility for new property addition
         bool exists = _fields.ContainsKey(propName);
-        if (IsSealed && !exists)
+        if (!IsExtensible && !exists)
         {
-            // Sealed objects silently ignore new property additions
+            // Non-extensible objects silently ignore new property additions
             return;
         }
 
@@ -234,11 +263,11 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         }
 
         bool exists = _fields.ContainsKey(propName);
-        if (IsSealed && !exists)
+        if (!IsExtensible && !exists)
         {
             if (strictMode)
             {
-                throw new Exception($"TypeError: Cannot add property '{propName}' to a sealed object");
+                throw new Exception($"TypeError: Cannot add property '{propName}' to a non-extensible object");
             }
             return;
         }
@@ -306,7 +335,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     /// <summary>
     /// Sets a field value directly without invoking setters.
     /// Used for bracket notation assignment and constructor initialization.
-    /// Respects frozen/sealed state and writable flags.
+    /// Respects frozen/extensible state and writable flags.
     /// </summary>
     public void SetRawField(string name, object? value)
     {
@@ -316,7 +345,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         }
 
         bool exists = _fields.ContainsKey(name);
-        if (IsSealed && !exists)
+        if (!IsExtensible && !exists)
         {
             return;
         }
@@ -332,7 +361,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
     /// <summary>
     /// Sets a field value directly with strict mode behavior.
-    /// In strict mode, throws TypeError for modifications to frozen objects, new properties on sealed objects,
+    /// In strict mode, throws TypeError for modifications to frozen objects, new properties on non-extensible objects,
     /// or assignments to non-writable properties.
     /// </summary>
     public void SetRawFieldStrict(string name, object? value, bool strictMode)
@@ -347,11 +376,11 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         }
 
         bool exists = _fields.ContainsKey(name);
-        if (IsSealed && !exists)
+        if (!IsExtensible && !exists)
         {
             if (strictMode)
             {
-                throw new Exception($"TypeError: Cannot add property '{name}' to a sealed object");
+                throw new Exception($"TypeError: Cannot add property '{name}' to a non-extensible object");
             }
             return;
         }
@@ -410,7 +439,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     }
 
     /// <summary>
-    /// Sets a value by symbol key. Respects frozen/sealed state.
+    /// Sets a value by symbol key. Respects frozen/extensible state.
     /// </summary>
     public void SetBySymbol(SharpTSSymbol symbol, object? value)
     {
@@ -420,7 +449,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         }
 
         bool exists = _symbolFields.ContainsKey(symbol);
-        if (IsSealed && !exists)
+        if (!IsExtensible && !exists)
         {
             return;
         }
@@ -443,11 +472,11 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         }
 
         bool exists = _symbolFields.ContainsKey(symbol);
-        if (IsSealed && !exists)
+        if (!IsExtensible && !exists)
         {
             if (strictMode)
             {
-                throw new Exception($"TypeError: Cannot add symbol property to a sealed object");
+                throw new Exception($"TypeError: Cannot add symbol property to a non-extensible object");
             }
             return;
         }
@@ -527,12 +556,12 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             }
         }
 
-        // Check sealed/frozen state
+        // Check sealed/frozen/extensible state
         if (IsFrozen)
         {
             return false;
         }
-        if (IsSealed && !hasExisting)
+        if (!IsExtensible && !hasExisting)
         {
             return false;
         }

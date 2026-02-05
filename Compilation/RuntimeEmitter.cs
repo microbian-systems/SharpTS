@@ -1947,6 +1947,22 @@ public partial class RuntimeEmitter
         );
         runtime.SealedObjectsField = sealedObjectsField;
 
+        // Static field for non-extensible objects tracking: ConditionalWeakTable<object, object>
+        var nonExtensibleObjectsField = typeBuilder.DefineField(
+            "_nonExtensibleObjects",
+            _types.ConditionalWeakTable,
+            FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly
+        );
+        runtime.NonExtensibleObjectsField = nonExtensibleObjectsField;
+
+        // Static field for prototype tracking: ConditionalWeakTable<object, object>
+        var prototypeStoreField = typeBuilder.DefineField(
+            "_prototypeStore",
+            _types.ConditionalWeakTable,
+            FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly
+        );
+        runtime.PrototypeStoreField = prototypeStoreField;
+
         // Static field for console group indentation level (needed early for ConsoleLog)
         var consoleGroupLevelField = typeBuilder.DefineField(
             "_consoleGroupLevel",
@@ -1978,6 +1994,14 @@ public partial class RuntimeEmitter
         // Initialize _sealedObjects = new ConditionalWeakTable<object, object>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ConditionalWeakTable));
         cctorIL.Emit(OpCodes.Stsfld, sealedObjectsField);
+
+        // Initialize _nonExtensibleObjects = new ConditionalWeakTable<object, object>()
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ConditionalWeakTable));
+        cctorIL.Emit(OpCodes.Stsfld, nonExtensibleObjectsField);
+
+        // Initialize _prototypeStore = new ConditionalWeakTable<object, object>()
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ConditionalWeakTable));
+        cctorIL.Emit(OpCodes.Stsfld, prototypeStoreField);
 
         // Initialize perf_hooks timing fields (must be called after fields are defined)
         // Note: Fields will be defined by EmitPerfHooksMethods, so we defer this initialization
@@ -2071,7 +2095,12 @@ public partial class RuntimeEmitter
         EmitObjectIsSealed(typeBuilder, runtime, sealedObjectsField);
         EmitObjectDefineProperty(typeBuilder, runtime);
         EmitObjectGetOwnPropertyDescriptor(typeBuilder, runtime);
-        EmitObjectCreate(typeBuilder, runtime);
+        EmitObjectCreate(typeBuilder, runtime, prototypeStoreField);
+        EmitObjectPreventExtensions(typeBuilder, runtime, nonExtensibleObjectsField, frozenObjectsField, sealedObjectsField);
+        EmitObjectIsExtensible(typeBuilder, runtime, nonExtensibleObjectsField, frozenObjectsField, sealedObjectsField);
+        EmitGetOwnPropertySymbols(typeBuilder, runtime);
+        EmitObjectGetPrototypeOf(typeBuilder, runtime, prototypeStoreField);
+        EmitObjectSetPrototypeOf(typeBuilder, runtime, prototypeStoreField, nonExtensibleObjectsField);
         EmitIsArray(typeBuilder, runtime);
         EmitSpreadArray(typeBuilder, runtime);
         EmitConcatArrays(typeBuilder, runtime);

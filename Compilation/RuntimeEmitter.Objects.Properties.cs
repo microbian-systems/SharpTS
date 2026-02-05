@@ -315,7 +315,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(nullLabel);
-        il.Emit(OpCodes.Ldnull);
+        // Return $Undefined.Instance for non-existent properties (JavaScript semantics)
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
     }
 
@@ -488,18 +489,29 @@ public partial class RuntimeEmitter
         // Found a non-null _fields dictionary
         // Check if sealed: _sealedObjects.TryGetValue(obj, out _)
         var doSetFieldLabel = il.DefineLabel();
+        var checkExtensibilityLabel = il.DefineLabel();
         var sealedCheckLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldsfld, runtime.SealedObjectsField);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloca, sealedCheckLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
-        il.Emit(OpCodes.Brfalse, doSetFieldLabel); // Not sealed, proceed to set
+        il.Emit(OpCodes.Brfalse, checkExtensibilityLabel); // Not sealed, check extensibility
 
         // Object is sealed - check if property exists in dictionary
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ldarg_1); // name
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
         il.Emit(OpCodes.Brfalse, endLabel); // Property doesn't exist on sealed object, silently return
+        il.Emit(OpCodes.Br, doSetFieldLabel); // Property exists, proceed to set
+
+        // Not sealed - check extensibility via PropertyDescriptorStore
+        il.MarkLabel(checkExtensibilityLabel);
+        // Call PropertyDescriptorStore.CanAddProperty(obj, name)
+        var canAddPropertyMethod = typeof(PropertyDescriptorStore).GetMethod("CanAddProperty", [typeof(object), typeof(string)])!;
+        il.Emit(OpCodes.Ldarg_0); // obj
+        il.Emit(OpCodes.Ldarg_1); // name
+        il.Emit(OpCodes.Call, canAddPropertyMethod);
+        il.Emit(OpCodes.Brfalse, endLabel); // Cannot add property, silently return
 
         // Set the value: dict[name] = value;
         il.MarkLabel(doSetFieldLabel);
@@ -963,7 +975,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
         var foundLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, foundLabel);
-        il.Emit(OpCodes.Ldnull);
+        // Return $Undefined.Instance for non-existent properties (JavaScript semantics)
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(foundLabel);
 
@@ -1298,7 +1311,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
-        il.Emit(OpCodes.Brfalse, doSetLabel); // Not sealed, proceed to set
+        var extensibleCheckLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, extensibleCheckLabel); // Not sealed, check extensibility
 
         // Object is sealed - check if property exists
         il.Emit(OpCodes.Ldarg_0);
@@ -1306,6 +1320,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
         il.Emit(OpCodes.Brfalse, nullLabel); // Property doesn't exist, silently return
+        il.Emit(OpCodes.Br, doSetLabel); // Property exists on sealed object, proceed to set
+
+        // Check extensibility via PropertyDescriptorStore.CanAddProperty
+        il.MarkLabel(extensibleCheckLabel);
+        var canAddPropertyMethod = typeof(PropertyDescriptorStore).GetMethod("CanAddProperty", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        if (canAddPropertyMethod == null) throw new InvalidOperationException("CanAddProperty method not found!");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, canAddPropertyMethod);
+        il.Emit(OpCodes.Brfalse, nullLabel); // Cannot add property (non-extensible), silently return
+        // Fall through to doSetLabel if CanAddProperty returned true
 
         // Actually set the property
         il.MarkLabel(doSetLabel);
@@ -1433,7 +1458,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
-        il.Emit(OpCodes.Brfalse, doSetLabel); // Not sealed, proceed to set
+        var extensibleCheckLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, extensibleCheckLabel); // Not sealed, check extensibility
 
         // Object is sealed - check if property exists
         il.Emit(OpCodes.Ldarg_0);
@@ -1450,6 +1476,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "TypeError: Cannot add property '");
         il.Emit(OpCodes.Ldarg_1); // name
         il.Emit(OpCodes.Ldstr, "' to a sealed object");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        // Check extensibility via PropertyDescriptorStore.CanAddProperty
+        il.MarkLabel(extensibleCheckLabel);
+        var canAddPropertyMethod = typeof(PropertyDescriptorStore).GetMethod("CanAddProperty", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, canAddPropertyMethod!);
+        il.Emit(OpCodes.Brtrue, doSetLabel); // Can add property, proceed to set
+
+        // Cannot add property (non-extensible) - check strict mode
+        il.Emit(OpCodes.Ldarg_3); // strictMode
+        il.Emit(OpCodes.Brfalse, nullLabel); // Not strict, silently return
+
+        // Strict mode and non-extensible with new property - throw TypeError
+        il.Emit(OpCodes.Ldstr, "TypeError: Cannot add property '");
+        il.Emit(OpCodes.Ldarg_1); // name
+        il.Emit(OpCodes.Ldstr, "' to a non-extensible object");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
         il.Emit(OpCodes.Throw);
