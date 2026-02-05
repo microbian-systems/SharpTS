@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-04 (Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
+**Last Updated:** 2026-02-04 (Fixed string concat optimizer bug; documented parser/type checker limitations for destructuring and iterator spread; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
 
 ## Legend
 - ✅ Implemented
@@ -209,7 +209,7 @@ This document tracks TypeScript language features and their implementation statu
 | `console.log` | ✅ | Multiple arguments, printf-style format specifiers (%s, %d, %i, %f, %o, %O, %j, %%) |
 | `Math` object | ✅ | PI, E, abs, floor, ceil, round, sqrt, sin, cos, tan, log, exp, sign, trunc, pow, min, max, random |
 | String methods | ✅ | length, charAt, substring, indexOf, toUpperCase, toLowerCase, trim, replace, split, includes, startsWith, endsWith, slice, repeat, padStart, padEnd, charCodeAt, concat, lastIndexOf, trimStart, trimEnd, replaceAll, at |
-| Array methods | ✅ | push, pop, shift, unshift, reverse, slice, concat, map, filter, forEach, find, findIndex, findLast, findLastIndex, some, every, reduce, includes, indexOf, join, sort, toSorted, toReversed, with, flat, flatMap, splice, toSpliced, at |
+| Array methods | ✅ | push, pop, shift, unshift, reverse, slice, concat, map, filter, forEach, find, findIndex, findLast, findLastIndex, some, every, reduce, reduceRight, includes, indexOf, join, sort, toSorted, toReversed, with, flat, flatMap, splice, toSpliced, at, fill, entries, keys, values |
 | `JSON.parse`/`stringify` | ✅ | With reviver, replacer, indentation, class instances, toJSON(), BigInt TypeError |
 | `Object.keys`/`values`/`entries`/`fromEntries`/`hasOwn` | ✅ | Full support for object literals and class instances |
 | `Array.isArray` | ✅ | Type guard for array detection |
@@ -348,10 +348,10 @@ This section documents JavaScript/TypeScript features that are **not currently i
 |---------|--------|-------|
 | `fill()` | ✅ | |
 | `reduceRight()` | ✅ | Iterates right-to-left |
+| `entries()` | ✅ | Returns iterator of [index, value] pairs |
+| `keys()` | ✅ | Returns iterator of indices |
+| `values()` | ✅ | Returns iterator of values |
 | `copyWithin()` | ❌ | |
-| `entries()` | ❌ | Use `forEach` or `for...of` |
-| `keys()` | ❌ | Use index-based iteration |
-| `values()` | ❌ | Use `for...of` directly |
 
 ### String Methods & Static
 
@@ -383,12 +383,18 @@ This section documents JavaScript/TypeScript features that are **not currently i
 
 - **Inner function declarations** (`function inner() {}` inside another function) are not supported. The compiler skips inner function definitions, causing crashes when they are called. **Workaround:** Use arrow functions instead (`const inner = () => { ... }`), which are fully supported with proper closure capture.
 
+### Parser Limitations
+
+- **Destructuring in for...of declarations** - `for (const [i, val] of arr.entries())` is not supported. The parser doesn't recognize destructuring patterns in for...of variable declarations. **Workaround:** Use manual destructuring: `for (let entry of arr.entries()) { let i = entry[0]; let val = entry[1]; }`
+
 ### Type Checker Limitations
 
 - Type alias declarations are lazily validated - errors in type alias definitions (e.g., `type R = ReturnType<string, number>;` with wrong arg count) are only caught when the alias is used, not at declaration time. TypeScript catches these at declaration.
+- **Spreading iterators** - `[...arr.entries()]` fails with "Spread expression must be an array or tuple". The type checker doesn't allow spreading iterator objects. **Workaround:** Use `Array.from(arr.entries())` instead.
 
 ### Recently Fixed Bugs (2026-02-04)
 - ~~Method chaining on `new` expressions~~ - Fixed: Parser now correctly allows method chaining directly after `new` expressions (e.g., `new Date().toISOString()`)
+- ~~String concatenation optimizer incorrect stringification~~ - Fixed: IL compiler's string concat optimizer now calls `Stringify()` instead of relying on .NET's `ToString()`, ensuring JavaScript-style output (`null` → "null", `true` → "true" not "True")
 
 ### Recently Fixed Bugs (2026-01-21)
 - ~~Object literal accessor `this` type inference~~ - Fixed: `this` in getter/setter bodies now correctly infers the object's type instead of defaulting to `any`; uses two-pass type checking with literal type widening

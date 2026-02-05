@@ -1342,10 +1342,10 @@ public partial class ILEmitter
     /// </summary>
     private void EmitStringConcatWithOverload(List<Expr> parts)
     {
-        // Get the appropriate String.Concat overload
+        // Get the appropriate String.Concat overload (using string params, not object)
         var paramTypes = new Type[parts.Count];
         for (int i = 0; i < parts.Count; i++)
-            paramTypes[i] = _ctx.Types.Object;
+            paramTypes[i] = _ctx.Types.String;
 
         var concatMethod = _ctx.Types.String.GetMethod("Concat", paramTypes);
 
@@ -1356,37 +1356,57 @@ public partial class ILEmitter
             return;
         }
 
-        // Emit each part as boxed object
+        // Emit each part and call Stringify for JS-compatible string conversion
         foreach (var part in parts)
         {
-            EmitExpression(part);
-            EmitBoxIfNeeded(part);
+            // String literals can be emitted directly
+            if (part is Expr.Literal { Value: string s })
+            {
+                IL.Emit(OpCodes.Ldstr, s);
+            }
+            else
+            {
+                EmitExpression(part);
+                EmitBoxIfNeeded(part);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.Stringify);
+            }
         }
 
         IL.Emit(OpCodes.Call, concatMethod);
     }
 
     /// <summary>
-    /// Emits String.Concat using the params object[] overload for 5+ arguments.
+    /// Emits String.Concat using the params string[] overload for 5+ arguments.
     /// </summary>
     private void EmitStringConcatWithArray(List<Expr> parts)
     {
-        // Create array: new object[parts.Count]
+        // Create array: new string[parts.Count]
         IL.Emit(OpCodes.Ldc_I4, parts.Count);
-        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+        IL.Emit(OpCodes.Newarr, _ctx.Types.String);
 
-        // Fill array with parts
+        // Fill array with parts (Stringify each for JS-compatible conversion)
         for (int i = 0; i < parts.Count; i++)
         {
             IL.Emit(OpCodes.Dup);           // Duplicate array reference
             IL.Emit(OpCodes.Ldc_I4, i);     // Index
-            EmitExpression(parts[i]);       // Value
-            EmitBoxIfNeeded(parts[i]);
+
+            // String literals can be emitted directly
+            if (parts[i] is Expr.Literal { Value: string s })
+            {
+                IL.Emit(OpCodes.Ldstr, s);
+            }
+            else
+            {
+                EmitExpression(parts[i]);       // Value
+                EmitBoxIfNeeded(parts[i]);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.Stringify);
+            }
+
             IL.Emit(OpCodes.Stelem_Ref);    // Store in array
         }
 
-        // Call String.Concat(object[])
-        var concatMethod = _ctx.Types.String.GetMethod("Concat", [_ctx.Types.ObjectArray]);
+        // Call String.Concat(string[])
+        var concatMethod = _ctx.Types.String.GetMethod("Concat", [_ctx.Types.StringArray]);
         IL.Emit(OpCodes.Call, concatMethod!);
     }
 }

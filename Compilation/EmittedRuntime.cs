@@ -148,6 +148,9 @@ public class EmittedRuntime
     public MethodBuilder ArrayWith { get; set; } = null!;
     public MethodBuilder ArrayAt { get; set; } = null!;
     public MethodBuilder ArrayFill { get; set; } = null!;
+    public MethodBuilder ArrayEntries { get; set; } = null!;
+    public MethodBuilder ArrayKeys { get; set; } = null!;
+    public MethodBuilder ArrayValues { get; set; } = null!;
 
     // String methods
     public MethodBuilder StringCharAt { get; set; } = null!;

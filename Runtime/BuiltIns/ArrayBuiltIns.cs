@@ -39,6 +39,9 @@ public static class ArrayBuiltIns
             .Method("with", 2, With)
             .Method("at", 1, At)
             .Method("fill", 1, 3, Fill)
+            .Method("entries", 0, Entries)
+            .Method("keys", 0, Keys)
+            .Method("values", 0, Values)
             .Build();
 
     public static object? GetMember(SharpTSArray receiver, string name)
@@ -876,4 +879,47 @@ public static class ArrayBuiltIns
         if (obj is bool b) return b ? "true" : "false";
         return obj.ToString() ?? "null";
     }
+
+    #region Iterator Methods
+
+    private static object? Entries(Interpreter _, SharpTSArray arr, List<object?> args)
+    {
+        return new SharpTSIterator(EnumerateEntries(arr));
+    }
+
+    private static object? Keys(Interpreter _, SharpTSArray arr, List<object?> args)
+    {
+        return new SharpTSIterator(EnumerateKeys(arr));
+    }
+
+    private static object? Values(Interpreter _, SharpTSArray arr, List<object?> args)
+    {
+        return new SharpTSIterator(EnumerateValues(arr));
+    }
+
+    private static IEnumerable<object?> EnumerateEntries(SharpTSArray arr)
+    {
+        for (int i = 0; i < arr.Elements.Count; i++)
+        {
+            yield return new SharpTSArray([(double)i, arr.Elements[i]]);
+        }
+    }
+
+    private static IEnumerable<object?> EnumerateKeys(SharpTSArray arr)
+    {
+        for (int i = 0; i < arr.Elements.Count; i++)
+        {
+            yield return (double)i;
+        }
+    }
+
+    private static IEnumerable<object?> EnumerateValues(SharpTSArray arr)
+    {
+        foreach (var element in arr.Elements)
+        {
+            yield return element;
+        }
+    }
+
+    #endregion
 }
