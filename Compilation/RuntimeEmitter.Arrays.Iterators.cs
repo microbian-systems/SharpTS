@@ -836,5 +836,133 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, accLocal);
         il.Emit(OpCodes.Ret);
     }
+
+    private void EmitArrayReduceRight(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ArrayReduceRight",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.ListOfObject, _types.ObjectArray]
+        );
+        runtime.ArrayReduceRight = method;
+
+        var il = method.GetILGenerator();
+
+        // args[0] = callback, args[1] = initial value (optional)
+        var accLocal = il.DeclareLocal(_types.Object);
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        var callbackLocal = il.DeclareLocal(_types.Object);
+
+        // callback = args[0]
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+
+        // Check if initial value provided (args.Length > 1)
+        var hasInitial = il.DefineLabel();
+        var noInitial = il.DefineLabel();
+        var startLoop = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Bgt, hasInitial);
+
+        // No initial value: acc = list[last], start from index (last - 1)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        var notEmpty = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, notEmpty);
+        // Empty array with no initial - return null
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notEmpty);
+        // acc = list[list.Count - 1]
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, accLocal);
+        // startIndex = list.Count - 2
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, startLoop);
+
+        il.MarkLabel(hasInitial);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, accLocal);
+        // startIndex = list.Count - 1
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        il.MarkLabel(startLoop);
+        var loopEnd = il.DefineLabel();
+
+        // Loop: for (int i = startIndex; i >= 0; i--)
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, loopEnd);
+
+        // Create args: [acc, list[i], i, list]
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Newarr, _types.Object);
+
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, accLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        il.Emit(OpCodes.Stloc, accLocal);
+
+        // i--
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, startLoop);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, accLocal);
+        il.Emit(OpCodes.Ret);
+    }
 }
 

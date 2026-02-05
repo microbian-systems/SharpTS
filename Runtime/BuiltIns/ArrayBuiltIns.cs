@@ -21,6 +21,7 @@ public static class ArrayBuiltIns
             .Method("some", 1, Some)
             .Method("every", 1, Every)
             .Method("reduce", 1, 2, Reduce)
+            .Method("reduceRight", 1, 2, ReduceRight)
             .Method("includes", 1, Includes)
             .Method("indexOf", 1, IndexOf)
             .Method("join", 0, 1, Join)
@@ -335,6 +336,50 @@ public static class ArrayBuiltIns
             callbackArgs.Add(null);
             callbackArgs.Add(arr);
             for (int i = startIndex; i < arr.Elements.Count; i++)
+            {
+                callbackArgs[0] = accumulator;
+                callbackArgs[1] = arr.Elements[i];
+                callbackArgs[2] = (double)i;
+                accumulator = callback.Call(interp, callbackArgs);
+            }
+            return accumulator;
+        }
+        finally
+        {
+            ArgumentListPool.Return(callbackArgs);
+        }
+    }
+
+    private static object? ReduceRight(Interpreter interp, SharpTSArray arr, List<object?> args)
+    {
+        var callback = args[0] as ISharpTSCallable
+            ?? throw new Exception("Runtime Error: reduceRight requires a function argument.");
+
+        int startIndex = arr.Elements.Count - 1;
+        object? accumulator;
+
+        if (args.Count > 1)
+        {
+            accumulator = args[1];
+        }
+        else
+        {
+            if (arr.Elements.Count == 0)
+            {
+                throw new Exception("Runtime Error: reduceRight of empty array with no initial value.");
+            }
+            accumulator = arr.Elements[arr.Elements.Count - 1];
+            startIndex = arr.Elements.Count - 2;
+        }
+
+        var callbackArgs = ArgumentListPool.Rent();
+        try
+        {
+            callbackArgs.Add(null);
+            callbackArgs.Add(null);
+            callbackArgs.Add(null);
+            callbackArgs.Add(arr);
+            for (int i = startIndex; i >= 0; i--)
             {
                 callbackArgs[0] = accumulator;
                 callbackArgs[1] = arr.Elements[i];

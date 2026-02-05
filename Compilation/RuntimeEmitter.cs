@@ -2088,6 +2088,7 @@ public partial class RuntimeEmitter
         EmitArraySome(typeBuilder, runtime);
         EmitArrayEvery(typeBuilder, runtime);
         EmitArrayReduce(typeBuilder, runtime);
+        EmitArrayReduceRight(typeBuilder, runtime);
         EmitArrayIncludes(typeBuilder, runtime);
         EmitArrayIndexOf(typeBuilder, runtime);
         EmitArrayJoin(typeBuilder, runtime);

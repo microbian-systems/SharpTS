@@ -94,6 +94,11 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduce);
                 return true;
 
+            case "reduceRight":
+                EmitArgsArray(emitter, arguments);
+                il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduceRight);
+                return true;
+
             case "join":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayJoin);

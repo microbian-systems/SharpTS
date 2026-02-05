@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-04 (Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
+**Last Updated:** 2026-02-04 (Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
 
 ## Legend
 - ✅ Implemented
@@ -347,11 +347,11 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | Feature | Status | Notes |
 |---------|--------|-------|
 | `fill()` | ✅ | |
+| `reduceRight()` | ✅ | Iterates right-to-left |
 | `copyWithin()` | ❌ | |
 | `entries()` | ❌ | Use `forEach` or `for...of` |
 | `keys()` | ❌ | Use index-based iteration |
 | `values()` | ❌ | Use `for...of` directly |
-| `reduceRight()` | ❌ | Use `reverse()` + `reduce()` |
 
 ### String Methods & Static
 

@@ -159,6 +159,98 @@ public class ArrayMethodTests
 
     #endregion
 
+    #region ReduceRight Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_ReduceRight_WithInitialValue_ReturnsResult(ExecutionMode mode)
+    {
+        var source = """
+            let nums: number[] = [1, 2, 3, 4];
+            let sum: number = nums.reduceRight((acc: number, n: number): number => acc + n, 0);
+            console.log(sum);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_ReduceRight_WithoutInitialValue_UsesLastElement(ExecutionMode mode)
+    {
+        var source = """
+            let nums: number[] = [1, 2, 3, 4];
+            let sum: number = nums.reduceRight((acc: number, n: number): number => acc + n);
+            console.log(sum);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_ReduceRight_IteratesRightToLeft(ExecutionMode mode)
+    {
+        var source = """
+            let strs: string[] = ["a", "b", "c", "d"];
+            let result: string = strs.reduceRight((acc: string, s: string): string => acc + s, "");
+            console.log(result);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("dcba\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_ReduceRight_WithIndex_PassesCorrectIndices(ExecutionMode mode)
+    {
+        var source = """
+            let nums: number[] = [10, 20, 30];
+            let indices: number[] = [];
+            nums.reduceRight((acc: number, n: number, i: number): number => {
+                indices.push(i);
+                return acc + n;
+            }, 0);
+            console.log(indices.join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2,1,0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_ReduceRight_SingleElement_WithInitial(ExecutionMode mode)
+    {
+        var source = """
+            let nums: number[] = [5];
+            let result: number = nums.reduceRight((acc: number, n: number): number => acc + n, 10);
+            console.log(result);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("15\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_ReduceRight_SingleElement_WithoutInitial(ExecutionMode mode)
+    {
+        var source = """
+            let nums: number[] = [42];
+            let result: number = nums.reduceRight((acc: number, n: number): number => acc + n);
+            console.log(result);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    #endregion
+
     #region Includes/IndexOf Tests
 
     [Theory]

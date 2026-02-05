@@ -128,6 +128,7 @@ public class EmittedRuntime
     public MethodBuilder ArraySome { get; set; } = null!;
     public MethodBuilder ArrayEvery { get; set; } = null!;
     public MethodBuilder ArrayReduce { get; set; } = null!;
+    public MethodBuilder ArrayReduceRight { get; set; } = null!;
     public MethodBuilder ArrayIncludes { get; set; } = null!;
     public MethodBuilder ArrayIndexOf { get; set; } = null!;
     public MethodBuilder ArrayJoin { get; set; } = null!;

@@ -105,7 +105,10 @@ public static class BuiltInTypes
                 [new TypeInfo.Function([elementType], BooleanType)],
                 BooleanType),
             "reduce" => new TypeInfo.Function(
-                [new TypeInfo.Function([AnyType, elementType], AnyType), AnyType],
+                [new TypeInfo.Function([AnyType, elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 2), AnyType],
+                AnyType, RequiredParams: 1), // initialValue is optional
+            "reduceRight" => new TypeInfo.Function(
+                [new TypeInfo.Function([AnyType, elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 2), AnyType],
                 AnyType, RequiredParams: 1), // initialValue is optional
             "includes" => new TypeInfo.Function([elementType], BooleanType),
             "indexOf" => new TypeInfo.Function([elementType], NumberType),
