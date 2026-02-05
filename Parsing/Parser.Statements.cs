@@ -76,6 +76,12 @@ public partial class Parser
         // Check for for...of pattern: for (let/const varName of iterable)
         if (Match(TokenType.LET, TokenType.CONST))
         {
+            // Check for destructuring patterns: for (const [a, b] of ...) or for (const {x, y} of ...)
+            if (Check(TokenType.LEFT_BRACKET) || Check(TokenType.LEFT_BRACE))
+            {
+                return ParseDestructuringForOf(isAsync);
+            }
+
             Token varName = Consume(TokenType.IDENTIFIER, "Expect variable name.");
 
             // Check for optional type annotation
@@ -157,6 +163,69 @@ public partial class Parser
         // Return native For statement instead of desugaring to while
         // This ensures continue statements properly execute the increment
         return new Stmt.For(initializer, condition, increment, body);
+    }
+
+    /// <summary>
+    /// Parses a for...of loop with destructuring pattern in the variable position.
+    /// Desugars: for (const [a, b] of iterable) { body }
+    /// Into: for (const _dest0 of iterable) { const [a, b] = _dest0; body }
+    /// </summary>
+    private Stmt ParseDestructuringForOf(bool isAsync)
+    {
+        int line = Previous().Line;
+
+        // Parse the destructuring pattern
+        DestructurePattern pattern;
+        if (Match(TokenType.LEFT_BRACKET))
+        {
+            pattern = ParseArrayPattern();
+        }
+        else
+        {
+            Consume(TokenType.LEFT_BRACE, "Expect '[' or '{' for destructuring pattern.");
+            pattern = ParseObjectPattern();
+        }
+
+        // Must be followed by 'of' for destructuring for...of
+        if (!Match(TokenType.OF))
+        {
+            if (isAsync)
+            {
+                throw new Exception("'for await' can only be used with 'for...of' loops.");
+            }
+            throw new Exception("Destructuring in for loop requires 'of' keyword. Use 'for (const [a, b] of iterable)'.");
+        }
+
+        Expr iterable = Expression();
+        Consume(TokenType.RIGHT_PAREN, "Expect ')' after for...of expression.");
+        Stmt originalBody = Statement();
+
+        // Generate temp variable for iteration
+        Token tempVar = GenerateTempVar(line);
+
+        // Desugar the pattern with temp var as the initializer
+        Expr tempVarExpr = new Expr.Variable(tempVar);
+        Stmt destructuringStmt = pattern switch
+        {
+            ArrayPattern arrayPattern => DesugarArrayPattern(arrayPattern, tempVarExpr),
+            ObjectPattern objectPattern => DesugarObjectPattern(objectPattern, tempVarExpr),
+            _ => throw new Exception("Unexpected pattern type in for...of destructuring.")
+        };
+
+        // Combine destructuring statement with original body
+        List<Stmt> bodyStatements = [destructuringStmt];
+        if (originalBody is Stmt.Block block)
+        {
+            bodyStatements.AddRange(block.Statements);
+        }
+        else
+        {
+            bodyStatements.Add(originalBody);
+        }
+
+        Stmt newBody = new Stmt.Block(bodyStatements);
+
+        return new Stmt.ForOf(tempVar, null, iterable, newBody, isAsync);
     }
 
     private Stmt WhileStatement()

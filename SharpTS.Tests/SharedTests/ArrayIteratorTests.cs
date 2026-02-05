@@ -451,4 +451,325 @@ public class ArrayIteratorTests
     }
 
     #endregion
+
+    #region Destructuring in for...of Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ArrayDestructuring_EntriesPattern(ExecutionMode mode)
+    {
+        var source = """
+            let arr = ["a", "b", "c"];
+            let results: string[] = [];
+            for (const [i, val] of arr.entries()) {
+                results.push(i + ":" + val);
+            }
+            console.log(results.join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0:a,1:b,2:c\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ArrayDestructuring_MapEntries(ExecutionMode mode)
+    {
+        var source = """
+            let map = new Map<string, number>();
+            map.set("x", 10);
+            map.set("y", 20);
+            let results: string[] = [];
+            for (const [key, value] of map) {
+                results.push(key + "=" + value);
+            }
+            console.log(results.join(";"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("x=10;y=20\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ObjectDestructuring(ExecutionMode mode)
+    {
+        var source = """
+            let items = [
+                { name: "Alice", age: 30 },
+                { name: "Bob", age: 25 }
+            ];
+            let results: string[] = [];
+            for (const { name, age } of items) {
+                results.push(name + " is " + age);
+            }
+            console.log(results.join("; "));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Alice is 30; Bob is 25\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ArrayDestructuring_WithRest(ExecutionMode mode)
+    {
+        var source = """
+            let arr = [[1, 2, 3, 4], [5, 6, 7, 8]];
+            let results: string[] = [];
+            for (const [first, ...rest] of arr) {
+                results.push(first + ":" + rest.length);
+            }
+            console.log(results.join("; "));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1:3; 5:3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ArrayDestructuring_WithBreak(ExecutionMode mode)
+    {
+        var source = """
+            let arr = ["a", "b", "c", "d"];
+            let results: string[] = [];
+            for (const [i, val] of arr.entries()) {
+                if (i >= 2) break;
+                results.push(i + ":" + val);
+            }
+            console.log(results.join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0:a,1:b\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ArrayDestructuring_WithContinue(ExecutionMode mode)
+    {
+        var source = """
+            let arr = ["a", "b", "c", "d"];
+            let results: string[] = [];
+            for (const [i, val] of arr.entries()) {
+                if (i === 1 || i === 3) continue;
+                results.push(i + ":" + val);
+            }
+            console.log(results.join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0:a,2:c\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ObjectDestructuring_WithRename(ExecutionMode mode)
+    {
+        var source = """
+            let items = [{ x: 1, y: 2 }, { x: 3, y: 4 }];
+            let results: string[] = [];
+            for (const { x: a, y: b } of items) {
+                results.push(a + "," + b);
+            }
+            console.log(results.join("; "));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1,2; 3,4\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ArrayDestructuring_WithHole(ExecutionMode mode)
+    {
+        var source = """
+            let arr = [[1, 2, 3], [4, 5, 6]];
+            let results: string[] = [];
+            for (const [a, , c] of arr) {
+                results.push(a + "," + c);
+            }
+            console.log(results.join("; "));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1,3; 4,6\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOf_ArrayDestructuring_WithLet(ExecutionMode mode)
+    {
+        var source = """
+            let arr = [["a", 1], ["b", 2]];
+            let results: string[] = [];
+            for (let [key, val] of arr) {
+                results.push(key + "=" + val);
+            }
+            console.log(results.join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("a=1,b=2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_ArrayDestructuring(ExecutionMode mode)
+    {
+        var source = """
+            async function* asyncGen() {
+                yield [0, "first"];
+                yield [1, "second"];
+                yield [2, "third"];
+            }
+
+            async function main() {
+                let results: string[] = [];
+                for await (const [idx, val] of asyncGen()) {
+                    results.push(idx + "=" + val);
+                }
+                console.log(results.join(", "));
+            }
+
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0=first, 1=second, 2=third\n", output);
+    }
+
+    #endregion
+
+    #region Spread Iterator Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_ArrayEntries_CreatesArray(ExecutionMode mode)
+    {
+        var source = """
+            let arr = ["a", "b", "c"];
+            let entries = [...arr.entries()];
+            console.log(entries.length);
+            console.log(entries[0][0] + ":" + entries[0][1]);
+            console.log(entries[1][0] + ":" + entries[1][1]);
+            console.log(entries[2][0] + ":" + entries[2][1]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("3\n0:a\n1:b\n2:c\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_ArrayKeys_CreatesArray(ExecutionMode mode)
+    {
+        var source = """
+            let arr = [10, 20, 30];
+            let keys = [...arr.keys()];
+            console.log(keys.join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0,1,2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_ArrayValues_CreatesArray(ExecutionMode mode)
+    {
+        var source = """
+            let arr = [10, 20, 30];
+            let values = [...arr.values()];
+            console.log(values.join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10,20,30\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_Set_CreatesArray(ExecutionMode mode)
+    {
+        var source = """
+            let mySet = new Set([1, 2, 3]);
+            let arr = [...mySet];
+            console.log(arr.join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1,2,3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_Map_CreatesArrayOfTuples(ExecutionMode mode)
+    {
+        // Note: Compiled mode has a pre-existing bug with nested array access from Map iteration.
+        // This test verifies the spread itself works (correct length and stringification).
+        var source = """
+            let myMap = new Map();
+            myMap.set("x", 10);
+            myMap.set("y", 20);
+            let arr = [...myMap];
+            console.log(arr.length);
+            console.log(arr.join("; "));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2\n[x, 10]; [y, 20]\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_String_CreatesCharArray(ExecutionMode mode)
+    {
+        var source = """
+            let chars = [..."hello"];
+            console.log(chars.join("-"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("h-e-l-l-o\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_Generator_CreatesArray(ExecutionMode mode)
+    {
+        var source = """
+            function* gen() {
+                yield 1;
+                yield 2;
+                yield 3;
+            }
+            let arr = [...gen()];
+            console.log(arr.join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1,2,3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_Iterator_WithOtherElements(ExecutionMode mode)
+    {
+        // Use any[] type to handle mixed number and tuple elements
+        var source = """
+            let arr = [10, 20];
+            let combined: any[] = [0, ...arr.entries(), 99];
+            console.log(combined.length);
+            console.log(combined[0]);
+            console.log(combined[1][0] + ":" + combined[1][1]);
+            console.log(combined[3]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("4\n0\n0:10\n99\n", output);
+    }
+
+    #endregion
 }

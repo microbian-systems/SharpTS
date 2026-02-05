@@ -206,6 +206,42 @@ public partial class TypeChecker
     };
 
     /// <summary>
+    /// Tries to get the element type from a spreadable/iterable type.
+    /// Returns true if the type is spreadable, with the element type in the out parameter.
+    /// </summary>
+    private static bool TryGetSpreadElementType(TypeInfo type, out TypeInfo elementType)
+    {
+        switch (type)
+        {
+            case TypeInfo.Array arr:
+                elementType = arr.ElementType;
+                return true;
+            case TypeInfo.Iterator iter:
+                elementType = iter.ElementType;
+                return true;
+            case TypeInfo.Generator gen:
+                elementType = gen.YieldType;
+                return true;
+            case TypeInfo.Set set:
+                elementType = set.ElementType;
+                return true;
+            case TypeInfo.Map map:
+                elementType = TypeInfo.Tuple.FromTypes([map.KeyType, map.ValueType], 2);
+                return true;
+            case TypeInfo.String:
+            case TypeInfo.StringLiteral:
+                elementType = new TypeInfo.String();
+                return true;
+            case TypeInfo.Any:
+                elementType = new TypeInfo.Any();
+                return true;
+            default:
+                elementType = null!;
+                return false;
+        }
+    }
+
+    /// <summary>
     /// Resolves the Awaited&lt;T&gt; type - recursively unwraps Promise types.
     /// Handles Promise<T> → T, Promise<Promise<T>> → T, and distributes over unions.
     /// </summary>
@@ -639,13 +675,9 @@ public partial class TypeChecker
             TypeInfo elemType;
             if (element is Expr.Spread spread)
             {
-                // Spread element - get element type from array or tuple
+                // Spread element - get element type from any iterable type
                 TypeInfo spreadType = CheckExpr(spread.Expression);
-                if (spreadType is TypeInfo.Array arrType)
-                {
-                    elemType = arrType.ElementType;
-                }
-                else if (spreadType is TypeInfo.Tuple tupType)
+                if (spreadType is TypeInfo.Tuple tupType)
                 {
                     // Spread tuple - add all its element types
                     elementTypes.AddRange(tupType.ElementTypes);
@@ -653,13 +685,13 @@ public partial class TypeChecker
                         elementTypes.Add(tupType.RestElementType);
                     continue; // Don't add elemType again since we added multiple
                 }
-                else if (spreadType is TypeInfo.Any)
+                else if (TryGetSpreadElementType(spreadType, out var spreadElemType))
                 {
-                    elemType = new TypeInfo.Any();
+                    elemType = spreadElemType;
                 }
                 else
                 {
-                    throw new TypeCheckException($" Spread expression must be an array or tuple, got '{spreadType}'.");
+                    throw new TypeCheckException($" Spread expression must be an iterable type (array, iterator, set, map, string, or generator), got '{spreadType}'.");
                 }
             }
             else

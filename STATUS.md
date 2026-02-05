@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-04 (Fixed string concat optimizer bug; documented parser/type checker limitations for destructuring and iterator spread; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
+**Last Updated:** 2026-02-04 (Added spreading iterators: `[...arr.entries()]`, `[...set]`, `[...map]`; Added destructuring in for...of: `for (const [i, val] of arr.entries())`; Fixed string concat optimizer bug; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
 
 ## Legend
 - ✅ Implemented
@@ -383,16 +383,13 @@ This section documents JavaScript/TypeScript features that are **not currently i
 
 - **Inner function declarations** (`function inner() {}` inside another function) are not supported. The compiler skips inner function definitions, causing crashes when they are called. **Workaround:** Use arrow functions instead (`const inner = () => { ... }`), which are fully supported with proper closure capture.
 
-### Parser Limitations
-
-- **Destructuring in for...of declarations** - `for (const [i, val] of arr.entries())` is not supported. The parser doesn't recognize destructuring patterns in for...of variable declarations. **Workaround:** Use manual destructuring: `for (let entry of arr.entries()) { let i = entry[0]; let val = entry[1]; }`
-
 ### Type Checker Limitations
 
 - Type alias declarations are lazily validated - errors in type alias definitions (e.g., `type R = ReturnType<string, number>;` with wrong arg count) are only caught when the alias is used, not at declaration time. TypeScript catches these at declaration.
-- **Spreading iterators** - `[...arr.entries()]` fails with "Spread expression must be an array or tuple". The type checker doesn't allow spreading iterator objects. **Workaround:** Use `Array.from(arr.entries())` instead.
 
 ### Recently Fixed Bugs (2026-02-04)
+- ~~Spreading iterators~~ - Fixed: Type checker now allows spreading any iterable type (`[...arr.entries()]`, `[...mySet]`, `[...myMap]`, `[..."hello"]`, `[...generator()]`).
+- ~~Destructuring in for...of declarations~~ - Fixed: Parser now supports `for (const [i, val] of arr.entries())` and `for (const {x, y} of items)`. Desugars to temp variable with body destructuring.
 - ~~Method chaining on `new` expressions~~ - Fixed: Parser now correctly allows method chaining directly after `new` expressions (e.g., `new Date().toISOString()`)
 - ~~String concatenation optimizer incorrect stringification~~ - Fixed: IL compiler's string concat optimizer now calls `Stringify()` instead of relying on .NET's `ToString()`, ensuring JavaScript-style output (`null` → "null", `true` → "true" not "True")
 
