@@ -892,18 +892,6 @@ public partial class TypeChecker
 
     private TypeInfo CheckArrowFunction(Expr.ArrowFunction arrow, TypeInfo? expectedType = null)
     {
-        // Parse explicit 'this' type if present (for object literal method shorthand)
-        // Note: Arrow function expressions shouldn't have 'this' parameter in standard TypeScript,
-        // but we support it for object literal method shorthand which is parsed as ArrowFunction.
-        TypeInfo? thisType = arrow.ThisType != null ? ToTypeInfo(arrow.ThisType) : null;
-
-        // For function expressions and object method shorthand (HasOwnThis=true), allow 'this' even without explicit type annotation
-        // TypeScript infers 'this' as the containing object type - use _pendingObjectThisType if available
-        if (arrow.HasOwnThis && thisType == null)
-        {
-            thisType = _pendingObjectThisType ?? new TypeInfo.Any();
-        }
-
         // Extract expected function type for parameter inference
         TypeInfo.Function? expectedFuncType = expectedType switch
         {
@@ -912,83 +900,133 @@ public partial class TypeChecker
             _ => null
         };
 
-        // Build parameter types and check defaults
+        // Set up generic type parameters (if any)
+        TypeEnvironment typeParamEnv = _environment;
+        List<TypeInfo.TypeParameter>? typeParams = null;
+
+        if (arrow.TypeParams != null && arrow.TypeParams.Count > 0)
+        {
+            typeParamEnv = new TypeEnvironment(_environment);
+
+            // First pass: define all type parameters without constraints
+            foreach (var tp in arrow.TypeParams)
+            {
+                var typeParam = new TypeInfo.TypeParameter(tp.Name.Lexeme, null, null, tp.IsConst, tp.Variance);
+                typeParamEnv.DefineTypeParameter(tp.Name.Lexeme, typeParam);
+            }
+
+            // Second pass: parse constraints/defaults (can reference other type parameters)
+            using (new EnvironmentScope(this, typeParamEnv))
+            {
+                typeParams = [];
+                foreach (var tp in arrow.TypeParams)
+                {
+                    TypeInfo? constraint = tp.Constraint != null ? ToTypeInfo(tp.Constraint) : null;
+                    TypeInfo? defaultType = tp.Default != null ? ToTypeInfo(tp.Default) : null;
+                    var typeParam = new TypeInfo.TypeParameter(tp.Name.Lexeme, constraint, defaultType, tp.IsConst, tp.Variance);
+                    typeParams.Add(typeParam);
+                    typeParamEnv.DefineTypeParameter(tp.Name.Lexeme, typeParam);
+                }
+            }
+        }
+
+        // Parse 'this' type, parameter types, and return type in the type-parameter scope
+        TypeInfo? thisType;
         List<TypeInfo> paramTypes = [];
         int requiredParams = 0;
         bool seenDefault = false;
-
-        for (int i = 0; i < arrow.Parameters.Count; i++)
-        {
-            var param = arrow.Parameters[i];
-            TypeInfo paramType;
-
-            if (param.Type != null)
-            {
-                // Explicit type annotation - use it
-                paramType = ToTypeInfo(param.Type);
-            }
-            else if (expectedFuncType != null && i < expectedFuncType.ParamTypes.Count)
-            {
-                // Infer from expected type
-                paramType = expectedFuncType.ParamTypes[i];
-            }
-            else
-            {
-                // No type annotation and no expected type - use Any
-                paramType = new TypeInfo.Any();
-            }
-            paramTypes.Add(paramType);
-
-            // Rest parameters are not counted toward required params
-            if (param.IsRest)
-            {
-                continue;
-            }
-
-            if (param.DefaultValue != null)
-            {
-                seenDefault = true;
-                TypeInfo defaultType = CheckExpr(param.DefaultValue);
-                if (!IsCompatible(paramType, defaultType))
-                {
-                    throw new TypeCheckException($" Default value type '{defaultType}' is not assignable to parameter type '{paramType}'.");
-                }
-            }
-            else if (param.IsOptional)
-            {
-                seenDefault = true; // Optional parameters are like having a default
-            }
-            else
-            {
-                if (seenDefault)
-                {
-                    throw new TypeCheckException($" Required parameter cannot follow optional parameter.");
-                }
-                requiredParams++;
-            }
-        }
-
-        // Determine return type (use expected type if available and no explicit annotation)
         TypeInfo returnType;
-        if (arrow.ReturnType != null)
+
+        using (new EnvironmentScope(this, typeParamEnv))
         {
-            returnType = ToTypeInfo(arrow.ReturnType);
-        }
-        else if (expectedFuncType != null)
-        {
-            returnType = expectedFuncType.ReturnType;
-        }
-        else
-        {
-            returnType = new TypeInfo.Any();
+            // Parse explicit 'this' type if present (for object literal method shorthand)
+            // Note: Arrow function expressions shouldn't have 'this' parameter in standard TypeScript,
+            // but we support it for object literal method shorthand which is parsed as ArrowFunction.
+            thisType = arrow.ThisType != null ? ToTypeInfo(arrow.ThisType) : null;
+
+            // For function expressions and object method shorthand (HasOwnThis=true), allow 'this' even without explicit type annotation
+            // TypeScript infers 'this' as the containing object type - use _pendingObjectThisType if available
+            if (arrow.HasOwnThis && thisType == null)
+            {
+                thisType = _pendingObjectThisType ?? new TypeInfo.Any();
+            }
+
+            // Build parameter types and check defaults
+            for (int i = 0; i < arrow.Parameters.Count; i++)
+            {
+                var param = arrow.Parameters[i];
+                TypeInfo paramType;
+
+                if (param.Type != null)
+                {
+                    // Explicit type annotation - use it
+                    paramType = ToTypeInfo(param.Type);
+                }
+                else if (expectedFuncType != null && i < expectedFuncType.ParamTypes.Count)
+                {
+                    // Infer from expected type
+                    paramType = expectedFuncType.ParamTypes[i];
+                }
+                else
+                {
+                    // No type annotation and no expected type - use Any
+                    paramType = new TypeInfo.Any();
+                }
+                paramTypes.Add(paramType);
+
+                // Rest parameters are not counted toward required params
+                if (param.IsRest)
+                {
+                    continue;
+                }
+
+                if (param.DefaultValue != null)
+                {
+                    seenDefault = true;
+                    TypeInfo defaultType = CheckExpr(param.DefaultValue);
+                    if (!IsCompatible(paramType, defaultType))
+                    {
+                        throw new TypeCheckException($" Default value type '{defaultType}' is not assignable to parameter type '{paramType}'.");
+                    }
+                }
+                else if (param.IsOptional)
+                {
+                    seenDefault = true; // Optional parameters are like having a default
+                }
+                else
+                {
+                    if (seenDefault)
+                    {
+                        throw new TypeCheckException($" Required parameter cannot follow optional parameter.");
+                    }
+                    requiredParams++;
+                }
+            }
+
+            // Determine return type (use expected type if available and no explicit annotation)
+            if (arrow.ReturnType != null)
+            {
+                returnType = ToTypeInfo(arrow.ReturnType);
+            }
+            else if (expectedFuncType != null)
+            {
+                returnType = expectedFuncType.ReturnType;
+            }
+            else
+            {
+                returnType = new TypeInfo.Any();
+            }
         }
 
         // Build the function type (needed for named function expressions self-reference)
         bool hasRest = arrow.Parameters.Any(p => p.IsRest);
-        var funcType = new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, thisType);
+        List<string> paramNames = arrow.Parameters.Select(p => p.Name.Lexeme).ToList();
+        TypeInfo funcType = (typeParams != null && typeParams.Count > 0)
+            ? new TypeInfo.GenericFunction(typeParams, paramTypes, returnType, requiredParams, hasRest, thisType, paramNames)
+            : new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, thisType, paramNames);
 
         // Create new environment for function body
-        TypeEnvironment arrowEnv = new(_environment);
+        TypeEnvironment arrowEnv = new(typeParamEnv);
 
         // For named function expressions, add the function name to the inner scope
         // This enables recursion: const f = function myFunc(n) { return myFunc(n-1); }
@@ -1077,8 +1115,9 @@ public partial class TypeChecker
                 _activeLabels[kvp.Key] = kvp.Value;
         }
 
-        List<string> paramNames = arrow.Parameters.Select(p => p.Name.Lexeme).ToList();
-        return new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, thisType, paramNames);
+        return typeParams != null && typeParams.Count > 0
+            ? new TypeInfo.GenericFunction(typeParams, paramTypes, returnType, requiredParams, hasRest, thisType, paramNames)
+            : new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, thisType, paramNames);
     }
 
     private TypeInfo CheckAssign(Expr.Assign assign)

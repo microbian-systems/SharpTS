@@ -310,9 +310,13 @@ public partial class Parser
 
     private Expr Unary()
     {
-        // Check for angle-bracket type assertion: <Type>expr
+        // Check for generic arrow function: <T>(x) => ...
         if (Check(TokenType.LESS))
         {
+            var genericArrow = TryParseGenericArrowFunction();
+            if (genericArrow != null) return genericArrow;
+
+            // Check for angle-bracket type assertion: <Type>expr
             var assertion = TryParseAngleBracketAssertion();
             if (assertion != null) return assertion;
         }
@@ -973,6 +977,12 @@ public partial class Parser
         // async arrow function: async () => {} or async (x) => x
         if (Match(TokenType.ASYNC))
         {
+            if (Check(TokenType.LESS))
+            {
+                Expr? genericArrow = TryParseGenericArrowFunction(isAsync: true);
+                if (genericArrow != null) return genericArrow;
+            }
+
             Consume(TokenType.LEFT_PAREN, "Expect '(' after 'async' in async arrow function.");
             Expr? arrowFunc = TryParseArrowFunction(isAsync: true);
             if (arrowFunc != null) return arrowFunc;
@@ -1263,7 +1273,45 @@ public partial class Parser
             ValidateNoDuplicateParameters(parameters);
         }
 
-        return new Expr.ArrowFunction(Name: null, TypeParams: null, ThisType: null, Parameters: parameters, ExpressionBody: exprBody, BlockBody: body, ReturnType: returnType, IsAsync: isAsync);  // TODO: Parse type params
+        return new Expr.ArrowFunction(Name: null, TypeParams: null, ThisType: null, Parameters: parameters, ExpressionBody: exprBody, BlockBody: body, ReturnType: returnType, IsAsync: isAsync);
+    }
+
+    /// <summary>
+    /// Tries to parse a generic arrow function starting with type parameters: &lt;T&gt;(x) => ...
+    /// Returns null if not a generic arrow function (backtracking safe).
+    /// </summary>
+    private Expr? TryParseGenericArrowFunction(bool isAsync = false)
+    {
+        int savedPosition = _current;
+        try
+        {
+            List<TypeParam>? typeParams = ParseTypeParameters();
+            if (typeParams == null || typeParams.Count == 0)
+            {
+                _current = savedPosition;
+                return null;
+            }
+
+            if (!Match(TokenType.LEFT_PAREN))
+            {
+                _current = savedPosition;
+                return null;
+            }
+
+            Expr? arrowExpr = TryParseArrowFunction(isAsync);
+            if (arrowExpr is Expr.ArrowFunction arrow)
+            {
+                return arrow with { TypeParams = typeParams };
+            }
+
+            _current = savedPosition;
+            return null;
+        }
+        catch
+        {
+            _current = savedPosition;
+            return null;
+        }
     }
 
     /// <summary>

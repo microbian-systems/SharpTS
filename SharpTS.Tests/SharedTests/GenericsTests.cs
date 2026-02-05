@@ -74,6 +74,22 @@ public class GenericsTests
         Assert.Equal("1\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericArrowFunction_Works(ExecutionMode mode)
+    {
+        var source = """
+            const identity = <T>(x: T): T => x;
+            console.log(identity<number>(42));
+            console.log(identity("hello"));
+            const second = <T, U>(a: T, b: U) => b;
+            console.log(second<string, number>("a", 99));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\nhello\n99\n", output);
+    }
+
     #endregion
 
     #region Generic Classes

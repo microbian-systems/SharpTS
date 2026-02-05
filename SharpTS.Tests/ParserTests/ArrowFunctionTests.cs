@@ -161,6 +161,41 @@ public class ArrowFunctionTests
 
     #endregion
 
+    #region Generic Type Parameters
+
+    [Fact]
+    public void Arrow_GenericTypeParams_Single()
+    {
+        var arrow = ParseArrowFromVarOrConst("const fn = <T>(x: T) => x;");
+        Assert.NotNull(arrow.TypeParams);
+        Assert.Single(arrow.TypeParams!);
+        Assert.Equal("T", arrow.TypeParams![0].Name.Lexeme);
+        Assert.Equal("T", arrow.Parameters[0].Type);
+    }
+
+    [Fact]
+    public void Arrow_GenericTypeParams_Multiple()
+    {
+        var arrow = ParseArrowFromVarOrConst("const fn = <T extends number, U = string>(x: T, y: U) => y;");
+        Assert.NotNull(arrow.TypeParams);
+        Assert.Equal(2, arrow.TypeParams!.Count);
+        Assert.Equal("T", arrow.TypeParams![0].Name.Lexeme);
+        Assert.Equal("number", arrow.TypeParams![0].Constraint);
+        Assert.Equal("U", arrow.TypeParams![1].Name.Lexeme);
+        Assert.Equal("string", arrow.TypeParams![1].Default);
+    }
+
+    [Fact]
+    public void Arrow_GenericTypeParams_Async()
+    {
+        var arrow = ParseArrowFromVarOrConst("const fn = async <T>(x: T) => x;");
+        Assert.True(arrow.IsAsync);
+        Assert.NotNull(arrow.TypeParams);
+        Assert.Single(arrow.TypeParams!);
+    }
+
+    #endregion
+
     #region Async Arrow Functions
 
     [Fact]
