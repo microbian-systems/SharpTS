@@ -1,5 +1,3 @@
-using SharpTS.Runtime.Types;
-
 namespace SharpTS.Compilation;
 
 public static partial class RuntimeTypes
@@ -8,8 +6,9 @@ public static partial class RuntimeTypes
 
     /// <summary>
     /// Creates a new empty Map.
+    /// Uses System.Collections.Generic.ReferenceEqualityComparer for JavaScript-style reference equality.
     /// </summary>
-    public static object CreateMap() => new Dictionary<object, object?>(SharpTS.Runtime.Types.ReferenceEqualityComparer.Instance);
+    public static object CreateMap() => new Dictionary<object, object?>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// Creates the system error map for util.getSystemErrorMap().
@@ -39,7 +38,7 @@ public static partial class RuntimeTypes
     /// </summary>
     public static object CreateMapFromEntries(object? entries)
     {
-        var map = new Dictionary<object, object?>(SharpTS.Runtime.Types.ReferenceEqualityComparer.Instance);
+        var map = new Dictionary<object, object?>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         if (entries is List<object?> list)
         {
             foreach (var entry in list)

@@ -46,6 +46,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits helper for creating SharedArrayBuffer.
     /// public static object CreateSharedArrayBuffer(double byteLength)
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitSharedArrayBufferHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
@@ -58,14 +59,47 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Get the SharpTSSharedArrayBuffer type and constructor
-        var sabType = typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer);
-        var sabCtor = sabType.GetConstructor([typeof(int)])!;
+        // Use reflection to get the type and create instance at runtime
+        // var type = Type.GetType("SharpTS.Runtime.Types.SharpTSSharedArrayBuffer, SharpTS");
+        // var ctor = type.GetConstructor(new[] { typeof(int) });
+        // return ctor.Invoke(new object[] { (int)byteLength });
 
-        // Convert double to int and create new SharedArrayBuffer
-        il.Emit(OpCodes.Ldarg_0);          // Load byteLength (double)
-        il.Emit(OpCodes.Conv_I4);           // Convert to int
-        il.Emit(OpCodes.Newobj, sabCtor);   // new SharpTSSharedArrayBuffer(byteLength)
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var ctorLocal = il.DeclareLocal(_types.ConstructorInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // Get the type by name
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSSharedArrayBuffer, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Get constructor that takes int
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.Int32);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, ctorLocal);
+
+        // Create args array: new object[] { (int)byteLength }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);  // byteLength (double)
+        il.Emit(OpCodes.Conv_I4);  // convert to int
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the constructor
+        il.Emit(OpCodes.Ldloc, ctorLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConstructorInfo, "Invoke", _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         runtime.TSSharedArrayBufferCtor = method;
@@ -77,6 +111,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits SharedArrayBuffer.slice(begin?, end?) helper.
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitSharedArrayBufferSlice(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
@@ -88,35 +123,79 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var sabType = typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer);
-        var sliceMethod = sabType.GetMethod("Slice", [typeof(int), typeof(int?)])!;
 
+        // Use reflection to call Slice method at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // Get the type from the object itself
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, sabType);
-        il.Emit(OpCodes.Ldarg_1);  // begin
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
 
-        // Convert end to nullable int (if end == int.MaxValue, treat as null for "use full length")
+        // Get the Slice method: type.GetMethod("Slice", new[] { typeof(int), typeof(int?) })
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "Slice");
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.Int32);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldtoken, typeof(int?));
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
+
+        // Build args array with nullable end handling
+        // new object[] { begin, (end == int.MaxValue) ? null : (int?)end }
         var endLabel = il.DefineLabel();
-        var callLabel = il.DefineLabel();
+        var buildArgsLabel = il.DefineLabel();
+        var localEndValue = il.DeclareLocal(_types.Object);
 
+        // Check if end == int.MaxValue
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldc_I4, int.MaxValue);
         il.Emit(OpCodes.Beq, endLabel);
 
-        // end is a real value - wrap in nullable
+        // end is a real value - box as int?
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Newobj, _types.NullableInt32Ctor);
-        il.Emit(OpCodes.Br, callLabel);
+        il.Emit(OpCodes.Box, typeof(int?));
+        il.Emit(OpCodes.Stloc, localEndValue);
+        il.Emit(OpCodes.Br, buildArgsLabel);
 
         // end is MaxValue - use null
         il.MarkLabel(endLabel);
-        var localNullableInt = il.DeclareLocal(typeof(int?));
-        il.Emit(OpCodes.Ldloca, localNullableInt);
-        il.Emit(OpCodes.Initobj, typeof(int?));
-        il.Emit(OpCodes.Ldloc, localNullableInt);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, localEndValue);
 
-        il.MarkLabel(callLabel);
-        il.Emit(OpCodes.Callvirt, sliceMethod);
+        il.MarkLabel(buildArgsLabel);
+
+        // Create args array: new object[] { begin, endValue }
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, localEndValue);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the method
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         runtime.TSSharedArrayBufferSlice = method;
@@ -124,6 +203,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits SharedArrayBuffer.byteLength getter helper.
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitSharedArrayBufferByteLength(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
@@ -135,12 +215,27 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var sabType = typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer);
-        var byteLengthGetter = sabType.GetProperty("ByteLength")!.GetGetMethod()!;
 
+        // Use reflection: obj.GetType().GetProperty("ByteLength").GetValue(obj)
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var propInfoLocal = il.DeclareLocal(_types.PropertyInfo);
+
+        // var type = obj.GetType();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, sabType);
-        il.Emit(OpCodes.Callvirt, byteLengthGetter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // var propInfo = type.GetProperty("ByteLength");
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "ByteLength");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Stloc, propInfoLocal);
+
+        // return (double)(int)propInfo.GetValue(obj);
+        il.Emit(OpCodes.Ldloc, propInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object));
+        il.Emit(OpCodes.Unbox_Any, _types.Int32);
         il.Emit(OpCodes.Conv_R8);  // Convert int to double
         il.Emit(OpCodes.Ret);
 
@@ -150,6 +245,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits helper for creating ArrayBuffer.
     /// public static object CreateArrayBuffer(double byteLength)
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitArrayBufferHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
@@ -162,14 +258,43 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Get the SharpTSArrayBuffer type and constructor
-        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
-        var abCtor = abType.GetConstructor([typeof(int)])!;
+        // Use reflection to get the type and create instance at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var ctorLocal = il.DeclareLocal(_types.ConstructorInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
 
-        // Convert double to int and create new ArrayBuffer
-        il.Emit(OpCodes.Ldarg_0);          // Load byteLength (double)
-        il.Emit(OpCodes.Conv_I4);           // Convert to int
-        il.Emit(OpCodes.Newobj, abCtor);   // new SharpTSArrayBuffer(byteLength)
+        // Get the type by name
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSArrayBuffer, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Get constructor that takes int
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.Int32);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, ctorLocal);
+
+        // Create args array: new object[] { (int)byteLength }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);  // byteLength (double)
+        il.Emit(OpCodes.Conv_I4);  // convert to int
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the constructor
+        il.Emit(OpCodes.Ldloc, ctorLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConstructorInfo, "Invoke", _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         runtime.TSArrayBufferCtor = method;
@@ -182,6 +307,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits ArrayBuffer.slice(begin?, end?) helper.
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitArrayBufferSlice(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
@@ -193,35 +319,78 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
-        var sliceMethod = abType.GetMethod("Slice", [typeof(int), typeof(int?)])!;
 
+        // Use reflection to call Slice method at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // Get the type from the object itself
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, abType);
-        il.Emit(OpCodes.Ldarg_1);  // begin
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
 
-        // Convert end to nullable int (if end == int.MaxValue, treat as null for "use full length")
+        // Get the Slice method: type.GetMethod("Slice", new[] { typeof(int), typeof(int?) })
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "Slice");
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.Int32);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldtoken, typeof(int?));
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
+
+        // Build args array with nullable end handling
         var endLabel = il.DefineLabel();
-        var callLabel = il.DefineLabel();
+        var buildArgsLabel = il.DefineLabel();
+        var localEndValue = il.DeclareLocal(_types.Object);
 
+        // Check if end == int.MaxValue
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldc_I4, int.MaxValue);
         il.Emit(OpCodes.Beq, endLabel);
 
-        // end is a real value - wrap in nullable
+        // end is a real value - box as int?
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Newobj, _types.NullableInt32Ctor);
-        il.Emit(OpCodes.Br, callLabel);
+        il.Emit(OpCodes.Box, typeof(int?));
+        il.Emit(OpCodes.Stloc, localEndValue);
+        il.Emit(OpCodes.Br, buildArgsLabel);
 
         // end is MaxValue - use null
         il.MarkLabel(endLabel);
-        var localNullableInt = il.DeclareLocal(typeof(int?));
-        il.Emit(OpCodes.Ldloca, localNullableInt);
-        il.Emit(OpCodes.Initobj, typeof(int?));
-        il.Emit(OpCodes.Ldloc, localNullableInt);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, localEndValue);
 
-        il.MarkLabel(callLabel);
-        il.Emit(OpCodes.Callvirt, sliceMethod);
+        il.MarkLabel(buildArgsLabel);
+
+        // Create args array: new object[] { begin, endValue }
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, localEndValue);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the method
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         runtime.TSArrayBufferSlice = method;
@@ -229,6 +398,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits ArrayBuffer.byteLength getter helper.
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitArrayBufferByteLength(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
@@ -240,12 +410,27 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
-        var byteLengthGetter = abType.GetProperty("ByteLength")!.GetGetMethod()!;
 
+        // Use reflection: obj.GetType().GetProperty("ByteLength").GetValue(obj)
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var propInfoLocal = il.DeclareLocal(_types.PropertyInfo);
+
+        // var type = obj.GetType();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, abType);
-        il.Emit(OpCodes.Callvirt, byteLengthGetter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // var propInfo = type.GetProperty("ByteLength");
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "ByteLength");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Stloc, propInfoLocal);
+
+        // return (double)(int)propInfo.GetValue(obj);
+        il.Emit(OpCodes.Ldloc, propInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object));
+        il.Emit(OpCodes.Unbox_Any, _types.Int32);
         il.Emit(OpCodes.Conv_R8);  // Convert int to double
         il.Emit(OpCodes.Ret);
 
@@ -254,6 +439,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits ArrayBuffer.isView static method helper.
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitArrayBufferIsView(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
@@ -265,11 +451,39 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
-        var isViewMethod = abType.GetMethod("IsView", BindingFlags.Public | BindingFlags.Static)!;
 
+        // Use reflection to call static IsView method at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // Get the ArrayBuffer type by name
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSArrayBuffer, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Get the static IsView method
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "IsView");
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
+
+        // Create args array: new object[] { arg }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, isViewMethod);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the static method: methodInfo.Invoke(null, args)
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldnull);  // null for static method
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
         il.Emit(OpCodes.Ret);
 
         runtime.TSArrayBufferIsView = method;
@@ -278,13 +492,10 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits helper for creating DataView.
     /// public static object CreateDataView(object buffer, double byteOffset, object byteLength)
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitDataViewHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
-        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
-        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
-        var sabType = typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer);
-
         var method = runtimeType.DefineMethod(
             "CreateDataView",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -293,36 +504,97 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var dvCtorAB = dvType.GetConstructor([abType, typeof(int), typeof(int?)])!;
-        var dvCtorSAB = dvType.GetConstructor([sabType, typeof(int), typeof(int?)])!;
 
-        var isSabLabel = il.DefineLabel();
-        var endLabel = il.DefineLabel();
+        // Use reflection to get types and create instance at runtime
+        // We need to determine if buffer is ArrayBuffer or SharedArrayBuffer by checking type name
+        var dvTypeLocal = il.DeclareLocal(_types.Type);
+        var bufferTypeLocal = il.DeclareLocal(_types.Type);
+        var ctorLocal = il.DeclareLocal(_types.ConstructorInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var byteLengthLocal = il.DeclareLocal(_types.Object);
+        var typeArrayLocal = il.DeclareLocal(_types.MakeArrayType(_types.Type));
 
-        // Check if buffer is SharedArrayBuffer
+        // Get the DataView type
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSDataView, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, dvTypeLocal);
+
+        // Get the buffer's type
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, sabType);
-        il.Emit(OpCodes.Brtrue, isSabLabel);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, bufferTypeLocal);
 
-        // ArrayBuffer path
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, abType);
-        il.Emit(OpCodes.Ldarg_1);
+        // Handle nullable byteLength - convert from object to int? boxed
+        var hasLengthLabel = il.DefineLabel();
+        var afterLengthLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, hasLengthLabel);
+
+        // Has byteLength - unbox double and convert to int?
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
         il.Emit(OpCodes.Conv_I4);
-        EmitNullableIntFromObject(il, 2);
-        il.Emit(OpCodes.Newobj, dvCtorAB);
-        il.Emit(OpCodes.Br, endLabel);
+        il.Emit(OpCodes.Newobj, _types.NullableInt32Ctor);
+        il.Emit(OpCodes.Box, typeof(int?));
+        il.Emit(OpCodes.Stloc, byteLengthLocal);
+        il.Emit(OpCodes.Br, afterLengthLabel);
 
-        // SharedArrayBuffer path
-        il.MarkLabel(isSabLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, sabType);
-        il.Emit(OpCodes.Ldarg_1);
+        // No byteLength - use null
+        il.MarkLabel(hasLengthLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, byteLengthLocal);
+
+        il.MarkLabel(afterLengthLabel);
+
+        // Build Type[] for constructor lookup: new[] { bufferType, typeof(int), typeof(int?) }
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, bufferTypeLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldtoken, _types.Int32);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldtoken, typeof(int?));
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, typeArrayLocal);
+
+        // Get constructor: dvType.GetConstructor(typeArray)
+        il.Emit(OpCodes.Ldloc, dvTypeLocal);
+        il.Emit(OpCodes.Ldloc, typeArrayLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, ctorLocal);
+
+        // Build args array: new object[] { buffer, (int)byteOffset, byteLength }
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);  // buffer
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1);  // byteOffset (double)
         il.Emit(OpCodes.Conv_I4);
-        EmitNullableIntFromObject(il, 2);
-        il.Emit(OpCodes.Newobj, dvCtorSAB);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldloc, byteLengthLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
 
-        il.MarkLabel(endLabel);
+        // Invoke constructor
+        il.Emit(OpCodes.Ldloc, ctorLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConstructorInfo, "Invoke", _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         runtime.TSDataViewCtor = method;
@@ -392,12 +664,24 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
-        var getter = dvType.GetProperty("ByteLength")!.GetGetMethod()!;
+
+        // Use reflection: obj.GetType().GetProperty("ByteLength").GetValue(obj)
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var propInfoLocal = il.DeclareLocal(_types.PropertyInfo);
 
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, dvType);
-        il.Emit(OpCodes.Callvirt, getter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "ByteLength");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Stloc, propInfoLocal);
+
+        il.Emit(OpCodes.Ldloc, propInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object));
+        il.Emit(OpCodes.Unbox_Any, _types.Int32);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Ret);
 
@@ -414,12 +698,24 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
-        var getter = dvType.GetProperty("ByteOffset")!.GetGetMethod()!;
+
+        // Use reflection: obj.GetType().GetProperty("ByteOffset").GetValue(obj)
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var propInfoLocal = il.DeclareLocal(_types.PropertyInfo);
 
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, dvType);
-        il.Emit(OpCodes.Callvirt, getter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "ByteOffset");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Stloc, propInfoLocal);
+
+        il.Emit(OpCodes.Ldloc, propInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object));
+        il.Emit(OpCodes.Unbox_Any, _types.Int32);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Ret);
 
@@ -436,12 +732,23 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
-        var getter = dvType.GetProperty("Buffer")!.GetGetMethod()!;
+
+        // Use reflection: obj.GetType().GetProperty("Buffer").GetValue(obj)
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var propInfoLocal = il.DeclareLocal(_types.PropertyInfo);
 
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, dvType);
-        il.Emit(OpCodes.Callvirt, getter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "Buffer");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Stloc, propInfoLocal);
+
+        il.Emit(OpCodes.Ldloc, propInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object));
         il.Emit(OpCodes.Ret);
 
         runtime.TSDataViewBufferGetter = method;
@@ -461,21 +768,82 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
 
-        var getterParams = hasEndianness
-            ? new[] { typeof(int), typeof(bool) }
-            : new[] { typeof(int) };
-        var getter = dvType.GetMethod(runtimeMethodName, getterParams)!;
+        // Use reflection to call the method at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
 
+        // Get the object's type
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, dvType);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Get the method: type.GetMethod(methodName, types)
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, runtimeMethodName);
         if (hasEndianness)
         {
-            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Type);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldtoken, _types.Int32);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldtoken, _types.Boolean);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Stelem_Ref);
         }
-        il.Emit(OpCodes.Callvirt, getter);
+        else
+        {
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, _types.Type);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldtoken, _types.Int32);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
+
+        // Build args array
+        if (hasEndianness)
+        {
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Box, _types.Int32);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Box, _types.Boolean);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Box, _types.Int32);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the method and convert result to double
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
         il.Emit(OpCodes.Ret);
 
         // Store in runtime
@@ -502,14 +870,56 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
-        var getter = dvType.GetMethod(runtimeMethodName, [typeof(int), typeof(bool)])!;
 
+        // Use reflection to call the method at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // Get the object's type
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, dvType);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Get the method: type.GetMethod(methodName, new[] { typeof(int), typeof(bool) })
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, runtimeMethodName);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.Int32);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldtoken, _types.Boolean);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
+
+        // Build args array: new object[] { index, littleEndian }
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, getter);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the method and unbox result as BigInteger
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Unbox_Any, _types.BigInteger);
         il.Emit(OpCodes.Ret);
 
         switch (jsMethodName)
@@ -533,22 +943,100 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var dvType = typeof(SharpTS.Runtime.Types.SharpTSDataView);
 
-        var setterParams = hasEndianness
-            ? new[] { typeof(int), typeof(object), typeof(bool) }
-            : new[] { typeof(int), typeof(object) };
-        var setter = dvType.GetMethod(runtimeMethodName, setterParams)!;
+        // Use reflection to call the method at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
 
+        // Get the object's type
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, dvType);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Get the method: type.GetMethod(methodName, types)
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, runtimeMethodName);
         if (hasEndianness)
         {
-            il.Emit(OpCodes.Ldarg_3);
+            il.Emit(OpCodes.Ldc_I4_3);
+            il.Emit(OpCodes.Newarr, _types.Type);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldtoken, _types.Int32);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldtoken, _types.Object);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Ldtoken, _types.Boolean);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Stelem_Ref);
         }
-        il.Emit(OpCodes.Callvirt, setter);
+        else
+        {
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Type);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldtoken, _types.Int32);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldtoken, _types.Object);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
+
+        // Build args array
+        if (hasEndianness)
+        {
+            il.Emit(OpCodes.Ldc_I4_3);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Box, _types.Int32);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Ldarg_3);
+            il.Emit(OpCodes.Box, _types.Boolean);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Box, _types.Int32);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the method (discard result)
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Pop);  // Discard return value
         il.Emit(OpCodes.Ret);
 
         // Store in runtime
@@ -569,21 +1057,22 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits helpers for creating TypedArrays.
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitTypedArrayHelpers(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
-        // Helper method for each TypedArray type
-        EmitTypedArrayHelper(runtimeType, runtime, "Int8Array", typeof(SharpTS.Runtime.Types.SharpTSInt8Array));
-        EmitTypedArrayHelper(runtimeType, runtime, "Uint8Array", typeof(SharpTS.Runtime.Types.SharpTSUint8Array));
-        EmitTypedArrayHelper(runtimeType, runtime, "Uint8ClampedArray", typeof(SharpTS.Runtime.Types.SharpTSUint8ClampedArray));
-        EmitTypedArrayHelper(runtimeType, runtime, "Int16Array", typeof(SharpTS.Runtime.Types.SharpTSInt16Array));
-        EmitTypedArrayHelper(runtimeType, runtime, "Uint16Array", typeof(SharpTS.Runtime.Types.SharpTSUint16Array));
-        EmitTypedArrayHelper(runtimeType, runtime, "Int32Array", typeof(SharpTS.Runtime.Types.SharpTSInt32Array));
-        EmitTypedArrayHelper(runtimeType, runtime, "Uint32Array", typeof(SharpTS.Runtime.Types.SharpTSUint32Array));
-        EmitTypedArrayHelper(runtimeType, runtime, "Float32Array", typeof(SharpTS.Runtime.Types.SharpTSFloat32Array));
-        EmitTypedArrayHelper(runtimeType, runtime, "Float64Array", typeof(SharpTS.Runtime.Types.SharpTSFloat64Array));
-        EmitTypedArrayHelper(runtimeType, runtime, "BigInt64Array", typeof(SharpTS.Runtime.Types.SharpTSBigInt64Array));
-        EmitTypedArrayHelper(runtimeType, runtime, "BigUint64Array", typeof(SharpTS.Runtime.Types.SharpTSBigUint64Array));
+        // Helper method for each TypedArray type - use type names instead of typeof()
+        EmitTypedArrayHelper(runtimeType, runtime, "Int8Array", "SharpTS.Runtime.Types.SharpTSInt8Array, SharpTS");
+        EmitTypedArrayHelper(runtimeType, runtime, "Uint8Array", "SharpTS.Runtime.Types.SharpTSUint8Array, SharpTS");
+        EmitTypedArrayHelper(runtimeType, runtime, "Uint8ClampedArray", "SharpTS.Runtime.Types.SharpTSUint8ClampedArray, SharpTS");
+        EmitTypedArrayHelper(runtimeType, runtime, "Int16Array", "SharpTS.Runtime.Types.SharpTSInt16Array, SharpTS");
+        EmitTypedArrayHelper(runtimeType, runtime, "Uint16Array", "SharpTS.Runtime.Types.SharpTSUint16Array, SharpTS");
+        EmitTypedArrayHelper(runtimeType, runtime, "Int32Array", "SharpTS.Runtime.Types.SharpTSInt32Array, SharpTS");
+        EmitTypedArrayHelper(runtimeType, runtime, "Uint32Array", "SharpTS.Runtime.Types.SharpTSUint32Array, SharpTS");
+        EmitTypedArrayHelper(runtimeType, runtime, "Float32Array", "SharpTS.Runtime.Types.SharpTSFloat32Array, SharpTS");
+        EmitTypedArrayHelper(runtimeType, runtime, "Float64Array", "SharpTS.Runtime.Types.SharpTSFloat64Array, SharpTS");
+        EmitTypedArrayHelper(runtimeType, runtime, "BigInt64Array", "SharpTS.Runtime.Types.SharpTSBigInt64Array, SharpTS");
+        EmitTypedArrayHelper(runtimeType, runtime, "BigUint64Array", "SharpTS.Runtime.Types.SharpTSBigUint64Array, SharpTS");
 
         // Get typed array element helper
         EmitTypedArrayGetHelper(runtimeType, runtime);
@@ -831,26 +1320,28 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits helpers for creating TypedArrays from an object argument (number or SharedArrayBuffer).
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitTypedArrayFromObjectHelpers(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
-        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Int8Array", typeof(SharpTS.Runtime.Types.SharpTSInt8Array));
-        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Uint8Array", typeof(SharpTS.Runtime.Types.SharpTSUint8Array));
-        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Uint8ClampedArray", typeof(SharpTS.Runtime.Types.SharpTSUint8ClampedArray));
-        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Int16Array", typeof(SharpTS.Runtime.Types.SharpTSInt16Array));
-        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Uint16Array", typeof(SharpTS.Runtime.Types.SharpTSUint16Array));
-        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Int32Array", typeof(SharpTS.Runtime.Types.SharpTSInt32Array));
-        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Uint32Array", typeof(SharpTS.Runtime.Types.SharpTSUint32Array));
-        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Float32Array", typeof(SharpTS.Runtime.Types.SharpTSFloat32Array));
-        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Float64Array", typeof(SharpTS.Runtime.Types.SharpTSFloat64Array));
-        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "BigInt64Array", typeof(SharpTS.Runtime.Types.SharpTSBigInt64Array));
-        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "BigUint64Array", typeof(SharpTS.Runtime.Types.SharpTSBigUint64Array));
+        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Int8Array", "SharpTS.Runtime.Types.SharpTSInt8Array, SharpTS");
+        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Uint8Array", "SharpTS.Runtime.Types.SharpTSUint8Array, SharpTS");
+        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Uint8ClampedArray", "SharpTS.Runtime.Types.SharpTSUint8ClampedArray, SharpTS");
+        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Int16Array", "SharpTS.Runtime.Types.SharpTSInt16Array, SharpTS");
+        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Uint16Array", "SharpTS.Runtime.Types.SharpTSUint16Array, SharpTS");
+        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Int32Array", "SharpTS.Runtime.Types.SharpTSInt32Array, SharpTS");
+        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Uint32Array", "SharpTS.Runtime.Types.SharpTSUint32Array, SharpTS");
+        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Float32Array", "SharpTS.Runtime.Types.SharpTSFloat32Array, SharpTS");
+        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "Float64Array", "SharpTS.Runtime.Types.SharpTSFloat64Array, SharpTS");
+        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "BigInt64Array", "SharpTS.Runtime.Types.SharpTSBigInt64Array, SharpTS");
+        EmitTypedArrayFromObjectHelper(runtimeType, runtime, "BigUint64Array", "SharpTS.Runtime.Types.SharpTSBigUint64Array, SharpTS");
     }
 
     /// <summary>
     /// Emits a helper that creates a TypedArray from an object (either a number for length, SharedArrayBuffer, or ArrayBuffer).
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
-    private void EmitTypedArrayFromObjectHelper(TypeBuilder runtimeType, EmittedRuntime runtime, string name, Type arrayType)
+    private void EmitTypedArrayFromObjectHelper(TypeBuilder runtimeType, EmittedRuntime runtime, string name, string arrayTypeName)
     {
         // Create{name}FromObject(object arg) - handles number, SharedArrayBuffer, or ArrayBuffer
         var method = runtimeType.DefineMethod(
@@ -861,56 +1352,146 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var sabType = typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer);
-        var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
-        var lengthCtor = arrayType.GetConstructor([typeof(int)])!;
-        var sabCtor = arrayType.GetConstructor([sabType, typeof(int), typeof(int?)])!;
-        var abCtor = arrayType.GetConstructor([abType, typeof(int), typeof(int?)])!;
 
-        var isSabLabel = il.DefineLabel();
-        var isAbLabel = il.DefineLabel();
+        // Use reflection to create the TypedArray at runtime
+        var arrayTypeLocal = il.DeclareLocal(_types.Type);
+        var ctorLocal = il.DeclareLocal(_types.ConstructorInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var argTypeLocal = il.DeclareLocal(_types.Type);
+        var argTypeNameLocal = il.DeclareLocal(_types.String);
+
+        // Get the TypedArray type by name
+        il.Emit(OpCodes.Ldstr, arrayTypeName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, arrayTypeLocal);
+
+        // Check if arg is null - if so, treat as length 0
+        var argNotNullLabel = il.DefineLabel();
+        var isBufferLabel = il.DefineLabel();
+        var createFromLengthLabel = il.DefineLabel();
+        var createFromBufferLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
-        // Check if arg is SharedArrayBuffer
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, sabType);
-        il.Emit(OpCodes.Brtrue, isSabLabel);
+        il.Emit(OpCodes.Brtrue, argNotNullLabel);
 
-        // Check if arg is ArrayBuffer
+        // Arg is null - create with length 0
+        il.Emit(OpCodes.Ldloc, arrayTypeLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.Int32);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, ctorLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, ctorLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConstructorInfo, "Invoke", _types.ObjectArray));
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(argNotNullLabel);
+
+        // Get the arg's type name to check if it's a buffer
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, abType);
-        il.Emit(OpCodes.Brtrue, isAbLabel);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, argTypeLocal);
+        il.Emit(OpCodes.Ldloc, argTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "get_FullName"));
+        il.Emit(OpCodes.Stloc, argTypeNameLocal);
+
+        // Check if it contains "SharedArrayBuffer" or "ArrayBuffer"
+        il.Emit(OpCodes.Ldloc, argTypeNameLocal);
+        il.Emit(OpCodes.Ldstr, "ArrayBuffer");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Contains", _types.String));
+        il.Emit(OpCodes.Brtrue, isBufferLabel);
 
         // Not a buffer - treat as length
-        // Convert to double first, then to int
+        il.MarkLabel(createFromLengthLabel);
+
+        // Get constructor(int)
+        il.Emit(OpCodes.Ldloc, arrayTypeLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.Int32);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, ctorLocal);
+
+        // Create args array: new object[] { (int)Convert.ToDouble(arg) }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
         il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Newobj, lengthCtor);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        il.Emit(OpCodes.Ldloc, ctorLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConstructorInfo, "Invoke", _types.ObjectArray));
         il.Emit(OpCodes.Br, endLabel);
 
-        // Is a SharedArrayBuffer - create view with default offset and length
-        il.MarkLabel(isSabLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, sabType);
-        il.Emit(OpCodes.Ldc_I4_0);  // byteOffset = 0
-        var localNullableInt = il.DeclareLocal(typeof(int?));
-        il.Emit(OpCodes.Ldloca, localNullableInt);
-        il.Emit(OpCodes.Initobj, typeof(int?));
-        il.Emit(OpCodes.Ldloc, localNullableInt);  // length = null (use entire buffer)
-        il.Emit(OpCodes.Newobj, sabCtor);
-        il.Emit(OpCodes.Br, endLabel);
+        // Is a buffer - get constructor(bufferType, int, int?)
+        il.MarkLabel(isBufferLabel);
 
-        // Is an ArrayBuffer - create view with default offset and length
-        il.MarkLabel(isAbLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, abType);
+        // Build Type[] for constructor: new[] { argType, typeof(int), typeof(int?) }
+        il.Emit(OpCodes.Ldloc, arrayTypeLocal);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, argTypeLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldtoken, _types.Int32);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldtoken, typeof(int?));
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, ctorLocal);
+
+        // Create args array: new object[] { arg, 0, null }
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);  // buffer
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldc_I4_0);  // byteOffset = 0
-        var localNullableInt2 = il.DeclareLocal(typeof(int?));
-        il.Emit(OpCodes.Ldloca, localNullableInt2);
-        il.Emit(OpCodes.Initobj, typeof(int?));
-        il.Emit(OpCodes.Ldloc, localNullableInt2);  // length = null (use entire buffer)
-        il.Emit(OpCodes.Newobj, abCtor);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldnull);  // length = null
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        il.Emit(OpCodes.Ldloc, ctorLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConstructorInfo, "Invoke", _types.ObjectArray));
 
         il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);
@@ -919,9 +1500,10 @@ public partial class RuntimeEmitter
         runtime.TypedArrayFromObjectHelpers[name] = method;
     }
 
-    private void EmitTypedArrayHelper(TypeBuilder runtimeType, EmittedRuntime runtime, string name, Type arrayType)
+    private void EmitTypedArrayHelper(TypeBuilder runtimeType, EmittedRuntime runtime, string name, string arrayTypeName)
     {
         // Create from length: CreateInt8Array(double length)
+        // Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
         var methodFromLength = runtimeType.DefineMethod(
             $"Create{name}",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -930,14 +1512,46 @@ public partial class RuntimeEmitter
         );
 
         var il = methodFromLength.GetILGenerator();
-        var ctor = arrayType.GetConstructor([typeof(int)])!;
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var ctorLocal = il.DeclareLocal(_types.ConstructorInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
 
-        il.Emit(OpCodes.Ldarg_0);         // Load length (double)
-        il.Emit(OpCodes.Conv_I4);          // Convert to int
-        il.Emit(OpCodes.Newobj, ctor);     // new TypedArray(length)
+        // Get the type by name
+        il.Emit(OpCodes.Ldstr, arrayTypeName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Get constructor(int)
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.Int32);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, ctorLocal);
+
+        // Create args array: new object[] { (int)length }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);  // length (double)
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke constructor
+        il.Emit(OpCodes.Ldloc, ctorLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConstructorInfo, "Invoke", _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         // Create from SharedArrayBuffer: CreateInt8ArrayFromSAB(object sab, double byteOffset, object length)
+        // Uses reflection-based late-binding
         var methodFromSAB = runtimeType.DefineMethod(
             $"Create{name}FromSAB",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -946,42 +1560,99 @@ public partial class RuntimeEmitter
         );
 
         var ilSAB = methodFromSAB.GetILGenerator();
-        var ctorSAB = arrayType.GetConstructor([typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer), typeof(int), typeof(int?)])!;
+        var typeLocalSAB = ilSAB.DeclareLocal(_types.Type);
+        var sabTypeLocal = ilSAB.DeclareLocal(_types.Type);
+        var ctorLocalSAB = ilSAB.DeclareLocal(_types.ConstructorInfo);
+        var argsLocalSAB = ilSAB.DeclareLocal(_types.ObjectArray);
+        var lengthLocal = ilSAB.DeclareLocal(_types.Object);
 
-        ilSAB.Emit(OpCodes.Ldarg_0);                                      // Load sab
-        ilSAB.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer));
-        ilSAB.Emit(OpCodes.Ldarg_1);                                      // Load byteOffset
-        ilSAB.Emit(OpCodes.Conv_I4);                                       // Convert to int
+        // Get the TypedArray type by name
+        ilSAB.Emit(OpCodes.Ldstr, arrayTypeName);
+        ilSAB.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        ilSAB.Emit(OpCodes.Stloc, typeLocalSAB);
+
+        // Get the sab's actual type (could be SharedArrayBuffer or ArrayBuffer)
+        ilSAB.Emit(OpCodes.Ldarg_0);
+        ilSAB.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        ilSAB.Emit(OpCodes.Stloc, sabTypeLocal);
 
         // Handle nullable length parameter
         var lblHasLength = ilSAB.DefineLabel();
         var lblEndLength = ilSAB.DefineLabel();
 
-        ilSAB.Emit(OpCodes.Ldarg_2);                                      // Load length
-        ilSAB.Emit(OpCodes.Brfalse, lblHasLength);                        // if null, branch
+        ilSAB.Emit(OpCodes.Ldarg_2);
+        ilSAB.Emit(OpCodes.Brfalse, lblHasLength);
 
-        // length is not null - convert and wrap
+        // length is not null - convert and box as int?
         ilSAB.Emit(OpCodes.Ldarg_2);
         ilSAB.Emit(OpCodes.Unbox_Any, _types.Double);
         ilSAB.Emit(OpCodes.Conv_I4);
         ilSAB.Emit(OpCodes.Newobj, _types.NullableInt32Ctor);
+        ilSAB.Emit(OpCodes.Box, typeof(int?));
+        ilSAB.Emit(OpCodes.Stloc, lengthLocal);
         ilSAB.Emit(OpCodes.Br, lblEndLength);
 
         ilSAB.MarkLabel(lblHasLength);
         // length is null
-        var localNullableInt = ilSAB.DeclareLocal(typeof(int?));
-        ilSAB.Emit(OpCodes.Ldloca, localNullableInt);
-        ilSAB.Emit(OpCodes.Initobj, typeof(int?));
-        ilSAB.Emit(OpCodes.Ldloc, localNullableInt);
+        ilSAB.Emit(OpCodes.Ldnull);
+        ilSAB.Emit(OpCodes.Stloc, lengthLocal);
 
         ilSAB.MarkLabel(lblEndLength);
-        ilSAB.Emit(OpCodes.Newobj, ctorSAB);
+
+        // Build Type[] for constructor: new[] { sabType, typeof(int), typeof(int?) }
+        ilSAB.Emit(OpCodes.Ldloc, typeLocalSAB);
+        ilSAB.Emit(OpCodes.Ldc_I4_3);
+        ilSAB.Emit(OpCodes.Newarr, _types.Type);
+        ilSAB.Emit(OpCodes.Dup);
+        ilSAB.Emit(OpCodes.Ldc_I4_0);
+        ilSAB.Emit(OpCodes.Ldloc, sabTypeLocal);
+        ilSAB.Emit(OpCodes.Stelem_Ref);
+        ilSAB.Emit(OpCodes.Dup);
+        ilSAB.Emit(OpCodes.Ldc_I4_1);
+        ilSAB.Emit(OpCodes.Ldtoken, _types.Int32);
+        ilSAB.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        ilSAB.Emit(OpCodes.Stelem_Ref);
+        ilSAB.Emit(OpCodes.Dup);
+        ilSAB.Emit(OpCodes.Ldc_I4_2);
+        ilSAB.Emit(OpCodes.Ldtoken, typeof(int?));
+        ilSAB.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        ilSAB.Emit(OpCodes.Stelem_Ref);
+        ilSAB.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", _types.MakeArrayType(_types.Type)));
+        ilSAB.Emit(OpCodes.Stloc, ctorLocalSAB);
+
+        // Create args array: new object[] { sab, (int)byteOffset, length }
+        ilSAB.Emit(OpCodes.Ldc_I4_3);
+        ilSAB.Emit(OpCodes.Newarr, _types.Object);
+        ilSAB.Emit(OpCodes.Dup);
+        ilSAB.Emit(OpCodes.Ldc_I4_0);
+        ilSAB.Emit(OpCodes.Ldarg_0);  // sab
+        ilSAB.Emit(OpCodes.Stelem_Ref);
+        ilSAB.Emit(OpCodes.Dup);
+        ilSAB.Emit(OpCodes.Ldc_I4_1);
+        ilSAB.Emit(OpCodes.Ldarg_1);  // byteOffset (double)
+        ilSAB.Emit(OpCodes.Conv_I4);
+        ilSAB.Emit(OpCodes.Box, _types.Int32);
+        ilSAB.Emit(OpCodes.Stelem_Ref);
+        ilSAB.Emit(OpCodes.Dup);
+        ilSAB.Emit(OpCodes.Ldc_I4_2);
+        ilSAB.Emit(OpCodes.Ldloc, lengthLocal);
+        ilSAB.Emit(OpCodes.Stelem_Ref);
+        ilSAB.Emit(OpCodes.Stloc, argsLocalSAB);
+
+        // Invoke constructor
+        ilSAB.Emit(OpCodes.Ldloc, ctorLocalSAB);
+        ilSAB.Emit(OpCodes.Ldloc, argsLocalSAB);
+        ilSAB.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConstructorInfo, "Invoke", _types.ObjectArray));
         ilSAB.Emit(OpCodes.Ret);
+
+        // Store the helper for use by ILEmitter
+        runtime.TypedArrayFromBufferHelpers[name] = methodFromSAB;
     }
 
     private void EmitTypedArrayGetHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
         // public static object TypedArrayGet(object typedArray, double index)
+        // Uses reflection to avoid hard dependency on SharpTS.dll
         var method = runtimeType.DefineMethod(
             "TypedArrayGet",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -990,13 +1661,39 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var indexerGetter = typeof(SharpTS.Runtime.Types.SharpTSTypedArray).GetProperty("Item")!.GetGetMethod()!;
 
+        // Use reflection: obj.GetType().GetProperty("Item").GetValue(obj, new object[] { (int)index })
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var propInfoLocal = il.DeclareLocal(_types.PropertyInfo);
+        var indexArrayLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // var type = obj.GetType();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSTypedArray));
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // var propInfo = type.GetProperty("Item");
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "Item");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Stloc, propInfoLocal);
+
+        // var indexArray = new object[] { (int)index };
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Callvirt, indexerGetter);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, indexArrayLocal);
+
+        // return propInfo.GetValue(obj, indexArray);
+        il.Emit(OpCodes.Ldloc, propInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexArrayLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         runtime.TSTypedArrayGet = method;
@@ -1005,6 +1702,7 @@ public partial class RuntimeEmitter
     private void EmitTypedArraySetHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
         // public static void TypedArraySet(object typedArray, double index, object value)
+        // Uses reflection to avoid hard dependency on SharpTS.dll
         var method = runtimeType.DefineMethod(
             "TypedArraySet",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -1013,14 +1711,40 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var indexerSetter = typeof(SharpTS.Runtime.Types.SharpTSTypedArray).GetProperty("Item")!.GetSetMethod()!;
 
+        // Use reflection: obj.GetType().GetProperty("Item").SetValue(obj, value, new object[] { (int)index })
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var propInfoLocal = il.DeclareLocal(_types.PropertyInfo);
+        var indexArrayLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // var type = obj.GetType();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSTypedArray));
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // var propInfo = type.GetProperty("Item");
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "Item");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Stloc, propInfoLocal);
+
+        // var indexArray = new object[] { (int)index };
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, indexArrayLocal);
+
+        // propInfo.SetValue(obj, value, indexArray);
+        il.Emit(OpCodes.Ldloc, propInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, indexerSetter);
+        il.Emit(OpCodes.Ldloc, indexArrayLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "SetValue", _types.Object, _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         runtime.TSTypedArraySet = method;
@@ -1028,58 +1752,59 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits Atomics static method helpers.
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitAtomicsHelpers(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
-        var atomicsType = typeof(SharpTS.Runtime.Types.SharpTSAtomics);
+        const string atomicsTypeName = "SharpTS.Runtime.Types.SharpTSAtomics, SharpTS";
 
         // Atomics.load(typedArray, index)
-        runtime.AtomicsLoad = EmitAtomicsMethod(runtimeType, "AtomicsLoad", atomicsType, "Load",
-            [_types.Object, _types.Double], _types.Object);
+        runtime.AtomicsLoad = EmitAtomicsMethod(runtimeType, "AtomicsLoad", atomicsTypeName, "Load",
+            [_types.Object, _types.Double], _types.Object, hasValue: false);
 
         // Atomics.store(typedArray, index, value)
-        runtime.AtomicsStore = EmitAtomicsMethod(runtimeType, "AtomicsStore", atomicsType, "Store",
-            [_types.Object, _types.Double, _types.Object], _types.Object);
+        runtime.AtomicsStore = EmitAtomicsMethod(runtimeType, "AtomicsStore", atomicsTypeName, "Store",
+            [_types.Object, _types.Double, _types.Object], _types.Object, hasValue: true);
 
         // Atomics.add(typedArray, index, value)
-        runtime.AtomicsAdd = EmitAtomicsMethod(runtimeType, "AtomicsAdd", atomicsType, "Add",
-            [_types.Object, _types.Double, _types.Object], _types.Object);
+        runtime.AtomicsAdd = EmitAtomicsMethod(runtimeType, "AtomicsAdd", atomicsTypeName, "Add",
+            [_types.Object, _types.Double, _types.Object], _types.Object, hasValue: true);
 
         // Atomics.sub(typedArray, index, value)
-        runtime.AtomicsSub = EmitAtomicsMethod(runtimeType, "AtomicsSub", atomicsType, "Sub",
-            [_types.Object, _types.Double, _types.Object], _types.Object);
+        runtime.AtomicsSub = EmitAtomicsMethod(runtimeType, "AtomicsSub", atomicsTypeName, "Sub",
+            [_types.Object, _types.Double, _types.Object], _types.Object, hasValue: true);
 
         // Atomics.and(typedArray, index, value)
-        runtime.AtomicsAnd = EmitAtomicsMethod(runtimeType, "AtomicsAnd", atomicsType, "And",
-            [_types.Object, _types.Double, _types.Object], _types.Object);
+        runtime.AtomicsAnd = EmitAtomicsMethod(runtimeType, "AtomicsAnd", atomicsTypeName, "And",
+            [_types.Object, _types.Double, _types.Object], _types.Object, hasValue: true);
 
         // Atomics.or(typedArray, index, value)
-        runtime.AtomicsOr = EmitAtomicsMethod(runtimeType, "AtomicsOr", atomicsType, "Or",
-            [_types.Object, _types.Double, _types.Object], _types.Object);
+        runtime.AtomicsOr = EmitAtomicsMethod(runtimeType, "AtomicsOr", atomicsTypeName, "Or",
+            [_types.Object, _types.Double, _types.Object], _types.Object, hasValue: true);
 
         // Atomics.xor(typedArray, index, value)
-        runtime.AtomicsXor = EmitAtomicsMethod(runtimeType, "AtomicsXor", atomicsType, "Xor",
-            [_types.Object, _types.Double, _types.Object], _types.Object);
+        runtime.AtomicsXor = EmitAtomicsMethod(runtimeType, "AtomicsXor", atomicsTypeName, "Xor",
+            [_types.Object, _types.Double, _types.Object], _types.Object, hasValue: true);
 
         // Atomics.exchange(typedArray, index, value)
-        runtime.AtomicsExchange = EmitAtomicsMethod(runtimeType, "AtomicsExchange", atomicsType, "Exchange",
-            [_types.Object, _types.Double, _types.Object], _types.Object);
+        runtime.AtomicsExchange = EmitAtomicsMethod(runtimeType, "AtomicsExchange", atomicsTypeName, "Exchange",
+            [_types.Object, _types.Double, _types.Object], _types.Object, hasValue: true);
 
         // Atomics.compareExchange(typedArray, index, expectedValue, replacementValue)
-        runtime.AtomicsCompareExchange = EmitAtomicsCompareExchangeMethod(runtimeType, atomicsType);
+        runtime.AtomicsCompareExchange = EmitAtomicsCompareExchangeMethod(runtimeType, atomicsTypeName);
 
         // Atomics.wait(typedArray, index, value, timeout?)
-        runtime.AtomicsWait = EmitAtomicsWaitMethod(runtimeType, atomicsType);
+        runtime.AtomicsWait = EmitAtomicsWaitMethod(runtimeType, atomicsTypeName);
 
         // Atomics.notify(typedArray, index, count?)
-        runtime.AtomicsNotify = EmitAtomicsNotifyMethod(runtimeType, atomicsType);
+        runtime.AtomicsNotify = EmitAtomicsNotifyMethod(runtimeType, atomicsTypeName);
 
         // Atomics.isLockFree(size)
-        runtime.AtomicsIsLockFree = EmitAtomicsIsLockFreeMethod(runtimeType, atomicsType);
+        runtime.AtomicsIsLockFree = EmitAtomicsIsLockFreeMethod(runtimeType, atomicsTypeName);
     }
 
-    private MethodBuilder EmitAtomicsMethod(TypeBuilder runtimeType, string methodName, Type atomicsType,
-        string runtimeMethodName, Type[] paramTypes, Type returnType)
+    private MethodBuilder EmitAtomicsMethod(TypeBuilder runtimeType, string methodName, string atomicsTypeName,
+        string runtimeMethodName, Type[] paramTypes, Type returnType, bool hasValue)
     {
         var method = runtimeType.DefineMethod(
             methodName,
@@ -1090,42 +1815,73 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Get the runtime method with matching signature
-        var runtimeMethod = atomicsType.GetMethod(runtimeMethodName,
-            BindingFlags.Public | BindingFlags.Static,
-            null,
-            [typeof(SharpTS.Runtime.Types.SharpTSTypedArray), typeof(int), typeof(object)],
-            null);
+        // Use reflection to call the static method at runtime
+        var atomicsTypeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
 
-        if (runtimeMethod == null)
+        // Get the Atomics type by name
+        il.Emit(OpCodes.Ldstr, atomicsTypeName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, atomicsTypeLocal);
+
+        // Get the method by name with BindingFlags
+        il.Emit(OpCodes.Ldloc, atomicsTypeLocal);
+        il.Emit(OpCodes.Ldstr, runtimeMethodName);
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
+
+        // Build args array
+        if (hasValue)
         {
-            // Try without value parameter (for load)
-            runtimeMethod = atomicsType.GetMethod(runtimeMethodName,
-                BindingFlags.Public | BindingFlags.Static,
-                null,
-                [typeof(SharpTS.Runtime.Types.SharpTSTypedArray), typeof(int)],
-                null);
+            // new object[] { typedArray, (int)index, value }
+            il.Emit(OpCodes.Ldc_I4_3);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Box, _types.Int32);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_Ref);
         }
-
-        // Load and convert arguments
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSTypedArray));
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Conv_I4);
-
-        if (paramTypes.Length > 2)
+        else
         {
-            il.Emit(OpCodes.Ldarg_2);  // value
+            // new object[] { typedArray, (int)index }
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Box, _types.Int32);
+            il.Emit(OpCodes.Stelem_Ref);
         }
+        il.Emit(OpCodes.Stloc, argsLocal);
 
-        il.Emit(OpCodes.Call, runtimeMethod!);
+        // Invoke the static method
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldnull);  // null instance for static method
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         return method;
     }
 
-    private MethodBuilder EmitAtomicsCompareExchangeMethod(TypeBuilder runtimeType, Type atomicsType)
+    private MethodBuilder EmitAtomicsCompareExchangeMethod(TypeBuilder runtimeType, string atomicsTypeName)
     {
         var method = runtimeType.DefineMethod(
             "AtomicsCompareExchange",
@@ -1136,22 +1892,57 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        var runtimeMethod = atomicsType.GetMethod("CompareExchange",
-            BindingFlags.Public | BindingFlags.Static)!;
+        // Use reflection to call the static method at runtime
+        var atomicsTypeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
 
+        // Get the Atomics type by name
+        il.Emit(OpCodes.Ldstr, atomicsTypeName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, atomicsTypeLocal);
+
+        // Get the CompareExchange method
+        il.Emit(OpCodes.Ldloc, atomicsTypeLocal);
+        il.Emit(OpCodes.Ldstr, "CompareExchange");
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
+
+        // Build args array: new object[] { typedArray, (int)index, expected, replacement }
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSTypedArray));
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Ldarg_2);  // expectedValue
-        il.Emit(OpCodes.Ldarg_3);  // replacementValue
-        il.Emit(OpCodes.Call, runtimeMethod);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the static method
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         return method;
     }
 
-    private MethodBuilder EmitAtomicsWaitMethod(TypeBuilder runtimeType, Type atomicsType)
+    private MethodBuilder EmitAtomicsWaitMethod(TypeBuilder runtimeType, string atomicsTypeName)
     {
         var method = runtimeType.DefineMethod(
             "AtomicsWait",
@@ -1162,14 +1953,23 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        var runtimeMethod = atomicsType.GetMethod("Wait",
-            BindingFlags.Public | BindingFlags.Static)!;
+        // Use reflection to call the static method at runtime
+        var atomicsTypeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var timeoutLocal = il.DeclareLocal(_types.Object);
 
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSTypedArray));
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Ldarg_2);  // expectedValue
+        // Get the Atomics type by name
+        il.Emit(OpCodes.Ldstr, atomicsTypeName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, atomicsTypeLocal);
+
+        // Get the Wait method
+        il.Emit(OpCodes.Ldloc, atomicsTypeLocal);
+        il.Emit(OpCodes.Ldstr, "Wait");
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
 
         // Handle nullable timeout
         var lblHasTimeout = il.DefineLabel();
@@ -1182,22 +1982,51 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_3);
         il.Emit(OpCodes.Unbox_Any, _types.Double);
         il.Emit(OpCodes.Newobj, typeof(double?).GetConstructor([typeof(double)])!);
+        il.Emit(OpCodes.Box, typeof(double?));
+        il.Emit(OpCodes.Stloc, timeoutLocal);
         il.Emit(OpCodes.Br, lblEndTimeout);
 
         il.MarkLabel(lblHasTimeout);
-        var localNullableDouble = il.DeclareLocal(typeof(double?));
-        il.Emit(OpCodes.Ldloca, localNullableDouble);
-        il.Emit(OpCodes.Initobj, typeof(double?));
-        il.Emit(OpCodes.Ldloc, localNullableDouble);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, timeoutLocal);
 
         il.MarkLabel(lblEndTimeout);
-        il.Emit(OpCodes.Call, runtimeMethod);
+
+        // Build args array: new object[] { typedArray, (int)index, value, timeout }
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Ldloc, timeoutLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the static method
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Ret);
 
         return method;
     }
 
-    private MethodBuilder EmitAtomicsNotifyMethod(TypeBuilder runtimeType, Type atomicsType)
+    private MethodBuilder EmitAtomicsNotifyMethod(TypeBuilder runtimeType, string atomicsTypeName)
     {
         var method = runtimeType.DefineMethod(
             "AtomicsNotify",
@@ -1208,13 +2037,23 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        var runtimeMethod = atomicsType.GetMethod("Notify",
-            BindingFlags.Public | BindingFlags.Static)!;
+        // Use reflection to call the static method at runtime
+        var atomicsTypeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var countLocal = il.DeclareLocal(_types.Object);
 
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSTypedArray));
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Conv_I4);
+        // Get the Atomics type by name
+        il.Emit(OpCodes.Ldstr, atomicsTypeName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, atomicsTypeLocal);
+
+        // Get the Notify method
+        il.Emit(OpCodes.Ldloc, atomicsTypeLocal);
+        il.Emit(OpCodes.Ldstr, "Notify");
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
 
         // Handle nullable count
         var lblHasCount = il.DefineLabel();
@@ -1228,22 +2067,47 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Unbox_Any, _types.Double);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Newobj, _types.NullableInt32Ctor);
+        il.Emit(OpCodes.Box, typeof(int?));
+        il.Emit(OpCodes.Stloc, countLocal);
         il.Emit(OpCodes.Br, lblEndCount);
 
         il.MarkLabel(lblHasCount);
-        var localNullableInt = il.DeclareLocal(typeof(int?));
-        il.Emit(OpCodes.Ldloca, localNullableInt);
-        il.Emit(OpCodes.Initobj, typeof(int?));
-        il.Emit(OpCodes.Ldloc, localNullableInt);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, countLocal);
 
         il.MarkLabel(lblEndCount);
-        il.Emit(OpCodes.Call, runtimeMethod);
+
+        // Build args array: new object[] { typedArray, (int)index, count }
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldloc, countLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the static method and convert result to double
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
         il.Emit(OpCodes.Ret);
 
         return method;
     }
 
-    private MethodBuilder EmitAtomicsIsLockFreeMethod(TypeBuilder runtimeType, Type atomicsType)
+    private MethodBuilder EmitAtomicsIsLockFreeMethod(TypeBuilder runtimeType, string atomicsTypeName)
     {
         var method = runtimeType.DefineMethod(
             "AtomicsIsLockFree",
@@ -1254,12 +2118,40 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        var runtimeMethod = atomicsType.GetMethod("IsLockFree",
-            BindingFlags.Public | BindingFlags.Static)!;
+        // Use reflection to call the static method at runtime
+        var atomicsTypeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
 
+        // Get the Atomics type by name
+        il.Emit(OpCodes.Ldstr, atomicsTypeName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, atomicsTypeLocal);
+
+        // Get the IsLockFree method
+        il.Emit(OpCodes.Ldloc, atomicsTypeLocal);
+        il.Emit(OpCodes.Ldstr, "IsLockFree");
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
+
+        // Build args array: new object[] { (int)size }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Call, runtimeMethod);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the static method
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
         il.Emit(OpCodes.Ret);
 
         return method;
@@ -1267,6 +2159,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits MessageChannel constructor helper.
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitMessageChannelHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
@@ -1278,9 +2171,28 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var ctor = typeof(SharpTS.Runtime.Types.SharpTSMessageChannel).GetConstructor(Type.EmptyTypes)!;
 
-        il.Emit(OpCodes.Newobj, ctor);
+        // Use reflection to create MessageChannel at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var ctorLocal = il.DeclareLocal(_types.ConstructorInfo);
+
+        // Get the type by name
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSMessageChannel, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Get the parameterless constructor
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, ctorLocal);
+
+        // Invoke the constructor with empty args
+        il.Emit(OpCodes.Ldloc, ctorLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConstructorInfo, "Invoke", _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         runtime.TSMessageChannelCtor = method;
@@ -1288,6 +2200,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits Worker constructor helper.
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitWorkerHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
@@ -1300,20 +2213,70 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var ctor = typeof(SharpTS.Runtime.Types.SharpTSWorker).GetConstructor(
-            [typeof(string), typeof(SharpTS.Runtime.Types.SharpTSObject), typeof(SharpTS.Execution.Interpreter)])!;
 
+        // Use reflection to create Worker at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var ctorLocal = il.DeclareLocal(_types.ConstructorInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var optionsTypeLocal = il.DeclareLocal(_types.Type);
+        var interpreterTypeLocal = il.DeclareLocal(_types.Type);
+
+        // Get the Worker type by name
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSWorker, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Get the SharpTSObject type for options parameter
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSObject, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, optionsTypeLocal);
+
+        // Get the Interpreter type for parentInterpreter parameter
+        il.Emit(OpCodes.Ldstr, "SharpTS.Execution.Interpreter, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, interpreterTypeLocal);
+
+        // Build Type[] for constructor: new[] { typeof(string), SharpTSObjectType, InterpreterType }
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, optionsTypeLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldloc, interpreterTypeLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, ctorLocal);
+
+        // Build args array: new object[] { filename, options, parentInterpreter }
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldarg_0);  // filename
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1);  // options
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldarg_2);  // parentInterpreter
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
 
-        // Cast options to SharpTSObject (or null)
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSObject));
-
-        // Cast parentInterpreter
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Castclass, typeof(SharpTS.Execution.Interpreter));
-
-        il.Emit(OpCodes.Newobj, ctor);
+        // Invoke the constructor
+        il.Emit(OpCodes.Ldloc, ctorLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConstructorInfo, "Invoke", _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         runtime.TSWorkerCtor = method;
@@ -1322,6 +2285,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits StructuredClone helper.
     /// Accepts either null, a SharpTSArray (transfer list), or a SharpTSObject with { transfer: [...] }.
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitStructuredCloneHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
@@ -1333,71 +2297,155 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var cloneMethod = typeof(SharpTS.Runtime.Types.StructuredClone).GetMethod("Clone",
-            BindingFlags.Public | BindingFlags.Static)!;
-        var sharpTSObjectType = typeof(SharpTS.Runtime.Types.SharpTSObject);
-        var sharpTSArrayType = typeof(SharpTS.Runtime.Types.SharpTSArray);
 
-        var transferLocal = il.DeclareLocal(sharpTSArrayType);
-        var isObjectLabel = il.DefineLabel();
-        var isArrayLabel = il.DefineLabel();
-        var callCloneLabel = il.DefineLabel();
+        // Use reflection to call StructuredClone.Clone at runtime
+        var structuredCloneTypeLocal = il.DeclareLocal(_types.Type);
+        var cloneMethodLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var transferLocal = il.DeclareLocal(_types.Object);
+        var argTypeNameLocal = il.DeclareLocal(_types.String);
+        var valueLocal = il.DeclareLocal(_types.Object);
+
+        // Get the StructuredClone type by name
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.StructuredClone, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, structuredCloneTypeLocal);
+
+        // Get the Clone method
+        il.Emit(OpCodes.Ldloc, structuredCloneTypeLocal);
+        il.Emit(OpCodes.Ldstr, "Clone");
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, cloneMethodLocal);
 
         // Initialize transfer to null
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Stloc, transferLocal);
 
+        var callCloneLabel = il.DefineLabel();
+        var checkObjectLabel = il.DefineLabel();
+        var checkArrayLabel = il.DefineLabel();
+        var extractTransferLabel = il.DefineLabel();
+
         // Check if arg1 is null
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, callCloneLabel);
 
-        // Check if arg1 is SharpTSObject (options object)
+        // Get the arg's type name to check what type it is
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, sharpTSObjectType);
-        il.Emit(OpCodes.Brtrue, isObjectLabel);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "get_FullName"));
+        il.Emit(OpCodes.Stloc, argTypeNameLocal);
 
-        // Check if arg1 is SharpTSArray (transfer array directly)
+        // Check if it's a SharpTSObject (options)
+        il.Emit(OpCodes.Ldloc, argTypeNameLocal);
+        il.Emit(OpCodes.Ldstr, "SharpTSObject");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Contains", _types.String));
+        il.Emit(OpCodes.Brtrue, extractTransferLabel);
+
+        // Check if it's a SharpTSArray (transfer directly)
+        il.Emit(OpCodes.Ldloc, argTypeNameLocal);
+        il.Emit(OpCodes.Ldstr, "SharpTSArray");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Contains", _types.String));
+        il.Emit(OpCodes.Brfalse, callCloneLabel);
+
+        // It's an array - use it directly as transfer
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, sharpTSArrayType);
-        il.Emit(OpCodes.Brtrue, isArrayLabel);
-
-        // Neither - just call with null transfer
-        il.Emit(OpCodes.Br, callCloneLabel);
-
-        // Handle SharpTSArray - use it directly as transfer
-        il.MarkLabel(isArrayLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, sharpTSArrayType);
         il.Emit(OpCodes.Stloc, transferLocal);
         il.Emit(OpCodes.Br, callCloneLabel);
 
-        // Handle SharpTSObject - extract "transfer" field
-        il.MarkLabel(isObjectLabel);
-        var valueLocal = il.DeclareLocal(_types.Object);
-        var fieldsProperty = sharpTSObjectType.GetProperty("Fields")!.GetGetMethod()!;
-        var tryGetValue = _types.DictionaryStringObjectNullableTryGetValue;
+        // Extract transfer from object's Fields dictionary
+        il.MarkLabel(extractTransferLabel);
+
+        // Get "transfer" field via reflection: obj.GetType().GetProperty("Fields").GetValue(obj)
+        var fieldsLocal = il.DeclareLocal(_types.Object);
+        var propInfoLocal = il.DeclareLocal(_types.PropertyInfo);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "Fields");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Stloc, propInfoLocal);
+
+        // Check if propInfo is null
+        il.Emit(OpCodes.Ldloc, propInfoLocal);
+        il.Emit(OpCodes.Brfalse, callCloneLabel);
 
         // Get the Fields dictionary
+        il.Emit(OpCodes.Ldloc, propInfoLocal);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, sharpTSObjectType);
-        il.Emit(OpCodes.Callvirt, fieldsProperty);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object));
+        il.Emit(OpCodes.Stloc, fieldsLocal);
 
-        // Try to get "transfer" from Fields
+        // Try to get "transfer" from the dictionary using indexer via reflection
+        // For simplicity, we'll use the Item property (indexer)
+        var dictTypeLocal = il.DeclareLocal(_types.Type);
+        var itemPropLocal = il.DeclareLocal(_types.PropertyInfo);
+        var indexArgsLocal = il.DeclareLocal(_types.ObjectArray);
+
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Brfalse, callCloneLabel);
+
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, dictTypeLocal);
+
+        // Try to get ContainsKey method and check if "transfer" exists
+        var containsKeyMethodLocal = il.DeclareLocal(_types.MethodInfo);
+        il.Emit(OpCodes.Ldloc, dictTypeLocal);
+        il.Emit(OpCodes.Ldstr, "ContainsKey");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        il.Emit(OpCodes.Stloc, containsKeyMethodLocal);
+
+        // Call ContainsKey("transfer")
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldstr, "transfer");
-        il.Emit(OpCodes.Ldloca, valueLocal);
-        il.Emit(OpCodes.Callvirt, tryGetValue);
-        il.Emit(OpCodes.Brfalse, callCloneLabel);  // If not found, use null
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, indexArgsLocal);
 
-        // Found transfer - cast to SharpTSArray
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, sharpTSArrayType);
+        il.Emit(OpCodes.Ldloc, containsKeyMethodLocal);
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Ldloc, indexArgsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, callCloneLabel);
+
+        // Get the "transfer" value using Item indexer
+        il.Emit(OpCodes.Ldloc, dictTypeLocal);
+        il.Emit(OpCodes.Ldstr, "Item");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Stloc, itemPropLocal);
+
+        il.Emit(OpCodes.Ldloc, itemPropLocal);
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Ldloc, indexArgsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Stloc, transferLocal);
 
         // Call Clone(value, transfer)
         il.MarkLabel(callCloneLabel);
-        il.Emit(OpCodes.Ldarg_0);       // value
-        il.Emit(OpCodes.Ldloc, transferLocal);  // transfer (SharpTSArray or null)
-        il.Emit(OpCodes.Call, cloneMethod);
+
+        // Build args: new object[] { value, transfer }
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, transferLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke Clone
+        il.Emit(OpCodes.Ldloc, cloneMethodLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         runtime.StructuredCloneClone = method;
@@ -1405,9 +2453,12 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits worker_threads module helper methods.
+    /// Uses reflection-based late-binding to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitWorkerThreadsModuleHelpers(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
+        const string workerThreadsTypeName = "SharpTS.Runtime.Types.WorkerThreads, SharpTS";
+
         // isMainThread getter
         var isMainThreadMethod = runtimeType.DefineMethod(
             "WorkerThreadsIsMainThread",
@@ -1417,8 +2468,25 @@ public partial class RuntimeEmitter
         );
 
         var il = isMainThreadMethod.GetILGenerator();
-        var prop = typeof(SharpTS.Runtime.Types.WorkerThreads).GetProperty("IsMainThread")!.GetGetMethod()!;
-        il.Emit(OpCodes.Call, prop);
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var propInfoLocal = il.DeclareLocal(_types.PropertyInfo);
+
+        // Get the WorkerThreads type
+        il.Emit(OpCodes.Ldstr, workerThreadsTypeName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Get the IsMainThread property
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "IsMainThread");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Stloc, propInfoLocal);
+
+        // Get the property value (static property, so pass null)
+        il.Emit(OpCodes.Ldloc, propInfoLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object));
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
         il.Emit(OpCodes.Ret);
         runtime.WorkerThreadsIsMainThread = isMainThreadMethod;
 
@@ -1431,8 +2499,25 @@ public partial class RuntimeEmitter
         );
 
         var il2 = threadIdMethod.GetILGenerator();
-        var prop2 = typeof(SharpTS.Runtime.Types.WorkerThreads).GetProperty("ThreadId")!.GetGetMethod()!;
-        il2.Emit(OpCodes.Call, prop2);
+        var typeLocal2 = il2.DeclareLocal(_types.Type);
+        var propInfoLocal2 = il2.DeclareLocal(_types.PropertyInfo);
+
+        // Get the WorkerThreads type
+        il2.Emit(OpCodes.Ldstr, workerThreadsTypeName);
+        il2.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il2.Emit(OpCodes.Stloc, typeLocal2);
+
+        // Get the ThreadId property
+        il2.Emit(OpCodes.Ldloc, typeLocal2);
+        il2.Emit(OpCodes.Ldstr, "ThreadId");
+        il2.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il2.Emit(OpCodes.Stloc, propInfoLocal2);
+
+        // Get the property value and convert to double
+        il2.Emit(OpCodes.Ldloc, propInfoLocal2);
+        il2.Emit(OpCodes.Ldnull);
+        il2.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object));
+        il2.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
         il2.Emit(OpCodes.Ret);
         runtime.WorkerThreadsThreadId = threadIdMethod;
 
@@ -1445,10 +2530,36 @@ public partial class RuntimeEmitter
         );
 
         var il3 = receiveMethod.GetILGenerator();
-        var receiveRuntimeMethod = typeof(SharpTS.Runtime.Types.WorkerThreads).GetMethod("ReceiveMessageOnPort")!;
+        var typeLocal3 = il3.DeclareLocal(_types.Type);
+        var methodInfoLocal = il3.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il3.DeclareLocal(_types.ObjectArray);
+
+        // Get the WorkerThreads type
+        il3.Emit(OpCodes.Ldstr, workerThreadsTypeName);
+        il3.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il3.Emit(OpCodes.Stloc, typeLocal3);
+
+        // Get the ReceiveMessageOnPort method
+        il3.Emit(OpCodes.Ldloc, typeLocal3);
+        il3.Emit(OpCodes.Ldstr, "ReceiveMessageOnPort");
+        il3.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static));
+        il3.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il3.Emit(OpCodes.Stloc, methodInfoLocal);
+
+        // Build args array: new object[] { port }
+        il3.Emit(OpCodes.Ldc_I4_1);
+        il3.Emit(OpCodes.Newarr, _types.Object);
+        il3.Emit(OpCodes.Dup);
+        il3.Emit(OpCodes.Ldc_I4_0);
         il3.Emit(OpCodes.Ldarg_0);
-        il3.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSMessagePort));
-        il3.Emit(OpCodes.Call, receiveRuntimeMethod);
+        il3.Emit(OpCodes.Stelem_Ref);
+        il3.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke the static method
+        il3.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il3.Emit(OpCodes.Ldnull);
+        il3.Emit(OpCodes.Ldloc, argsLocal);
+        il3.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il3.Emit(OpCodes.Ret);
         runtime.WorkerThreadsReceiveMessageOnPort = receiveMethod;
     }

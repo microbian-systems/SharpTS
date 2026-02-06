@@ -1,5 +1,4 @@
 using SharpTS.Parsing;
-using SharpTS.Runtime.Types;
 
 namespace SharpTS.Compilation;
 
@@ -13,6 +12,11 @@ namespace SharpTS.Compilation;
 /// </remarks>
 public static class ConstantFolder
 {
+    // Cached type for SharpTSUndefined checks (avoids compile-time dependency on SharpTS.dll)
+    private static readonly Type? _sharpTSUndefinedType = Type.GetType("SharpTS.Runtime.Types.SharpTSUndefined, SharpTS");
+
+    private static bool IsUndefinedType(object? value) =>
+        value != null && _sharpTSUndefinedType?.IsInstanceOfType(value) == true;
     /// <summary>
     /// Attempts to fold a binary expression with literal operands.
     /// </summary>
@@ -283,31 +287,36 @@ public static class ConstantFolder
         return true;
     }
 
-    private static bool IsTruthy(object? value) => value switch
+    private static bool IsTruthy(object? value)
     {
-        null => false,
-        SharpTSUndefined => false,
-        bool b => b,
-        double d => d != 0.0 && !double.IsNaN(d),
-        string s => s.Length > 0,
-        _ => true
-    };
+        if (value == null || IsUndefinedType(value)) return false;
+        return value switch
+        {
+            bool b => b,
+            double d => d != 0.0 && !double.IsNaN(d),
+            string s => s.Length > 0,
+            _ => true
+        };
+    }
 
     private static bool IsNullish(object? value) =>
         value == null || IsUndefined(value);
 
     private static bool IsUndefined(object? value) =>
-        value is SharpTSUndefined;
+        IsUndefinedType(value);
 
-    private static string Stringify(object? value) => value switch
+    private static string Stringify(object? value)
     {
-        null => "null",
-        SharpTSUndefined => "undefined",
-        bool b => b ? "true" : "false",
-        double d => FormatNumber(d),
-        string s => s,
-        _ => value.ToString() ?? ""
-    };
+        if (value == null) return "null";
+        if (IsUndefinedType(value)) return "undefined";
+        return value switch
+        {
+            bool b => b ? "true" : "false",
+            double d => FormatNumber(d),
+            string s => s,
+            _ => value.ToString() ?? ""
+        };
+    }
 
     private static string FormatNumber(double d)
     {
@@ -319,13 +328,16 @@ public static class ConstantFolder
         return d.ToString("G15");
     }
 
-    private static string TypeOf(object? value) => value switch
+    private static string TypeOf(object? value)
     {
-        null => "object",
-        SharpTSUndefined => "undefined",
-        bool => "boolean",
-        double => "number",
-        string => "string",
-        _ => "object"
-    };
+        if (value == null) return "object";
+        if (IsUndefinedType(value)) return "undefined";
+        return value switch
+        {
+            bool => "boolean",
+            double => "number",
+            string => "string",
+            _ => "object"
+        };
+    }
 }

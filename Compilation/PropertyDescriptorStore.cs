@@ -231,8 +231,9 @@ public static class PropertyDescriptorStore
 
     /// <summary>
     /// Stores symbol-keyed properties for compiled objects.
+    /// Uses object as key type to avoid compile-time dependency on SharpTSSymbol.
     /// </summary>
-    private static readonly ConditionalWeakTable<object, Dictionary<SharpTS.Runtime.Types.SharpTSSymbol, object?>> _symbolStorage = new();
+    private static readonly ConditionalWeakTable<object, Dictionary<object, object?>> _symbolStorage = new();
 
     /// <summary>
     /// Stores prototype references for compiled objects.
@@ -241,8 +242,9 @@ public static class PropertyDescriptorStore
 
     /// <summary>
     /// Gets all symbol keys from an object.
+    /// Returns objects that are SharpTSSymbol instances (checked via reflection at runtime).
     /// </summary>
-    public static IEnumerable<SharpTS.Runtime.Types.SharpTSSymbol> GetSymbolKeys(object obj)
+    public static IEnumerable<object> GetSymbolKeys(object obj)
     {
         if (_symbolStorage.TryGetValue(obj, out var symbols))
             return symbols.Keys;
@@ -280,6 +282,10 @@ internal class PrototypeInfo
 /// </summary>
 public class CompiledPropertyDescriptor
 {
+    // Cached types for reflection
+    private static readonly Type? _sharpTSPropertyDescriptorType = Type.GetType("SharpTS.Runtime.Types.SharpTSPropertyDescriptor, SharpTS");
+    private static readonly Type? _sharpTSObjectType = Type.GetType("SharpTS.Runtime.Types.SharpTSObject, SharpTS");
+
     /// <summary>Value for data properties.</summary>
     public object? Value { get; set; }
 
@@ -300,19 +306,25 @@ public class CompiledPropertyDescriptor
 
     /// <summary>
     /// Creates a descriptor from a SharpTSPropertyDescriptor or similar object.
+    /// Uses reflection to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     public static CompiledPropertyDescriptor FromAny(object? descriptorObj)
     {
         var result = new CompiledPropertyDescriptor();
 
-        if (descriptorObj is SharpTS.Runtime.Types.SharpTSPropertyDescriptor pd)
+        // Check for SharpTSPropertyDescriptor via reflection
+        if (descriptorObj != null && _sharpTSPropertyDescriptorType?.IsInstanceOfType(descriptorObj) == true)
         {
-            result.Value = pd.Value;
-            result.Getter = pd.Get;
-            result.Setter = pd.Set;
-            result.Writable = pd.Writable;
-            result.Enumerable = pd.Enumerable;
-            result.Configurable = pd.Configurable;
+            var pdType = descriptorObj.GetType();
+            result.Value = pdType.GetProperty("Value")?.GetValue(descriptorObj);
+            result.Getter = pdType.GetProperty("Get")?.GetValue(descriptorObj);
+            result.Setter = pdType.GetProperty("Set")?.GetValue(descriptorObj);
+            if (pdType.GetProperty("Writable")?.GetValue(descriptorObj) is bool w)
+                result.Writable = w;
+            if (pdType.GetProperty("Enumerable")?.GetValue(descriptorObj) is bool e)
+                result.Enumerable = e;
+            if (pdType.GetProperty("Configurable")?.GetValue(descriptorObj) is bool c)
+                result.Configurable = c;
             return result;
         }
 
@@ -356,31 +368,39 @@ public class CompiledPropertyDescriptor
     }
 
     /// <summary>
-    /// Converts to a SharpTSObject for returning from getOwnPropertyDescriptor.
+    /// Converts to a SharpTSObject (or Dictionary if type not available) for returning from getOwnPropertyDescriptor.
+    /// Uses reflection to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
-    public SharpTS.Runtime.Types.SharpTSObject ToObject()
+    public object ToObject()
     {
-        var obj = new SharpTS.Runtime.Types.SharpTSObject(new Dictionary<string, object?>());
+        var fields = new Dictionary<string, object?>();
 
         if (Getter != null || Setter != null)
         {
             // Accessor descriptor
             if (Getter != null)
-                obj.SetProperty("get", Getter);
+                fields["get"] = Getter;
             if (Setter != null)
-                obj.SetProperty("set", Setter);
+                fields["set"] = Setter;
         }
         else
         {
             // Data descriptor
-            obj.SetProperty("value", Value);
-            obj.SetProperty("writable", Writable);
+            fields["value"] = Value;
+            fields["writable"] = Writable;
         }
 
-        obj.SetProperty("enumerable", Enumerable);
-        obj.SetProperty("configurable", Configurable);
+        fields["enumerable"] = Enumerable;
+        fields["configurable"] = Configurable;
 
-        return obj;
+        // Try to create SharpTSObject via reflection, fall back to Dictionary
+        if (_sharpTSObjectType != null)
+        {
+            var obj = Activator.CreateInstance(_sharpTSObjectType, fields);
+            return obj!;
+        }
+
+        return fields;
     }
 }
 

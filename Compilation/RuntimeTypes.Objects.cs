@@ -1,11 +1,53 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using SharpTS.Runtime.Types;
 
 namespace SharpTS.Compilation;
 
 public static partial class RuntimeTypes
 {
+    // Cached types for reflection-based checks (to avoid repeated Type.GetType calls)
+    private static readonly Type? _sharpTSNamespaceType = Type.GetType("SharpTS.Runtime.Types.SharpTSNamespace, SharpTS");
+    private static readonly Type? _sharpTSArrayType = Type.GetType("SharpTS.Runtime.Types.SharpTSArray, SharpTS");
+
+    /// <summary>Helper to check if value is a SharpTSNamespace and get a property via reflection.</summary>
+    private static bool TryGetNamespaceProperty(object obj, string name, out object? result)
+    {
+        result = null;
+        if (_sharpTSNamespaceType == null || !_sharpTSNamespaceType.IsInstanceOfType(obj))
+            return false;
+        var getMethod = _sharpTSNamespaceType.GetMethod("Get", [typeof(string)]);
+        if (getMethod != null)
+            result = getMethod.Invoke(obj, [name]);
+        return true;
+    }
+
+    /// <summary>Helper to check if value is a SharpTSArray and get element count via reflection.</summary>
+    private static bool TryGetSharpTSArrayLength(object obj, out double length)
+    {
+        length = 0;
+        if (_sharpTSArrayType == null || !_sharpTSArrayType.IsInstanceOfType(obj))
+            return false;
+        var elementsProp = _sharpTSArrayType.GetProperty("Elements");
+        if (elementsProp?.GetValue(obj) is System.Collections.IList list)
+            length = list.Count;
+        return true;
+    }
+
+    /// <summary>Helper to check if value is a SharpTSArray and get element at index via reflection.</summary>
+    private static bool TryGetSharpTSArrayElement(object obj, int index, out object? result)
+    {
+        result = null;
+        if (_sharpTSArrayType == null || !_sharpTSArrayType.IsInstanceOfType(obj))
+            return false;
+        var elementsProp = _sharpTSArrayType.GetProperty("Elements");
+        if (elementsProp?.GetValue(obj) is System.Collections.IList list && index >= 0 && index < list.Count)
+        {
+            result = list[index];
+            return true;
+        }
+        return false;
+    }
+
     #region Objects
 
     // Helper to safely cast object to Dictionary<string, object?>
@@ -87,10 +129,10 @@ public static partial class RuntimeTypes
     {
         if (obj == null) return null;
 
-        // Namespace (TypeScript namespace object)
-        if (obj is SharpTSNamespace ns)
+        // Namespace (TypeScript namespace object) - checked via reflection
+        if (TryGetNamespaceProperty(obj, name, out var nsResult))
         {
-            return ns.Get(name);
+            return nsResult;
         }
 
         // Map (Dictionary<object, object>) - check before Dictionary<string, object?>
@@ -134,10 +176,10 @@ public static partial class RuntimeTypes
             return name == "length" ? (double)list.Count : null;
         }
 
-        // SharpTSArray (interpreter array type used by Map/Set entries)
-        if (obj is SharpTSArray tsArr)
+        // SharpTSArray (interpreter array type used by Map/Set entries) - checked via reflection
+        if (TryGetSharpTSArrayLength(obj, out var arrLength))
         {
-            return name == "length" ? (double)tsArr.Elements.Count : null;
+            return name == "length" ? arrLength : null;
         }
 
         // KeyValuePair<object, object> (compiled Map entries) - treat as [key, value] tuple
@@ -277,10 +319,10 @@ public static partial class RuntimeTypes
                 return list[idx];
             }
 
-            // SharpTSArray (interpreter array type used by Map/Set entries)
-            if (obj is SharpTSArray tsArr && idx >= 0 && idx < tsArr.Elements.Count)
+            // SharpTSArray (interpreter array type used by Map/Set entries) - checked via reflection
+            if (TryGetSharpTSArrayElement(obj, idx, out var arrElement))
             {
-                return tsArr.Get(idx);
+                return arrElement;
             }
 
             // KeyValuePair<object, object> (compiled Map entries) - treat as [key, value] tuple

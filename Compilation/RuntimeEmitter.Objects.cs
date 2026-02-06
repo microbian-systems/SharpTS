@@ -351,15 +351,8 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call the static helper method in RuntimeTypes
-        // RuntimeTypes.InvokeTaggedTemplate(tag, cookedStrings, rawStrings, expressions)
-        il.Emit(OpCodes.Ldarg_0); // tag
-        il.Emit(OpCodes.Ldarg_1); // cooked
-        il.Emit(OpCodes.Ldarg_2); // raw
-        il.Emit(OpCodes.Ldarg_3); // expressions
-        il.Emit(OpCodes.Call, typeof(RuntimeTypes).GetMethod(
-            "InvokeTaggedTemplate",
-            [typeof(object), typeof(object[]), typeof(string[]), typeof(object[])])!);
+        // Call RuntimeTypes.InvokeTaggedTemplate via reflection to avoid compile-time dependency
+        EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "InvokeTaggedTemplate", 4);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1645,10 +1638,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnLabel);
 
-        // Call PropertyDescriptorStore.Freeze(obj) to track in unified store
-        il.Emit(OpCodes.Ldarg_0);
-        var freezeMethod = typeof(PropertyDescriptorStore).GetMethod("Freeze", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        il.Emit(OpCodes.Call, freezeMethod!);
+        // Call PropertyDescriptorStore.Freeze(obj) via reflection to avoid compile-time dependency
+        EmitReflectionCallVoid(il, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS", "Freeze", 1);
 
         // Also add to legacy frozen objects table for backward compatibility
         il.Emit(OpCodes.Ldsfld, frozenObjectsField);
@@ -1729,10 +1720,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnLabel);
 
-        // Call PropertyDescriptorStore.Seal(obj) to track in unified store
-        il.Emit(OpCodes.Ldarg_0);
-        var sealMethod = typeof(PropertyDescriptorStore).GetMethod("Seal", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        il.Emit(OpCodes.Call, sealMethod!);
+        // Call PropertyDescriptorStore.Seal(obj) via reflection to avoid compile-time dependency
+        EmitReflectionCallVoid(il, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS", "Seal", 1);
 
         // Also add to legacy sealed objects table for backward compatibility
         il.Emit(OpCodes.Ldsfld, sealedObjectsField);
@@ -1892,6 +1881,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits Object.defineProperty(obj, prop, descriptor) - defines or modifies a property.
     /// Signature: object ObjectDefineProperty(object obj, object prop, object descriptor)
+    /// Uses reflection to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitObjectDefineProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1905,24 +1895,73 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call the static helper method in ObjectBuiltIns
-        // This helper handles all the complex logic
-        il.Emit(OpCodes.Ldarg_0); // obj
-        il.Emit(OpCodes.Ldarg_1); // prop
-        il.Emit(OpCodes.Ldarg_2); // descriptor
+        // Use reflection to call ObjectBuiltIns.RuntimeDefineProperty at runtime
+        // var type = Type.GetType("SharpTS.Runtime.BuiltIns.ObjectBuiltIns, SharpTS");
+        // var method = type?.GetMethod("RuntimeDefineProperty", BindingFlags.Public | BindingFlags.Static);
+        // return method?.Invoke(null, new object[] { obj, prop, descriptor }) ?? obj;
 
-        // Call runtime helper
-        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
-            "RuntimeDefineProperty",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
-        );
-        il.Emit(OpCodes.Call, helperMethod!);
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var fallbackLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // Get the type by name
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.ObjectBuiltIns, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Check if type is null (SharpTS.dll not loaded)
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brfalse, fallbackLabel);
+
+        // Get the method: type.GetMethod("RuntimeDefineProperty", BindingFlags.Public | BindingFlags.Static)
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "RuntimeDefineProperty");
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+        il.Emit(OpCodes.Stloc, methodLocal);
+
+        // Check if method is null
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Brfalse, fallbackLabel);
+
+        // Create args array: new object[] { obj, prop, descriptor }
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);  // obj
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1);  // prop
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldarg_2);  // descriptor
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke: method.Invoke(null, args)
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Ldnull);  // instance (null for static)
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Fallback: return obj as-is
+        il.MarkLabel(fallbackLabel);
+        il.Emit(OpCodes.Ldarg_0);
+
+        il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits Object.getOwnPropertyDescriptor(obj, prop) - gets a property descriptor.
     /// Signature: object ObjectGetOwnPropertyDescriptor(object obj, object prop)
+    /// Uses reflection to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitObjectGetOwnPropertyDescriptor(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1936,22 +1975,65 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call the static helper method
-        il.Emit(OpCodes.Ldarg_0); // obj
-        il.Emit(OpCodes.Ldarg_1); // prop
+        // Use reflection to call ObjectBuiltIns.RuntimeGetOwnPropertyDescriptor at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var fallbackLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
 
-        // Call runtime helper
-        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
-            "RuntimeGetOwnPropertyDescriptor",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
-        );
-        il.Emit(OpCodes.Call, helperMethod!);
+        // Get the type by name
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.ObjectBuiltIns, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Check if type is null
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brfalse, fallbackLabel);
+
+        // Get the method
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "RuntimeGetOwnPropertyDescriptor");
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+        il.Emit(OpCodes.Stloc, methodLocal);
+
+        // Check if method is null
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Brfalse, fallbackLabel);
+
+        // Create args array: new object[] { obj, prop }
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);  // obj
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1);  // prop
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke: method.Invoke(null, args)
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Fallback: return null
+        il.MarkLabel(fallbackLabel);
+        il.Emit(OpCodes.Ldnull);
+
+        il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits Object.create(proto, propertiesObject?) - creates a new object with prototype.
     /// Signature: object ObjectCreate(object proto, object propertiesObject)
+    /// Uses reflection to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
     private void EmitObjectCreate(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder prototypeStoreField)
     {
@@ -1965,16 +2047,58 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call the static helper method in ObjectBuiltIns
-        il.Emit(OpCodes.Ldarg_0); // proto
-        il.Emit(OpCodes.Ldarg_1); // propertiesObject
+        // Use reflection to call ObjectBuiltIns.RuntimeCreate at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var fallbackLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
 
-        // Call runtime helper
-        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
-            "RuntimeCreate",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
-        );
-        il.Emit(OpCodes.Call, helperMethod!);
+        // Get the type by name
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.ObjectBuiltIns, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Check if type is null
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brfalse, fallbackLabel);
+
+        // Get the method
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "RuntimeCreate");
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+        il.Emit(OpCodes.Stloc, methodLocal);
+
+        // Check if method is null
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Brfalse, fallbackLabel);
+
+        // Create args array: new object[] { proto, propertiesObject }
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);  // proto
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1);  // propertiesObject
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke: method.Invoke(null, args)
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Fallback: create a plain dictionary
+        il.MarkLabel(fallbackLabel);
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+
+        il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);
     }
 
@@ -2001,12 +2125,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnLabel);
 
-        // Call PropertyDescriptorStore.PreventExtensions(obj) to track in unified store
-        il.Emit(OpCodes.Ldarg_0);
-        var preventExtensionsMethod = typeof(PropertyDescriptorStore).GetMethod(
-            "PreventExtensions",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        il.Emit(OpCodes.Call, preventExtensionsMethod!);
+        // Call PropertyDescriptorStore.PreventExtensions(obj) via reflection to avoid compile-time dependency
+        EmitReflectionCallVoid(il, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS", "PreventExtensions", 1);
 
         // Also add to local non-extensible objects table for standalone checks
         il.Emit(OpCodes.Ldsfld, nonExtensibleObjectsField);
@@ -2092,14 +2212,49 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.Boolean);
         il.Emit(OpCodes.Brtrue, returnFalseLabel);
 
-        // Check PropertyDescriptorStore.IsExtensible(obj) - unified store check
+        // Check PropertyDescriptorStore.IsExtensible(obj) via reflection - unified store check
         il.MarkLabel(checkPropertyStoreLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        var isExtensibleMethod = typeof(PropertyDescriptorStore).GetMethod(
-            "IsExtensible",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        il.Emit(OpCodes.Call, isExtensibleMethod!);
-        il.Emit(OpCodes.Brfalse, returnFalseLabel); // PropertyDescriptorStore says not extensible
+        {
+            var typeLocal = il.DeclareLocal(_types.Type);
+            var methodLocal = il.DeclareLocal(_types.MethodInfo);
+            var argsLocal = il.DeclareLocal(_types.ObjectArray);
+            var skipReflectionLabel = il.DefineLabel();
+
+            // Try to get PropertyDescriptorStore type
+            il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+            il.Emit(OpCodes.Stloc, typeLocal);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Brfalse, skipReflectionLabel);
+
+            // Get IsExtensible method
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldstr, "IsExtensible");
+            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+            il.Emit(OpCodes.Stloc, methodLocal);
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Brfalse, skipReflectionLabel);
+
+            // Create args array with obj
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Stloc, argsLocal);
+
+            // Call method and check result
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+            il.Emit(OpCodes.Brfalse, returnFalseLabel); // PropertyDescriptorStore says not extensible
+
+            il.MarkLabel(skipReflectionLabel);
+        }
 
         // Also check local tables for backward compatibility
         // Check if obj is in the non-extensible objects table
@@ -2228,19 +2383,53 @@ public partial class RuntimeEmitter
         var resultLocal = il.DeclareLocal(_types.Object);
         var tempLocal = il.DeclareLocal(_types.Object);
 
-        // First check PropertyDescriptorStore.GetPrototype(obj)
-        il.Emit(OpCodes.Ldarg_0);
-        var getPrototypeMethod = typeof(PropertyDescriptorStore).GetMethod(
-            "GetPrototype",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        il.Emit(OpCodes.Call, getPrototypeMethod!);
-        il.Emit(OpCodes.Stloc, resultLocal);
+        // First check PropertyDescriptorStore.GetPrototype(obj) via reflection
+        {
+            var typeLocal = il.DeclareLocal(_types.Type);
+            var methodLocal = il.DeclareLocal(_types.MethodInfo);
+            var argsLocal = il.DeclareLocal(_types.ObjectArray);
+            var skipReflectionLabel = il.DefineLabel();
 
-        // If result is not null, return it
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Brfalse, checkLocalTableLabel);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ret);
+            // Try to get PropertyDescriptorStore type
+            il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+            il.Emit(OpCodes.Stloc, typeLocal);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Brfalse, skipReflectionLabel);
+
+            // Get GetPrototype method
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldstr, "GetPrototype");
+            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+            il.Emit(OpCodes.Stloc, methodLocal);
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Brfalse, skipReflectionLabel);
+
+            // Create args array with obj
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Stloc, argsLocal);
+
+            // Call method and store result
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            // If result is not null, return it
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Brfalse, skipReflectionLabel);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(skipReflectionLabel);
+        }
 
         // Also check local _prototypeStore table for backward compatibility
         il.MarkLabel(checkLocalTableLabel);
@@ -2264,7 +2453,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits Object.setPrototypeOf(obj, proto) - sets the prototype of an object.
     /// Signature: object ObjectSetPrototypeOf(object obj, object proto)
-    /// Uses RuntimeSetPrototypeOf helper for complex object type handling.
+    /// Uses reflection to call RuntimeSetPrototypeOf helper for complex object type handling.
     /// Also stores in local prototype table for standalone checks.
     /// </summary>
     private void EmitObjectSetPrototypeOf(TypeBuilder typeBuilder, EmittedRuntime runtime,
@@ -2280,17 +2469,56 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call the runtime helper which handles all edge cases (class instances, extensibility, etc.)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
-            "RuntimeSetPrototypeOf",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
-        );
-        il.Emit(OpCodes.Call, helperMethod!);
+        // Use reflection to call ObjectBuiltIns.RuntimeSetPrototypeOf at runtime
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var skipReflectionCallLabel = il.DefineLabel();
+        var localStoreLabel = il.DefineLabel();
+
+        // Get the type by name
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.ObjectBuiltIns, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Check if type is null
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brfalse, skipReflectionCallLabel);
+
+        // Get the method
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "RuntimeSetPrototypeOf");
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+        il.Emit(OpCodes.Stloc, methodLocal);
+
+        // Check if method is null
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Brfalse, skipReflectionCallLabel);
+
+        // Create args array: new object[] { obj, proto }
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);  // obj
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1);  // proto
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke: method.Invoke(null, args) - discard result since we also do local tracking
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Pop);  // Discard result from reflection call
+
+        il.MarkLabel(skipReflectionCallLabel);
 
         // Also store in local prototype table for standalone checks
-        // (The runtime helper stores in PropertyDescriptorStore, we also store locally)
         var skipLocalStoreLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, skipLocalStoreLabel); // Skip if null
@@ -2323,6 +2551,8 @@ public partial class RuntimeEmitter
         }
 
         il.MarkLabel(skipLocalStoreLabel);
+        // Return obj (arg_0)
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
     }
 }

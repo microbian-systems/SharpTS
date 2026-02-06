@@ -622,12 +622,8 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call RuntimeTypes.ConsoleTable(data, columns) which has full table rendering
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, typeof(RuntimeTypes).GetMethod(
-            nameof(RuntimeTypes.ConsoleTable),
-            [typeof(object), typeof(object)])!);
+        // Call RuntimeTypes.ConsoleTable via reflection to avoid compile-time dependency
+        EmitReflectionCallVoid(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "ConsoleTable", 2);
         il.Emit(OpCodes.Ret);
     }
 
@@ -647,11 +643,8 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call RuntimeTypes.ConsoleDir(obj) which has full inspection
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(RuntimeTypes).GetMethod(
-            nameof(RuntimeTypes.ConsoleDir),
-            [typeof(object)])!);
+        // Call RuntimeTypes.ConsoleDir via reflection to avoid compile-time dependency
+        EmitReflectionCallVoid(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "ConsoleDir", 1);
         il.Emit(OpCodes.Ret);
     }
 

@@ -504,14 +504,53 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, endLabel); // Property doesn't exist on sealed object, silently return
         il.Emit(OpCodes.Br, doSetFieldLabel); // Property exists, proceed to set
 
-        // Not sealed - check extensibility via PropertyDescriptorStore
+        // Not sealed - check extensibility via PropertyDescriptorStore (via reflection)
         il.MarkLabel(checkExtensibilityLabel);
-        // Call PropertyDescriptorStore.CanAddProperty(obj, name)
-        var canAddPropertyMethod = typeof(PropertyDescriptorStore).GetMethod("CanAddProperty", [typeof(object), typeof(string)])!;
-        il.Emit(OpCodes.Ldarg_0); // obj
-        il.Emit(OpCodes.Ldarg_1); // name
-        il.Emit(OpCodes.Call, canAddPropertyMethod);
-        il.Emit(OpCodes.Brfalse, endLabel); // Cannot add property, silently return
+        {
+            var typeLocal = il.DeclareLocal(_types.Type);
+            var methodLocal = il.DeclareLocal(_types.MethodInfo);
+            var argsLocal = il.DeclareLocal(_types.ObjectArray);
+            var skipReflectionLabel = il.DefineLabel();
+
+            // Try to get PropertyDescriptorStore type
+            il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+            il.Emit(OpCodes.Stloc, typeLocal);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Brfalse, skipReflectionLabel);
+
+            // Get CanAddProperty method
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldstr, "CanAddProperty");
+            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+            il.Emit(OpCodes.Stloc, methodLocal);
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Brfalse, skipReflectionLabel);
+
+            // Create args array with (obj, name)
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0); // obj
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_1); // name
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Stloc, argsLocal);
+
+            // Call method and check result
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+            il.Emit(OpCodes.Brfalse, endLabel); // Cannot add property, silently return
+
+            il.MarkLabel(skipReflectionLabel);
+        }
 
         // Set the value: dict[name] = value;
         il.MarkLabel(doSetFieldLabel);
@@ -698,12 +737,8 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call RuntimeTypes.GetListProperty(list, name)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, typeof(RuntimeTypes).GetMethod(
-            "GetListProperty",
-            [typeof(List<object>), typeof(string)])!);
+        // Call RuntimeTypes.GetListProperty via reflection to avoid compile-time dependency
+        EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "GetListProperty", 2);
         il.Emit(OpCodes.Ret);
     }
 
@@ -938,24 +973,102 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(dictLabel);
-        // Check for getter accessor via PropertyDescriptorStore before regular property lookup
+        // Check for getter accessor via PropertyDescriptorStore before regular property lookup (via reflection)
         var getterLocal = il.DeclareLocal(_types.Object);
         var noGetterLabel = il.DefineLabel();
+        {
+            var typeLocal = il.DeclareLocal(_types.Type);
+            var methodLocal = il.DeclareLocal(_types.MethodInfo);
+            var argsLocal = il.DeclareLocal(_types.ObjectArray);
+            var skipReflectionLabel = il.DefineLabel();
 
-        // Check PropertyDescriptorStore.TryGetGetter(obj, name, out getter)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloca, getterLocal);
-        var tryGetGetterMethod = typeof(PropertyDescriptorStore).GetMethod("TryGetGetter", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        il.Emit(OpCodes.Call, tryGetGetterMethod!);
-        il.Emit(OpCodes.Brfalse, noGetterLabel);
+            // Try to get PropertyDescriptorStore type
+            il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+            il.Emit(OpCodes.Stloc, typeLocal);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Brfalse, skipReflectionLabel);
 
-        // Getter exists - invoke it via helper method
-        il.Emit(OpCodes.Ldloc, getterLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        var invokeGetterMethod = typeof(RuntimeTypes).GetMethod("InvokeGetterAccessor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        il.Emit(OpCodes.Call, invokeGetterMethod!);
-        il.Emit(OpCodes.Ret);
+            // Get TryGetGetter method
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldstr, "TryGetGetter");
+            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+            il.Emit(OpCodes.Stloc, methodLocal);
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Brfalse, skipReflectionLabel);
+
+            // Create args array: new object[] { obj, name, null } for out parameter
+            il.Emit(OpCodes.Ldc_I4_3);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Stelem_Ref);
+            // args[2] will be set by the method (out parameter)
+            il.Emit(OpCodes.Stloc, argsLocal);
+
+            // Call TryGetGetter
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+            il.Emit(OpCodes.Brfalse, skipReflectionLabel);
+
+            // Getter was found - get it from args[2]
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Stloc, getterLocal);
+
+            // Invoke getter via RuntimeTypes.InvokeGetterAccessor (also via reflection)
+            var rtTypeLocal = il.DeclareLocal(_types.Type);
+            var rtMethodLocal = il.DeclareLocal(_types.MethodInfo);
+            var rtArgsLocal = il.DeclareLocal(_types.ObjectArray);
+            var skipGetterInvokeLabel = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.RuntimeTypes, SharpTS");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+            il.Emit(OpCodes.Stloc, rtTypeLocal);
+            il.Emit(OpCodes.Ldloc, rtTypeLocal);
+            il.Emit(OpCodes.Brfalse, skipGetterInvokeLabel);
+
+            il.Emit(OpCodes.Ldloc, rtTypeLocal);
+            il.Emit(OpCodes.Ldstr, "InvokeGetterAccessor");
+            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+            il.Emit(OpCodes.Stloc, rtMethodLocal);
+            il.Emit(OpCodes.Ldloc, rtMethodLocal);
+            il.Emit(OpCodes.Brfalse, skipGetterInvokeLabel);
+
+            // Create args: new object[] { getter, obj }
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldloc, getterLocal);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Stloc, rtArgsLocal);
+
+            // Invoke and return
+            il.Emit(OpCodes.Ldloc, rtMethodLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, rtArgsLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(skipGetterInvokeLabel);
+            il.MarkLabel(skipReflectionLabel);
+        }
 
         il.MarkLabel(noGetterLabel);
 
@@ -1321,47 +1434,193 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, nullLabel); // Property doesn't exist, silently return
         il.Emit(OpCodes.Br, doSetLabel); // Property exists on sealed object, proceed to set
 
-        // Check extensibility via PropertyDescriptorStore.CanAddProperty
+        // Check extensibility via PropertyDescriptorStore.CanAddProperty (via reflection)
         il.MarkLabel(extensibleCheckLabel);
-        var canAddPropertyMethod = typeof(PropertyDescriptorStore).GetMethod("CanAddProperty", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        if (canAddPropertyMethod == null) throw new InvalidOperationException("CanAddProperty method not found!");
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, canAddPropertyMethod);
-        il.Emit(OpCodes.Brfalse, nullLabel); // Cannot add property (non-extensible), silently return
-        // Fall through to doSetLabel if CanAddProperty returned true
+        {
+            var typeLocal = il.DeclareLocal(_types.Type);
+            var methodLocal = il.DeclareLocal(_types.MethodInfo);
+            var argsLocal = il.DeclareLocal(_types.ObjectArray);
+            var skipLabel = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+            il.Emit(OpCodes.Stloc, typeLocal);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldstr, "CanAddProperty");
+            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+            il.Emit(OpCodes.Stloc, methodLocal);
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Stloc, argsLocal);
+
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+            il.Emit(OpCodes.Brfalse, nullLabel);
+
+            il.MarkLabel(skipLabel);
+        }
+        // Fall through to doSetLabel if CanAddProperty returned true (or type not found)
 
         // Actually set the property
         il.MarkLabel(doSetLabel);
 
-        // Check for setter accessor via PropertyDescriptorStore before regular property set
+        // Check for setter accessor via PropertyDescriptorStore before regular property set (via reflection)
         var setterLocal = il.DeclareLocal(_types.Object);
         var noSetterLabel = il.DefineLabel();
+        {
+            var typeLocal = il.DeclareLocal(_types.Type);
+            var methodLocal = il.DeclareLocal(_types.MethodInfo);
+            var argsLocal = il.DeclareLocal(_types.ObjectArray);
+            var skipLabel = il.DefineLabel();
 
-        // Check PropertyDescriptorStore.TryGetSetter(obj, name, out setter)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloca, setterLocal);
-        var tryGetSetterMethod = typeof(PropertyDescriptorStore).GetMethod("TryGetSetter", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        il.Emit(OpCodes.Call, tryGetSetterMethod!);
-        il.Emit(OpCodes.Brfalse, noSetterLabel);
+            il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+            il.Emit(OpCodes.Stloc, typeLocal);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Brfalse, skipLabel);
 
-        // Setter exists - invoke it via helper method
-        il.Emit(OpCodes.Ldloc, setterLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_2);
-        var invokeSetterMethod = typeof(RuntimeTypes).GetMethod("InvokeSetterAccessor", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        il.Emit(OpCodes.Call, invokeSetterMethod!);
-        il.Emit(OpCodes.Ret);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldstr, "TryGetSetter");
+            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+            il.Emit(OpCodes.Stloc, methodLocal);
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldc_I4_3);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Stloc, argsLocal);
+
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            // Get setter from args[2]
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Stloc, setterLocal);
+
+            // Invoke setter via RuntimeTypes.InvokeSetterAccessor (via reflection)
+            var rtTypeLocal = il.DeclareLocal(_types.Type);
+            var rtMethodLocal = il.DeclareLocal(_types.MethodInfo);
+            var rtArgsLocal = il.DeclareLocal(_types.ObjectArray);
+            var skipSetterLabel = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.RuntimeTypes, SharpTS");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+            il.Emit(OpCodes.Stloc, rtTypeLocal);
+            il.Emit(OpCodes.Ldloc, rtTypeLocal);
+            il.Emit(OpCodes.Brfalse, skipSetterLabel);
+
+            il.Emit(OpCodes.Ldloc, rtTypeLocal);
+            il.Emit(OpCodes.Ldstr, "InvokeSetterAccessor");
+            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+            il.Emit(OpCodes.Stloc, rtMethodLocal);
+            il.Emit(OpCodes.Ldloc, rtMethodLocal);
+            il.Emit(OpCodes.Brfalse, skipSetterLabel);
+
+            il.Emit(OpCodes.Ldc_I4_3);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldloc, setterLocal);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Stloc, rtArgsLocal);
+
+            il.Emit(OpCodes.Ldloc, rtMethodLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, rtArgsLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(skipSetterLabel);
+            il.MarkLabel(skipLabel);
+        }
 
         il.MarkLabel(noSetterLabel);
 
-        // Check if property is writable via PropertyDescriptorStore
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        var isWritableMethod = typeof(PropertyDescriptorStore).GetMethod("IsWritable", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        il.Emit(OpCodes.Call, isWritableMethod!);
-        il.Emit(OpCodes.Brfalse, nullLabel); // Not writable - silently return
+        // Check if property is writable via PropertyDescriptorStore (via reflection)
+        {
+            var typeLocal = il.DeclareLocal(_types.Type);
+            var methodLocal = il.DeclareLocal(_types.MethodInfo);
+            var argsLocal = il.DeclareLocal(_types.ObjectArray);
+            var skipLabel = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+            il.Emit(OpCodes.Stloc, typeLocal);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldstr, "IsWritable");
+            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+            il.Emit(OpCodes.Stloc, methodLocal);
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Stloc, argsLocal);
+
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+            il.Emit(OpCodes.Brfalse, nullLabel);
+
+            il.MarkLabel(skipLabel);
+        }
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
@@ -1479,25 +1738,63 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
         il.Emit(OpCodes.Throw);
 
-        // Check extensibility via PropertyDescriptorStore.CanAddProperty
+        // Check extensibility via PropertyDescriptorStore.CanAddProperty (via reflection)
         il.MarkLabel(extensibleCheckLabel);
-        var canAddPropertyMethod = typeof(PropertyDescriptorStore).GetMethod("CanAddProperty", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, canAddPropertyMethod!);
-        il.Emit(OpCodes.Brtrue, doSetLabel); // Can add property, proceed to set
+        {
+            var typeLocal = il.DeclareLocal(_types.Type);
+            var methodLocal = il.DeclareLocal(_types.MethodInfo);
+            var argsLocal = il.DeclareLocal(_types.ObjectArray);
+            var skipLabel = il.DefineLabel();
 
-        // Cannot add property (non-extensible) - check strict mode
-        il.Emit(OpCodes.Ldarg_3); // strictMode
-        il.Emit(OpCodes.Brfalse, nullLabel); // Not strict, silently return
+            il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+            il.Emit(OpCodes.Stloc, typeLocal);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Brfalse, skipLabel);
 
-        // Strict mode and non-extensible with new property - throw TypeError
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot add property '");
-        il.Emit(OpCodes.Ldarg_1); // name
-        il.Emit(OpCodes.Ldstr, "' to a non-extensible object");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
-        il.Emit(OpCodes.Throw);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldstr, "CanAddProperty");
+            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+            il.Emit(OpCodes.Stloc, methodLocal);
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Stloc, argsLocal);
+
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+            il.Emit(OpCodes.Brtrue, doSetLabel); // Can add property, proceed to set
+
+            // Cannot add property (non-extensible) - check strict mode
+            il.Emit(OpCodes.Ldarg_3); // strictMode
+            il.Emit(OpCodes.Brfalse, nullLabel); // Not strict, silently return
+
+            // Strict mode and non-extensible with new property - throw TypeError
+            il.Emit(OpCodes.Ldstr, "TypeError: Cannot add property '");
+            il.Emit(OpCodes.Ldarg_1); // name
+            il.Emit(OpCodes.Ldstr, "' to a non-extensible object");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+            il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+            il.Emit(OpCodes.Throw);
+
+            il.MarkLabel(skipLabel);
+            // If type/method not found, assume extensible and proceed
+            il.Emit(OpCodes.Br, doSetLabel);
+        }
 
         // Actually set the property
         il.MarkLabel(doSetLabel);

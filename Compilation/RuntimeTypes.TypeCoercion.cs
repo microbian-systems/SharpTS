@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using SharpTS.Runtime.Types;
 
 namespace SharpTS.Compilation;
 
@@ -7,20 +6,23 @@ public static partial class RuntimeTypes
 {
     #region Type Coercion
 
-    public static string Stringify(object? value) => value switch
+    public static string Stringify(object? value)
     {
-        null => "null",
-        SharpTSUndefined => "undefined",
-        bool b => b ? "true" : "false",
-        double d => FormatNumber(d),
-        System.Numerics.BigInteger bi => $"{bi}n",
-        string s => s,
-        object[] arr => "[" + string.Join(", ", arr.Select(Stringify)) + "]",
-        List<object?> list => "[" + string.Join(", ", list.Select(Stringify)) + "]",
-        System.Collections.IList list => "[" + string.Join(", ", list.Cast<object?>().Select(Stringify)) + "]",
-        Dictionary<string, object?> dict => StringifyObject(dict),
-        _ => value.ToString() ?? "null"
-    };
+        if (value == null) return "null";
+        if (IsUndefined(value)) return "undefined";
+        return value switch
+        {
+            bool b => b ? "true" : "false",
+            double d => FormatNumber(d),
+            System.Numerics.BigInteger bi => $"{bi}n",
+            string s => s,
+            object[] arr => "[" + string.Join(", ", arr.Select(Stringify)) + "]",
+            List<object?> list => "[" + string.Join(", ", list.Select(Stringify)) + "]",
+            System.Collections.IList list => "[" + string.Join(", ", list.Cast<object?>().Select(Stringify)) + "]",
+            Dictionary<string, object?> dict => StringifyObject(dict),
+            _ => value.ToString() ?? "null"
+        };
+    }
 
     private static string FormatNumber(double d)
     {
@@ -39,34 +41,39 @@ public static partial class RuntimeTypes
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static double ToNumber(object? value) => value switch
+    public static double ToNumber(object? value)
     {
-        double d => d,
-        int i => i,
-        long l => l,
-        bool b => b ? 1.0 : 0.0,
-        string s when double.TryParse(s, out var d) => d,
-        null => 0.0,
-        SharpTSUndefined => double.NaN,  // undefined coerces to NaN, not 0
-        _ => double.NaN
-    };
+        if (value == null) return 0.0;
+        if (IsUndefined(value)) return double.NaN;  // undefined coerces to NaN, not 0
+        return value switch
+        {
+            double d => d,
+            int i => i,
+            long l => l,
+            bool b => b ? 1.0 : 0.0,
+            string s when double.TryParse(s, out var d) => d,
+            _ => double.NaN
+        };
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool IsTruthy(object? value) => value switch
+    public static bool IsTruthy(object? value)
     {
-        null => false,
-        SharpTSUndefined => false,
-        bool b => b,
-        double d => d != 0.0 && !double.IsNaN(d),
-        string s => s.Length > 0,
-        _ => true
-    };
+        if (value == null || IsUndefined(value)) return false;
+        return value switch
+        {
+            bool b => b,
+            double d => d != 0.0 && !double.IsNaN(d),
+            string s => s.Length > 0,
+            _ => true
+        };
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static string TypeOf(object? value)
     {
         if (value == null) return "object"; // typeof null === "object" in JS
-        if (value is SharpTSUndefined) return "undefined";
+        if (IsUndefined(value)) return "undefined";
 
         // Check for union types using marker interface
         if (value is IUnionType union)

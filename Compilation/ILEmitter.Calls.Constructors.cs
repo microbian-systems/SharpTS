@@ -1089,32 +1089,23 @@ public partial class ILEmitter
 
     /// <summary>
     /// Emits code for new TypedArray(...) construction.
+    /// Uses reflection-based helpers to avoid compile-time dependencies on SharpTS.dll.
     /// </summary>
     private void EmitNewTypedArray(string typeName, List<Expr> arguments)
     {
-        // Get the TypedArray type
-        var arrayType = typeName switch
-        {
-            "Int8Array" => typeof(SharpTS.Runtime.Types.SharpTSInt8Array),
-            "Uint8Array" => typeof(SharpTS.Runtime.Types.SharpTSUint8Array),
-            "Uint8ClampedArray" => typeof(SharpTS.Runtime.Types.SharpTSUint8ClampedArray),
-            "Int16Array" => typeof(SharpTS.Runtime.Types.SharpTSInt16Array),
-            "Uint16Array" => typeof(SharpTS.Runtime.Types.SharpTSUint16Array),
-            "Int32Array" => typeof(SharpTS.Runtime.Types.SharpTSInt32Array),
-            "Uint32Array" => typeof(SharpTS.Runtime.Types.SharpTSUint32Array),
-            "Float32Array" => typeof(SharpTS.Runtime.Types.SharpTSFloat32Array),
-            "Float64Array" => typeof(SharpTS.Runtime.Types.SharpTSFloat64Array),
-            "BigInt64Array" => typeof(SharpTS.Runtime.Types.SharpTSBigInt64Array),
-            "BigUint64Array" => typeof(SharpTS.Runtime.Types.SharpTSBigUint64Array),
-            _ => throw new CompileException($"Unknown TypedArray type: {typeName}")
-        };
-
         if (arguments.Count == 0)
         {
             // new TypedArray() - empty array of length 0
-            var ctor = arrayType.GetConstructor([typeof(int)])!;
-            IL.Emit(OpCodes.Ldc_I4_0);
-            IL.Emit(OpCodes.Newobj, ctor);
+            // Use FromObject helper with null (which creates length 0)
+            if (_ctx.Runtime!.TypedArrayFromObjectHelpers.TryGetValue(typeName, out var helper))
+            {
+                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Call, helper);
+            }
+            else
+            {
+                throw new CompileException($"Missing TypedArray helper for: {typeName}");
+            }
         }
         else if (arguments.Count == 1)
         {
@@ -1130,85 +1121,46 @@ public partial class ILEmitter
             }
             else
             {
-                // Fallback: assume it's a length
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.ToNumber);
-                IL.Emit(OpCodes.Conv_I4);
-                var ctor = arrayType.GetConstructor([typeof(int)])!;
-                IL.Emit(OpCodes.Newobj, ctor);
+                throw new CompileException($"Missing TypedArray helper for: {typeName}");
             }
         }
         else if (arguments.Count >= 2)
         {
             // new TypedArray(buffer, byteOffset?, length?)
-            // Buffer can be either SharedArrayBuffer or ArrayBuffer - need runtime dispatch
-            var sabType = typeof(SharpTS.Runtime.Types.SharpTSSharedArrayBuffer);
-            var abType = typeof(SharpTS.Runtime.Types.SharpTSArrayBuffer);
-
-            // Emit buffer argument
-            EmitExpression(arguments[0]);
-            EmitBoxIfNeeded(arguments[0]);
-            var bufferLocal = IL.DeclareLocal(Types.Object);
-            IL.Emit(OpCodes.Stloc, bufferLocal);
-
-            // Compute byteOffset and length once
-            var byteOffsetLocal = IL.DeclareLocal(Types.Int32);
-            var lengthLocal = IL.DeclareLocal(typeof(int?));
-
-            // byteOffset
-            if (arguments.Count > 1)
+            // Use the FromBuffer helper which handles both SharedArrayBuffer and ArrayBuffer via reflection
+            if (_ctx.Runtime!.TypedArrayFromBufferHelpers.TryGetValue(typeName, out var bufferHelper))
             {
-                EmitExpressionAsDouble(arguments[1]);
-                IL.Emit(OpCodes.Conv_I4);
+                // Emit buffer argument
+                EmitExpression(arguments[0]);
+                EmitBoxIfNeeded(arguments[0]);
+
+                // Emit byteOffset as double
+                if (arguments.Count > 1)
+                {
+                    EmitExpressionAsDouble(arguments[1]);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldc_R8, 0.0);
+                }
+
+                // Emit length (null if not provided)
+                if (arguments.Count > 2)
+                {
+                    EmitExpression(arguments[2]);
+                    EmitBoxIfNeeded(arguments[2]);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldnull);
+                }
+
+                IL.Emit(OpCodes.Call, bufferHelper);
             }
             else
             {
-                IL.Emit(OpCodes.Ldc_I4_0);
+                throw new CompileException($"Missing TypedArray buffer helper for: {typeName}");
             }
-            IL.Emit(OpCodes.Stloc, byteOffsetLocal);
-
-            // length (nullable)
-            if (arguments.Count > 2)
-            {
-                EmitExpressionAsDouble(arguments[2]);
-                IL.Emit(OpCodes.Conv_I4);
-                IL.Emit(OpCodes.Newobj, Types.NullableInt32Ctor);
-            }
-            else
-            {
-                var tempNullableInt = IL.DeclareLocal(typeof(int?));
-                IL.Emit(OpCodes.Ldloca, tempNullableInt);
-                IL.Emit(OpCodes.Initobj, typeof(int?));
-                IL.Emit(OpCodes.Ldloc, tempNullableInt);
-            }
-            IL.Emit(OpCodes.Stloc, lengthLocal);
-
-            // Check if buffer is SharedArrayBuffer
-            var isArrayBufferLabel = IL.DefineLabel();
-            var endLabel = IL.DefineLabel();
-
-            IL.Emit(OpCodes.Ldloc, bufferLocal);
-            IL.Emit(OpCodes.Isinst, sabType);
-            IL.Emit(OpCodes.Brfalse, isArrayBufferLabel);
-
-            // SharedArrayBuffer path
-            IL.Emit(OpCodes.Ldloc, bufferLocal);
-            IL.Emit(OpCodes.Castclass, sabType);
-            IL.Emit(OpCodes.Ldloc, byteOffsetLocal);
-            IL.Emit(OpCodes.Ldloc, lengthLocal);
-            var sabCtor = arrayType.GetConstructor([sabType, typeof(int), typeof(int?)])!;
-            IL.Emit(OpCodes.Newobj, sabCtor);
-            IL.Emit(OpCodes.Br, endLabel);
-
-            // ArrayBuffer path
-            IL.MarkLabel(isArrayBufferLabel);
-            IL.Emit(OpCodes.Ldloc, bufferLocal);
-            IL.Emit(OpCodes.Castclass, abType);
-            IL.Emit(OpCodes.Ldloc, byteOffsetLocal);
-            IL.Emit(OpCodes.Ldloc, lengthLocal);
-            var abCtor = arrayType.GetConstructor([abType, typeof(int), typeof(int?)])!;
-            IL.Emit(OpCodes.Newobj, abCtor);
-
-            IL.MarkLabel(endLabel);
         }
 
         SetStackUnknown();

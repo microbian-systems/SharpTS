@@ -367,14 +367,10 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call the static helper method in RuntimeTypes
-        il.Emit(OpCodes.Ldarg_0); // obj
-
-        var helperMethod = typeof(RuntimeTypes).GetMethod(
-            "GetOwnPropertyNames",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
-        );
-        il.Emit(OpCodes.Call, helperMethod!);
+        // Call RuntimeTypes.GetOwnPropertyNames via reflection to avoid compile-time dependency
+        EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "GetOwnPropertyNames", 1);
+        // Cast result from object to List<object> (reflection Invoke returns object)
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
         il.Emit(OpCodes.Ret);
     }
 

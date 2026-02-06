@@ -113,6 +113,29 @@ ILCompiler runs in multiple phases:
 
 Arrow functions use display classes for captured variables; non-capturing arrows compile to static methods.
 
+### CRITICAL: Standalone DLL Constraint
+
+**Compiled TypeScript DLLs must NOT reference SharpTS.dll.** The output DLL must be fully standalone.
+
+**NEVER do this in Compilation/ files:**
+```csharp
+// BAD - embeds SharpTS.dll reference in output
+var method = typeof(RuntimeTypes).GetMethod("SomeMethod");
+il.Emit(OpCodes.Call, method);
+```
+
+**Instead, use reflection-based IL that resolves at runtime:**
+```csharp
+// GOOD - uses RuntimeEmitter helper methods
+EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "SomeMethod", argCount);
+// or for void methods:
+EmitReflectionCallVoid(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "SomeMethod", argCount);
+```
+
+The same applies to `PropertyDescriptorStore`, `ObjectBuiltIns`, and any other SharpTS types.
+
+**Why:** When emitting IL with `typeof(X).GetMethod(...)`, the method token references the SharpTS assembly directly. This creates a hard dependency. The reflection pattern emits IL that does `Type.GetType("..., SharpTS")` at runtime, allowing graceful degradation if SharpTS isn't present.
+
 ### Error Handling Conventions
 
 - Type errors: "Type Error:" prefix

@@ -41,12 +41,43 @@ public partial class RuntimeEmitter
 
         if (checkExtensible)
         {
-            // Check extensibility via PropertyDescriptorStore.IsExtensible
+            // Check extensibility via PropertyDescriptorStore.IsExtensible (via reflection)
             // If NOT extensible, branch to return
-            var isExtensibleMethod = typeof(PropertyDescriptorStore).GetMethod("IsExtensible", [typeof(object)])!;
-            il.Emit(OpCodes.Ldarg_0);  // list
-            il.Emit(OpCodes.Call, isExtensibleMethod);
-            il.Emit(OpCodes.Brfalse, returnLabel);  // If false (not extensible), branch to return
+            var typeLocal = il.DeclareLocal(_types.Type);
+            var methodLocal = il.DeclareLocal(_types.MethodInfo);
+            var argsLocal = il.DeclareLocal(_types.ObjectArray);
+            var skipLabel = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.PropertyDescriptorStore, SharpTS");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+            il.Emit(OpCodes.Stloc, typeLocal);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldstr, "IsExtensible");
+            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+            il.Emit(OpCodes.Stloc, methodLocal);
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Stloc, argsLocal);
+
+            il.Emit(OpCodes.Ldloc, methodLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+            il.Emit(OpCodes.Brfalse, returnLabel);
+
+            il.MarkLabel(skipLabel);
         }
     }
 

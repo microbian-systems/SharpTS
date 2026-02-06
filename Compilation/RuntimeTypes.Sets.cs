@@ -1,5 +1,3 @@
-using SharpTS.Runtime.Types;
-
 namespace SharpTS.Compilation;
 
 public static partial class RuntimeTypes
@@ -9,14 +7,14 @@ public static partial class RuntimeTypes
     /// <summary>
     /// Creates a new empty Set.
     /// </summary>
-    public static object CreateSet() => new HashSet<object>(SharpTS.Runtime.Types.ReferenceEqualityComparer.Instance);
+    public static object CreateSet() => new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// Creates a Set from an array of values.
     /// </summary>
     public static object CreateSetFromArray(object? values)
     {
-        var set = new HashSet<object>(SharpTS.Runtime.Types.ReferenceEqualityComparer.Instance);
+        var set = new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         if (values is List<object?> list)
         {
             foreach (var item in list)
@@ -146,7 +144,7 @@ public static partial class RuntimeTypes
     /// </summary>
     public static object SetUnion(object? set1, object? set2)
     {
-        var result = new HashSet<object>(SharpTS.Runtime.Types.ReferenceEqualityComparer.Instance);
+        var result = new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         if (set1 is HashSet<object> hashSet1)
         {
             foreach (var value in hashSet1)
@@ -166,7 +164,7 @@ public static partial class RuntimeTypes
     /// </summary>
     public static object SetIntersection(object? set1, object? set2)
     {
-        var result = new HashSet<object>(SharpTS.Runtime.Types.ReferenceEqualityComparer.Instance);
+        var result = new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         if (set1 is HashSet<object> hashSet1 && set2 is HashSet<object> hashSet2)
         {
             foreach (var value in hashSet1)
@@ -184,7 +182,7 @@ public static partial class RuntimeTypes
     /// </summary>
     public static object SetDifference(object? set1, object? set2)
     {
-        var result = new HashSet<object>(SharpTS.Runtime.Types.ReferenceEqualityComparer.Instance);
+        var result = new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         if (set1 is HashSet<object> hashSet1)
         {
             var hashSet2 = set2 as HashSet<object>;
@@ -203,7 +201,7 @@ public static partial class RuntimeTypes
     /// </summary>
     public static object SetSymmetricDifference(object? set1, object? set2)
     {
-        var result = new HashSet<object>(SharpTS.Runtime.Types.ReferenceEqualityComparer.Instance);
+        var result = new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         var hashSet1 = set1 as HashSet<object>;
         var hashSet2 = set2 as HashSet<object>;
 

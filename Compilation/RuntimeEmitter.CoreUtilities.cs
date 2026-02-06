@@ -1351,11 +1351,10 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notString);
 
-        // Default: use RuntimeTypes.FormatAsJson for proper JSON formatting of objects/arrays
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(RuntimeTypes).GetMethod(
-            nameof(RuntimeTypes.FormatAsJson),
-            [typeof(object)])!);
+        // Default: use RuntimeTypes.FormatAsJson via reflection to avoid compile-time dependency
+        EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "FormatAsJson", 1);
+        // Cast result from object to string (reflection Invoke returns object)
+        il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Ret);
     }
 

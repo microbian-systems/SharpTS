@@ -1666,6 +1666,133 @@ public static class ScryptImpl
 }
 
 /// <summary>
+/// Shared reflection-based type cache and factory methods for crypto helpers.
+/// Avoids compile-time dependencies on SharpTS.dll for standalone compiled assemblies.
+/// </summary>
+internal static class CryptoReflectionHelper
+{
+    // Cached types
+    public static readonly Type? SharpTSArrayType = Type.GetType("SharpTS.Runtime.Types.SharpTSArray, SharpTS");
+    public static readonly Type? SharpTSObjectType = Type.GetType("SharpTS.Runtime.Types.SharpTSObject, SharpTS");
+    public static readonly Type? SharpTSBufferType = Type.GetType("SharpTS.Runtime.Types.SharpTSBuffer, SharpTS");
+    public static readonly Type? SharpTSDiffieHellmanType = Type.GetType("SharpTS.Runtime.Types.SharpTSDiffieHellman, SharpTS");
+    public static readonly Type? SharpTSECDHType = Type.GetType("SharpTS.Runtime.Types.SharpTSECDH, SharpTS");
+    public static readonly Type? SharpTSKeyObjectType = Type.GetType("SharpTS.Runtime.Types.SharpTSKeyObject, SharpTS");
+    public static readonly Type? SharpTSPropertyDescriptorType = Type.GetType("SharpTS.Runtime.Types.SharpTSPropertyDescriptor, SharpTS");
+    public static readonly Type? KeyObjectTypeEnum = Type.GetType("SharpTS.Runtime.Types.KeyObjectType, SharpTS");
+
+    /// <summary>Creates a SharpTSArray from a list of items.</summary>
+    public static object CreateArray(IEnumerable<object?> items)
+    {
+        if (SharpTSArrayType == null)
+            throw new InvalidOperationException("SharpTSArray type not found");
+        return Activator.CreateInstance(SharpTSArrayType, new List<object?>(items))!;
+    }
+
+    /// <summary>Creates a SharpTSObject from a dictionary.</summary>
+    public static object CreateObject(Dictionary<string, object?> fields)
+    {
+        if (SharpTSObjectType == null)
+            throw new InvalidOperationException("SharpTSObject type not found");
+        return Activator.CreateInstance(SharpTSObjectType, fields)!;
+    }
+
+    /// <summary>Creates a SharpTSDiffieHellman with prime length.</summary>
+    public static object CreateDiffieHellman(int primeLength)
+    {
+        if (SharpTSDiffieHellmanType == null)
+            throw new InvalidOperationException("SharpTSDiffieHellman type not found");
+        return Activator.CreateInstance(SharpTSDiffieHellmanType, primeLength)!;
+    }
+
+    /// <summary>Creates a SharpTSDiffieHellman with prime and generator.</summary>
+    public static object CreateDiffieHellman(byte[] prime, byte[]? generator)
+    {
+        if (SharpTSDiffieHellmanType == null)
+            throw new InvalidOperationException("SharpTSDiffieHellman type not found");
+        return Activator.CreateInstance(SharpTSDiffieHellmanType, prime, generator)!;
+    }
+
+    /// <summary>Creates a SharpTSDiffieHellman for a named group.</summary>
+    public static object CreateDiffieHellmanGroup(string groupName)
+    {
+        if (SharpTSDiffieHellmanType == null)
+            throw new InvalidOperationException("SharpTSDiffieHellman type not found");
+        return Activator.CreateInstance(SharpTSDiffieHellmanType, groupName, true)!;
+    }
+
+    /// <summary>Creates a SharpTSECDH with curve name.</summary>
+    public static object CreateECDH(string curveName)
+    {
+        if (SharpTSECDHType == null)
+            throw new InvalidOperationException("SharpTSECDH type not found");
+        return Activator.CreateInstance(SharpTSECDHType, curveName)!;
+    }
+
+    /// <summary>Creates a SharpTSKeyObject (secret key) with bytes.</summary>
+    public static object CreateSecretKeyObject(byte[] keyBytes)
+    {
+        if (SharpTSKeyObjectType == null)
+            throw new InvalidOperationException("SharpTSKeyObject type not found");
+        return Activator.CreateInstance(SharpTSKeyObjectType, keyBytes)!;
+    }
+
+    /// <summary>Creates a public SharpTSKeyObject from PEM.</summary>
+    public static object CreatePublicKeyObject(string pem)
+    {
+        if (SharpTSKeyObjectType == null)
+            throw new InvalidOperationException("SharpTSKeyObject type not found");
+        var method = SharpTSKeyObjectType.GetMethod("CreatePublicKey", [typeof(string)]);
+        if (method == null)
+            throw new InvalidOperationException("SharpTSKeyObject.CreatePublicKey method not found");
+        return method.Invoke(null, [pem])!;
+    }
+
+    /// <summary>Creates a private SharpTSKeyObject from PEM.</summary>
+    public static object CreatePrivateKeyObject(string pem)
+    {
+        if (SharpTSKeyObjectType == null)
+            throw new InvalidOperationException("SharpTSKeyObject type not found");
+        var method = SharpTSKeyObjectType.GetMethod("CreatePrivateKey", [typeof(string)]);
+        if (method == null)
+            throw new InvalidOperationException("SharpTSKeyObject.CreatePrivateKey method not found");
+        return method.Invoke(null, [pem])!;
+    }
+
+    /// <summary>Checks if value is a SharpTSBuffer and extracts data.</summary>
+    public static byte[]? TryGetBufferData(object? value)
+    {
+        if (value == null || SharpTSBufferType == null)
+            return null;
+        if (!SharpTSBufferType.IsInstanceOfType(value))
+            return null;
+        var dataProperty = SharpTSBufferType.GetProperty("Data");
+        return dataProperty?.GetValue(value) as byte[];
+    }
+
+    /// <summary>Checks if value is a SharpTSKeyObject and extracts info.</summary>
+    public static (bool isKeyObject, object? rsaKey, bool isPrivate) TryGetKeyObjectInfo(object? value)
+    {
+        if (value == null || SharpTSKeyObjectType == null || KeyObjectTypeEnum == null)
+            return (false, null, false);
+        if (!SharpTSKeyObjectType.IsInstanceOfType(value))
+            return (false, null, false);
+
+        var rsaKeyProperty = SharpTSKeyObjectType.GetProperty("RsaKey");
+        var typeProperty = SharpTSKeyObjectType.GetProperty("Type");
+        if (rsaKeyProperty == null || typeProperty == null)
+            return (false, null, false);
+
+        var rsaKey = rsaKeyProperty.GetValue(value);
+        var keyType = typeProperty.GetValue(value);
+        var privateValue = Enum.Parse(KeyObjectTypeEnum, "Private");
+        var isPrivate = keyType?.Equals(privateValue) == true;
+
+        return (true, rsaKey, isPrivate);
+    }
+}
+
+/// <summary>
 /// Static helper for getHashes() and getCiphers().
 /// Used by compiled code.
 /// </summary>
@@ -1676,12 +1803,12 @@ public static class CryptoInfoHelper
 
     public static object GetHashes()
     {
-        return new SharpTS.Runtime.Types.SharpTSArray(new List<object?>(_hashes));
+        return CryptoReflectionHelper.CreateArray(_hashes);
     }
 
     public static object GetCiphers()
     {
-        return new SharpTS.Runtime.Types.SharpTSArray(new List<object?>(_ciphers));
+        return CryptoReflectionHelper.CreateArray(_ciphers);
     }
 }
 
@@ -1717,7 +1844,7 @@ public static class CryptoKeyPairHelper
     private static object GenerateRsaKeyPair(object? options)
     {
         var (publicKey, privateKey) = GenerateRsaKeyPairRaw(options);
-        return new SharpTS.Runtime.Types.SharpTSObject(new Dictionary<string, object?>
+        return CryptoReflectionHelper.CreateObject(new Dictionary<string, object?>
         {
             ["publicKey"] = publicKey,
             ["privateKey"] = privateKey
@@ -1739,7 +1866,7 @@ public static class CryptoKeyPairHelper
     private static object GenerateEcKeyPair(object? options)
     {
         var (publicKey, privateKey) = GenerateEcKeyPairRaw(options);
-        return new SharpTS.Runtime.Types.SharpTSObject(new Dictionary<string, object?>
+        return CryptoReflectionHelper.CreateObject(new Dictionary<string, object?>
         {
             ["publicKey"] = publicKey,
             ["privateKey"] = privateKey
@@ -1821,23 +1948,24 @@ public static class CryptoDHHelper
     {
         if (primeOrLength is double d)
         {
-            return new SharpTS.Runtime.Types.SharpTSDiffieHellman((int)d);
+            return CryptoReflectionHelper.CreateDiffieHellman((int)d);
         }
 
         var prime = ConvertToBytes(primeOrLength);
         byte[]? gen = generator != null ? ConvertToBytes(generator) : null;
-        return new SharpTS.Runtime.Types.SharpTSDiffieHellman(prime, gen);
+        return CryptoReflectionHelper.CreateDiffieHellman(prime, gen);
     }
 
     public static object GetDiffieHellman(string groupName)
     {
-        return new SharpTS.Runtime.Types.SharpTSDiffieHellman(groupName, isGroup: true);
+        return CryptoReflectionHelper.CreateDiffieHellmanGroup(groupName);
     }
 
     private static byte[] ConvertToBytes(object value)
     {
-        if (value is SharpTS.Runtime.Types.SharpTSBuffer buffer)
-            return buffer.Data;
+        var bufferData = CryptoReflectionHelper.TryGetBufferData(value);
+        if (bufferData != null)
+            return bufferData;
         if (value is byte[] bytes)
             return bytes;
         if (value is string str)
@@ -1854,7 +1982,7 @@ public static class CryptoECDHHelper
 {
     public static object CreateECDH(string curveName)
     {
-        return new SharpTS.Runtime.Types.SharpTSECDH(curveName);
+        return CryptoReflectionHelper.CreateECDH(curveName);
     }
 }
 
@@ -1919,13 +2047,19 @@ public static class CryptoRsaHelper
         if (key is string pem)
             return pem;
 
-        if (key is SharpTS.Runtime.Types.SharpTSKeyObject keyObj)
+        // Check for SharpTSKeyObject via reflection
+        var (isKeyObject, rsaKey, isPrivate) = CryptoReflectionHelper.TryGetKeyObjectInfo(key);
+        if (isKeyObject)
         {
-            if (keyObj.RsaKey != null)
+            if (rsaKey != null)
             {
-                return keyObj.Type == SharpTS.Runtime.Types.KeyObjectType.Private
-                    ? keyObj.RsaKey.ExportPkcs8PrivateKeyPem()
-                    : keyObj.RsaKey.ExportSubjectPublicKeyInfoPem();
+                // rsaKey is an RSA instance
+                var rsaType = rsaKey.GetType();
+                var exportMethod = isPrivate
+                    ? rsaType.GetMethod("ExportPkcs8PrivateKeyPem", Type.EmptyTypes)
+                    : rsaType.GetMethod("ExportSubjectPublicKeyInfoPem", Type.EmptyTypes);
+                if (exportMethod != null)
+                    return (string)exportMethod.Invoke(rsaKey, null)!;
             }
             throw new ArgumentException("KeyObject must contain an RSA key");
         }
@@ -2009,24 +2143,29 @@ public static class CryptoKeyObjectHelper
                 _ => throw new ArgumentException($"crypto.createSecretKey: unsupported encoding '{enc}'")
             };
         }
-        else if (key is SharpTS.Runtime.Types.SharpTSBuffer buf)
-        {
-            keyBytes = buf.Data;
-        }
-        else if (key is byte[] bytes)
-        {
-            keyBytes = bytes;
-        }
         else
         {
-            // Try to extract bytes from compiled $Buffer type
-            var extracted = ExtractBufferBytes(key);
-            if (extracted == null)
-                throw new ArgumentException("crypto.createSecretKey: key must be a Buffer or string");
-            keyBytes = extracted;
+            // Try to extract bytes from SharpTSBuffer via reflection
+            var bufferData = CryptoReflectionHelper.TryGetBufferData(key);
+            if (bufferData != null)
+            {
+                keyBytes = bufferData;
+            }
+            else if (key is byte[] bytes)
+            {
+                keyBytes = bytes;
+            }
+            else
+            {
+                // Try to extract bytes from compiled $Buffer type
+                var extracted = ExtractBufferBytes(key);
+                if (extracted == null)
+                    throw new ArgumentException("crypto.createSecretKey: key must be a Buffer or string");
+                keyBytes = extracted;
+            }
         }
 
-        return new SharpTS.Runtime.Types.SharpTSKeyObject(keyBytes);
+        return CryptoReflectionHelper.CreateSecretKeyObject(keyBytes);
     }
 
     /// <summary>
@@ -2035,7 +2174,7 @@ public static class CryptoKeyObjectHelper
     public static object CreatePublicKey(object key)
     {
         string pem = ExtractPem(key);
-        return SharpTS.Runtime.Types.SharpTSKeyObject.CreatePublicKey(pem);
+        return CryptoReflectionHelper.CreatePublicKeyObject(pem);
     }
 
     /// <summary>
@@ -2044,7 +2183,7 @@ public static class CryptoKeyObjectHelper
     public static object CreatePrivateKey(object key)
     {
         string pem = ExtractPem(key);
-        return SharpTS.Runtime.Types.SharpTSKeyObject.CreatePrivateKey(pem);
+        return CryptoReflectionHelper.CreatePrivateKeyObject(pem);
     }
 
     /// <summary>
@@ -2052,8 +2191,10 @@ public static class CryptoKeyObjectHelper
     /// </summary>
     private static byte[]? ExtractBufferBytes(object obj)
     {
-        if (obj is SharpTS.Runtime.Types.SharpTSBuffer buf)
-            return buf.Data;
+        // Try SharpTSBuffer via reflection first
+        var bufferData = CryptoReflectionHelper.TryGetBufferData(obj);
+        if (bufferData != null)
+            return bufferData;
 
         if (obj is byte[] bytes)
             return bytes;
@@ -2082,8 +2223,10 @@ public static class CryptoKeyObjectHelper
         if (key is string pem)
             return pem;
 
-        if (key is SharpTS.Runtime.Types.SharpTSBuffer buf)
-            return System.Text.Encoding.UTF8.GetString(buf.Data);
+        // Try SharpTSBuffer via reflection
+        var bufferData = CryptoReflectionHelper.TryGetBufferData(key);
+        if (bufferData != null)
+            return System.Text.Encoding.UTF8.GetString(bufferData);
 
         // Try to get bytes from compiled $Buffer
         var bytes = ExtractBufferBytes(key);

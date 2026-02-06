@@ -729,6 +729,15 @@ public class EmittedRuntime
     public MethodBuilder FsFtruncateSync { get; set; } = null!;
     public FieldBuilder FsFileDescriptorTable { get; set; } = null!;
 
+    // File descriptor low-level helpers (reflection-based for standalone DLLs)
+    public MethodBuilder FsFlagsParse { get; set; } = null!;
+    public MethodBuilder FdTableGetInstance { get; set; } = null!;
+    public MethodBuilder FdTableOpen { get; set; } = null!;
+    public MethodBuilder FdTableClose { get; set; } = null!;
+    public MethodBuilder FdTableGet { get; set; } = null!;
+    public MethodBuilder CreateSharpTSDir { get; set; } = null!;
+    public MethodBuilder LibCCreateHardLink { get; set; } = null!;
+
     // Directory utilities
     public MethodBuilder FsMkdtempSync { get; set; } = null!;
     public MethodBuilder FsOpendirSync { get; set; } = null!;
@@ -906,6 +915,11 @@ public class EmittedRuntime
     public MethodBuilder HttpGetMethods { get; set; } = null!;
     public MethodBuilder HttpGetStatusCodes { get; set; } = null!;
     public MethodBuilder HttpGetGlobalAgent { get; set; } = null!;
+
+    // HTTP low-level helpers (reflection-based for standalone DLLs)
+    public MethodBuilder ExtractResponseHeadersHelper { get; set; } = null!;
+    public MethodBuilder WrapCallbackHelper { get; set; } = null!;
+    public MethodBuilder CreateHttpServerHelper { get; set; } = null!;
 
     // $FetchResponse type - emitted for standalone fetch support
     public TypeBuilder TSFetchResponseType { get; set; } = null!;
@@ -1348,6 +1362,9 @@ public class EmittedRuntime
 
     // TypedArray FromObject helpers (handles both length and SharedArrayBuffer arguments)
     public Dictionary<string, MethodBuilder> TypedArrayFromObjectHelpers { get; } = [];
+
+    // TypedArray FromBuffer helpers (handles buffer + byteOffset + length arguments)
+    public Dictionary<string, MethodBuilder> TypedArrayFromBufferHelpers { get; } = [];
 
     // Atomics static methods
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSAtomics

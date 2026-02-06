@@ -719,8 +719,8 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call RuntimeTypes.CreateSystemErrorMap()
-        il.Emit(OpCodes.Call, typeof(RuntimeTypes).GetMethod(nameof(RuntimeTypes.CreateSystemErrorMap))!);
+        // Call RuntimeTypes.CreateSystemErrorMap via reflection to avoid compile-time dependency
+        EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "CreateSystemErrorMap", 0);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1089,12 +1089,31 @@ public partial class RuntimeEmitter
 /// </summary>
 public static class UtilHelpers
 {
+    // Cached types for reflection-based type checks (to avoid repeated Type.GetType calls)
+    private static readonly Type? _sharpTSArrayType = Type.GetType("SharpTS.Runtime.Types.SharpTSArray, SharpTS");
+    private static readonly Type? _sharpTSPromiseType = Type.GetType("SharpTS.Runtime.Types.SharpTSPromise, SharpTS");
+    private static readonly Type? _sharpTSRegExpType = Type.GetType("SharpTS.Runtime.Types.SharpTSRegExp, SharpTS");
+    private static readonly Type? _sharpTSMapType = Type.GetType("SharpTS.Runtime.Types.SharpTSMap, SharpTS");
+    private static readonly Type? _sharpTSSetType = Type.GetType("SharpTS.Runtime.Types.SharpTSSet, SharpTS");
+    private static readonly Type? _sharpTSBufferType = Type.GetType("SharpTS.Runtime.Types.SharpTSBuffer, SharpTS");
+    private static readonly Type? _sharpTSErrorType = Type.GetType("SharpTS.Runtime.Types.SharpTSError, SharpTS");
+    private static readonly Type? _sharpTSWeakMapType = Type.GetType("SharpTS.Runtime.Types.SharpTSWeakMap, SharpTS");
+    private static readonly Type? _sharpTSWeakSetType = Type.GetType("SharpTS.Runtime.Types.SharpTSWeakSet, SharpTS");
+    private static readonly Type? _sharpTSTextEncoderType = Type.GetType("SharpTS.Runtime.Types.SharpTSTextEncoder, SharpTS");
+    private static readonly Type? _sharpTSTextDecoderType = Type.GetType("SharpTS.Runtime.Types.SharpTSTextDecoder, SharpTS");
+
+    /// <summary>
+    /// Helper to check if a value is an instance of a SharpTS type using reflection.
+    /// </summary>
+    private static bool IsInstanceOf(object? value, Type? type) =>
+        value != null && type?.IsInstanceOfType(value) == true;
+
     /// <summary>
     /// util.types.isArray - checks if value is an array.
     /// Checks for both emitted $Array (implements IList) and interpreter SharpTSArray.
     /// </summary>
     public static bool IsArray(object? value) =>
-        value is IList<object?> || value is SharpTS.Runtime.Types.SharpTSArray;
+        value is IList<object?> || IsInstanceOf(value, _sharpTSArrayType);
 
     /// <summary>
     /// util.types.isFunction - checks if value is a function.
@@ -1137,7 +1156,7 @@ public static class UtilHelpers
     public static bool IsPromise(object? value)
     {
         if (value is null) return false;
-        if (value is SharpTS.Runtime.Types.SharpTSPromise) return true;
+        if (IsInstanceOf(value, _sharpTSPromiseType)) return true;
         // In compiled mode, promises are represented as Task<object?> or Task
         var type = value.GetType();
         return type.IsGenericType && type.GetGenericTypeDefinition() == typeof(System.Threading.Tasks.Task<>)
@@ -1151,7 +1170,7 @@ public static class UtilHelpers
     public static bool IsRegExp(object? value)
     {
         if (value is null) return false;
-        if (value is SharpTS.Runtime.Types.SharpTSRegExp) return true;
+        if (IsInstanceOf(value, _sharpTSRegExpType)) return true;
         if (value is System.Text.RegularExpressions.Regex) return true;
         // In compiled mode, regex is represented as $RegExp emitted type
         var typeName = value.GetType().Name;
@@ -1165,7 +1184,7 @@ public static class UtilHelpers
     public static bool IsMap(object? value)
     {
         if (value is null) return false;
-        if (value is SharpTS.Runtime.Types.SharpTSMap) return true;
+        if (IsInstanceOf(value, _sharpTSMapType)) return true;
         // In compiled mode, maps are represented as Dictionary<object, object?>
         var type = value.GetType();
         return type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Dictionary<,>);
@@ -1178,7 +1197,7 @@ public static class UtilHelpers
     public static bool IsSet(object? value)
     {
         if (value is null) return false;
-        if (value is SharpTS.Runtime.Types.SharpTSSet) return true;
+        if (IsInstanceOf(value, _sharpTSSetType)) return true;
         // In compiled mode, sets are represented as HashSet<object>
         var type = value.GetType();
         return type.IsGenericType && type.GetGenericTypeDefinition() == typeof(HashSet<>);
@@ -1187,7 +1206,7 @@ public static class UtilHelpers
     /// <summary>
     /// util.types.isTypedArray - checks if value is a typed array (Buffer).
     /// </summary>
-    public static bool IsTypedArray(object? value) => value is SharpTS.Runtime.Types.SharpTSBuffer;
+    public static bool IsTypedArray(object? value) => IsInstanceOf(value, _sharpTSBufferType);
 
     /// <summary>
     /// util.types.isNativeError - checks if value is an Error instance.
@@ -1195,7 +1214,7 @@ public static class UtilHelpers
     public static bool IsNativeError(object? value)
     {
         if (value is null) return false;
-        if (value is SharpTS.Runtime.Types.SharpTSError) return true;
+        if (IsInstanceOf(value, _sharpTSErrorType)) return true;
         if (value is Exception) return true;
         return false;
     }
@@ -1212,7 +1231,7 @@ public static class UtilHelpers
     public static bool IsWeakMap(object? value)
     {
         if (value is null) return false;
-        if (value is SharpTS.Runtime.Types.SharpTSWeakMap) return true;
+        if (IsInstanceOf(value, _sharpTSWeakMapType)) return true;
         // Check type name for compiled WeakMap
         var typeName = value.GetType().Name;
         return typeName.Contains("WeakMap");
@@ -1224,7 +1243,7 @@ public static class UtilHelpers
     public static bool IsWeakSet(object? value)
     {
         if (value is null) return false;
-        if (value is SharpTS.Runtime.Types.SharpTSWeakSet) return true;
+        if (IsInstanceOf(value, _sharpTSWeakSetType)) return true;
         // Check type name for compiled WeakSet
         var typeName = value.GetType().Name;
         return typeName.Contains("WeakSet");
@@ -1237,7 +1256,7 @@ public static class UtilHelpers
     public static bool IsArrayBuffer(object? value)
     {
         if (value is null) return false;
-        if (value is SharpTS.Runtime.Types.SharpTSBuffer) return true;
+        if (IsInstanceOf(value, _sharpTSBufferType)) return true;
         if (value is byte[]) return true;
         return false;
     }
@@ -1584,10 +1603,17 @@ public static class UtilHelpers
             return true;
         }
 
-        // Buffers
-        if (a is SharpTS.Runtime.Types.SharpTSBuffer bufA && b is SharpTS.Runtime.Types.SharpTSBuffer bufB)
+        // Buffers - check via reflection for SharpTSBuffer
+        if (_sharpTSBufferType != null && _sharpTSBufferType.IsInstanceOfType(a) && _sharpTSBufferType.IsInstanceOfType(b))
         {
-            return bufA.Data.SequenceEqual(bufB.Data);
+            var dataProperty = _sharpTSBufferType.GetProperty("Data");
+            if (dataProperty != null)
+            {
+                var dataA = dataProperty.GetValue(a) as byte[];
+                var dataB = dataProperty.GetValue(b) as byte[];
+                if (dataA != null && dataB != null)
+                    return dataA.SequenceEqual(dataB);
+            }
         }
 
         // Default: use Object.Equals
@@ -2034,18 +2060,24 @@ public static class UtilHelpers
     /// <summary>
     /// Creates a new TextEncoder instance.
     /// TextEncoder always uses UTF-8 encoding.
+    /// Uses reflection to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
-    public static SharpTS.Runtime.Types.SharpTSTextEncoder CreateTextEncoder()
+    public static object CreateTextEncoder()
     {
-        return new SharpTS.Runtime.Types.SharpTSTextEncoder();
+        if (_sharpTSTextEncoderType == null)
+            throw new InvalidOperationException("SharpTSTextEncoder type not found");
+        return Activator.CreateInstance(_sharpTSTextEncoderType)!;
     }
 
     /// <summary>
     /// Creates a new TextDecoder instance with the specified options.
+    /// Uses reflection to avoid compile-time dependency on SharpTS.dll.
     /// </summary>
-    public static SharpTS.Runtime.Types.SharpTSTextDecoder CreateTextDecoder(string? encoding = null, bool fatal = false, bool ignoreBOM = false)
+    public static object CreateTextDecoder(string? encoding = null, bool fatal = false, bool ignoreBOM = false)
     {
-        return new SharpTS.Runtime.Types.SharpTSTextDecoder(encoding ?? "utf-8", fatal, ignoreBOM);
+        if (_sharpTSTextDecoderType == null)
+            throw new InvalidOperationException("SharpTSTextDecoder type not found");
+        return Activator.CreateInstance(_sharpTSTextDecoderType, encoding ?? "utf-8", fatal, ignoreBOM)!;
     }
 
     /// <summary>

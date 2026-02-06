@@ -2265,5 +2265,142 @@ public partial class RuntimeEmitter
 
         typeBuilder.CreateType();
     }
+
+    #region Reflection-Based Call Helpers
+
+    /// <summary>
+    /// Emits IL that calls a static void method via reflection at runtime.
+    /// This avoids compile-time dependencies on SharpTS.dll.
+    /// Assumes the arguments are already on the stack (arg_0, arg_1, etc.).
+    /// </summary>
+    /// <param name="il">The IL generator.</param>
+    /// <param name="typeName">Full type name including assembly (e.g., "SharpTS.Compilation.PropertyDescriptorStore, SharpTS").</param>
+    /// <param name="methodName">The method name to call.</param>
+    /// <param name="argCount">Number of arguments the method takes (will be loaded from arg_0, arg_1, etc.).</param>
+    private void EmitReflectionCallVoid(ILGenerator il, string typeName, string methodName, int argCount)
+    {
+        // var type = Type.GetType("...");
+        // if (type == null) goto skip;
+        // var method = type.GetMethod("...", BindingFlags.Public | BindingFlags.Static);
+        // if (method == null) goto skip;
+        // var args = new object[] { arg_0, arg_1, ... };
+        // method.Invoke(null, args);
+        // skip:
+
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var skipLabel = il.DefineLabel();
+
+        // Get the type by name
+        il.Emit(OpCodes.Ldstr, typeName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Check if type is null
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        // Get the method
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, methodName);
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+        il.Emit(OpCodes.Stloc, methodLocal);
+
+        // Check if method is null
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        // Create args array
+        il.Emit(OpCodes.Ldc_I4, argCount);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        for (int i = 0; i < argCount; i++)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4, i);
+            il.Emit(OpCodes.Ldarg, i);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke: method.Invoke(null, args)
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Pop);  // Discard result (void method)
+
+        il.MarkLabel(skipLabel);
+    }
+
+    /// <summary>
+    /// Emits IL that calls a static method via reflection at runtime and returns the result.
+    /// This avoids compile-time dependencies on SharpTS.dll.
+    /// Assumes the arguments are already on the stack (arg_0, arg_1, etc.).
+    /// </summary>
+    /// <param name="il">The IL generator.</param>
+    /// <param name="typeName">Full type name including assembly.</param>
+    /// <param name="methodName">The method name to call.</param>
+    /// <param name="argCount">Number of arguments the method takes.</param>
+    /// <param name="fallbackValue">Label to branch to if type/method not found, or null to push null as fallback.</param>
+    private void EmitReflectionCall(ILGenerator il, string typeName, string methodName, int argCount, Label? fallbackLabel = null)
+    {
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var skipLabel = fallbackLabel ?? il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // Get the type by name
+        il.Emit(OpCodes.Ldstr, typeName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Check if type is null
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        // Get the method
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, methodName);
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
+        il.Emit(OpCodes.Stloc, methodLocal);
+
+        // Check if method is null
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        // Create args array
+        il.Emit(OpCodes.Ldc_I4, argCount);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        for (int i = 0; i < argCount; i++)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4, i);
+            il.Emit(OpCodes.Ldarg, i);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // Invoke: method.Invoke(null, args)
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Fallback: push null if no label provided
+        if (fallbackLabel == null)
+        {
+            il.MarkLabel(skipLabel);
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        il.MarkLabel(endLabel);
+    }
+
+    #endregion
 }
 
