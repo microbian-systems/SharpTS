@@ -184,6 +184,10 @@ public partial class RuntimeEmitter
         // Must come before EmitRuntimeClass so InvokeTaggedTemplate can use the constructor
         EmitTemplateStringsListClass(moduleBuilder, runtime);
 
+        // Emit $PropertyDescriptorStore and supporting types for standalone object semantics
+        // Must come before EmitRuntimeClass so Object.freeze/seal/etc. can use it
+        EmitPropertyDescriptorTypes(moduleBuilder, runtime);
+
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime);
 
@@ -2077,13 +2081,14 @@ public partial class RuntimeEmitter
         EmitGetArrayMethod(typeBuilder, runtime);
         EmitGetFunctionMethod(typeBuilder, runtime);  // For bind/call/apply on functions
         EmitToPascalCase(typeBuilder, runtime);  // Must be emitted before GetFieldsProperty/SetFieldsProperty
+        // InvokeValue/InvokeMethodValue must come before GetFieldsProperty (needs InvokeMethodValue for getters)
+        // and before Promise methods (needed by InvokeCallback)
+        EmitInvokeValue(typeBuilder, runtime);
+        EmitInvokeMethodValue(typeBuilder, runtime);
         EmitGetFieldsProperty(typeBuilder, runtime);
         EmitGetListProperty(typeBuilder, runtime);
         EmitSetFieldsProperty(typeBuilder, runtime);
         EmitSetFieldsPropertyStrict(typeBuilder, runtime);
-        // InvokeValue/InvokeMethodValue must come before Promise methods (needed by InvokeCallback)
-        EmitInvokeValue(typeBuilder, runtime);
-        EmitInvokeMethodValue(typeBuilder, runtime);
         // Exception helpers must come before Promise methods (Promise.any uses CreateException)
         EmitCreateException(typeBuilder, runtime);
         EmitWrapException(typeBuilder, runtime);

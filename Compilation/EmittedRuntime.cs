@@ -1489,4 +1489,47 @@ public class EmittedRuntime
     public MethodBuilder StatsIsSocket { get; set; } = null!;
     public MethodBuilder StatsSizeGetter { get; set; } = null!;
     public MethodBuilder StatsModeGetter { get; set; } = null!;
+
+    // $FrozenSealedState - tracks frozen/sealed/extensible state for objects
+    public Type FrozenSealedStateType { get; set; } = null!;
+    public ConstructorInfo FrozenSealedStateCtor { get; set; } = null!;
+    public PropertyInfo FrozenSealedStateIsFrozen { get; set; } = null!;
+    public PropertyInfo FrozenSealedStateIsSealed { get; set; } = null!;
+    public PropertyInfo FrozenSealedStateIsExtensible { get; set; } = null!;
+
+    // $PrototypeInfo - holds prototype reference for objects
+    public Type PrototypeInfoType { get; set; } = null!;
+    public ConstructorInfo PrototypeInfoCtor { get; set; } = null!;
+    public PropertyInfo PrototypeInfoPrototype { get; set; } = null!;
+
+    // $CompiledPropertyDescriptor - property descriptor for compiled objects
+    public Type CompiledPropertyDescriptorType { get; set; } = null!;
+    public ConstructorInfo CompiledPropertyDescriptorCtor { get; set; } = null!;
+    public PropertyInfo CompiledPropertyDescriptorValue { get; set; } = null!;
+    public PropertyInfo CompiledPropertyDescriptorGetter { get; set; } = null!;
+    public PropertyInfo CompiledPropertyDescriptorSetter { get; set; } = null!;
+    public PropertyInfo CompiledPropertyDescriptorWritable { get; set; } = null!;
+    public PropertyInfo CompiledPropertyDescriptorEnumerable { get; set; } = null!;
+    public PropertyInfo CompiledPropertyDescriptorConfigurable { get; set; } = null!;
+
+    // $PropertyDescriptorStore - stores property descriptors for compiled objects
+    public Type PropertyDescriptorStoreType { get; set; } = null!;
+    public FieldBuilder PDSDescriptorsField { get; set; } = null!;
+    public FieldBuilder PDSFrozenSealedField { get; set; } = null!;
+    public FieldBuilder PDSSymbolStorageField { get; set; } = null!;
+    public FieldBuilder PDSPrototypeStoreField { get; set; } = null!;
+    public MethodBuilder PDSFreeze { get; set; } = null!;
+    public MethodBuilder PDSSeal { get; set; } = null!;
+    public MethodBuilder PDSPreventExtensions { get; set; } = null!;
+    public MethodBuilder PDSIsExtensible { get; set; } = null!;
+    public MethodBuilder PDSIsFrozen { get; set; } = null!;
+    public MethodBuilder PDSIsSealed { get; set; } = null!;
+    public MethodBuilder PDSCanAddProperty { get; set; } = null!;
+    public MethodBuilder PDSTryGetGetter { get; set; } = null!;
+    public MethodBuilder PDSTryGetSetter { get; set; } = null!;
+    public MethodBuilder PDSIsWritable { get; set; } = null!;
+    public MethodBuilder PDSSetPrototype { get; set; } = null!;
+    public MethodBuilder PDSGetPrototype { get; set; } = null!;
+    public MethodBuilder PDSDefineProperty { get; set; } = null!;
+    public MethodBuilder PDSGetPropertyDescriptor { get; set; } = null!;
 }
