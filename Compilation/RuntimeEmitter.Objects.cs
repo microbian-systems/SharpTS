@@ -1981,6 +1981,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits Object.preventExtensions(obj) - prevents adding new properties.
     /// Signature: object ObjectPreventExtensions(object obj)
+    /// Uses PropertyDescriptorStore for enforcement and local table for standalone checks.
     /// </summary>
     private void EmitObjectPreventExtensions(TypeBuilder typeBuilder, EmittedRuntime runtime,
         FieldBuilder nonExtensibleObjectsField, FieldBuilder frozenObjectsField, FieldBuilder sealedObjectsField)
@@ -1994,19 +1995,56 @@ public partial class RuntimeEmitter
         runtime.ObjectPreventExtensions = method;
 
         var il = method.GetILGenerator();
+        var returnLabel = il.DefineLabel();
 
+        // If obj is null, just return it
         il.Emit(OpCodes.Ldarg_0);
-        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
-            "RuntimePreventExtensions",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
-        );
-        il.Emit(OpCodes.Call, helperMethod!);
+        il.Emit(OpCodes.Brfalse, returnLabel);
+
+        // Call PropertyDescriptorStore.PreventExtensions(obj) to track in unified store
+        il.Emit(OpCodes.Ldarg_0);
+        var preventExtensionsMethod = typeof(PropertyDescriptorStore).GetMethod(
+            "PreventExtensions",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        il.Emit(OpCodes.Call, preventExtensionsMethod!);
+
+        // Also add to local non-extensible objects table for standalone checks
+        il.Emit(OpCodes.Ldsfld, nonExtensibleObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1); // true
+        il.Emit(OpCodes.Box, _types.Boolean);
+        var addOrUpdateMethod = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<object, object>)
+            .GetMethod("AddOrUpdate");
+        if (addOrUpdateMethod != null)
+        {
+            il.Emit(OpCodes.Callvirt, addOrUpdateMethod);
+        }
+        else
+        {
+            var setItem = _types.ConditionalWeakTable.GetMethod("set_Item")
+                ?? _types.ConditionalWeakTable.GetProperty("Item")?.GetSetMethod();
+            if (setItem != null)
+            {
+                il.Emit(OpCodes.Callvirt, setItem);
+            }
+            else
+            {
+                il.Emit(OpCodes.Pop);
+                il.Emit(OpCodes.Pop);
+                il.Emit(OpCodes.Pop);
+            }
+        }
+
+        il.MarkLabel(returnLabel);
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits Object.isExtensible(obj) - returns whether object can have new properties.
     /// Signature: bool ObjectIsExtensible(object obj)
+    /// Checks both PropertyDescriptorStore and local tables for compatibility.
+    /// Returns false for primitives, frozen, sealed, or explicitly non-extensible objects.
     /// </summary>
     private void EmitObjectIsExtensible(TypeBuilder typeBuilder, EmittedRuntime runtime,
         FieldBuilder nonExtensibleObjectsField, FieldBuilder frozenObjectsField, FieldBuilder sealedObjectsField)
@@ -2020,13 +2058,82 @@ public partial class RuntimeEmitter
         runtime.ObjectIsExtensible = method;
 
         var il = method.GetILGenerator();
+        var returnFalseLabel = il.DefineLabel();
+        var checkStringLabel = il.DefineLabel();
+        var checkNumberLabel = il.DefineLabel();
+        var checkBooleanLabel = il.DefineLabel();
+        var checkPropertyStoreLabel = il.DefineLabel();
+        var checkLocalTablesLabel = il.DefineLabel();
+        var checkFrozenLabel = il.DefineLabel();
+        var checkSealedLabel = il.DefineLabel();
 
+        var valueLocal = il.DeclareLocal(_types.Object);
+
+        // If obj is null, return false (primitives are not extensible)
         il.Emit(OpCodes.Ldarg_0);
-        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
-            "RuntimeIsExtensible",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
-        );
-        il.Emit(OpCodes.Call, helperMethod!);
+        il.Emit(OpCodes.Brtrue, checkStringLabel);
+        il.Emit(OpCodes.Br, returnFalseLabel);
+
+        // If obj is string, return false (immutable)
+        il.MarkLabel(checkStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel);
+
+        // If obj is double (boxed number), return false (immutable)
+        il.MarkLabel(checkNumberLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel);
+
+        // If obj is bool (boxed boolean), return false (immutable)
+        il.MarkLabel(checkBooleanLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel);
+
+        // Check PropertyDescriptorStore.IsExtensible(obj) - unified store check
+        il.MarkLabel(checkPropertyStoreLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        var isExtensibleMethod = typeof(PropertyDescriptorStore).GetMethod(
+            "IsExtensible",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        il.Emit(OpCodes.Call, isExtensibleMethod!);
+        il.Emit(OpCodes.Brfalse, returnFalseLabel); // PropertyDescriptorStore says not extensible
+
+        // Also check local tables for backward compatibility
+        // Check if obj is in the non-extensible objects table
+        il.MarkLabel(checkLocalTablesLabel);
+        il.Emit(OpCodes.Ldsfld, nonExtensibleObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        var tryGetValue = _types.ConditionalWeakTable.GetMethod("TryGetValue");
+        il.Emit(OpCodes.Callvirt, tryGetValue!);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel); // Found = not extensible
+
+        // Check if obj is in the frozen objects table
+        il.MarkLabel(checkFrozenLabel);
+        il.Emit(OpCodes.Ldsfld, frozenObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        il.Emit(OpCodes.Callvirt, tryGetValue!);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel); // Frozen = not extensible
+
+        // Check if obj is in the sealed objects table
+        il.MarkLabel(checkSealedLabel);
+        il.Emit(OpCodes.Ldsfld, sealedObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        il.Emit(OpCodes.Callvirt, tryGetValue!);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel); // Sealed = not extensible
+
+        // Not in any table, object is extensible
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+
+        // Return false
+        il.MarkLabel(returnFalseLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
     }
 
@@ -2102,6 +2209,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits Object.getPrototypeOf(obj) - returns the prototype of an object.
     /// Signature: object ObjectGetPrototypeOf(object obj)
+    /// Checks PropertyDescriptorStore first, then local table for compatibility.
     /// </summary>
     private void EmitObjectGetPrototypeOf(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder prototypeStoreField)
     {
@@ -2114,19 +2222,50 @@ public partial class RuntimeEmitter
         runtime.ObjectGetPrototypeOf = method;
 
         var il = method.GetILGenerator();
+        var checkLocalTableLabel = il.DefineLabel();
+        var foundInLocalLabel = il.DefineLabel();
 
+        var resultLocal = il.DeclareLocal(_types.Object);
+        var tempLocal = il.DeclareLocal(_types.Object);
+
+        // First check PropertyDescriptorStore.GetPrototype(obj)
         il.Emit(OpCodes.Ldarg_0);
-        var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
-            "RuntimeGetPrototypeOf",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
-        );
-        il.Emit(OpCodes.Call, helperMethod!);
+        var getPrototypeMethod = typeof(PropertyDescriptorStore).GetMethod(
+            "GetPrototype",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        il.Emit(OpCodes.Call, getPrototypeMethod!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // If result is not null, return it
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Brfalse, checkLocalTableLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        // Also check local _prototypeStore table for backward compatibility
+        il.MarkLabel(checkLocalTableLabel);
+        il.Emit(OpCodes.Ldsfld, prototypeStoreField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, tempLocal);
+        var tryGetValue = _types.ConditionalWeakTable.GetMethod("TryGetValue");
+        il.Emit(OpCodes.Callvirt, tryGetValue!);
+        il.Emit(OpCodes.Brtrue, foundInLocalLabel);
+
+        // Not found in either: return null
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        // Found in local table: return it
+        il.MarkLabel(foundInLocalLabel);
+        il.Emit(OpCodes.Ldloc, tempLocal);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits Object.setPrototypeOf(obj, proto) - sets the prototype of an object.
     /// Signature: object ObjectSetPrototypeOf(object obj, object proto)
+    /// Uses RuntimeSetPrototypeOf helper for complex object type handling.
+    /// Also stores in local prototype table for standalone checks.
     /// </summary>
     private void EmitObjectSetPrototypeOf(TypeBuilder typeBuilder, EmittedRuntime runtime,
         FieldBuilder prototypeStoreField, FieldBuilder nonExtensibleObjectsField)
@@ -2141,6 +2280,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
+        // Call the runtime helper which handles all edge cases (class instances, extensibility, etc.)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         var helperMethod = typeof(Runtime.BuiltIns.ObjectBuiltIns).GetMethod(
@@ -2148,6 +2288,41 @@ public partial class RuntimeEmitter
             System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
         );
         il.Emit(OpCodes.Call, helperMethod!);
+
+        // Also store in local prototype table for standalone checks
+        // (The runtime helper stores in PropertyDescriptorStore, we also store locally)
+        var skipLocalStoreLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, skipLocalStoreLabel); // Skip if null
+
+        il.Emit(OpCodes.Ldsfld, prototypeStoreField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        var addOrUpdateMethod = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<object, object>)
+            .GetMethod("AddOrUpdate");
+        if (addOrUpdateMethod != null)
+        {
+            il.Emit(OpCodes.Callvirt, addOrUpdateMethod);
+        }
+        else
+        {
+            // Fallback: Remove then Add
+            var removeMethod = _types.ConditionalWeakTable.GetMethod("Remove", [_types.Object]);
+            il.Emit(OpCodes.Pop); // Pop proto
+            il.Emit(OpCodes.Pop); // Pop target
+            il.Emit(OpCodes.Pop); // Pop table
+            il.Emit(OpCodes.Ldsfld, prototypeStoreField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, removeMethod!);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ldsfld, prototypeStoreField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            var addMethod = _types.ConditionalWeakTable.GetMethod("Add");
+            il.Emit(OpCodes.Callvirt, addMethod!);
+        }
+
+        il.MarkLabel(skipLocalStoreLabel);
         il.Emit(OpCodes.Ret);
     }
 }
