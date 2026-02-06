@@ -801,10 +801,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
         il.Emit(OpCodes.Brtrue, promiseLabel);
 
-        // TypedArray - call GetMember(name)
+        // TypedArray - use reflection-based helper to avoid SharpTS.dll dependency
         var typedArrayLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, typeof(SharpTS.Runtime.Types.SharpTSTypedArray));
+        il.Emit(OpCodes.Call, runtime.IsTypedArrayMethod);
         il.Emit(OpCodes.Brtrue, typedArrayLabel);
 
         // Default - try to access _fields dictionary via reflection for class instances
@@ -819,12 +819,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
         il.Emit(OpCodes.Ret);
 
-        // TypedArray handler - call typedArray.GetMember(name)
+        // TypedArray handler - use reflection-based helper to call GetMember(name)
         il.MarkLabel(typedArrayLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeof(SharpTS.Runtime.Types.SharpTSTypedArray));
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, typeof(SharpTS.Runtime.Types.SharpTSTypedArray).GetMethod("GetMember", [typeof(string)])!);
+        il.Emit(OpCodes.Call, runtime.GetTypedArrayMemberMethod);
         il.Emit(OpCodes.Ret);
 
         // Namespace handler - call ns.Get(name)

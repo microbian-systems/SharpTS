@@ -1299,6 +1299,7 @@ public class EmittedRuntime
     public MethodBuilder IsTypedArrayMethod { get; set; } = null!;
     public MethodBuilder GetTypedArrayElementMethod { get; set; } = null!;
     public MethodBuilder SetTypedArrayElementMethod { get; set; } = null!;
+    public MethodBuilder GetTypedArrayMemberMethod { get; set; } = null!;
 
     // Concrete TypedArray types
     public Type TSInt8ArrayType { get; set; } = null!;

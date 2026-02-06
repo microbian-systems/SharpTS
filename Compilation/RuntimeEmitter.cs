@@ -2048,6 +2048,8 @@ public partial class RuntimeEmitter
         EmitWrapException(typeBuilder, runtime);
         // Promise methods must come before GetProperty (which needs PromiseThen for typeof p.then)
         EmitPromiseMethods(typeBuilder, runtime);
+        // TypedArray detection helpers must come before GetProperty (which uses IsTypedArrayMethod)
+        EmitTypedArrayDetectionHelpers(typeBuilder, runtime);
         EmitGetProperty(typeBuilder, runtime);
         EmitSetProperty(typeBuilder, runtime);
         EmitSetPropertyStrict(typeBuilder, runtime);
@@ -2062,8 +2064,7 @@ public partial class RuntimeEmitter
         EmitDisposeResource(typeBuilder, runtime);
         // HasIn operator depends on IsSymbol and GetSymbolDict
         EmitHasIn(typeBuilder, runtime);
-        // TypedArray helpers must come BEFORE GetIndex/SetIndex since they use these helpers
-        EmitTypedArrayDetectionHelpers(typeBuilder, runtime);
+        // Note: TypedArray detection helpers are emitted earlier (before GetProperty)
         EmitGetIndex(typeBuilder, runtime);
         EmitSetIndex(typeBuilder, runtime);
         EmitSetIndexStrict(typeBuilder, runtime);

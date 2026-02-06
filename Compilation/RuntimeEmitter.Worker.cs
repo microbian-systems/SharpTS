@@ -603,6 +603,7 @@ public partial class RuntimeEmitter
         EmitIsTypedArrayHelper(runtimeType, runtime);
         EmitGetTypedArrayElementHelper(runtimeType, runtime);
         EmitSetTypedArrayElementHelper(runtimeType, runtime);
+        EmitGetTypedArrayMemberHelper(runtimeType, runtime);
     }
 
     /// <summary>
@@ -767,6 +768,64 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldloc, indexArrayLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "SetValue", _types.Object, _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits a helper that gets a member from a TypedArray using reflection.
+    /// This avoids a hard dependency on SharpTS.dll for standalone compilation.
+    /// Calls the GetMember(string) method on the TypedArray.
+    /// </summary>
+    private void EmitGetTypedArrayMemberHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "GetTypedArrayMember",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.String]
+        );
+        runtime.GetTypedArrayMemberMethod = method;
+
+        var il = method.GetILGenerator();
+
+        // Use reflection: obj.GetType().GetMethod("GetMember").Invoke(obj, new object[] { name })
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
+        var argsArrayLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // var type = obj.GetType();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // var methodInfo = type.GetMethod("GetMember", new[] { typeof(string) });
+        // First get the Type[] for the parameter types
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "GetMember");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, methodInfoLocal);
+
+        // var argsArray = new object[] { name };
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);  // name string
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, argsArrayLocal);
+
+        // return methodInfo.Invoke(obj, argsArray);
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argsArrayLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
     }
 
