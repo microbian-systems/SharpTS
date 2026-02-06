@@ -244,6 +244,13 @@ public class EmittedRuntime
     public ConstructorBuilder FunctionApplyWrapperCtor { get; set; } = null!;
     public MethodBuilder GetFunctionMethod { get; set; } = null!;
 
+    // Bound array method for dynamic array property access
+    public TypeBuilder BoundArrayMethodType { get; set; } = null!;
+    public ConstructorBuilder BoundArrayMethodCtor { get; set; } = null!;
+    public MethodBuilder BoundArrayMethodInvoke { get; set; } = null!;
+    public FieldBuilder BoundArrayMethodListField { get; set; } = null!;
+    public FieldBuilder BoundArrayMethodNameField { get; set; } = null!;
+
     // Exception methods
     public MethodBuilder CreateException { get; set; } = null!;
     public MethodBuilder WrapException { get; set; } = null!;

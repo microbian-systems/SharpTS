@@ -367,10 +367,233 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call RuntimeTypes.GetOwnPropertyNames via reflection to avoid compile-time dependency
-        EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "GetOwnPropertyNames", 1);
-        // Cast result from object to List<object> (reflection Invoke returns object)
+        var dictLabel = il.DefineLabel();
+        var listLabel = il.DefineLabel();
+        var objectLabel = il.DefineLabel();
+        var returnEmptyLabel = il.DefineLabel();
+
+        // Local for result list
+        var namesLocal = il.DeclareLocal(_types.ListOfObject);
+        var iLocal = il.DeclareLocal(_types.Int32);
+
+        // if (obj is Dictionary<string, object?> dict)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, dictLabel);
+
+        // if (obj is List<object?> list)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brtrue, listLabel);
+
+        // if (obj != null)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, objectLabel);
+
+        // return empty list
+        il.MarkLabel(returnEmptyLabel);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, Type.EmptyTypes));
+        il.Emit(OpCodes.Ret);
+
+        // Dictionary case: return dict.Keys as list
+        il.MarkLabel(dictLabel);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, Type.EmptyTypes));
+        il.Emit(OpCodes.Stloc, namesLocal);
+
+        // Get the Keys collection and iterate
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.DictionaryStringObject, "Keys"));
+        // Get enumerator
+        var keysEnumeratorLocal = il.DeclareLocal(_types.IEnumeratorOfString);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IEnumerableOfString, "GetEnumerator"));
+        il.Emit(OpCodes.Stloc, keysEnumeratorLocal);
+
+        var dictLoopStart = il.DefineLabel();
+        var dictLoopEnd = il.DefineLabel();
+        il.MarkLabel(dictLoopStart);
+        // while (enumerator.MoveNext())
+        il.Emit(OpCodes.Ldloc, keysEnumeratorLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IEnumerator, "MoveNext"));
+        il.Emit(OpCodes.Brfalse, dictLoopEnd);
+        // names.Add(enumerator.Current)
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ldloc, keysEnumeratorLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.IEnumeratorOfString, "Current"));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+        il.Emit(OpCodes.Br, dictLoopStart);
+
+        il.MarkLabel(dictLoopEnd);
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ret);
+
+        // List case: return ["0", "1", ..., "length"]
+        il.MarkLabel(listLabel);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, Type.EmptyTypes));
+        il.Emit(OpCodes.Stloc, namesLocal);
+
+        // for (int i = 0; i < list.Count; i++)
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        var listLoopStart = il.DefineLabel();
+        var listLoopEnd = il.DefineLabel();
+        il.Emit(OpCodes.Br, listLoopEnd);
+
+        il.MarkLabel(listLoopStart);
+        // names.Add(i.ToString())
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ldloca, iLocal);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int32, "ToString"));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+        // i++
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(listLoopEnd);
+        // i < list.Count
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.ListOfObject, "Count"));
+        il.Emit(OpCodes.Blt, listLoopStart);
+
+        // names.Add("length")
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ret);
+
+        // Object case: use reflection to get field names
+        il.MarkLabel(objectLabel);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, Type.EmptyTypes));
+        il.Emit(OpCodes.Stloc, namesLocal);
+
+        // var type = obj.GetType()
+        var typeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Get backing fields: type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
+        var fieldsArrayLocal = il.DeclareLocal(_types.FieldInfoArray);
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.NonPublic | BindingFlags.Instance));
+        il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("GetFields", [_types.BindingFlags])!);
+        il.Emit(OpCodes.Stloc, fieldsArrayLocal);
+
+        // Iterate fields
+        var fieldIdxLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, fieldIdxLocal);
+
+        var fieldLoopStart = il.DefineLabel();
+        var fieldLoopEnd = il.DefineLabel();
+        var fieldLoopContinue = il.DefineLabel();
+        il.Emit(OpCodes.Br, fieldLoopEnd);
+
+        il.MarkLabel(fieldLoopStart);
+        // var field = fields[i]
+        var fieldLocal = il.DeclareLocal(_types.FieldInfo);
+        il.Emit(OpCodes.Ldloc, fieldsArrayLocal);
+        il.Emit(OpCodes.Ldloc, fieldIdxLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, fieldLocal);
+
+        // if (field.Name.StartsWith("__"))
+        il.Emit(OpCodes.Ldloc, fieldLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.FieldInfo, "Name"));
+        il.Emit(OpCodes.Ldstr, "__");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "StartsWith", _types.String));
+        il.Emit(OpCodes.Brfalse, fieldLoopContinue);
+
+        // names.Add(field.Name.Substring(2))
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ldloc, fieldLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.FieldInfo, "Name"));
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Substring", _types.Int32));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+        il.MarkLabel(fieldLoopContinue);
+        // i++
+        il.Emit(OpCodes.Ldloc, fieldIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, fieldIdxLocal);
+
+        il.MarkLabel(fieldLoopEnd);
+        // i < fields.Length
+        il.Emit(OpCodes.Ldloc, fieldIdxLocal);
+        il.Emit(OpCodes.Ldloc, fieldsArrayLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Blt, fieldLoopStart);
+
+        // Get _fields dictionary: type.GetField("_fields", BindingFlags.NonPublic | BindingFlags.Instance)
+        var fieldsFieldLocal = il.DeclareLocal(_types.FieldInfo);
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "_fields");
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.NonPublic | BindingFlags.Instance));
+        il.Emit(OpCodes.Callvirt, _types.TypeGetFieldWithFlags);
+        il.Emit(OpCodes.Stloc, fieldsFieldLocal);
+
+        // if (fieldsField != null)
+        var noFieldsDictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, fieldsFieldLocal);
+        il.Emit(OpCodes.Brfalse, noFieldsDictLabel);
+
+        // var fieldsDict = fieldsField.GetValue(obj) as Dictionary<string, object?>
+        var fieldsDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldloc, fieldsFieldLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.FieldInfo, "GetValue", _types.Object));
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, fieldsDictLocal);
+
+        // if (fieldsDict != null)
+        il.Emit(OpCodes.Ldloc, fieldsDictLocal);
+        il.Emit(OpCodes.Brfalse, noFieldsDictLabel);
+
+        // Iterate fieldsDict.Keys
+        var dictKeysEnumLocal = il.DeclareLocal(_types.IEnumeratorOfString);
+        il.Emit(OpCodes.Ldloc, fieldsDictLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.DictionaryStringObject, "Keys"));
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IEnumerableOfString, "GetEnumerator"));
+        il.Emit(OpCodes.Stloc, dictKeysEnumLocal);
+
+        var dictKeysLoopStart = il.DefineLabel();
+        var dictKeysLoopEnd = il.DefineLabel();
+        il.MarkLabel(dictKeysLoopStart);
+        il.Emit(OpCodes.Ldloc, dictKeysEnumLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IEnumerator, "MoveNext"));
+        il.Emit(OpCodes.Brfalse, dictKeysLoopEnd);
+
+        // var key = enumerator.Current
+        var keyLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, dictKeysEnumLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.IEnumeratorOfString, "Current"));
+        il.Emit(OpCodes.Stloc, keyLocal);
+
+        // if (!names.Contains(key)) names.Add(key)
+        var skipAddKeyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Contains", _types.Object));
+        il.Emit(OpCodes.Brtrue, skipAddKeyLabel);
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+        il.MarkLabel(skipAddKeyLabel);
+        il.Emit(OpCodes.Br, dictKeysLoopStart);
+
+        il.MarkLabel(dictKeysLoopEnd);
+
+        il.MarkLabel(noFieldsDictLabel);
+        il.Emit(OpCodes.Ldloc, namesLocal);
         il.Emit(OpCodes.Ret);
     }
 
@@ -543,6 +766,202 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "ToArray", _types.EmptyTypes));
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Phase 1: Define $BoundArrayMethod type, fields, and constructor.
+    /// Must be called before EmitRuntimeClass so GetListProperty can use the constructor.
+    /// </summary>
+    internal void EmitBoundArrayMethodTypeDefinition(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        // Define class: public sealed class $BoundArrayMethod
+        var typeBuilder = moduleBuilder.DefineType(
+            "$BoundArrayMethod",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.Object
+        );
+        runtime.BoundArrayMethodType = typeBuilder;
+
+        // Fields
+        var listField = typeBuilder.DefineField("_list", _types.ListOfObject, FieldAttributes.Private);
+        var methodNameField = typeBuilder.DefineField("_methodName", _types.String, FieldAttributes.Private);
+        runtime.BoundArrayMethodListField = listField;
+        runtime.BoundArrayMethodNameField = methodNameField;
+
+        // Constructor: public $BoundArrayMethod(List<object> list, string methodName)
+        var ctorBuilder = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.ListOfObject, _types.String]
+        );
+        runtime.BoundArrayMethodCtor = ctorBuilder;
+
+        var ctorIL = ctorBuilder.GetILGenerator();
+        // Call base constructor
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        // this._list = list
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Stfld, listField);
+        // this._methodName = methodName
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_2);
+        ctorIL.Emit(OpCodes.Stfld, methodNameField);
+        ctorIL.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Phase 2: Add Invoke method to $BoundArrayMethod and create the type.
+    /// Must be called after EmitRuntimeClass so array methods are available.
+    /// </summary>
+    internal void EmitBoundArrayMethodFinalize(EmittedRuntime runtime)
+    {
+        var typeBuilder = runtime.BoundArrayMethodType;
+        var listField = runtime.BoundArrayMethodListField;
+        var methodNameField = runtime.BoundArrayMethodNameField;
+
+        // Invoke method: public object Invoke(object[] args)
+        var invokeBuilder = typeBuilder.DefineMethod(
+            "Invoke",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.ObjectArray]
+        );
+        runtime.BoundArrayMethodInvoke = invokeBuilder;
+
+        var il = invokeBuilder.GetILGenerator();
+
+        // Switch on _methodName to dispatch to appropriate runtime method
+        var defaultLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // Helper to emit a method case
+        void EmitMethodCase(string methodName, MethodBuilder runtimeMethod)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, methodNameField);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            // Call runtime.Method(_list, args) or runtime.Method(_list) depending on method
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, listField);
+
+            // Methods that take args
+            if (methodName is "push" or "unshift" or "slice" or "indexOf" or "includes" or "concat" or "reduce")
+            {
+                il.Emit(OpCodes.Ldarg_1); // args
+            }
+            else if (methodName == "join")
+            {
+                // join takes a single separator (args[0]) not the whole args array
+                // Handle: args.Length > 0 ? args[0] : null
+                var noArgsLabel = il.DefineLabel();
+                var afterArgLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_1); // args
+                il.Emit(OpCodes.Ldlen);
+                il.Emit(OpCodes.Brfalse, noArgsLabel);
+                il.Emit(OpCodes.Ldarg_1); // args
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Ldelem_Ref); // args[0]
+                il.Emit(OpCodes.Br, afterArgLabel);
+                il.MarkLabel(noArgsLabel);
+                il.Emit(OpCodes.Ldnull);
+                il.MarkLabel(afterArgLabel);
+            }
+
+            il.Emit(OpCodes.Call, runtimeMethod);
+
+            // Box if needed (for methods returning double)
+            if (runtimeMethod.ReturnType == _types.Double)
+            {
+                il.Emit(OpCodes.Box, _types.Double);
+            }
+            else if (runtimeMethod.ReturnType == _types.Boolean)
+            {
+                il.Emit(OpCodes.Box, _types.Boolean);
+            }
+            else if (runtimeMethod.ReturnType == _types.String)
+            {
+                // String is already object-compatible
+            }
+
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+
+        // Helper to emit a callback method case (list, callback) where callback is args[0]
+        void EmitCallbackMethodCase(string methodName, MethodBuilder runtimeMethod)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, methodNameField);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            // Call runtime.Method(_list, args[0])
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, listField);
+            il.Emit(OpCodes.Ldarg_1); // args
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_Ref); // args[0]
+            il.Emit(OpCodes.Call, runtimeMethod);
+
+            // Handle return type
+            if (runtimeMethod.ReturnType == _types.Void)
+            {
+                il.Emit(OpCodes.Ldnull); // void methods need to return null for object return
+            }
+            else if (runtimeMethod.ReturnType == _types.Boolean)
+            {
+                il.Emit(OpCodes.Box, _types.Boolean);
+            }
+            else if (runtimeMethod.ReturnType == _types.Double)
+            {
+                il.Emit(OpCodes.Box, _types.Double);
+            }
+
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+
+        // Emit cases for each array method
+        EmitMethodCase("join", runtime.ArrayJoin);
+        EmitMethodCase("push", runtime.ArrayPush);
+        EmitMethodCase("pop", runtime.ArrayPop);
+        EmitMethodCase("shift", runtime.ArrayShift);
+        EmitMethodCase("unshift", runtime.ArrayUnshift);
+        EmitMethodCase("slice", runtime.ArraySlice);
+        EmitMethodCase("indexOf", runtime.ArrayIndexOf);
+        EmitMethodCase("includes", runtime.ArrayIncludes);
+        EmitMethodCase("concat", runtime.ArrayConcat);
+        EmitMethodCase("reverse", runtime.ArrayReverse);
+
+        // Methods that take (list, args) for callback + options
+        EmitMethodCase("reduce", runtime.ArrayReduce);
+
+        // Callback-based methods (take list, callback)
+        EmitCallbackMethodCase("map", runtime.ArrayMap);
+        EmitCallbackMethodCase("filter", runtime.ArrayFilter);
+        EmitCallbackMethodCase("forEach", runtime.ArrayForEach);
+        EmitCallbackMethodCase("find", runtime.ArrayFind);
+        EmitCallbackMethodCase("findIndex", runtime.ArrayFindIndex);
+        EmitCallbackMethodCase("some", runtime.ArraySome);
+        EmitCallbackMethodCase("every", runtime.ArrayEvery);
+
+        // Default: return null
+        il.MarkLabel(defaultLabel);
+        il.Emit(OpCodes.Ldnull);
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ret);
+
+        // Create the type
+        typeBuilder.CreateType();
     }
 }
 

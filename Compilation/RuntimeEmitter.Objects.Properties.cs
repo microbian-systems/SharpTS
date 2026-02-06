@@ -726,7 +726,7 @@ public partial class RuntimeEmitter
     private void EmitGetListProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // GetListProperty(list: List<object>, name: string) -> object?
-        // Forwards to RuntimeTypes.GetListProperty which handles array methods
+        // Returns length as double, or a $BoundArrayMethod for array methods
         var method = typeBuilder.DefineMethod(
             "GetListProperty",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -737,8 +737,78 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call RuntimeTypes.GetListProperty via reflection to avoid compile-time dependency
-        EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "GetListProperty", 2);
+        var lengthLabel = il.DefineLabel();
+        var returnNullLabel = il.DefineLabel();
+        var createBoundMethodLabel = il.DefineLabel();
+
+        // if (name == "length") goto lengthLabel
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, lengthLabel);
+
+        // if (name == "raw") - check for TemplateStringsList.raw property
+        var rawLabel = il.DefineLabel();
+        var skipRawLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "raw");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, rawLabel);
+        il.Emit(OpCodes.Br, skipRawLabel);
+
+        il.MarkLabel(rawLabel);
+        // Use reflection to get raw property: list.GetType().GetProperty("raw")?.GetValue(list)
+        var rawPropLocal = il.DeclareLocal(_types.PropertyInfo);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "raw");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Stloc, rawPropLocal);
+
+        // if (rawProp != null) return rawProp.GetValue(list)
+        il.Emit(OpCodes.Ldloc, rawPropLocal);
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+        il.Emit(OpCodes.Ldloc, rawPropLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(skipRawLabel);
+
+        // Check for known array method names
+        // For each method name, if match, create $BoundArrayMethod
+        string[] methodNames = ["join", "push", "pop", "shift", "unshift", "slice", "indexOf",
+            "includes", "concat", "reverse", "map", "filter", "forEach", "find",
+            "findIndex", "some", "every", "reduce"];
+
+        foreach (var methodName in methodNames)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            // Create $BoundArrayMethod(list, name) and return
+            il.Emit(OpCodes.Ldarg_0); // list
+            il.Emit(OpCodes.Ldarg_1); // name
+            il.Emit(OpCodes.Newobj, runtime.BoundArrayMethodCtor);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(skipLabel);
+        }
+
+        // No match - return null
+        il.MarkLabel(returnNullLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        // length case: return (double)list.Count
+        il.MarkLabel(lengthLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.ListOfObject, "Count"));
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
     }
 

@@ -1451,20 +1451,173 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.String);
         var notString = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notString);
-        // Simple escaping: just wrap in quotes (proper JSON escaping would need more work)
+        // Escape backslash and quote: s.Replace("\\", "\\\\").Replace("\"", "\\\"")
         il.Emit(OpCodes.Ldstr, "\"");
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldstr, "\\");
+        il.Emit(OpCodes.Ldstr, "\\\\");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Replace", _types.String, _types.String));
+        il.Emit(OpCodes.Ldstr, "\"");
+        il.Emit(OpCodes.Ldstr, "\\\"");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Replace", _types.String, _types.String));
         il.Emit(OpCodes.Ldstr, "\"");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notString);
 
-        // Default: use RuntimeTypes.FormatAsJson via reflection to avoid compile-time dependency
-        EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "FormatAsJson", 1);
-        // Cast result from object to string (reflection Invoke returns object)
-        il.Emit(OpCodes.Castclass, _types.String);
+        // if (value is List<object?> list)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        var notList = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notList);
+
+        // Build "[" + elements.join(",") + "]"
+        var listSbLocal = il.DeclareLocal(_types.StringBuilder);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, Type.EmptyTypes));
+        il.Emit(OpCodes.Stloc, listSbLocal);
+        il.Emit(OpCodes.Ldloc, listSbLocal);
+        il.Emit(OpCodes.Ldstr, "[");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Iterate list
+        var listIdxLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, listIdxLocal);
+        var listLoopStart = il.DefineLabel();
+        var listLoopEnd = il.DefineLabel();
+        il.Emit(OpCodes.Br, listLoopEnd);
+
+        il.MarkLabel(listLoopStart);
+        // if (i > 0) sb.Append(",")
+        il.Emit(OpCodes.Ldloc, listIdxLocal);
+        var skipCommaLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, skipCommaLabel);
+        il.Emit(OpCodes.Ldloc, listSbLocal);
+        il.Emit(OpCodes.Ldstr, ",");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(skipCommaLabel);
+
+        // sb.Append(FormatAsJson(list[i]))
+        il.Emit(OpCodes.Ldloc, listSbLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Ldloc, listIdxLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Call, method); // Recursive call to FormatAsJson
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // i++
+        il.Emit(OpCodes.Ldloc, listIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, listIdxLocal);
+
+        il.MarkLabel(listLoopEnd);
+        il.Emit(OpCodes.Ldloc, listIdxLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.ListOfObject, "Count"));
+        il.Emit(OpCodes.Blt, listLoopStart);
+
+        // sb.Append("]")
+        il.Emit(OpCodes.Ldloc, listSbLocal);
+        il.Emit(OpCodes.Ldstr, "]");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, listSbLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notList);
+
+        // if (value is Dictionary<string, object?> dict)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        var notDict = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notDict);
+
+        // Build "{" + pairs.join(",") + "}"
+        var dictSbLocal = il.DeclareLocal(_types.StringBuilder);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, Type.EmptyTypes));
+        il.Emit(OpCodes.Stloc, dictSbLocal);
+        il.Emit(OpCodes.Ldloc, dictSbLocal);
+        il.Emit(OpCodes.Ldstr, "{");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Get enumerator for key-value pairs
+        var dictEnumLocal = il.DeclareLocal(_types.DictionaryStringObjectEnumerator);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.DictionaryStringObject, "GetEnumerator"));
+        il.Emit(OpCodes.Stloc, dictEnumLocal);
+
+        var dictFirstLocal = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, dictFirstLocal);
+
+        var dictLoopStart = il.DefineLabel();
+        var dictLoopEnd = il.DefineLabel();
+        il.MarkLabel(dictLoopStart);
+        il.Emit(OpCodes.Ldloca, dictEnumLocal);
+        il.Emit(OpCodes.Call, _types.DictionaryStringObjectEnumerator.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, dictLoopEnd);
+
+        // if (!first) sb.Append(",")
+        il.Emit(OpCodes.Ldloc, dictFirstLocal);
+        var skipDictComma = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, skipDictComma);
+        il.Emit(OpCodes.Ldloc, dictSbLocal);
+        il.Emit(OpCodes.Ldstr, ",");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(skipDictComma);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, dictFirstLocal);
+
+        // Get current key-value pair
+        var kvpLocal = il.DeclareLocal(_types.KeyValuePairStringObject);
+        il.Emit(OpCodes.Ldloca, dictEnumLocal);
+        il.Emit(OpCodes.Call, _types.DictionaryStringObjectEnumerator.GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, kvpLocal);
+
+        // sb.Append("\"").Append(key).Append("\":").Append(FormatAsJson(value))
+        il.Emit(OpCodes.Ldloc, dictSbLocal);
+        il.Emit(OpCodes.Ldstr, "\"");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, _types.KeyValuePairStringObject.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Ldstr, "\":");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        // Append FormatAsJson(value)
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, _types.KeyValuePairStringObject.GetProperty("Value")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, method); // Recursive call
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        il.Emit(OpCodes.Br, dictLoopStart);
+
+        il.MarkLabel(dictLoopEnd);
+        il.Emit(OpCodes.Ldloc, dictSbLocal);
+        il.Emit(OpCodes.Ldstr, "}");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, dictSbLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notDict);
+
+        // Fallback: use Stringify (already emitted in $Runtime)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Ret);
     }
 

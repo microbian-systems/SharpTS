@@ -176,8 +176,16 @@ public partial class RuntimeEmitter
         // Must come before fs module methods which use it
         EmitStatsClass(moduleBuilder, runtime);
 
+        // Emit $BoundArrayMethod type and constructor (Phase 1)
+        // Must come before EmitRuntimeClass so GetListProperty can use the constructor
+        EmitBoundArrayMethodTypeDefinition(moduleBuilder, runtime);
+
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime);
+
+        // Finalize $BoundArrayMethod with Invoke method (Phase 2)
+        // Must come after EmitRuntimeClass (needs array methods defined)
+        EmitBoundArrayMethodFinalize(runtime);
 
         return runtime;
     }

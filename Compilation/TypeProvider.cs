@@ -184,6 +184,8 @@ public class TypeProvider
     public Type DictionaryStringObject => MakeGenericType(DictionaryOpen, String, Object);
     public Type IEnumerableOfObject => MakeGenericType(IEnumerableOpen, Object);
     public Type IEnumeratorOfObject => MakeGenericType(IEnumeratorOpen, Object);
+    public Type IEnumerableOfString => MakeGenericType(IEnumerableOpen, String);
+    public Type IEnumeratorOfString => MakeGenericType(IEnumeratorOpen, String);
     public Type IListOfObject => MakeGenericType(IListOpen, Object);
     public Type ICollectionOfObject => MakeGenericType(ICollectionOpen, Object);
     public Type KeyValuePairStringObject => MakeGenericType(KeyValuePairOpen, String, Object);
