@@ -338,6 +338,146 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits the $TemplateStringsList class for tagged template literals.
+    /// This is a List&lt;object&gt; subclass with a "raw" property for accessing raw strings.
+    /// </summary>
+    internal void EmitTemplateStringsListClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        // Define class: public sealed class $TemplateStringsList : List<object>
+        var typeBuilder = moduleBuilder.DefineType(
+            "$TemplateStringsList",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.ListOfObject
+        );
+
+        // Field: private readonly List<object> _rawStrings
+        var rawStringsField = typeBuilder.DefineField(
+            "_rawStrings",
+            _types.ListOfObject,
+            FieldAttributes.Private | FieldAttributes.InitOnly
+        );
+
+        // Constructor: public $TemplateStringsList(object[] cookedStrings, string[] rawStrings)
+        var ctorBuilder = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.ObjectArray, _types.StringArray]
+        );
+
+        var ctorIL = ctorBuilder.GetILGenerator();
+
+        // Call base constructor: List<object>()
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.ListOfObject));
+
+        // Add cooked strings to the list
+        // foreach (var s in cookedStrings) Add(s ?? "undefined")
+        var iLocal = ctorIL.DeclareLocal(_types.Int32);
+        var cookedLoopStart = ctorIL.DefineLabel();
+        var cookedLoopEnd = ctorIL.DefineLabel();
+
+        ctorIL.Emit(OpCodes.Ldc_I4_0);
+        ctorIL.Emit(OpCodes.Stloc, iLocal);
+
+        ctorIL.MarkLabel(cookedLoopStart);
+        ctorIL.Emit(OpCodes.Ldloc, iLocal);
+        ctorIL.Emit(OpCodes.Ldarg_1); // cookedStrings
+        ctorIL.Emit(OpCodes.Ldlen);
+        ctorIL.Emit(OpCodes.Conv_I4);
+        ctorIL.Emit(OpCodes.Bge, cookedLoopEnd);
+
+        // this.Add(cookedStrings[i] ?? "undefined")
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Ldloc, iLocal);
+        ctorIL.Emit(OpCodes.Ldelem_Ref);
+
+        // If null, replace with "undefined"
+        var notNullLabel = ctorIL.DefineLabel();
+        var afterNullCheck = ctorIL.DefineLabel();
+        ctorIL.Emit(OpCodes.Dup);
+        ctorIL.Emit(OpCodes.Brtrue, notNullLabel);
+        ctorIL.Emit(OpCodes.Pop);
+        ctorIL.Emit(OpCodes.Ldstr, "undefined");
+        ctorIL.Emit(OpCodes.Br, afterNullCheck);
+        ctorIL.MarkLabel(notNullLabel);
+        ctorIL.MarkLabel(afterNullCheck);
+
+        ctorIL.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+        ctorIL.Emit(OpCodes.Ldloc, iLocal);
+        ctorIL.Emit(OpCodes.Ldc_I4_1);
+        ctorIL.Emit(OpCodes.Add);
+        ctorIL.Emit(OpCodes.Stloc, iLocal);
+        ctorIL.Emit(OpCodes.Br, cookedLoopStart);
+
+        ctorIL.MarkLabel(cookedLoopEnd);
+
+        // Create _rawStrings list from rawStrings array
+        // _rawStrings = new List<object>()
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.EmptyTypes));
+        ctorIL.Emit(OpCodes.Stfld, rawStringsField);
+
+        // foreach (var s in rawStrings) _rawStrings.Add(s)
+        var rawLoopStart = ctorIL.DefineLabel();
+        var rawLoopEnd = ctorIL.DefineLabel();
+
+        ctorIL.Emit(OpCodes.Ldc_I4_0);
+        ctorIL.Emit(OpCodes.Stloc, iLocal);
+
+        ctorIL.MarkLabel(rawLoopStart);
+        ctorIL.Emit(OpCodes.Ldloc, iLocal);
+        ctorIL.Emit(OpCodes.Ldarg_2); // rawStrings
+        ctorIL.Emit(OpCodes.Ldlen);
+        ctorIL.Emit(OpCodes.Conv_I4);
+        ctorIL.Emit(OpCodes.Bge, rawLoopEnd);
+
+        // _rawStrings.Add(rawStrings[i])
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldfld, rawStringsField);
+        ctorIL.Emit(OpCodes.Ldarg_2);
+        ctorIL.Emit(OpCodes.Ldloc, iLocal);
+        ctorIL.Emit(OpCodes.Ldelem_Ref);
+        ctorIL.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+        ctorIL.Emit(OpCodes.Ldloc, iLocal);
+        ctorIL.Emit(OpCodes.Ldc_I4_1);
+        ctorIL.Emit(OpCodes.Add);
+        ctorIL.Emit(OpCodes.Stloc, iLocal);
+        ctorIL.Emit(OpCodes.Br, rawLoopStart);
+
+        ctorIL.MarkLabel(rawLoopEnd);
+        ctorIL.Emit(OpCodes.Ret);
+
+        // Property: public List<object> raw => _rawStrings
+        var rawGetter = typeBuilder.DefineMethod(
+            "get_raw",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig,
+            _types.ListOfObject,
+            Type.EmptyTypes
+        );
+        var rawGetterIL = rawGetter.GetILGenerator();
+        rawGetterIL.Emit(OpCodes.Ldarg_0);
+        rawGetterIL.Emit(OpCodes.Ldfld, rawStringsField);
+        rawGetterIL.Emit(OpCodes.Ret);
+
+        var rawProp = typeBuilder.DefineProperty(
+            "raw",
+            PropertyAttributes.None,
+            _types.ListOfObject,
+            null
+        );
+        rawProp.SetGetMethod(rawGetter);
+
+        // Create the type
+        var createdType = typeBuilder.CreateType()!;
+        runtime.TemplateStringsListType = createdType;
+        runtime.TemplateStringsListCtor = createdType.GetConstructor([_types.ObjectArray, _types.StringArray])!;
+        runtime.TemplateStringsListRawGetter = createdType.GetProperty("raw")!.GetGetMethod()!;
+    }
+
     private void EmitInvokeTaggedTemplate(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // InvokeTaggedTemplate(tag: object, cooked: object[], raw: string[], expressions: object[]) -> object?
@@ -351,8 +491,141 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call RuntimeTypes.InvokeTaggedTemplate via reflection to avoid compile-time dependency
-        EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "InvokeTaggedTemplate", 4);
+        // Create strings array: new $TemplateStringsList(cooked, raw)
+        var stringsLocal = il.DeclareLocal(runtime.TemplateStringsListType);
+        il.Emit(OpCodes.Ldarg_1); // cooked
+        il.Emit(OpCodes.Ldarg_2); // raw
+        il.Emit(OpCodes.Newobj, runtime.TemplateStringsListCtor);
+        il.Emit(OpCodes.Stloc, stringsLocal);
+
+        // Build args array: new object[1 + expressions.Length]
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_3); // expressions
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // args[0] = stringsArray
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, stringsLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        // Copy expressions to args[1..]
+        // for (int i = 0; i < expressions.Length; i++) args[i + 1] = expressions[i]
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var copyLoopStart = il.DefineLabel();
+        var copyLoopEnd = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(copyLoopStart);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldarg_3); // expressions
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, copyLoopEnd);
+
+        // args[i + 1] = expressions[i]
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, copyLoopStart);
+
+        il.MarkLabel(copyLoopEnd);
+
+        // Call tag.Invoke(args) - check for $TSFunction, Delegate, or generic Invoke method
+        var tsFuncLabel = il.DefineLabel();
+        var delegateLabel = il.DefineLabel();
+        var reflectionLabel = il.DefineLabel();
+        var errorLabel = il.DefineLabel();
+
+        // Check if tag is $TSFunction
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, tsFuncLabel);
+
+        // Check if tag is Delegate
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Delegate);
+        il.Emit(OpCodes.Brtrue, delegateLabel);
+
+        // Check if tag is not null (use reflection)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, reflectionLabel);
+
+        // tag is null - throw error
+        il.MarkLabel(errorLabel);
+        il.Emit(OpCodes.Ldstr, "TypeError: Tagged template tag must be a function.");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        // $TSFunction case: call func.Invoke(args)
+        il.MarkLabel(tsFuncLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Ret);
+
+        // Delegate case: call del.DynamicInvoke(args)
+        il.MarkLabel(delegateLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.Delegate);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Delegate, "DynamicInvoke", _types.ObjectArray));
+        il.Emit(OpCodes.Ret);
+
+        // Reflection case: tag.GetType().GetMethod("Invoke")?.Invoke(tag, [args])
+        il.MarkLabel(reflectionLabel);
+        var invokeMethodLocal = il.DeclareLocal(_types.MethodInfo);
+
+        // var invokeMethod = tag.GetType().GetMethod("Invoke", new Type[] { typeof(object[]) })
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "Invoke");
+        // Create Type[] { typeof(object[]) }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.ObjectArray);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        // Call GetMethod(string, Type[])
+        var getMethodWithTypes = typeof(Type).GetMethod("GetMethod", [typeof(string), typeof(Type[])])!;
+        il.Emit(OpCodes.Callvirt, getMethodWithTypes);
+        il.Emit(OpCodes.Stloc, invokeMethodLocal);
+
+        // if (invokeMethod != null)
+        il.Emit(OpCodes.Ldloc, invokeMethodLocal);
+        il.Emit(OpCodes.Brfalse, errorLabel);
+
+        // return invokeMethod.Invoke(tag, new object[] { args })
+        il.Emit(OpCodes.Ldloc, invokeMethodLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        // Create new object[] { args }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
     }
 

@@ -180,6 +180,10 @@ public partial class RuntimeEmitter
         // Must come before EmitRuntimeClass so GetListProperty can use the constructor
         EmitBoundArrayMethodTypeDefinition(moduleBuilder, runtime);
 
+        // Emit $TemplateStringsList class for tagged template literals
+        // Must come before EmitRuntimeClass so InvokeTaggedTemplate can use the constructor
+        EmitTemplateStringsListClass(moduleBuilder, runtime);
+
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime);
 
@@ -1917,6 +1921,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Defines util inspect method signatures early so ConsoleDir can reference them.
+    /// Method bodies are emitted later in EmitUtilStandaloneMethods.
+    /// </summary>
+    private void DefineUtilInspectSignatures(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // InspectValue(object value, int depth, int currentDepth) -> string
+        runtime.UtilInspectValue = typeBuilder.DefineMethod(
+            "UtilInspectValue",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object, _types.Int32, _types.Int32]);
+
+        // InspectArray(object arr, int depth, int currentDepth) -> string
+        runtime.UtilInspectArray = typeBuilder.DefineMethod(
+            "UtilInspectArray",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object, _types.Int32, _types.Int32]);
+
+        // InspectObject(object obj, int depth, int currentDepth) -> string
+        runtime.UtilInspectObject = typeBuilder.DefineMethod(
+            "UtilInspectObject",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object, _types.Int32, _types.Int32]);
+    }
+
     private void EmitRuntimeClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
         // Define class: public static class $Runtime
@@ -2238,6 +2270,8 @@ public partial class RuntimeEmitter
         EmitHttpModuleMethods(typeBuilder, runtime);
         // globalThis methods (ES2020) - must be after HTTP for fetch reference
         EmitGlobalThisMethods(typeBuilder, runtime);
+        // Define util inspect method signatures before ConsoleExtensions (ConsoleDir uses UtilInspectValue)
+        DefineUtilInspectSignatures(typeBuilder, runtime);
         // Console extensions (error, warn, clear, time, timeEnd, timeLog)
         EmitConsoleExtensions(typeBuilder, runtime);
         // Crypto module methods

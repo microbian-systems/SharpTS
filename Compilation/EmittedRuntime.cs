@@ -251,6 +251,11 @@ public class EmittedRuntime
     public FieldBuilder BoundArrayMethodListField { get; set; } = null!;
     public FieldBuilder BoundArrayMethodNameField { get; set; } = null!;
 
+    // Template strings list for tagged template literals
+    public Type TemplateStringsListType { get; set; } = null!;
+    public ConstructorInfo TemplateStringsListCtor { get; set; } = null!;
+    public MethodInfo TemplateStringsListRawGetter { get; set; } = null!;
+
     // Exception methods
     public MethodBuilder CreateException { get; set; } = null!;
     public MethodBuilder WrapException { get; set; } = null!;

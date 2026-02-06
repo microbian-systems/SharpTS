@@ -41,27 +41,11 @@ public partial class RuntimeEmitter
 
     private void DefineUtilHelperSignatures(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // InspectValue(object value, int depth, int currentDepth) -> string
-        runtime.UtilInspectValue = typeBuilder.DefineMethod(
-            "UtilInspectValue",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.String,
-            [_types.Object, _types.Int32, _types.Int32]);
+        // Note: These signatures are already defined in DefineUtilInspectSignatures (called earlier)
+        // This method is kept for documentation/future use but the signatures are pre-defined
+        // so that ConsoleDir can reference them before EmitUtilMethods is called.
 
-        // InspectArray(object arr, int depth, int currentDepth) -> string
-        runtime.UtilInspectArray = typeBuilder.DefineMethod(
-            "UtilInspectArray",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.String,
-            [_types.Object, _types.Int32, _types.Int32]);
-
-        // InspectObject(object obj, int depth, int currentDepth) -> string
-        runtime.UtilInspectObject = typeBuilder.DefineMethod(
-            "UtilInspectObject",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.String,
-            [_types.Object, _types.Int32, _types.Int32]);
-
+        // UtilInspectValue, UtilInspectArray, UtilInspectObject are defined in DefineUtilInspectSignatures
         // UtilInspect signature already defined in EmitUtilMethods
         // UtilFormat signature already defined in EmitUtilMethods
         // UtilIsDeepStrictEqual signature already defined in EmitUtilMethods

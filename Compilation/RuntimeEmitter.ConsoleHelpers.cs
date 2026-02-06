@@ -608,7 +608,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static void ConsoleTable(object data, object columns)
-    /// Prints data in a table format by calling RuntimeTypes.ConsoleTable.
+    /// Prints data in a simplified table format for standalone DLLs.
     /// </summary>
     private void EmitConsoleTable(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder groupLevelField)
     {
@@ -622,14 +622,293 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call RuntimeTypes.ConsoleTable via reflection to avoid compile-time dependency
-        EmitReflectionCallVoid(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "ConsoleTable", 2);
+        // Simplified table output for standalone DLLs
+        // Formats: arrays as indexed entries, dictionaries as key-value pairs
+
+        var nullLabel = il.DefineLabel();
+        var listLabel = il.DefineLabel();
+        var dictLabel = il.DefineLabel();
+        var defaultLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // if (data == null) goto nullLabel
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // if (data is List<object>) goto listLabel
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brtrue, listLabel);
+
+        // if (data is Dictionary<string, object>) goto dictLabel
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, dictLabel);
+
+        // default: just stringify and print
+        il.Emit(OpCodes.Br, defaultLabel);
+
+        // nullLabel: print "null"
+        il.MarkLabel(nullLabel);
+        il.Emit(OpCodes.Ldstr, "null");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+        il.Emit(OpCodes.Br, endLabel);
+
+        // listLabel: print array as table
+        il.MarkLabel(listLabel);
+        EmitPrintListAsTable(il, runtime);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // dictLabel: print dictionary as table
+        il.MarkLabel(dictLabel);
+        EmitPrintDictAsTable(il, runtime);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // defaultLabel: stringify and print
+        il.MarkLabel(defaultLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+
+        il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
+    /// Emits IL to print a List as a simple table.
+    /// Format: (index): value
+    /// </summary>
+    private void EmitPrintListAsTable(ILGenerator il, EmittedRuntime runtime)
+    {
+        var listLocal = il.DeclareLocal(_types.ListOfObject);
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        var sbLocal = il.DeclareLocal(_types.StringBuilder);
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var notEmptyLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // var list = (List<object>)data
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Stloc, listLocal);
+
+        // if (list.Count > 0) goto notEmpty
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.ListOfObject, "Count"));
+        il.Emit(OpCodes.Brtrue, notEmptyLabel);
+
+        // print "(empty array)" and return
+        il.Emit(OpCodes.Ldstr, "(empty array)");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(notEmptyLabel);
+
+        // Print header with ASCII table borders
+        il.Emit(OpCodes.Ldstr, "+---------+----------------------+");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+        il.Emit(OpCodes.Ldstr, "| (index) | Value                |");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+        il.Emit(OpCodes.Ldstr, "+---------+----------------------+");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+
+        // for (int i = 0; i < list.Count; i++)
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.ListOfObject, "Count"));
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // Build output: $"| {i,7} | {Stringify(list[i]).PadRight(20)} |"
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, _types.EmptyTypes));
+        il.Emit(OpCodes.Stloc, sbLocal);
+
+        // Append "| "
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, "| ");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Append index (padded to 7 chars)
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloca, indexLocal);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int32, "ToString"));
+        il.Emit(OpCodes.Ldc_I4_7);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "PadLeft", _types.Int32));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Append " | "
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, " | ");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Append Stringify(list[i]) padded to 20 chars
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Ldc_I4, 20);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "PadRight", _types.Int32));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Append " |"
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, " |");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Console.WriteLine(sb.ToString())
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+
+        // i++
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+
+        // Print footer
+        il.Emit(OpCodes.Ldstr, "+---------+----------------------+");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+
+        il.MarkLabel(endLabel);
+    }
+
+    /// <summary>
+    /// Emits IL to print a Dictionary as a simple table.
+    /// Format: key | value
+    /// </summary>
+    private void EmitPrintDictAsTable(ILGenerator il, EmittedRuntime runtime)
+    {
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var sbLocal = il.DeclareLocal(_types.StringBuilder);
+
+        // Get enumerator types
+        var enumeratorType = typeof(Dictionary<string, object?>.Enumerator);
+        var kvpType = typeof(KeyValuePair<string, object?>);
+        var enumeratorLocal = il.DeclareLocal(enumeratorType);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var notEmptyLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // var dict = (Dictionary<string, object>)data
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, dictLocal);
+
+        // if (dict.Count > 0) goto notEmpty
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.DictionaryStringObject, "Count"));
+        il.Emit(OpCodes.Brtrue, notEmptyLabel);
+
+        // print "(empty object)" and return
+        il.Emit(OpCodes.Ldstr, "(empty object)");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(notEmptyLabel);
+
+        // Print header with ASCII table borders
+        il.Emit(OpCodes.Ldstr, "+----------+----------------------+");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+        il.Emit(OpCodes.Ldstr, "| (index)  | Values               |");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+        il.Emit(OpCodes.Ldstr, "+----------+----------------------+");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+
+        // Get enumerator
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("GetEnumerator")!);
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        il.MarkLabel(loopStart);
+        // while (enumerator.MoveNext())
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        il.Emit(OpCodes.Call, enumeratorType.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, loopEnd);
+
+        // Build output: $"| {key.PadRight(8)} | {Stringify(value).PadRight(20)} |"
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, _types.EmptyTypes));
+        il.Emit(OpCodes.Stloc, sbLocal);
+
+        // Append "| "
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, "| ");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Append key (padded to 8 chars)
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        il.Emit(OpCodes.Call, enumeratorType.GetProperty("Current")!.GetGetMethod()!);
+        var kvpLocal = il.DeclareLocal(kvpType);
+        il.Emit(OpCodes.Stloc, kvpLocal);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "PadRight", _types.Int32));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Append " | "
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, " | ");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Append Stringify(value) padded to 20 chars
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kvpType.GetProperty("Value")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Ldc_I4, 20);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "PadRight", _types.Int32));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Append " |"
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, " |");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // Console.WriteLine(sb.ToString())
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+
+        // Print footer
+        il.Emit(OpCodes.Ldstr, "+----------+----------------------+");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
+
+        // Dispose enumerator
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        il.Emit(OpCodes.Call, enumeratorType.GetMethod("Dispose")!);
+
+        il.MarkLabel(endLabel);
+    }
+
+    /// <summary>
     /// Emits: public static void ConsoleDir(object obj)
-    /// Prints object in an inspected format by calling RuntimeTypes.ConsoleDir.
+    /// Prints object in an inspected format using UtilInspectValue.
     /// </summary>
     private void EmitConsoleDir(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder groupLevelField)
     {
@@ -643,8 +922,13 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call RuntimeTypes.ConsoleDir via reflection to avoid compile-time dependency
-        EmitReflectionCallVoid(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "ConsoleDir", 1);
+        // Call Console.WriteLine(UtilInspectValue(obj, 2, 0))
+        // UtilInspectValue(value, depth, currentDepth) returns formatted string
+        il.Emit(OpCodes.Ldarg_0);       // obj
+        il.Emit(OpCodes.Ldc_I4_2);      // depth = 2 (maxDepth)
+        il.Emit(OpCodes.Ldc_I4_0);      // currentDepth = 0
+        il.Emit(OpCodes.Call, runtime.UtilInspectValue);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "WriteLine", _types.String));
         il.Emit(OpCodes.Ret);
     }
 
