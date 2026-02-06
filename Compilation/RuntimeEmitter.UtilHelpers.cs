@@ -719,8 +719,46 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call RuntimeTypes.CreateSystemErrorMap via reflection to avoid compile-time dependency
-        EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "CreateSystemErrorMap", 0);
+        // Create the error map directly instead of using reflection
+        // var map = new Dictionary<object, object?>()
+        var mapLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.DictionaryObjectObject, Type.EmptyTypes));
+        il.Emit(OpCodes.Stloc, mapLocal);
+
+        // Helper to add an entry: map[(double)code] = new List<object?> { name, message }
+        void AddErrorEntry(double code, string name, string message)
+        {
+            // map[(double)code] = ...
+            il.Emit(OpCodes.Ldloc, mapLocal);
+            il.Emit(OpCodes.Ldc_R8, code);
+            il.Emit(OpCodes.Box, _types.Double);
+
+            // new List<object?> { name, message }
+            il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, Type.EmptyTypes));
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, message);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+            // map[key] = value
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item", _types.Object, _types.Object));
+        }
+
+        // Add all error codes
+        AddErrorEntry(-2, "ENOENT", "no such file or directory");
+        AddErrorEntry(-1, "EPERM", "operation not permitted");
+        AddErrorEntry(-13, "EACCES", "permission denied");
+        AddErrorEntry(-17, "EEXIST", "file already exists");
+        AddErrorEntry(-22, "EINVAL", "invalid argument");
+        AddErrorEntry(-28, "ENOSPC", "no space left on device");
+        AddErrorEntry(-39, "ENOTEMPTY", "directory not empty");
+        AddErrorEntry(-110, "ETIMEDOUT", "connection timed out");
+        AddErrorEntry(-111, "ECONNREFUSED", "connection refused");
+
+        // return map
+        il.Emit(OpCodes.Ldloc, mapLocal);
         il.Emit(OpCodes.Ret);
     }
 

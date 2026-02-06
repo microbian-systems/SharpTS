@@ -523,7 +523,7 @@ public partial class ILEmitter
 
     /// <summary>
     /// Emits optimized code for String.raw tagged template literals.
-    /// Directly calls RuntimeTypes.StringRaw instead of going through InvokeTaggedTemplate.
+    /// Calls the emitted $Runtime.StringRaw method directly.
     /// </summary>
     private void EmitStringRawTaggedTemplate(Expr.TaggedTemplateLiteral ttl)
     {
@@ -550,65 +550,8 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Stelem_Ref);
         }
 
-        // 3. Call RuntimeTypes.StringRaw via reflection to avoid compile-time dependency
-        // Stack: [rawStrings, expressions] - store to locals first
-        var expressionsLocal = IL.DeclareLocal(_ctx.Types.ObjectArray);
-        var rawStringsLocal = IL.DeclareLocal(_ctx.Types.StringArray);
-        IL.Emit(OpCodes.Stloc, expressionsLocal);
-        IL.Emit(OpCodes.Stloc, rawStringsLocal);
-
-        // Get the type and method via reflection
-        var typeLocal = IL.DeclareLocal(_ctx.Types.Type);
-        var methodLocal = IL.DeclareLocal(_ctx.Types.MethodInfo);
-        var argsLocal = IL.DeclareLocal(_ctx.Types.ObjectArray);
-        var skipLabel = IL.DefineLabel();
-        var endLabel = IL.DefineLabel();
-
-        // Type.GetType("SharpTS.Compilation.RuntimeTypes, SharpTS")
-        IL.Emit(OpCodes.Ldstr, "SharpTS.Compilation.RuntimeTypes, SharpTS");
-        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Type, "GetType", _ctx.Types.String));
-        IL.Emit(OpCodes.Stloc, typeLocal);
-
-        // Check if type is null
-        IL.Emit(OpCodes.Ldloc, typeLocal);
-        IL.Emit(OpCodes.Brfalse, skipLabel);
-
-        // type.GetMethod("StringRaw", BindingFlags.Public | BindingFlags.Static)
-        IL.Emit(OpCodes.Ldloc, typeLocal);
-        IL.Emit(OpCodes.Ldstr, "StringRaw");
-        IL.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
-        IL.Emit(OpCodes.Callvirt, _ctx.Types.TypeGetMethodWithBindingFlags);
-        IL.Emit(OpCodes.Stloc, methodLocal);
-
-        // Check if method is null
-        IL.Emit(OpCodes.Ldloc, methodLocal);
-        IL.Emit(OpCodes.Brfalse, skipLabel);
-
-        // Create args array: new object[] { rawStrings, expressions }
-        IL.Emit(OpCodes.Ldc_I4_2);
-        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
-        IL.Emit(OpCodes.Dup);
-        IL.Emit(OpCodes.Ldc_I4_0);
-        IL.Emit(OpCodes.Ldloc, rawStringsLocal);
-        IL.Emit(OpCodes.Stelem_Ref);
-        IL.Emit(OpCodes.Dup);
-        IL.Emit(OpCodes.Ldc_I4_1);
-        IL.Emit(OpCodes.Ldloc, expressionsLocal);
-        IL.Emit(OpCodes.Stelem_Ref);
-        IL.Emit(OpCodes.Stloc, argsLocal);
-
-        // method.Invoke(null, args)
-        IL.Emit(OpCodes.Ldloc, methodLocal);
-        IL.Emit(OpCodes.Ldnull);
-        IL.Emit(OpCodes.Ldloc, argsLocal);
-        IL.Emit(OpCodes.Callvirt, _ctx.Types.MethodInfoInvoke);
-        IL.Emit(OpCodes.Br, endLabel);
-
-        // Fallback: return empty string if runtime not available
-        IL.MarkLabel(skipLabel);
-        IL.Emit(OpCodes.Ldstr, "");
-
-        IL.MarkLabel(endLabel);
+        // 3. Call $Runtime.StringRaw(rawStrings, expressions)
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.StringRaw);
         SetStackType(StackType.String);
     }
 

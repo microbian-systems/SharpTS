@@ -339,6 +339,116 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits: public static string StringRaw(string[] rawStrings, object[] expressions)
+    /// Implements String.raw for tagged template literals.
+    /// </summary>
+    private void EmitStringRaw(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "StringRaw",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.StringArray, _types.ObjectArray]
+        );
+        runtime.StringRaw = method;
+
+        var il = method.GetILGenerator();
+
+        // if (rawStrings.Length == 0) return ""
+        var hasStringsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brtrue, hasStringsLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(hasStringsLabel);
+
+        // var sb = new StringBuilder()
+        var sbLocal = il.DeclareLocal(_types.StringBuilder);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, Type.EmptyTypes));
+        il.Emit(OpCodes.Stloc, sbLocal);
+
+        // var i = 0
+        var iLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        // Loop: for (int i = 0; i < rawStrings.Length; i++)
+        var loopStart = il.DefineLabel();
+        var loopCondition = il.DefineLabel();
+        il.Emit(OpCodes.Br, loopCondition);
+
+        il.MarkLabel(loopStart);
+
+        // sb.Append(rawStrings[i])
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // if (i < expressions.Length) sb.Append(expressions[i]?.ToString() ?? "")
+        var skipExpressionLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, skipExpressionLabel);
+
+        // expressions[i]
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+
+        // ?.ToString() ?? ""
+        var exprNullLabel = il.DefineLabel();
+        var appendExprLabel = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, exprNullLabel);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Br, appendExprLabel);
+
+        il.MarkLabel(exprNullLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "");
+
+        il.MarkLabel(appendExprLabel);
+        // Stack has: [string] (either from ToString or "")
+        // sb.Append needs: [sb, string] on stack
+        // Store the string temporarily, then load sb, then load string back
+        var tempStringLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Stloc, tempStringLocal);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloc, tempStringLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(skipExpressionLabel);
+
+        // i++
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        // Loop condition: i < rawStrings.Length
+        il.MarkLabel(loopCondition);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Blt, loopStart);
+
+        // return sb.ToString()
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits: public static string GetConsoleIndent()
     /// Returns a string of spaces based on _consoleGroupLevel (2 spaces per level).
     /// </summary>

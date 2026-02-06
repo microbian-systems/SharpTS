@@ -254,6 +254,7 @@ public class EmittedRuntime
     public MethodBuilder GetEnumMemberName { get; set; } = null!;
     public MethodBuilder ConcatTemplate { get; set; } = null!;
     public MethodBuilder InvokeTaggedTemplate { get; set; } = null!;
+    public MethodBuilder StringRaw { get; set; } = null!;
     public MethodBuilder ObjectRest { get; set; } = null!;
 
     // JSON methods
