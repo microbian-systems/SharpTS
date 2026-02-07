@@ -11,33 +11,47 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class RuntimeEmitter
 {
+    private TypeBuilder _tsSignTypeBuilder = null!;
     private FieldBuilder _tsSignHashAlgorithmField = null!;
     private FieldBuilder _tsSignDataField = null!;
     private FieldBuilder _tsSignFinalizedField = null!;
 
-    private void EmitTSSignClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    /// <summary>
+    /// Phase 1: Define type, fields, constructor, and Update method.
+    /// Called before EmitRuntimeClass.
+    /// </summary>
+    private void EmitTSSignTypeDefinition(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
         // Define class: public sealed class $Sign
-        var typeBuilder = moduleBuilder.DefineType(
+        _tsSignTypeBuilder = moduleBuilder.DefineType(
             "$Sign",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
             _types.Object
         );
-        runtime.TSSignType = typeBuilder;
+        runtime.TSSignType = _tsSignTypeBuilder;
 
         // Fields
-        _tsSignHashAlgorithmField = typeBuilder.DefineField("_hashAlgorithm", _types.HashAlgorithmName, FieldAttributes.Private);
-        _tsSignDataField = typeBuilder.DefineField("_data", typeof(List<byte>), FieldAttributes.Private);
-        _tsSignFinalizedField = typeBuilder.DefineField("_finalized", _types.Boolean, FieldAttributes.Private);
+        _tsSignHashAlgorithmField = _tsSignTypeBuilder.DefineField("_hashAlgorithm", _types.HashAlgorithmName, FieldAttributes.Private);
+        _tsSignDataField = _tsSignTypeBuilder.DefineField("_data", typeof(List<byte>), FieldAttributes.Private);
+        _tsSignFinalizedField = _tsSignTypeBuilder.DefineField("_finalized", _types.Boolean, FieldAttributes.Private);
 
         // Constructor
-        EmitTSSignCtor(typeBuilder, runtime);
+        EmitTSSignCtor(_tsSignTypeBuilder, runtime);
 
-        // Methods
-        EmitTSSignUpdate(typeBuilder, runtime);
-        EmitTSSignSign(typeBuilder, runtime);
+        // Update method (doesn't need runtime helpers)
+        EmitTSSignUpdate(_tsSignTypeBuilder, runtime);
+    }
 
-        typeBuilder.CreateType();
+    /// <summary>
+    /// Phase 2: Add Sign method and finalize type.
+    /// Called after EmitRuntimeClass (needs runtime.SignDataBytes).
+    /// </summary>
+    private void EmitTSSignFinalize(EmittedRuntime runtime)
+    {
+        // Sign method needs runtime.SignDataBytes
+        EmitTSSignSign(_tsSignTypeBuilder, runtime);
+
+        _tsSignTypeBuilder.CreateType();
     }
 
     /// <summary>
@@ -265,13 +279,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.ListByteToArray);
         il.Emit(OpCodes.Stloc, dataBytesLocal);
 
-        // Call helper method to get signature bytes
+        // Call emitted helper method to get signature bytes (no SharpTS.dll dependency)
         var signatureBytesLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
         il.Emit(OpCodes.Ldarg_1);  // privateKeyPem
         il.Emit(OpCodes.Ldloc, dataBytesLocal);  // dataBytes
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsSignHashAlgorithmField);  // hashAlgorithm
-        il.Emit(OpCodes.Call, typeof(CryptoSignHelper).GetMethod("SignDataBytes")!);
+        il.Emit(OpCodes.Call, runtime.SignDataBytes);
         il.Emit(OpCodes.Stloc, signatureBytesLocal);
 
         // Handle encoding

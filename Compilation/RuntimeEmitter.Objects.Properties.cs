@@ -344,15 +344,56 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
         il.Emit(OpCodes.Stloc, methodLocal);
 
-        // if (methodInfo == null) return null;
+        // if (methodInfo == null) try GetMember method;
+        var tryGetMemberLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, methodLocal);
-        il.Emit(OpCodes.Brfalse, nullLabel);
+        il.Emit(OpCodes.Brfalse, tryGetMemberLabel);
 
         // wrapMethod: return new $TSFunction(obj, methodInfo);
         il.MarkLabel(wrapMethodLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, methodLocal);
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Ret);
+
+        // Try GetMember method (for types like $DiffieHellman, $ECDH with custom member access)
+        il.MarkLabel(tryGetMemberLabel);
+        var getMemberMethodLocal = il.DeclareLocal(_types.MethodInfo);
+        var getMemberResultLocal = il.DeclareLocal(_types.Object);
+
+        // var getMemberMethod = type.GetMethod("GetMember", new Type[] { typeof(string) });
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "GetMember");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
+        il.Emit(OpCodes.Stloc, getMemberMethodLocal);
+
+        // if (getMemberMethod == null) goto nullLabel;
+        il.Emit(OpCodes.Ldloc, getMemberMethodLocal);
+        il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // var result = getMemberMethod.Invoke(obj, new object[] { name });
+        il.Emit(OpCodes.Ldloc, getMemberMethodLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Stloc, getMemberResultLocal);
+
+        // if (result != null) return result;
+        il.Emit(OpCodes.Ldloc, getMemberResultLocal);
+        il.Emit(OpCodes.Brfalse, nullLabel);
+        il.Emit(OpCodes.Ldloc, getMemberResultLocal);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(nullLabel);

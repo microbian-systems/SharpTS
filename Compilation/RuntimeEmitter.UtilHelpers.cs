@@ -664,6 +664,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits: public static string UtilStripVTControlCharacters(object value)
     /// Strips ANSI escape codes from the input string.
+    /// Pure IL emission - no SharpTS.dll dependency.
     /// </summary>
     private void EmitUtilStripVTControlCharacters(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -676,15 +677,46 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call UtilHelpers.StripVTControlCharacters(value)
+        // var input = value?.ToString() ?? ""
+        var inputLocal = il.DeclareLocal(_types.String);
+        var returnEmptyLabel = il.DefineLabel();
+        var haveStringLabel = il.DefineLabel();
+
+        // if (value == null) return ""
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(UtilHelpers).GetMethod(nameof(UtilHelpers.StripVTControlCharacters))!);
+        il.Emit(OpCodes.Brfalse, returnEmptyLabel);
+
+        // input = value.ToString()
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, haveStringLabel);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(returnEmptyLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(haveStringLabel);
+        il.Emit(OpCodes.Stloc, inputLocal);
+
+        // return Regex.Replace(input, pattern, "")
+        // Pattern matches ANSI escape sequences:
+        // \x1b\[[0-9;]*[a-zA-Z] - CSI sequences
+        // \x1b\][^\x07]*\x07 - OSC sequences
+        // \x1b[PX^_][^\x1b]*\x1b\\ - DCS/SOS/PM/APC sequences
+        // \x1b\[[0-9;]*m - SGR sequences
+        il.Emit(OpCodes.Ldloc, inputLocal);
+        il.Emit(OpCodes.Ldstr, @"\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\|\x1b\[[0-9;]*m");
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Regex, "Replace", _types.String, _types.String, _types.String));
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits: public static string UtilGetSystemErrorName(object errno)
     /// Returns the POSIX error name for the given error code.
+    /// Pure IL emission - no SharpTS.dll dependency.
     /// </summary>
     private void EmitUtilGetSystemErrorName(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -697,10 +729,68 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call UtilHelpers.GetSystemErrorName(errno)
+        var errorCodeLocal = il.DeclareLocal(_types.Int32);
+        var notDoubleLabel = il.DefineLabel();
+        var defaultLabel = il.DefineLabel();
+
+        // if (errno is not double d) throw new Exception("The value of \"err\" is out of range")
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(UtilHelpers).GetMethod(nameof(UtilHelpers.GetSystemErrorName))!);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, notDoubleLabel);
+
+        // var errorCode = (int)(double)errno
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, errorCodeLocal);
+
+        // POSIX error codes and their names (emit as if-else chain for clarity)
+        // Using negative values as per Node.js libuv convention
+        var errorCodes = new (int code, string name)[]
+        {
+            (-1, "EPERM"), (-2, "ENOENT"), (-3, "ESRCH"), (-4, "EINTR"), (-5, "EIO"),
+            (-6, "ENXIO"), (-7, "E2BIG"), (-8, "ENOEXEC"), (-9, "EBADF"), (-10, "ECHILD"),
+            (-11, "EAGAIN"), (-12, "ENOMEM"), (-13, "EACCES"), (-14, "EFAULT"), (-16, "EBUSY"),
+            (-17, "EEXIST"), (-18, "EXDEV"), (-19, "ENODEV"), (-20, "ENOTDIR"), (-21, "EISDIR"),
+            (-22, "EINVAL"), (-23, "ENFILE"), (-24, "EMFILE"), (-25, "ENOTTY"), (-26, "ETXTBSY"),
+            (-27, "EFBIG"), (-28, "ENOSPC"), (-29, "ESPIPE"), (-30, "EROFS"), (-31, "EMLINK"),
+            (-32, "EPIPE"), (-33, "EDOM"), (-34, "ERANGE"), (-35, "EDEADLK"), (-36, "ENAMETOOLONG"),
+            (-37, "ENOLCK"), (-38, "ENOSYS"), (-39, "ENOTEMPTY"), (-40, "ELOOP"), (-42, "ENOMSG"),
+            (-43, "EIDRM"), (-60, "ENOSTR"), (-62, "ETIME"), (-63, "ENOSR"), (-71, "EPROTO"),
+            (-74, "EMULTIHOP"), (-84, "EOVERFLOW"), (-88, "EILSEQ"), (-89, "ENOTSOCK"),
+            (-90, "EDESTADDRREQ"), (-91, "EMSGSIZE"), (-92, "EPROTOTYPE"), (-93, "ENOPROTOOPT"),
+            (-94, "EPROTONOSUPPORT"), (-96, "EOPNOTSUPP"), (-97, "EAFNOSUPPORT"), (-98, "EADDRINUSE"),
+            (-99, "EADDRNOTAVAIL"), (-100, "ENETDOWN"), (-101, "ENETUNREACH"), (-102, "ENETRESET"),
+            (-103, "ECONNABORTED"), (-104, "ECONNRESET"), (-105, "ENOBUFS"), (-106, "EISCONN"),
+            (-107, "ENOTCONN"), (-110, "ETIMEDOUT"), (-111, "ECONNREFUSED"), (-113, "EHOSTUNREACH"),
+            (-114, "EALREADY"), (-115, "EINPROGRESS"), (-122, "EDQUOT"), (-125, "ECANCELED"),
+            (-4094, "ENOTRECOVERABLE"), (-4095, "EOWNERDEAD")
+        };
+
+        foreach (var (code, name) in errorCodes)
+        {
+            var nextLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, errorCodeLocal);
+            il.Emit(OpCodes.Ldc_I4, code);
+            il.Emit(OpCodes.Bne_Un, nextLabel);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(nextLabel);
+        }
+
+        // Default: return "Unknown system error {code}"
+        il.MarkLabel(defaultLabel);
+        il.Emit(OpCodes.Ldstr, "Unknown system error ");
+        il.Emit(OpCodes.Ldloca, errorCodeLocal);
+        il.Emit(OpCodes.Call, _types.Int32.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
         il.Emit(OpCodes.Ret);
+
+        // throw new Exception("The value of \"err\" is out of range")
+        il.MarkLabel(notDoubleLabel);
+        il.Emit(OpCodes.Ldstr, "The value of \"err\" is out of range");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
     }
 
     /// <summary>
@@ -855,93 +945,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    /// <summary>
-    /// Emits: public static string UtilFormat(object[] args)
-    /// Calls into UtilHelpers.Format for proper format specifier handling.
-    /// TODO: Emit full implementation for truly standalone execution.
-    /// </summary>
-    private void EmitUtilFormat(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "UtilFormat",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.String,
-            [_types.ObjectArray]);
-        runtime.UtilFormat = method;
-
-        var il = method.GetILGenerator();
-
-        // Call UtilHelpers.Format(args) - still uses helper for complex string parsing
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(UtilHelpers).GetMethod(nameof(UtilHelpers.Format))!);
-        il.Emit(OpCodes.Ret);
-    }
-
-    /// <summary>
-    /// Emits: public static string UtilInspect(object obj, object options)
-    /// Calls into UtilHelpers.Inspect for proper formatting.
-    /// TODO: Emit full implementation for truly standalone execution.
-    /// </summary>
-    private void EmitUtilInspect(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "UtilInspect",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.String,
-            [_types.Object, _types.Object]);
-        runtime.UtilInspect = method;
-
-        var il = method.GetILGenerator();
-
-        // Call UtilHelpers.Inspect(obj, options) - still uses helper for complex recursion
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, typeof(UtilHelpers).GetMethod(nameof(UtilHelpers.Inspect))!);
-        il.Emit(OpCodes.Ret);
-    }
-
-    /// <summary>
-    /// Emits: public static bool UtilIsDeepStrictEqual(object a, object b)
-    /// Calls into UtilHelpers.IsDeepStrictEqual for proper deep comparison.
-    /// </summary>
-    private void EmitUtilIsDeepStrictEqual(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "UtilIsDeepStrictEqual",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Boolean,
-            [_types.Object, _types.Object]);
-        runtime.UtilIsDeepStrictEqual = method;
-
-        var il = method.GetILGenerator();
-
-        // Call UtilHelpers.IsDeepStrictEqual(a, b)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, typeof(UtilHelpers).GetMethod(nameof(UtilHelpers.IsDeepStrictEqual))!);
-        il.Emit(OpCodes.Ret);
-    }
-
-    /// <summary>
-    /// Emits: public static object UtilParseArgs(object config)
-    /// Calls into UtilHelpers.ParseArgs for argument parsing.
-    /// </summary>
-    private void EmitUtilParseArgs(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "UtilParseArgs",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            [_types.Object]);
-        runtime.UtilParseArgs = method;
-
-        var il = method.GetILGenerator();
-
-        // Call UtilHelpers.ParseArgs(config)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(UtilHelpers).GetMethod(nameof(UtilHelpers.ParseArgs))!);
-        il.Emit(OpCodes.Ret);
-    }
+    // NOTE: EmitUtilFormat, EmitUtilInspect, EmitUtilIsDeepStrictEqual, EmitUtilParseArgs
+    // have been removed. The method signatures are defined in EmitUtilMethods() and the
+    // bodies are emitted by EmitUtilStandaloneMethods() in RuntimeEmitter.UtilStandalone.cs
+    // using pure IL emission without any SharpTS.dll dependencies.
 
     /// <summary>
     /// Emits: public static string UtilToUSVString(object value)

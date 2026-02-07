@@ -398,6 +398,201 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits $PromisifyCallback type for use by $PromisifiedFunction.
+    /// This callback receives (err, value) and resolves/rejects the TaskCompletionSource.
+    /// Must be emitted BEFORE $PromisifiedFunction.
+    /// </summary>
+    internal void EmitPromisifyCallbackClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var tcsType = typeof(TaskCompletionSource<object?>);
+
+        var typeBuilder = moduleBuilder.DefineType(
+            "$PromisifyCallback",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.Object
+        );
+
+        // Field: private readonly TaskCompletionSource<object?> _tcs
+        var tcsField = typeBuilder.DefineField("_tcs", tcsType, FieldAttributes.Private | FieldAttributes.InitOnly);
+
+        // Constructor: public $PromisifyCallback(TaskCompletionSource<object?> tcs)
+        var ctor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [tcsType]
+        );
+        runtime.TSPromisifyCallbackCtor = ctor;
+
+        var ctorIL = ctor.GetILGenerator();
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Stfld, tcsField);
+        ctorIL.Emit(OpCodes.Ret);
+
+        // Method: public object? Invoke(params object?[] args)
+        // Called with (err, value) - resolves or rejects the Task accordingly
+        var invokeMethod = typeBuilder.DefineMethod(
+            "Invoke",
+            MethodAttributes.Public | MethodAttributes.HideBySig,
+            _types.Object,
+            [_types.ObjectArray]
+        );
+
+        var invokeIL = invokeMethod.GetILGenerator();
+        var errLocal = invokeIL.DeclareLocal(_types.Object);
+        var valueLocal = invokeIL.DeclareLocal(_types.Object);
+        var hasErrorLabel = invokeIL.DefineLabel();
+        var resolveLabel = invokeIL.DefineLabel();
+        var returnLabel = invokeIL.DefineLabel();
+
+        // err = args?.Length > 0 ? args[0] : null
+        invokeIL.Emit(OpCodes.Ldarg_1);
+        var noArgsLabel = invokeIL.DefineLabel();
+        var getErrLabel = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Brfalse, noArgsLabel);
+        invokeIL.Emit(OpCodes.Ldarg_1);
+        invokeIL.Emit(OpCodes.Ldlen);
+        invokeIL.Emit(OpCodes.Ldc_I4_0);
+        invokeIL.Emit(OpCodes.Ble, noArgsLabel);
+        invokeIL.Emit(OpCodes.Ldarg_1);
+        invokeIL.Emit(OpCodes.Ldc_I4_0);
+        invokeIL.Emit(OpCodes.Ldelem_Ref);
+        invokeIL.Emit(OpCodes.Br, getErrLabel);
+        invokeIL.MarkLabel(noArgsLabel);
+        invokeIL.Emit(OpCodes.Ldnull);
+        invokeIL.MarkLabel(getErrLabel);
+        invokeIL.Emit(OpCodes.Stloc, errLocal);
+
+        // value = args?.Length > 1 ? args[1] : null
+        invokeIL.Emit(OpCodes.Ldarg_1);
+        var noValueLabel = invokeIL.DefineLabel();
+        var getValueLabel = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Brfalse, noValueLabel);
+        invokeIL.Emit(OpCodes.Ldarg_1);
+        invokeIL.Emit(OpCodes.Ldlen);
+        invokeIL.Emit(OpCodes.Ldc_I4_1);
+        invokeIL.Emit(OpCodes.Ble, noValueLabel);
+        invokeIL.Emit(OpCodes.Ldarg_1);
+        invokeIL.Emit(OpCodes.Ldc_I4_1);
+        invokeIL.Emit(OpCodes.Ldelem_Ref);
+        invokeIL.Emit(OpCodes.Br, getValueLabel);
+        invokeIL.MarkLabel(noValueLabel);
+        invokeIL.Emit(OpCodes.Ldnull);
+        invokeIL.MarkLabel(getValueLabel);
+        invokeIL.Emit(OpCodes.Stloc, valueLocal);
+
+        // Check if err is truthy (hasError)
+        // hasError = err is not (null | false | "" | 0.0 | 0)
+        invokeIL.Emit(OpCodes.Ldloc, errLocal);
+        invokeIL.Emit(OpCodes.Brfalse, resolveLabel);  // null -> no error
+
+        // Check if err is false (bool)
+        invokeIL.Emit(OpCodes.Ldloc, errLocal);
+        invokeIL.Emit(OpCodes.Isinst, _types.Boolean);
+        var notBoolLabel = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Brfalse, notBoolLabel);
+        invokeIL.Emit(OpCodes.Ldloc, errLocal);
+        invokeIL.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        invokeIL.Emit(OpCodes.Brfalse, resolveLabel);  // false -> no error
+        invokeIL.Emit(OpCodes.Br, hasErrorLabel);      // true -> has error
+
+        invokeIL.MarkLabel(notBoolLabel);
+
+        // Check if err is empty string
+        invokeIL.Emit(OpCodes.Ldloc, errLocal);
+        invokeIL.Emit(OpCodes.Isinst, _types.String);
+        var notStringLabel = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Brfalse, notStringLabel);
+        invokeIL.Emit(OpCodes.Ldloc, errLocal);
+        invokeIL.Emit(OpCodes.Castclass, _types.String);
+        invokeIL.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        invokeIL.Emit(OpCodes.Brfalse, resolveLabel);  // "" -> no error
+        invokeIL.Emit(OpCodes.Br, hasErrorLabel);      // non-empty string -> has error
+
+        invokeIL.MarkLabel(notStringLabel);
+
+        // Check if err is 0 (int or double)
+        invokeIL.Emit(OpCodes.Ldloc, errLocal);
+        invokeIL.Emit(OpCodes.Isinst, _types.Double);
+        var notDoubleLabel = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Brfalse, notDoubleLabel);
+        invokeIL.Emit(OpCodes.Ldloc, errLocal);
+        invokeIL.Emit(OpCodes.Unbox_Any, _types.Double);
+        invokeIL.Emit(OpCodes.Ldc_R8, 0.0);
+        invokeIL.Emit(OpCodes.Ceq);
+        invokeIL.Emit(OpCodes.Brtrue, resolveLabel);   // 0.0 -> no error
+        invokeIL.Emit(OpCodes.Br, hasErrorLabel);      // non-zero -> has error
+
+        invokeIL.MarkLabel(notDoubleLabel);
+
+        // Check if err is 0 (int32)
+        invokeIL.Emit(OpCodes.Ldloc, errLocal);
+        invokeIL.Emit(OpCodes.Isinst, _types.Int32);
+        var notIntLabel = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Brfalse, notIntLabel);
+        invokeIL.Emit(OpCodes.Ldloc, errLocal);
+        invokeIL.Emit(OpCodes.Unbox_Any, _types.Int32);
+        invokeIL.Emit(OpCodes.Brfalse, resolveLabel);  // 0 -> no error
+        invokeIL.Emit(OpCodes.Br, hasErrorLabel);      // non-zero -> has error
+
+        invokeIL.MarkLabel(notIntLabel);
+
+        // Any other truthy value -> has error
+        invokeIL.Emit(OpCodes.Br, hasErrorLabel);
+
+        // hasError: _tcs.TrySetException(new Exception(err?.ToString() ?? "Unknown error"))
+        invokeIL.MarkLabel(hasErrorLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, tcsField);
+
+        // Build error message: err?.ToString() ?? "Unknown error"
+        invokeIL.Emit(OpCodes.Ldloc, errLocal);
+        var errNullLabel = invokeIL.DefineLabel();
+        var errMsgDoneLabel = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Dup);
+        invokeIL.Emit(OpCodes.Brfalse, errNullLabel);
+        invokeIL.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        invokeIL.Emit(OpCodes.Br, errMsgDoneLabel);
+        invokeIL.MarkLabel(errNullLabel);
+        invokeIL.Emit(OpCodes.Pop);
+        invokeIL.Emit(OpCodes.Ldstr, "Unknown error");
+        invokeIL.MarkLabel(errMsgDoneLabel);
+
+        // new Exception(message)
+        invokeIL.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        invokeIL.Emit(OpCodes.Callvirt, tcsType.GetMethod("TrySetException", [typeof(Exception)])!);
+        invokeIL.Emit(OpCodes.Pop);  // Discard bool result
+        invokeIL.Emit(OpCodes.Br, returnLabel);
+
+        // resolve: _tcs.TrySetResult(value)
+        invokeIL.MarkLabel(resolveLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, tcsField);
+        invokeIL.Emit(OpCodes.Ldloc, valueLocal);
+        invokeIL.Emit(OpCodes.Callvirt, tcsType.GetMethod("TrySetResult", [typeof(object)])!);
+        invokeIL.Emit(OpCodes.Pop);  // Discard bool result
+
+        invokeIL.MarkLabel(returnLabel);
+        invokeIL.Emit(OpCodes.Ldnull);
+        invokeIL.Emit(OpCodes.Ret);
+
+        // Override ToString
+        var toStringMethod = typeBuilder.DefineMethod(
+            "ToString",
+            MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig,
+            _types.String,
+            Type.EmptyTypes
+        );
+        var toStringIL = toStringMethod.GetILGenerator();
+        toStringIL.Emit(OpCodes.Ldstr, "[Function: promisifyCallback]");
+        toStringIL.Emit(OpCodes.Ret);
+
+        runtime.TSPromisifyCallbackType = typeBuilder.CreateType()!;
+    }
+
+    /// <summary>
     /// Emits $PromisifiedFunction type for util.promisify support.
     /// This wraps a callback-style function and converts it to return a Promise.
     /// </summary>
@@ -470,12 +665,12 @@ public partial class RuntimeEmitter
         invokeIL.Emit(OpCodes.Call, arrayCopyMethod);
 
         // Create callback function that resolves TCS
-        // newArgs[args.Length] = new PromisifyCallback(tcs);
+        // newArgs[args.Length] = new $PromisifyCallback(tcs);
         invokeIL.Emit(OpCodes.Ldloc, newArgsLocal);
         invokeIL.Emit(OpCodes.Ldarg_1);
         invokeIL.Emit(OpCodes.Callvirt, arrayLengthMethod);
         invokeIL.Emit(OpCodes.Ldloc, tcsLocal);
-        invokeIL.Emit(OpCodes.Newobj, typeof(PromisifyCallback).GetConstructor([tcsType])!);
+        invokeIL.Emit(OpCodes.Newobj, runtime.TSPromisifyCallbackCtor);
         invokeIL.Emit(OpCodes.Stelem_Ref);
 
         // Call wrapped function via reflection (like $DeprecatedFunction does)

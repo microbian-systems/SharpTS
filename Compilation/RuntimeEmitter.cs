@@ -79,6 +79,10 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with AssertionError in AssertModuleInterpreter.cs
         EmitTSAssertionErrorClass(moduleBuilder, runtime);
 
+        // Emit $NodeError class for standalone fs module support
+        // NOTE: Must stay in sync with NodeError in Runtime/BuiltIns/Modules/NodeError.cs
+        EmitNodeErrorClass(moduleBuilder, runtime);
+
         // Emit $Buffer class for standalone buffer support
         // NOTE: Must come before $Hash and $Hmac since they return Buffer
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSBuffer
@@ -100,13 +104,39 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSDecipher
         EmitTSDecipherClass(moduleBuilder, runtime);
 
-        // Emit $Sign class for standalone crypto signing support
+        // Emit $Sign type definition (Phase 1)
+        // Sign method added in Phase 2 after EmitRuntimeClass
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSSign
-        EmitTSSignClass(moduleBuilder, runtime);
+        EmitTSSignTypeDefinition(moduleBuilder, runtime);
 
-        // Emit $Verify class for standalone crypto verification support
+        // Emit $Verify type definition (Phase 1)
+        // Verify method added in Phase 2 after EmitRuntimeClass
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSVerify
-        EmitTSVerifyClass(moduleBuilder, runtime);
+        EmitTSVerifyTypeDefinition(moduleBuilder, runtime);
+
+        // Emit $TSKeyObject class for standalone crypto key object support
+        // Must come after $Buffer (export returns Buffer for secret keys)
+        EmitTSKeyObjectClass(moduleBuilder, runtime);
+
+        // Emit $ECDH type definition (Phase 1)
+        // ECDH methods added in Phase 2 after EmitRuntimeClass
+        // Must come after $Buffer (encoding returns Buffer)
+        EmitTSECDHTypeDefinition(moduleBuilder, runtime);
+
+        // Emit $BoundECDHMethod type definition (Phase 1)
+        // Invoke method added in Phase 2 after ECDH methods
+        // Must come after $ECDH (uses TSECDHType for field)
+        EmitBoundECDHMethodTypeDefinition(moduleBuilder, runtime);
+
+        // Emit $DiffieHellman type definition (Phase 1)
+        // DH methods added in Phase 2 after EmitRuntimeClass
+        // Must come after $Buffer (encoding returns Buffer)
+        EmitTSDHTypeDefinition(moduleBuilder, runtime);
+
+        // Emit $BoundDHMethod type definition (Phase 1)
+        // Invoke method added in Phase 2 after DH methods
+        // Must come after $DiffieHellman (uses TSDiffieHellmanType for field)
+        EmitBoundDHMethodTypeDefinition(moduleBuilder, runtime);
 
         // Emit $VirtualTimer class for virtual timer support (single-threaded semantics)
         // Must come after TSFunction (uses TSFunctionType)
@@ -163,6 +193,7 @@ public partial class RuntimeEmitter
         // Emit util module types for standalone execution
         // Must come after $Buffer (TextEncoder returns $Buffer)
         EmitTSDeprecatedFunctionClass(moduleBuilder, runtime);
+        EmitPromisifyCallbackClass(moduleBuilder, runtime);  // Must come before PromisifiedFunction
         EmitTSPromisifiedFunctionClass(moduleBuilder, runtime);
         EmitTSTextEncoderClass(moduleBuilder, runtime);
         EmitTSTextDecoderClass(moduleBuilder, runtime);
@@ -188,12 +219,44 @@ public partial class RuntimeEmitter
         // Must come before EmitRuntimeClass so Object.freeze/seal/etc. can use it
         EmitPropertyDescriptorTypes(moduleBuilder, runtime);
 
+        // Emit $ReadlineInterface type definition (Phase 1)
+        // Must come before EmitRuntimeClass so ReadlineCreateInterface can use the constructor
+        EmitReadlineInterfaceTypeDefinition(moduleBuilder, runtime);
+
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime);
 
         // Finalize $BoundArrayMethod with Invoke method (Phase 2)
         // Must come after EmitRuntimeClass (needs array methods defined)
         EmitBoundArrayMethodFinalize(runtime);
+
+        // Finalize $ReadlineInterface class (Phase 2)
+        // Must come after EmitRuntimeClass (Question uses InvokeValue)
+        EmitReadlineInterfaceFinalize(runtime);
+
+        // Finalize $Sign class (Phase 2)
+        // Must come after EmitRuntimeClass (Sign uses SignDataBytes)
+        EmitTSSignFinalize(runtime);
+
+        // Finalize $Verify class (Phase 2)
+        // Must come after EmitRuntimeClass (Verify uses VerifyDataBytes)
+        EmitTSVerifyFinalize(runtime);
+
+        // Finalize $ECDH class (Phase 2)
+        // Must come after EmitRuntimeClass (methods use EncodeResult/DecodeInput)
+        EmitTSECDHFinalize(runtime);
+
+        // Finalize $BoundECDHMethod class (Phase 2)
+        // Must come after ECDH methods (Invoke calls them)
+        EmitBoundECDHMethodFinalize(runtime);
+
+        // Finalize $DiffieHellman class (Phase 2)
+        // Must come after EmitRuntimeClass (methods use EncodeResult/DecodeInput)
+        EmitTSDHFinalize(runtime);
+
+        // Finalize $BoundDHMethod class (Phase 2)
+        // Must come after DH methods (Invoke calls them)
+        EmitBoundDHMethodFinalize(runtime);
 
         return runtime;
     }
@@ -2281,6 +2344,9 @@ public partial class RuntimeEmitter
         EmitConsoleExtensions(typeBuilder, runtime);
         // Crypto module methods
         EmitCryptoMethods(typeBuilder, runtime);
+        // Path module methods (standalone - no SharpTS.dll dependency)
+        EmitComputeRelative(typeBuilder, runtime);
+        EmitPathHelpers(typeBuilder, runtime);
         // Util module methods
         EmitUtilMethods(typeBuilder, runtime);
         // Readline module methods

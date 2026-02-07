@@ -11,6 +11,9 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitCryptoMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Scrypt helpers (must be emitted first - scrypt methods are used by EmitCryptoScryptSync)
+        EmitScryptMethods(typeBuilder, runtime);
+
         EmitCryptoCreateHash(typeBuilder, runtime);
         EmitCryptoCreateHmac(typeBuilder, runtime);
         EmitCryptoCreateCipheriv(typeBuilder, runtime);
@@ -24,12 +27,25 @@ public partial class RuntimeEmitter
         EmitCryptoCreateVerify(typeBuilder, runtime);
         EmitCryptoGetHashes(typeBuilder, runtime);
         EmitCryptoGetCiphers(typeBuilder, runtime);
+
+        // Standalone helpers (must be emitted before methods that use them)
+        // RSA helpers
+        EmitExtractKeyPem(typeBuilder, runtime);
+        EmitRsaEncryptRaw(typeBuilder, runtime);
+        EmitRsaDecryptRaw(typeBuilder, runtime);
+        // Key pair generation helpers
+        EmitGetOptionInt(typeBuilder, runtime);
+        EmitGetOptionString(typeBuilder, runtime);
+        EmitGenerateRsaKeyPairRaw(typeBuilder, runtime);
+        EmitGenerateEcKeyPairRaw(typeBuilder, runtime);
+
+        // Methods that use the standalone helpers
         EmitCryptoGenerateKeyPairSync(typeBuilder, runtime);
         EmitCryptoCreateDiffieHellman(typeBuilder, runtime);
         EmitCryptoGetDiffieHellman(typeBuilder, runtime);
         EmitCryptoCreateECDH(typeBuilder, runtime);
 
-        // RSA encryption/decryption
+        // RSA encryption/decryption (uses ExtractKeyPem, RsaEncryptRaw, RsaDecryptRaw)
         EmitCryptoPublicEncrypt(typeBuilder, runtime);
         EmitCryptoPrivateDecrypt(typeBuilder, runtime);
         EmitCryptoPrivateEncrypt(typeBuilder, runtime);
@@ -37,6 +53,13 @@ public partial class RuntimeEmitter
 
         // HKDF key derivation
         EmitCryptoHkdfSync(typeBuilder, runtime);
+
+        // Sign/Verify helpers (standalone)
+        EmitSignDataBytes(typeBuilder, runtime);
+        EmitVerifyDataBytes(typeBuilder, runtime);
+
+        // ECDH helpers (standalone)
+        EmitTSECDHHelpers(typeBuilder, runtime);
 
         // KeyObject API
         EmitCryptoCreateSecretKey(typeBuilder, runtime);
@@ -750,8 +773,7 @@ public partial class RuntimeEmitter
             [_types.MakeArrayType(_types.Byte), _types.MakeArrayType(_types.Byte), _types.Int32, _types.Object]);
         runtime.CryptoScryptSync = method;
 
-        // Define a helper method that does the actual scrypt computation
-        EmitScryptHelper(typeBuilder, runtime);
+        // Note: ScryptDeriveBytes is already emitted by EmitScryptMethods (called at start of EmitCryptoMethods)
 
         // Define a helper method to extract option value
         var getOptionMethod = EmitScryptGetOption(typeBuilder, runtime);
@@ -906,33 +928,7 @@ public partial class RuntimeEmitter
         return method;
     }
 
-    /// <summary>
-    /// Emits the scrypt key derivation helper method.
-    /// This is a simplified implementation that delegates to a static helper class.
-    /// </summary>
-    private void EmitScryptHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "ScryptDeriveBytes",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.MakeArrayType(_types.Byte),
-            [_types.MakeArrayType(_types.Byte), _types.MakeArrayType(_types.Byte),
-             _types.Int32, _types.Int32, _types.Int32, _types.Int32]);
-        runtime.ScryptDeriveBytes = method;
-
-        var il = method.GetILGenerator();
-
-        // Call the static ScryptImpl.DeriveBytes method from our runtime
-        il.Emit(OpCodes.Ldarg_0);  // password
-        il.Emit(OpCodes.Ldarg_1);  // salt
-        il.Emit(OpCodes.Ldarg_2);  // N
-        il.Emit(OpCodes.Ldarg_3);  // r
-        il.Emit(OpCodes.Ldarg, 4); // p
-        il.Emit(OpCodes.Ldarg, 5); // dkLen
-        il.Emit(OpCodes.Call, typeof(ScryptImpl).GetMethod("DeriveBytes",
-            [typeof(byte[]), typeof(byte[]), typeof(int), typeof(int), typeof(int), typeof(int)])!);
-        il.Emit(OpCodes.Ret);
-    }
+    // Note: EmitScryptHelper removed - scrypt is now emitted by EmitScryptMethods in RuntimeEmitter.Scrypt.cs
 
     /// <summary>
     /// Emits: public static object CryptoTimingSafeEqual(byte[] a, byte[] b)
@@ -986,11 +982,22 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(lengthsMatchLabel);
 
-        // Call our static helper method that handles the Span conversion
+        // Convert byte[] to ReadOnlySpan<byte> and call CryptographicOperations.FixedTimeEquals
+        // The implicit conversion from byte[] to ReadOnlySpan<byte> is done via op_Implicit
+        var opImplicit = _types.ReadOnlySpanOfByte.GetMethod("op_Implicit", [typeof(byte[])])!;
+        var fixedTimeEquals = _types.CryptographicOperations.GetMethod("FixedTimeEquals",
+            [_types.ReadOnlySpanOfByte, _types.ReadOnlySpanOfByte])!;
+
+        // Convert first byte[] to ReadOnlySpan<byte>
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, opImplicit);
+
+        // Convert second byte[] to ReadOnlySpan<byte>
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, typeof(CryptoTimingSafeEqualHelper).GetMethod("Compare",
-            [typeof(byte[]), typeof(byte[])])!);
+        il.Emit(OpCodes.Call, opImplicit);
+
+        // Call CryptographicOperations.FixedTimeEquals(span1, span2)
+        il.Emit(OpCodes.Call, fixedTimeEquals);
 
         // Box the result and return
         il.Emit(OpCodes.Box, _types.Boolean);
@@ -1114,6 +1121,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits: public static object CryptoGenerateKeyPairSync(string type, object? options)
     /// Generates an RSA or EC key pair.
+    /// Uses pure IL - no SharpTS.dll dependency.
     /// </summary>
     private void EmitCryptoGenerateKeyPairSync(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1126,14 +1134,55 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper that returns (publicKey, privateKey) tuple
-        il.Emit(OpCodes.Ldarg_0);  // type
-        il.Emit(OpCodes.Ldarg_1);  // options
-        il.Emit(OpCodes.Call, typeof(CryptoKeyPairHelper).GetMethod("GenerateKeyPairRaw")!);
-
-        // Store tuple in local
         var tupleLocal = il.DeclareLocal(typeof((string, string)));
+        var rsaLabel = il.DefineLabel();
+        var ecLabel = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+        var createObjectLabel = il.DefineLabel();
+
+        // Convert type to lowercase
+        var typeLowerLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.StringToLowerInvariant);
+        il.Emit(OpCodes.Stloc, typeLowerLocal);
+
+        // Check for "rsa"
+        il.Emit(OpCodes.Ldloc, typeLowerLocal);
+        il.Emit(OpCodes.Ldstr, "rsa");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, rsaLabel);
+
+        // Check for "ec"
+        il.Emit(OpCodes.Ldloc, typeLowerLocal);
+        il.Emit(OpCodes.Ldstr, "ec");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, ecLabel);
+
+        // Unknown type - throw
+        il.Emit(OpCodes.Br, throwLabel);
+
+        // RSA key generation
+        il.MarkLabel(rsaLabel);
+        il.Emit(OpCodes.Ldarg_1);  // options
+        il.Emit(OpCodes.Call, runtime.GenerateRsaKeyPairRaw);
         il.Emit(OpCodes.Stloc, tupleLocal);
+        il.Emit(OpCodes.Br, createObjectLabel);
+
+        // EC key generation
+        il.MarkLabel(ecLabel);
+        il.Emit(OpCodes.Ldarg_1);  // options
+        il.Emit(OpCodes.Call, runtime.GenerateEcKeyPairRaw);
+        il.Emit(OpCodes.Stloc, tupleLocal);
+        il.Emit(OpCodes.Br, createObjectLabel);
+
+        // Throw for unknown type
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "crypto.generateKeyPairSync: unsupported key type");
+        il.Emit(OpCodes.Newobj, _types.ArgumentExceptionCtorString);
+        il.Emit(OpCodes.Throw);
+
+        // Create result object
+        il.MarkLabel(createObjectLabel);
 
         // Create Dictionary<string, object?> for $Object
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!);
@@ -1162,7 +1211,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object CryptoCreateDiffieHellman(object primeOrLength, object? generator)
-    /// Creates a DiffieHellman object.
+    /// Creates a DiffieHellman object using the emitted $DiffieHellman class.
     /// </summary>
     private void EmitCryptoCreateDiffieHellman(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1175,16 +1224,55 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper
-        il.Emit(OpCodes.Ldarg_0);  // primeOrLength
-        il.Emit(OpCodes.Ldarg_1);  // generator
-        il.Emit(OpCodes.Call, typeof(CryptoDHHelper).GetMethod("CreateDiffieHellman")!);
+        // Check if primeOrLength is a double (number) -> use prime length constructor
+        var notNumberLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, notNumberLabel);
+
+        // Use prime length constructor: new $DiffieHellman((int)(double)primeOrLength)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Newobj, runtime.TSDiffieHellmanCtorPrimeLength);
+        il.Emit(OpCodes.Ret);
+
+        // Not a number - decode prime and generator bytes
+        il.MarkLabel(notNumberLabel);
+
+        // Decode prime bytes
+        var primeLocal = il.DeclareLocal(_types.ByteArray);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);  // encoding
+        il.Emit(OpCodes.Call, runtime.TSDHDecodeInput);
+        il.Emit(OpCodes.Stloc, primeLocal);
+
+        // Decode generator bytes (if not null)
+        var generatorLocal = il.DeclareLocal(_types.ByteArray);
+        var generatorNullLabel = il.DefineLabel();
+        var afterGeneratorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, generatorNullLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Call, runtime.TSDHDecodeInput);
+        il.Emit(OpCodes.Stloc, generatorLocal);
+        il.Emit(OpCodes.Br, afterGeneratorLabel);
+        il.MarkLabel(generatorNullLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, generatorLocal);
+        il.MarkLabel(afterGeneratorLabel);
+
+        // Use prime/generator constructor: new $DiffieHellman(prime, generator)
+        il.Emit(OpCodes.Ldloc, primeLocal);
+        il.Emit(OpCodes.Ldloc, generatorLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSDiffieHellmanCtorPrimeGenerator);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits: public static object CryptoGetDiffieHellman(string groupName)
-    /// Gets a predefined DiffieHellman group.
+    /// Gets a predefined DiffieHellman group using the emitted $DiffieHellman class.
     /// </summary>
     private void EmitCryptoGetDiffieHellman(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1197,15 +1285,15 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper
+        // Use group constructor: new $DiffieHellman(groupName)
         il.Emit(OpCodes.Ldarg_0);  // groupName
-        il.Emit(OpCodes.Call, typeof(CryptoDHHelper).GetMethod("GetDiffieHellman")!);
+        il.Emit(OpCodes.Newobj, runtime.TSDiffieHellmanCtorGroup);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits: public static object CryptoCreateECDH(string curveName)
-    /// Creates an ECDH object.
+    /// Creates an ECDH object using the emitted $ECDH class.
     /// </summary>
     private void EmitCryptoCreateECDH(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1218,17 +1306,599 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper
+        // Create new $ECDH(curveName)
         il.Emit(OpCodes.Ldarg_0);  // curveName
-        il.Emit(OpCodes.Call, typeof(CryptoECDHHelper).GetMethod("CreateECDH")!);
+        il.Emit(OpCodes.Newobj, runtime.TSECDHCtor);
         il.Emit(OpCodes.Ret);
     }
+
+    #region RSA Helpers (Standalone)
+
+    /// <summary>
+    /// Emits: public static string ExtractKeyPem(object key)
+    /// Extracts PEM string from various key input types (string, object with GetProperty, etc.)
+    /// Used by RSA operations for standalone DLLs without SharpTS.dll dependency.
+    /// </summary>
+    private void EmitExtractKeyPem(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ExtractKeyPem",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]);
+        runtime.ExtractKeyPem = method;
+
+        var il = method.GetILGenerator();
+        var keyLocal = il.DeclareLocal(_types.Object);
+        var stringResultLabel = il.DefineLabel();
+        var tryGetPropertyLabel = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+        var returnLabel = il.DefineLabel();
+
+        // Store key
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, keyLocal);
+
+        // if (key is string) return (string)key
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, stringResultLabel);
+        il.Emit(OpCodes.Pop);
+
+        // Try to get "key" property from object
+        // First try compiled $Object with GetProperty method
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Brfalse, throwLabel);
+
+        // var type = key.GetType();
+        var typeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // var getPropertyMethod = type.GetMethod("GetProperty", new[] { typeof(string) });
+        var getPropertyMethodLocal = il.DeclareLocal(_types.MethodInfo);
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "GetProperty");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.TypeGetMethod);
+        il.Emit(OpCodes.Stloc, getPropertyMethodLocal);
+
+        // if (getPropertyMethod != null)
+        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
+        il.Emit(OpCodes.Brfalse, throwLabel);
+
+        // var keyValue = getPropertyMethod.Invoke(key, new object[] { "key" });
+        var keyValueLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldstr, "key");
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.MethodBaseInvoke);
+        il.Emit(OpCodes.Stloc, keyValueLocal);
+
+        // if (keyValue is string keyStr) return keyStr;
+        il.Emit(OpCodes.Ldloc, keyValueLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, returnLabel);
+        il.Emit(OpCodes.Pop);
+
+        // throw new ArgumentException(...)
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "Key must be a PEM string or object with 'key' property");
+        il.Emit(OpCodes.Newobj, _types.ArgumentExceptionCtorString);
+        il.Emit(OpCodes.Throw);
+
+        // return string result
+        il.MarkLabel(stringResultLabel);
+        il.MarkLabel(returnLabel);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static byte[] RsaEncryptRaw(string pem, byte[] data, bool useOaep)
+    /// Encrypts data using RSA. If useOaep is true, uses OAEP-SHA1; otherwise PKCS#1 v1.5.
+    /// </summary>
+    private void EmitRsaEncryptRaw(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "RsaEncryptRaw",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.MakeArrayType(_types.Byte),
+            [_types.String, _types.MakeArrayType(_types.Byte), _types.Boolean]);
+        runtime.RsaEncryptRaw = method;
+
+        var il = method.GetILGenerator();
+
+        // using var rsa = RSA.Create();
+        var rsaLocal = il.DeclareLocal(_types.RSA);
+        il.Emit(OpCodes.Call, _types.RSA.GetMethod("Create", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, rsaLocal);
+
+        // try { ... } finally { rsa?.Dispose(); }
+        il.BeginExceptionBlock();
+
+        // rsa.ImportFromPem(pem);
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Ldarg_0);  // pem
+        // ImportFromPem is an extension method, need to use the actual method
+        // It's on AsymmetricAlgorithm: public void ImportFromPem(ReadOnlySpan<char> input)
+        // For simplicity, convert string to char span
+        var importFromPemMethod = typeof(RSA).GetMethod("ImportFromPem", [typeof(ReadOnlySpan<char>)])!;
+        // Convert string to ReadOnlySpan<char>
+        il.Emit(OpCodes.Call, typeof(MemoryExtensions).GetMethod("AsSpan", [typeof(string)])!);
+        il.Emit(OpCodes.Callvirt, importFromPemMethod);
+
+        // var padding = useOaep ? RSAEncryptionPadding.OaepSHA1 : RSAEncryptionPadding.Pkcs1;
+        var paddingLocal = il.DeclareLocal(_types.RSAEncryptionPadding);
+        var usePkcs1Label = il.DefineLabel();
+        var paddingDoneLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_2);  // useOaep
+        il.Emit(OpCodes.Brfalse, usePkcs1Label);
+        il.Emit(OpCodes.Call, _types.RSAEncryptionPadding.GetProperty("OaepSHA1")!.GetGetMethod()!);
+        il.Emit(OpCodes.Br, paddingDoneLabel);
+        il.MarkLabel(usePkcs1Label);
+        il.Emit(OpCodes.Call, _types.RSAEncryptionPadding.GetProperty("Pkcs1")!.GetGetMethod()!);
+        il.MarkLabel(paddingDoneLabel);
+        il.Emit(OpCodes.Stloc, paddingLocal);
+
+        // return rsa.Encrypt(data, padding);
+        var resultLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Ldarg_1);  // data
+        il.Emit(OpCodes.Ldloc, paddingLocal);
+        il.Emit(OpCodes.Callvirt, _types.RSA.GetMethod("Encrypt", [typeof(byte[]), typeof(RSAEncryptionPadding)])!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // finally block
+        il.BeginFinallyBlock();
+        var skipDisposeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Brfalse, skipDisposeLabel);
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IDisposable, "Dispose"));
+        il.MarkLabel(skipDisposeLabel);
+        il.EndExceptionBlock();
+
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static byte[] RsaDecryptRaw(string pem, byte[] data, bool useOaep)
+    /// Decrypts data using RSA. If useOaep is true, uses OAEP-SHA1; otherwise PKCS#1 v1.5.
+    /// </summary>
+    private void EmitRsaDecryptRaw(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "RsaDecryptRaw",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.MakeArrayType(_types.Byte),
+            [_types.String, _types.MakeArrayType(_types.Byte), _types.Boolean]);
+        runtime.RsaDecryptRaw = method;
+
+        var il = method.GetILGenerator();
+
+        // using var rsa = RSA.Create();
+        var rsaLocal = il.DeclareLocal(_types.RSA);
+        il.Emit(OpCodes.Call, _types.RSA.GetMethod("Create", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, rsaLocal);
+
+        // try { ... } finally { rsa?.Dispose(); }
+        il.BeginExceptionBlock();
+
+        // rsa.ImportFromPem(pem);
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Ldarg_0);  // pem
+        var importFromPemMethod = typeof(RSA).GetMethod("ImportFromPem", [typeof(ReadOnlySpan<char>)])!;
+        il.Emit(OpCodes.Call, typeof(MemoryExtensions).GetMethod("AsSpan", [typeof(string)])!);
+        il.Emit(OpCodes.Callvirt, importFromPemMethod);
+
+        // var padding = useOaep ? RSAEncryptionPadding.OaepSHA1 : RSAEncryptionPadding.Pkcs1;
+        var paddingLocal = il.DeclareLocal(_types.RSAEncryptionPadding);
+        var usePkcs1Label = il.DefineLabel();
+        var paddingDoneLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_2);  // useOaep
+        il.Emit(OpCodes.Brfalse, usePkcs1Label);
+        il.Emit(OpCodes.Call, _types.RSAEncryptionPadding.GetProperty("OaepSHA1")!.GetGetMethod()!);
+        il.Emit(OpCodes.Br, paddingDoneLabel);
+        il.MarkLabel(usePkcs1Label);
+        il.Emit(OpCodes.Call, _types.RSAEncryptionPadding.GetProperty("Pkcs1")!.GetGetMethod()!);
+        il.MarkLabel(paddingDoneLabel);
+        il.Emit(OpCodes.Stloc, paddingLocal);
+
+        // return rsa.Decrypt(data, padding);
+        var resultLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Ldarg_1);  // data
+        il.Emit(OpCodes.Ldloc, paddingLocal);
+        il.Emit(OpCodes.Callvirt, _types.RSA.GetMethod("Decrypt", [typeof(byte[]), typeof(RSAEncryptionPadding)])!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // finally block
+        il.BeginFinallyBlock();
+        var skipDisposeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Brfalse, skipDisposeLabel);
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IDisposable, "Dispose"));
+        il.MarkLabel(skipDisposeLabel);
+        il.EndExceptionBlock();
+
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    #endregion
+
+    #region Key Pair Generation Helpers (Standalone)
+
+    /// <summary>
+    /// Emits: public static int GetOptionInt(object options, string name, int defaultValue)
+    /// Extracts an int option from an object using GetProperty or reflection.
+    /// </summary>
+    private void EmitGetOptionInt(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetOptionInt",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Int32,
+            [_types.Object, _types.String, _types.Int32]);
+        runtime.GetOptionInt = method;
+
+        var il = method.GetILGenerator();
+        var returnDefaultLabel = il.DefineLabel();
+        var checkValueLabel = il.DefineLabel();
+
+        // if (options == null) return defaultValue
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, returnDefaultLabel);
+
+        // var type = options.GetType()
+        var typeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // var getPropertyMethod = type.GetMethod("GetProperty", new[] { typeof(string) })
+        var getPropertyMethodLocal = il.DeclareLocal(_types.MethodInfo);
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "GetProperty");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.TypeGetMethod);
+        il.Emit(OpCodes.Stloc, getPropertyMethodLocal);
+
+        // if (getPropertyMethod == null) return defaultValue
+        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
+        il.Emit(OpCodes.Brfalse, returnDefaultLabel);
+
+        // var value = getPropertyMethod.Invoke(options, new object[] { name })
+        var valueLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
+        il.Emit(OpCodes.Ldarg_0);  // options
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);  // name
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.MethodBaseInvoke);
+        il.Emit(OpCodes.Stloc, valueLocal);
+
+        // if (value is double d) return (int)d
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, returnDefaultLabel);
+
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ret);
+
+        // return defaultValue
+        il.MarkLabel(returnDefaultLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static string GetOptionString(object options, string name, string defaultValue)
+    /// Extracts a string option from an object using GetProperty or reflection.
+    /// </summary>
+    private void EmitGetOptionString(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetOptionString",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object, _types.String, _types.String]);
+        runtime.GetOptionString = method;
+
+        var il = method.GetILGenerator();
+        var returnDefaultLabel = il.DefineLabel();
+
+        // if (options == null) return defaultValue
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, returnDefaultLabel);
+
+        // var type = options.GetType()
+        var typeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // var getPropertyMethod = type.GetMethod("GetProperty", new[] { typeof(string) })
+        var getPropertyMethodLocal = il.DeclareLocal(_types.MethodInfo);
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "GetProperty");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.TypeGetMethod);
+        il.Emit(OpCodes.Stloc, getPropertyMethodLocal);
+
+        // if (getPropertyMethod == null) return defaultValue
+        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
+        il.Emit(OpCodes.Brfalse, returnDefaultLabel);
+
+        // var value = getPropertyMethod.Invoke(options, new object[] { name })
+        var valueLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
+        il.Emit(OpCodes.Ldarg_0);  // options
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);  // name
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.MethodBaseInvoke);
+        il.Emit(OpCodes.Stloc, valueLocal);
+
+        // if (value is string s) return s
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Dup);
+        var returnStringLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, returnStringLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, returnDefaultLabel);
+
+        il.MarkLabel(returnStringLabel);
+        il.Emit(OpCodes.Ret);
+
+        // return defaultValue
+        il.MarkLabel(returnDefaultLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static (string, string) GenerateRsaKeyPairRaw(object? options)
+    /// Generates RSA key pair and returns (publicKeyPem, privateKeyPem).
+    /// </summary>
+    private void EmitGenerateRsaKeyPairRaw(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var tupleType = typeof(ValueTuple<string, string>);
+        var method = typeBuilder.DefineMethod(
+            "GenerateRsaKeyPairRaw",
+            MethodAttributes.Public | MethodAttributes.Static,
+            tupleType,
+            [_types.Object]);
+        runtime.GenerateRsaKeyPairRaw = method;
+
+        var il = method.GetILGenerator();
+
+        // int modulusLength = GetOptionInt(options, "modulusLength", 2048)
+        var modulusLengthLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_0);  // options
+        il.Emit(OpCodes.Ldstr, "modulusLength");
+        il.Emit(OpCodes.Ldc_I4, 2048);
+        il.Emit(OpCodes.Call, runtime.GetOptionInt);
+        il.Emit(OpCodes.Stloc, modulusLengthLocal);
+
+        // using var rsa = RSA.Create(modulusLength)
+        var rsaLocal = il.DeclareLocal(_types.RSA);
+        il.Emit(OpCodes.Ldloc, modulusLengthLocal);
+        il.Emit(OpCodes.Call, _types.RSA.GetMethod("Create", [typeof(int)])!);
+        il.Emit(OpCodes.Stloc, rsaLocal);
+
+        il.BeginExceptionBlock();
+
+        // var publicKey = rsa.ExportSubjectPublicKeyInfoPem()
+        var publicKeyLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Callvirt, _types.RSA.GetMethod("ExportSubjectPublicKeyInfoPem", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, publicKeyLocal);
+
+        // var privateKey = rsa.ExportPkcs8PrivateKeyPem()
+        var privateKeyLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Callvirt, _types.RSA.GetMethod("ExportPkcs8PrivateKeyPem", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, privateKeyLocal);
+
+        il.BeginFinallyBlock();
+        var skipDisposeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Brfalse, skipDisposeLabel);
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IDisposable, "Dispose"));
+        il.MarkLabel(skipDisposeLabel);
+        il.EndExceptionBlock();
+
+        // return (publicKey, privateKey)
+        il.Emit(OpCodes.Ldloc, publicKeyLocal);
+        il.Emit(OpCodes.Ldloc, privateKeyLocal);
+        il.Emit(OpCodes.Newobj, tupleType.GetConstructor([typeof(string), typeof(string)])!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static (string, string) GenerateEcKeyPairRaw(object? options)
+    /// Generates EC key pair and returns (publicKeyPem, privateKeyPem).
+    /// </summary>
+    private void EmitGenerateEcKeyPairRaw(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var tupleType = typeof(ValueTuple<string, string>);
+        var method = typeBuilder.DefineMethod(
+            "GenerateEcKeyPairRaw",
+            MethodAttributes.Public | MethodAttributes.Static,
+            tupleType,
+            [_types.Object]);
+        runtime.GenerateEcKeyPairRaw = method;
+
+        var il = method.GetILGenerator();
+
+        // string curveName = GetOptionString(options, "namedCurve", "prime256v1")
+        var curveNameLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_0);  // options
+        il.Emit(OpCodes.Ldstr, "namedCurve");
+        il.Emit(OpCodes.Ldstr, "prime256v1");
+        il.Emit(OpCodes.Call, runtime.GetOptionString);
+        il.Emit(OpCodes.Stloc, curveNameLocal);
+
+        // Map curveName to ECCurve
+        var curveLocal = il.DeclareLocal(typeof(ECCurve));
+        var p256Label = il.DefineLabel();
+        var p384Label = il.DefineLabel();
+        var p521Label = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+        var createKeyLabel = il.DefineLabel();
+
+        // Convert to lowercase
+        il.Emit(OpCodes.Ldloc, curveNameLocal);
+        il.Emit(OpCodes.Callvirt, _types.StringToLowerInvariant);
+        il.Emit(OpCodes.Stloc, curveNameLocal);
+
+        // Check for P-256 variants
+        il.Emit(OpCodes.Ldloc, curveNameLocal);
+        il.Emit(OpCodes.Ldstr, "prime256v1");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, p256Label);
+        il.Emit(OpCodes.Ldloc, curveNameLocal);
+        il.Emit(OpCodes.Ldstr, "secp256r1");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, p256Label);
+        il.Emit(OpCodes.Ldloc, curveNameLocal);
+        il.Emit(OpCodes.Ldstr, "p-256");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, p256Label);
+
+        // Check for P-384 variants
+        il.Emit(OpCodes.Ldloc, curveNameLocal);
+        il.Emit(OpCodes.Ldstr, "secp384r1");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, p384Label);
+        il.Emit(OpCodes.Ldloc, curveNameLocal);
+        il.Emit(OpCodes.Ldstr, "p-384");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, p384Label);
+
+        // Check for P-521 variants
+        il.Emit(OpCodes.Ldloc, curveNameLocal);
+        il.Emit(OpCodes.Ldstr, "secp521r1");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, p521Label);
+        il.Emit(OpCodes.Ldloc, curveNameLocal);
+        il.Emit(OpCodes.Ldstr, "p-521");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, p521Label);
+
+        // Unknown curve - throw
+        il.Emit(OpCodes.Br, throwLabel);
+
+        // P-256
+        il.MarkLabel(p256Label);
+        il.Emit(OpCodes.Call, typeof(ECCurve.NamedCurves).GetProperty("nistP256")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, curveLocal);
+        il.Emit(OpCodes.Br, createKeyLabel);
+
+        // P-384
+        il.MarkLabel(p384Label);
+        il.Emit(OpCodes.Call, typeof(ECCurve.NamedCurves).GetProperty("nistP384")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, curveLocal);
+        il.Emit(OpCodes.Br, createKeyLabel);
+
+        // P-521
+        il.MarkLabel(p521Label);
+        il.Emit(OpCodes.Call, typeof(ECCurve.NamedCurves).GetProperty("nistP521")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, curveLocal);
+        il.Emit(OpCodes.Br, createKeyLabel);
+
+        // Throw for unknown curve
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "crypto.generateKeyPairSync: unsupported curve");
+        il.Emit(OpCodes.Newobj, _types.ArgumentExceptionCtorString);
+        il.Emit(OpCodes.Throw);
+
+        // Create ECDsa key
+        il.MarkLabel(createKeyLabel);
+        var ecdsaLocal = il.DeclareLocal(typeof(ECDsa));
+        il.Emit(OpCodes.Ldloc, curveLocal);
+        il.Emit(OpCodes.Call, typeof(ECDsa).GetMethod("Create", [typeof(ECCurve)])!);
+        il.Emit(OpCodes.Stloc, ecdsaLocal);
+
+        il.BeginExceptionBlock();
+
+        // var publicKey = ecdsa.ExportSubjectPublicKeyInfoPem()
+        var publicKeyLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Callvirt, typeof(ECDsa).GetMethod("ExportSubjectPublicKeyInfoPem", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, publicKeyLocal);
+
+        // var privateKey = ecdsa.ExportPkcs8PrivateKeyPem()
+        var privateKeyLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Callvirt, typeof(ECDsa).GetMethod("ExportPkcs8PrivateKeyPem", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, privateKeyLocal);
+
+        il.BeginFinallyBlock();
+        var skipDisposeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Brfalse, skipDisposeLabel);
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IDisposable, "Dispose"));
+        il.MarkLabel(skipDisposeLabel);
+        il.EndExceptionBlock();
+
+        // return (publicKey, privateKey)
+        il.Emit(OpCodes.Ldloc, publicKeyLocal);
+        il.Emit(OpCodes.Ldloc, privateKeyLocal);
+        il.Emit(OpCodes.Newobj, tupleType.GetConstructor([typeof(string), typeof(string)])!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    #endregion
 
     #region RSA Encryption/Decryption
 
     /// <summary>
     /// Emits: public static object CryptoPublicEncrypt(object key, byte[] buffer)
     /// Encrypts data using RSA-OAEP with SHA-1.
+    /// Uses pure IL - no SharpTS.dll dependency.
     /// </summary>
     private void EmitCryptoPublicEncrypt(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1241,10 +1911,14 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper that returns byte[]
+        // var pem = ExtractKeyPem(key);
         il.Emit(OpCodes.Ldarg_0);  // key
+        il.Emit(OpCodes.Call, runtime.ExtractKeyPem);
+
+        // var result = RsaEncryptRaw(pem, buffer, true);  // true = use OAEP
         il.Emit(OpCodes.Ldarg_1);  // buffer
-        il.Emit(OpCodes.Call, typeof(CryptoRsaHelper).GetMethod("PublicEncryptRaw")!);
+        il.Emit(OpCodes.Ldc_I4_1);  // useOaep = true
+        il.Emit(OpCodes.Call, runtime.RsaEncryptRaw);
 
         // Wrap result in $Buffer
         il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
@@ -1254,6 +1928,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits: public static object CryptoPrivateDecrypt(object key, byte[] buffer)
     /// Decrypts data using RSA-OAEP with SHA-1.
+    /// Uses pure IL - no SharpTS.dll dependency.
     /// </summary>
     private void EmitCryptoPrivateDecrypt(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1266,10 +1941,14 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper that returns byte[]
+        // var pem = ExtractKeyPem(key);
         il.Emit(OpCodes.Ldarg_0);  // key
+        il.Emit(OpCodes.Call, runtime.ExtractKeyPem);
+
+        // var result = RsaDecryptRaw(pem, buffer, true);  // true = use OAEP
         il.Emit(OpCodes.Ldarg_1);  // buffer
-        il.Emit(OpCodes.Call, typeof(CryptoRsaHelper).GetMethod("PrivateDecryptRaw")!);
+        il.Emit(OpCodes.Ldc_I4_1);  // useOaep = true
+        il.Emit(OpCodes.Call, runtime.RsaDecryptRaw);
 
         // Wrap result in $Buffer
         il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
@@ -1279,6 +1958,8 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits: public static object CryptoPrivateEncrypt(object key, byte[] buffer)
     /// Encrypts data using private key (PKCS#1 v1.5 signing primitive).
+    /// Note: privateEncrypt in Node.js actually uses Decrypt with PKCS#1 padding.
+    /// Uses pure IL - no SharpTS.dll dependency.
     /// </summary>
     private void EmitCryptoPrivateEncrypt(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1291,10 +1972,15 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper that returns byte[]
+        // var pem = ExtractKeyPem(key);
         il.Emit(OpCodes.Ldarg_0);  // key
+        il.Emit(OpCodes.Call, runtime.ExtractKeyPem);
+
+        // var result = RsaDecryptRaw(pem, buffer, false);  // false = use PKCS#1
+        // Note: privateEncrypt uses RSA Decrypt with PKCS#1 padding
         il.Emit(OpCodes.Ldarg_1);  // buffer
-        il.Emit(OpCodes.Call, typeof(CryptoRsaHelper).GetMethod("PrivateEncryptRaw")!);
+        il.Emit(OpCodes.Ldc_I4_0);  // useOaep = false (PKCS#1)
+        il.Emit(OpCodes.Call, runtime.RsaDecryptRaw);
 
         // Wrap result in $Buffer
         il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
@@ -1304,6 +1990,8 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits: public static object CryptoPublicDecrypt(object key, byte[] buffer)
     /// Decrypts data using public key (PKCS#1 v1.5 verification primitive).
+    /// Note: publicDecrypt in Node.js actually uses Encrypt with PKCS#1 padding.
+    /// Uses pure IL - no SharpTS.dll dependency.
     /// </summary>
     private void EmitCryptoPublicDecrypt(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1316,10 +2004,15 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper that returns byte[]
+        // var pem = ExtractKeyPem(key);
         il.Emit(OpCodes.Ldarg_0);  // key
+        il.Emit(OpCodes.Call, runtime.ExtractKeyPem);
+
+        // var result = RsaEncryptRaw(pem, buffer, false);  // false = use PKCS#1
+        // Note: publicDecrypt uses RSA Encrypt with PKCS#1 padding
         il.Emit(OpCodes.Ldarg_1);  // buffer
-        il.Emit(OpCodes.Call, typeof(CryptoRsaHelper).GetMethod("PublicDecryptRaw")!);
+        il.Emit(OpCodes.Ldc_I4_0);  // useOaep = false (PKCS#1)
+        il.Emit(OpCodes.Call, runtime.RsaEncryptRaw);
 
         // Wrap result in $Buffer
         il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
@@ -1333,6 +2026,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits: public static object CryptoHkdfSync(string digest, byte[] ikm, byte[] salt, byte[] info, int keylen)
     /// HKDF key derivation (RFC 5869).
+    /// Pure IL emission - no SharpTS.dll dependency.
     /// </summary>
     private void EmitCryptoHkdfSync(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1346,16 +2040,299 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper that returns byte[]
-        il.Emit(OpCodes.Ldarg_0);  // digest
-        il.Emit(OpCodes.Ldarg_1);  // ikm
-        il.Emit(OpCodes.Ldarg_2);  // salt
-        il.Emit(OpCodes.Ldarg_3);  // info
-        il.Emit(OpCodes.Ldarg, 4); // keylen
-        il.Emit(OpCodes.Call, typeof(CryptoHkdfHelper).GetMethod("DeriveKeyRaw")!);
+        var hashAlgLocal = il.DeclareLocal(_types.HashAlgorithmName);
+        var lowerDigestLocal = il.DeclareLocal(_types.String);
 
-        // Wrap result in $Buffer
+        // Labels for hash algorithm selection
+        var sha1Label = il.DefineLabel();
+        var sha256Label = il.DefineLabel();
+        var sha384Label = il.DefineLabel();
+        var sha512Label = il.DefineLabel();
+        var unsupportedLabel = il.DefineLabel();
+        var deriveKeyLabel = il.DefineLabel();
+        var keylenNegativeLabel = il.DefineLabel();
+        var keylenZeroLabel = il.DefineLabel();
+        var afterKeylenCheckLabel = il.DefineLabel();
+
+        // if (keylen < 0) throw ArgumentException
+        il.Emit(OpCodes.Ldarg, 4);  // keylen
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, keylenNegativeLabel);
+
+        // if (keylen == 0) return new $Buffer(Array.Empty<byte>())
+        il.Emit(OpCodes.Ldarg, 4);  // keylen
+        il.Emit(OpCodes.Brfalse, keylenZeroLabel);
+        il.Emit(OpCodes.Br, afterKeylenCheckLabel);
+
+        il.MarkLabel(keylenNegativeLabel);
+        il.Emit(OpCodes.Ldstr, "crypto.hkdfSync: keylen must be non-negative");
+        il.Emit(OpCodes.Newobj, _types.ArgumentExceptionCtorString);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(keylenZeroLabel);
+        // Return new $Buffer(Array.Empty<byte>())
+        il.Emit(OpCodes.Call, typeof(Array).GetMethod("Empty")!.MakeGenericMethod(_types.Byte));
         il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(afterKeylenCheckLabel);
+
+        // lowerDigest = digest.ToLowerInvariant()
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("ToLowerInvariant")!);
+        il.Emit(OpCodes.Stloc, lowerDigestLocal);
+
+        // Switch on digest name
+        // if (lowerDigest == "sha1") goto sha1Label
+        il.Emit(OpCodes.Ldloc, lowerDigestLocal);
+        il.Emit(OpCodes.Ldstr, "sha1");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, sha1Label);
+
+        // if (lowerDigest == "sha256") goto sha256Label
+        il.Emit(OpCodes.Ldloc, lowerDigestLocal);
+        il.Emit(OpCodes.Ldstr, "sha256");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, sha256Label);
+
+        // if (lowerDigest == "sha384") goto sha384Label
+        il.Emit(OpCodes.Ldloc, lowerDigestLocal);
+        il.Emit(OpCodes.Ldstr, "sha384");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, sha384Label);
+
+        // if (lowerDigest == "sha512") goto sha512Label
+        il.Emit(OpCodes.Ldloc, lowerDigestLocal);
+        il.Emit(OpCodes.Ldstr, "sha512");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, sha512Label);
+
+        // else goto unsupported
+        il.Emit(OpCodes.Br, unsupportedLabel);
+
+        // sha1: hashAlg = HashAlgorithmName.SHA1
+        il.MarkLabel(sha1Label);
+        il.Emit(OpCodes.Call, _types.HashAlgorithmName.GetProperty("SHA1")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, hashAlgLocal);
+        il.Emit(OpCodes.Br, deriveKeyLabel);
+
+        // sha256: hashAlg = HashAlgorithmName.SHA256
+        il.MarkLabel(sha256Label);
+        il.Emit(OpCodes.Call, _types.HashAlgorithmName.GetProperty("SHA256")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, hashAlgLocal);
+        il.Emit(OpCodes.Br, deriveKeyLabel);
+
+        // sha384: hashAlg = HashAlgorithmName.SHA384
+        il.MarkLabel(sha384Label);
+        il.Emit(OpCodes.Call, _types.HashAlgorithmName.GetProperty("SHA384")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, hashAlgLocal);
+        il.Emit(OpCodes.Br, deriveKeyLabel);
+
+        // sha512: hashAlg = HashAlgorithmName.SHA512
+        il.MarkLabel(sha512Label);
+        il.Emit(OpCodes.Call, _types.HashAlgorithmName.GetProperty("SHA512")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, hashAlgLocal);
+        il.Emit(OpCodes.Br, deriveKeyLabel);
+
+        // unsupported: throw ArgumentException
+        il.MarkLabel(unsupportedLabel);
+        il.Emit(OpCodes.Ldstr, "crypto.hkdfSync: unsupported digest algorithm '");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "'. Supported: sha1, sha256, sha384, sha512");
+        il.Emit(OpCodes.Call, typeof(string).GetMethod("Concat", [typeof(string), typeof(string), typeof(string)])!);
+        il.Emit(OpCodes.Newobj, _types.ArgumentExceptionCtorString);
+        il.Emit(OpCodes.Throw);
+
+        // deriveKey: return new $Buffer(HKDF.DeriveKey(hashAlg, ikm, keylen, salt, info))
+        il.MarkLabel(deriveKeyLabel);
+        il.Emit(OpCodes.Ldloc, hashAlgLocal);   // hashAlgorithm
+        il.Emit(OpCodes.Ldarg_1);               // ikm
+        il.Emit(OpCodes.Ldarg, 4);              // keylen (outputLength)
+        il.Emit(OpCodes.Ldarg_2);               // salt
+        il.Emit(OpCodes.Ldarg_3);               // info
+        il.Emit(OpCodes.Call, _types.HKDF.GetMethod("DeriveKey",
+            [_types.HashAlgorithmName, typeof(byte[]), typeof(int), typeof(byte[]), typeof(byte[])])!);
+        il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+        il.Emit(OpCodes.Ret);
+    }
+
+    #endregion
+
+    #region Sign/Verify Helpers (Standalone)
+
+    /// <summary>
+    /// Emits: public static byte[] SignDataBytes(string privateKeyPem, byte[] data, HashAlgorithmName hashAlgorithm)
+    /// Signs data using RSA or EC private key. Uses try/catch to detect key type.
+    /// </summary>
+    private void EmitSignDataBytes(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "SignDataBytes",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.ByteArray,
+            [_types.String, _types.ByteArray, _types.HashAlgorithmName]);
+        runtime.SignDataBytes = method;
+
+        var il = method.GetILGenerator();
+
+        // Result local used for both EC and RSA paths
+        var resultLocal = il.DeclareLocal(_types.ByteArray);
+        var exitLabel = il.DefineLabel();
+        var rsaSignLabel = il.DefineLabel();
+
+        // Check for explicit RSA header
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "RSA PRIVATE KEY");
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Contains", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, rsaSignLabel);
+
+        // Generic format or EC - try EC first with try/catch
+        var ecdsaLocal = il.DeclareLocal(typeof(ECDsa));
+
+        // try { ECDsa sign }
+        il.BeginExceptionBlock();
+        il.Emit(OpCodes.Call, typeof(ECDsa).GetMethod("Create", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, ecdsaLocal);
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(MemoryExtensions).GetMethod("AsSpan", [typeof(string)])!);
+        il.Emit(OpCodes.Callvirt, typeof(ECDsa).GetMethod("ImportFromPem", [typeof(ReadOnlySpan<char>)])!);
+        // result = ecdsa.SignData(data, hashAlgorithm)
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, typeof(ECDsa).GetMethod("SignData", [typeof(byte[]), typeof(HashAlgorithmName)])!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        // Dispose ecdsa
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IDisposable).GetMethod("Dispose")!);
+        il.Emit(OpCodes.Leave, exitLabel);
+
+        // catch (CryptographicException) { fall back to RSA }
+        il.BeginCatchBlock(typeof(CryptographicException));
+        il.Emit(OpCodes.Pop);
+        // Dispose the failed ECDsa if it was created
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        var ecdsaNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, ecdsaNullLabel);
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IDisposable).GetMethod("Dispose")!);
+        il.MarkLabel(ecdsaNullLabel);
+        il.Emit(OpCodes.Leave, rsaSignLabel);
+        il.EndExceptionBlock();
+
+        // RSA signing path
+        il.MarkLabel(rsaSignLabel);
+        var rsaLocal = il.DeclareLocal(typeof(RSA));
+        il.Emit(OpCodes.Call, typeof(RSA).GetMethod("Create", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, rsaLocal);
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(MemoryExtensions).GetMethod("AsSpan", [typeof(string)])!);
+        il.Emit(OpCodes.Callvirt, typeof(RSA).GetMethod("ImportFromPem", [typeof(ReadOnlySpan<char>)])!);
+        // result = rsa.SignData(data, hashAlgorithm, RSASignaturePadding.Pkcs1)
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, typeof(RSASignaturePadding).GetProperty("Pkcs1")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, typeof(RSA).GetMethod("SignData", [typeof(byte[]), typeof(HashAlgorithmName), typeof(RSASignaturePadding)])!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        // Dispose rsa
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IDisposable).GetMethod("Dispose")!);
+
+        // Exit: return result
+        il.MarkLabel(exitLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static bool VerifyDataBytes(string publicKeyPem, byte[] data, HashAlgorithmName hashAlgorithm, byte[] signature)
+    /// Verifies a signature using RSA or EC public key. Uses try/catch to detect key type.
+    /// </summary>
+    private void EmitVerifyDataBytes(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "VerifyDataBytes",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.String, _types.ByteArray, _types.HashAlgorithmName, _types.ByteArray]);
+        runtime.VerifyDataBytes = method;
+
+        var il = method.GetILGenerator();
+
+        // Result local used for both EC and RSA paths
+        var resultLocal = il.DeclareLocal(_types.Boolean);
+        var exitLabel = il.DefineLabel();
+        var rsaVerifyLabel = il.DefineLabel();
+
+        // Check for explicit RSA header
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "RSA PUBLIC KEY");
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Contains", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, rsaVerifyLabel);
+
+        // Generic format or EC - try EC first with try/catch
+        var ecdsaLocal = il.DeclareLocal(typeof(ECDsa));
+
+        // try { ECDsa verify }
+        il.BeginExceptionBlock();
+        il.Emit(OpCodes.Call, typeof(ECDsa).GetMethod("Create", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, ecdsaLocal);
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(MemoryExtensions).GetMethod("AsSpan", [typeof(string)])!);
+        il.Emit(OpCodes.Callvirt, typeof(ECDsa).GetMethod("ImportFromPem", [typeof(ReadOnlySpan<char>)])!);
+        // result = ecdsa.VerifyData(data, signature, hashAlgorithm)
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Ldarg_1);  // data
+        il.Emit(OpCodes.Ldarg_3);  // signature
+        il.Emit(OpCodes.Ldarg_2);  // hashAlgorithm
+        il.Emit(OpCodes.Callvirt, typeof(ECDsa).GetMethod("VerifyData", [typeof(byte[]), typeof(byte[]), typeof(HashAlgorithmName)])!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        // Dispose ecdsa
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IDisposable).GetMethod("Dispose")!);
+        il.Emit(OpCodes.Leave, exitLabel);
+
+        // catch (CryptographicException) { fall back to RSA }
+        il.BeginCatchBlock(typeof(CryptographicException));
+        il.Emit(OpCodes.Pop);
+        // Dispose the failed ECDsa if it was created
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        var ecdsaNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, ecdsaNullLabel);
+        il.Emit(OpCodes.Ldloc, ecdsaLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IDisposable).GetMethod("Dispose")!);
+        il.MarkLabel(ecdsaNullLabel);
+        il.Emit(OpCodes.Leave, rsaVerifyLabel);
+        il.EndExceptionBlock();
+
+        // RSA verification path
+        il.MarkLabel(rsaVerifyLabel);
+        var rsaLocal = il.DeclareLocal(typeof(RSA));
+        il.Emit(OpCodes.Call, typeof(RSA).GetMethod("Create", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, rsaLocal);
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(MemoryExtensions).GetMethod("AsSpan", [typeof(string)])!);
+        il.Emit(OpCodes.Callvirt, typeof(RSA).GetMethod("ImportFromPem", [typeof(ReadOnlySpan<char>)])!);
+        // result = rsa.VerifyData(data, signature, hashAlgorithm, RSASignaturePadding.Pkcs1)
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Ldarg_1);  // data
+        il.Emit(OpCodes.Ldarg_3);  // signature
+        il.Emit(OpCodes.Ldarg_2);  // hashAlgorithm
+        il.Emit(OpCodes.Call, typeof(RSASignaturePadding).GetProperty("Pkcs1")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, typeof(RSA).GetMethod("VerifyData", [typeof(byte[]), typeof(byte[]), typeof(HashAlgorithmName), typeof(RSASignaturePadding)])!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        // Dispose rsa
+        il.Emit(OpCodes.Ldloc, rsaLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IDisposable).GetMethod("Dispose")!);
+
+        // Exit: return result
+        il.MarkLabel(exitLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1365,7 +2342,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object CryptoCreateSecretKey(object key, object? encoding)
-    /// Creates a secret (symmetric) KeyObject.
+    /// Creates a secret (symmetric) KeyObject using pure IL (no SharpTS.dll dependency).
     /// </summary>
     private void EmitCryptoCreateSecretKey(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1378,16 +2355,150 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper
-        il.Emit(OpCodes.Ldarg_0);  // key
-        il.Emit(OpCodes.Ldarg_1);  // encoding
-        il.Emit(OpCodes.Call, typeof(CryptoKeyObjectHelper).GetMethod("CreateSecretKey")!);
+        var keyBytesLocal = il.DeclareLocal(_types.ByteArray);
+        var encodingLocal = il.DeclareLocal(_types.String);
+
+        // Check if key is string
+        var notStringLabel = il.DefineLabel();
+        var createKeyObjectLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+
+        // key is string - get encoding
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Dup);
+        var useDefaultEncodingLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, useDefaultEncodingLabel);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        var encodingSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, encodingSetLabel);
+        il.MarkLabel(useDefaultEncodingLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "utf8");
+        il.MarkLabel(encodingSetLabel);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("ToLowerInvariant")!);
+        il.Emit(OpCodes.Stloc, encodingLocal);
+
+        // Convert string to bytes based on encoding
+        var hexLabel = il.DefineLabel();
+        var base64Label = il.DefineLabel();
+        var latin1Label = il.DefineLabel();
+        var stringConvertedLabel = il.DefineLabel();
+
+        // Check for "hex"
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "hex");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, hexLabel);
+
+        // Check for "base64"
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "base64");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, base64Label);
+
+        // Check for "latin1" or "binary"
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "latin1");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "binary");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Brtrue, latin1Label);
+
+        // Default: UTF8
+        il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("UTF8")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, typeof(System.Text.Encoding).GetMethod("GetBytes", [_types.String])!);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+        il.Emit(OpCodes.Br, stringConvertedLabel);
+
+        il.MarkLabel(hexLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, typeof(Convert).GetMethod("FromHexString", [_types.String])!);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+        il.Emit(OpCodes.Br, stringConvertedLabel);
+
+        il.MarkLabel(base64Label);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, typeof(Convert).GetMethod("FromBase64String", [_types.String])!);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+        il.Emit(OpCodes.Br, stringConvertedLabel);
+
+        il.MarkLabel(latin1Label);
+        il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("Latin1")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, typeof(System.Text.Encoding).GetMethod("GetBytes", [_types.String])!);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+
+        il.MarkLabel(stringConvertedLabel);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        // Not a string - try to get bytes from Buffer or byte[]
+        il.MarkLabel(notStringLabel);
+
+        // Try byte[] first
+        var tryBufferLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ByteArray);
+        il.Emit(OpCodes.Brfalse, tryBufferLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ByteArray);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        // Try $Buffer - call GetData() method
+        il.MarkLabel(tryBufferLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSBufferType);
+        var trySharpTSBufferLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, trySharpTSBufferLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSBufferType);
+        il.Emit(OpCodes.Call, runtime.TSBufferGetData);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        // Try SharpTSBuffer (interpreter mode type) - get Data property via reflection
+        il.MarkLabel(trySharpTSBufferLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("GetType")!);
+        il.Emit(OpCodes.Ldstr, "Data");
+        il.Emit(OpCodes.Call, _types.TypeGetProperty);
+        il.Emit(OpCodes.Dup);
+        var noDataPropertyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, noDataPropertyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Callvirt, typeof(PropertyInfo).GetMethod("GetValue", [_types.Object, typeof(object[])])!);
+        il.Emit(OpCodes.Castclass, _types.ByteArray);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        il.MarkLabel(noDataPropertyLabel);
+        il.Emit(OpCodes.Pop);
+        // Fallback - throw exception
+        il.Emit(OpCodes.Ldstr, "crypto.createSecretKey: key must be a Buffer or string");
+        il.Emit(OpCodes.Newobj, typeof(ArgumentException).GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Throw);
+
+        // Create and return new $TSKeyObject(keyBytes)
+        il.MarkLabel(createKeyObjectLabel);
+        il.Emit(OpCodes.Ldloc, keyBytesLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSKeyObjectCtorSecret);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits: public static object CryptoCreatePublicKey(object key)
-    /// Creates a public KeyObject from PEM.
+    /// Creates a public KeyObject from PEM using pure IL (no SharpTS.dll dependency).
     /// </summary>
     private void EmitCryptoCreatePublicKey(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1400,15 +2511,68 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper
-        il.Emit(OpCodes.Ldarg_0);  // key
-        il.Emit(OpCodes.Call, typeof(CryptoKeyObjectHelper).GetMethod("CreatePublicKey")!);
+        var pemLocal = il.DeclareLocal(_types.String);
+
+        // Extract PEM from key
+        var notStringLabel = il.DefineLabel();
+        var createKeyObjectLabel = il.DefineLabel();
+
+        // Check if key is string
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, pemLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        // Not a string - try to get 'key' property
+        il.MarkLabel(notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("GetType")!);
+        il.Emit(OpCodes.Ldstr, "GetProperty");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, _types.TypeGetMethod);
+        il.Emit(OpCodes.Dup);
+        var noGetPropertyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, noGetPropertyLabel);
+
+        // Call GetProperty("key")
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldstr, "key");
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.MethodBaseInvoke);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, pemLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        il.MarkLabel(noGetPropertyLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "crypto.createPublicKey: key must be a PEM string or object with 'key' property");
+        il.Emit(OpCodes.Newobj, typeof(ArgumentException).GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Throw);
+
+        // Create and return new $TSKeyObject(pem, isPrivate: false)
+        il.MarkLabel(createKeyObjectLabel);
+        il.Emit(OpCodes.Ldloc, pemLocal);
+        il.Emit(OpCodes.Ldc_I4_0); // isPrivate = false
+        il.Emit(OpCodes.Newobj, runtime.TSKeyObjectCtorAsym);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits: public static object CryptoCreatePrivateKey(object key)
-    /// Creates a private KeyObject from PEM.
+    /// Creates a private KeyObject from PEM using pure IL (no SharpTS.dll dependency).
     /// </summary>
     private void EmitCryptoCreatePrivateKey(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1421,28 +2585,66 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call static helper
-        il.Emit(OpCodes.Ldarg_0);  // key
-        il.Emit(OpCodes.Call, typeof(CryptoKeyObjectHelper).GetMethod("CreatePrivateKey")!);
+        var pemLocal = il.DeclareLocal(_types.String);
+
+        // Extract PEM from key
+        var notStringLabel = il.DefineLabel();
+        var createKeyObjectLabel = il.DefineLabel();
+
+        // Check if key is string
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, pemLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        // Not a string - try to get 'key' property
+        il.MarkLabel(notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("GetType")!);
+        il.Emit(OpCodes.Ldstr, "GetProperty");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, _types.TypeGetMethod);
+        il.Emit(OpCodes.Dup);
+        var noGetPropertyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, noGetPropertyLabel);
+
+        // Call GetProperty("key")
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldstr, "key");
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.MethodBaseInvoke);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, pemLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        il.MarkLabel(noGetPropertyLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "crypto.createPrivateKey: key must be a PEM string or object with 'key' property");
+        il.Emit(OpCodes.Newobj, typeof(ArgumentException).GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Throw);
+
+        // Create and return new $TSKeyObject(pem, isPrivate: true)
+        il.MarkLabel(createKeyObjectLabel);
+        il.Emit(OpCodes.Ldloc, pemLocal);
+        il.Emit(OpCodes.Ldc_I4_1); // isPrivate = true
+        il.Emit(OpCodes.Newobj, runtime.TSKeyObjectCtorAsym);
         il.Emit(OpCodes.Ret);
     }
 
     #endregion
-}
-
-/// <summary>
-/// Static helper for timing-safe comparison.
-/// Used by compiled code to avoid Span emission complexities.
-/// </summary>
-public static class CryptoTimingSafeEqualHelper
-{
-    /// <summary>
-    /// Performs constant-time comparison of two byte arrays.
-    /// </summary>
-    public static bool Compare(byte[] a, byte[] b)
-    {
-        return CryptographicOperations.FixedTimeEquals(a, b);
-    }
 }
 
 /// <summary>
@@ -2083,38 +3285,6 @@ public static class CryptoRsaHelper
         }
 
         throw new ArgumentException("Key must be a PEM string, KeyObject, or object with 'key' property");
-    }
-}
-
-/// <summary>
-/// Static helper for HKDF key derivation.
-/// Used by compiled code.
-/// </summary>
-public static class CryptoHkdfHelper
-{
-    /// <summary>
-    /// Derives a key using HKDF (RFC 5869).
-    /// Returns raw bytes for wrapping by the emitter.
-    /// </summary>
-    public static byte[] DeriveKeyRaw(string digest, byte[] ikm, byte[] salt, byte[] info, int keylen)
-    {
-        if (keylen < 0)
-            throw new ArgumentException("crypto.hkdfSync: keylen must be non-negative");
-
-        // Handle zero key length specially - .NET doesn't allow 0 but Node.js does
-        if (keylen == 0)
-            return [];
-
-        var hashAlgorithm = digest.ToLowerInvariant() switch
-        {
-            "sha1" => HashAlgorithmName.SHA1,
-            "sha256" => HashAlgorithmName.SHA256,
-            "sha384" => HashAlgorithmName.SHA384,
-            "sha512" => HashAlgorithmName.SHA512,
-            _ => throw new ArgumentException($"crypto.hkdfSync: unsupported digest algorithm '{digest}'. Supported: sha1, sha256, sha384, sha512")
-        };
-
-        return HKDF.DeriveKey(hashAlgorithm, ikm, keylen, salt, info);
     }
 }
 

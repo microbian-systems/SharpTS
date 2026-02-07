@@ -860,6 +860,11 @@ public class EmittedRuntime
     public MethodBuilder CryptoPbkdf2Sync { get; set; } = null!;
     public MethodBuilder CryptoScryptSync { get; set; } = null!;
     public MethodBuilder ScryptDeriveBytes { get; set; } = null!;
+    // Scrypt helper methods (pure IL implementation)
+    public MethodBuilder ScryptRotateLeft { get; set; } = null!;
+    public MethodBuilder ScryptSalsa20Core { get; set; } = null!;
+    public MethodBuilder ScryptBlockMix { get; set; } = null!;
+    public MethodBuilder ScryptROMix { get; set; } = null!;
 
     // Timing-safe comparison
     public MethodBuilder CryptoTimingSafeEqual { get; set; } = null!;
@@ -871,6 +876,7 @@ public class EmittedRuntime
     public ConstructorBuilder TSSignCtor { get; set; } = null!;
     public MethodBuilder TSSignUpdateMethod { get; set; } = null!;
     public MethodBuilder TSSignSignMethod { get; set; } = null!;
+    public MethodBuilder SignDataBytes { get; set; } = null!;  // Pure IL signing helper
 
     // $Verify type - emitted for standalone crypto verification support
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSVerify
@@ -879,6 +885,7 @@ public class EmittedRuntime
     public ConstructorBuilder TSVerifyCtor { get; set; } = null!;
     public MethodBuilder TSVerifyUpdateMethod { get; set; } = null!;
     public MethodBuilder TSVerifyVerifyMethod { get; set; } = null!;
+    public MethodBuilder VerifyDataBytes { get; set; } = null!;  // Pure IL verification helper
 
     // AES-GCM helper methods (needed because AesGcm uses Span<T> parameters)
     public MethodBuilder AesGcmEncryptHelper { get; set; } = null!;
@@ -898,17 +905,81 @@ public class EmittedRuntime
     public ConstructorBuilder TSDiffieHellmanCtorPrimeLength { get; set; } = null!;
     public ConstructorBuilder TSDiffieHellmanCtorPrimeGenerator { get; set; } = null!;
     public ConstructorBuilder TSDiffieHellmanCtorGroup { get; set; } = null!;
+    public MethodBuilder TSDHGenerateKeys { get; set; } = null!;
+    public MethodBuilder TSDHComputeSecret { get; set; } = null!;
+    public MethodBuilder TSDHGetPrime { get; set; } = null!;
+    public MethodBuilder TSDHGetGenerator { get; set; } = null!;
+    public MethodBuilder TSDHGetPublicKey { get; set; } = null!;
+    public MethodBuilder TSDHGetPrivateKey { get; set; } = null!;
+    public MethodBuilder TSDHSetPublicKey { get; set; } = null!;
+    public MethodBuilder TSDHSetPrivateKey { get; set; } = null!;
+    public MethodBuilder TSDHGetMember { get; set; } = null!;
+    public MethodBuilder TSDHEncodeResult { get; set; } = null!;
+    public MethodBuilder TSDHDecodeInput { get; set; } = null!;
+    public MethodBuilder TSDHGenerateRandomPrime { get; set; } = null!;
+    public MethodBuilder TSDHIsProbablePrime { get; set; } = null!;
+    public MethodBuilder TSDHBigIntFromBytes { get; set; } = null!;
+    public Type BoundDHMethodType { get; set; } = null!;
+    public ConstructorBuilder BoundDHMethodCtor { get; set; } = null!;
+    public MethodBuilder BoundDHMethodInvoke { get; set; } = null!;
 
     // ECDH support
     public MethodBuilder CryptoCreateECDH { get; set; } = null!;
     public Type TSECDHType { get; set; } = null!;
     public ConstructorBuilder TSECDHCtor { get; set; } = null!;
+    public MethodBuilder TSECDHGenerateKeys { get; set; } = null!;
+    public MethodBuilder TSECDHComputeSecret { get; set; } = null!;
+    public MethodBuilder TSECDHGetPublicKey { get; set; } = null!;
+    public MethodBuilder TSECDHGetPrivateKey { get; set; } = null!;
+    public MethodBuilder TSECDHSetPrivateKey { get; set; } = null!;
+    public MethodBuilder TSECDHGetMember { get; set; } = null!;
+    public MethodBuilder TSECDHEncodeResult { get; set; } = null!;
+    public MethodBuilder TSECDHDecodeInput { get; set; } = null!;
+    public MethodBuilder TSECDHComputeSecretHelper { get; set; } = null!;
+    public Type BoundECDHMethodType { get; set; } = null!;
+    public ConstructorBuilder BoundECDHMethodCtor { get; set; } = null!;
+    public MethodBuilder BoundECDHMethodInvoke { get; set; } = null!;
 
     // RSA encryption/decryption
     public MethodBuilder CryptoPublicEncrypt { get; set; } = null!;
     public MethodBuilder CryptoPrivateDecrypt { get; set; } = null!;
     public MethodBuilder CryptoPrivateEncrypt { get; set; } = null!;
     public MethodBuilder CryptoPublicDecrypt { get; set; } = null!;
+
+    // RSA helpers (standalone - no SharpTS.dll dependency)
+    public MethodBuilder ExtractKeyPem { get; set; } = null!;
+    public MethodBuilder RsaEncryptRaw { get; set; } = null!;
+    public MethodBuilder RsaDecryptRaw { get; set; } = null!;
+
+    // Key pair generation helpers (standalone)
+    public MethodBuilder GetOptionInt { get; set; } = null!;
+    public MethodBuilder GetOptionString { get; set; } = null!;
+    public MethodBuilder GenerateRsaKeyPairRaw { get; set; } = null!;
+    public MethodBuilder GenerateEcKeyPairRaw { get; set; } = null!;
+
+    // Path helpers (standalone - no SharpTS.dll dependency)
+    // POSIX path methods
+    public MethodBuilder PosixJoin { get; set; } = null!;
+    public MethodBuilder PosixResolve { get; set; } = null!;
+    public MethodBuilder PosixBasename { get; set; } = null!;
+    public MethodBuilder PosixDirname { get; set; } = null!;
+    public MethodBuilder PosixNormalize { get; set; } = null!;
+    public MethodBuilder PosixIsAbsolute { get; set; } = null!;
+    public MethodBuilder PosixRelative { get; set; } = null!;
+    public MethodBuilder PosixParse { get; set; } = null!;
+    public MethodBuilder PosixFormat { get; set; } = null!;
+    // Win32 path methods
+    public MethodBuilder Win32Join { get; set; } = null!;
+    public MethodBuilder Win32Resolve { get; set; } = null!;
+    public MethodBuilder Win32Basename { get; set; } = null!;
+    public MethodBuilder Win32Dirname { get; set; } = null!;
+    public MethodBuilder Win32Normalize { get; set; } = null!;
+    public MethodBuilder Win32IsAbsolute { get; set; } = null!;
+    public MethodBuilder Win32Relative { get; set; } = null!;
+    public MethodBuilder Win32Parse { get; set; } = null!;
+    public MethodBuilder Win32Format { get; set; } = null!;
+    // Shared path helper
+    public MethodBuilder ComputeRelative { get; set; } = null!;
 
     // HKDF key derivation
     public MethodBuilder CryptoHkdfSync { get; set; } = null!;
@@ -919,6 +990,7 @@ public class EmittedRuntime
     public MethodBuilder CryptoCreatePrivateKey { get; set; } = null!;
     public Type TSKeyObjectType { get; set; } = null!;
     public ConstructorBuilder TSKeyObjectCtorSecret { get; set; } = null!;
+    public ConstructorBuilder TSKeyObjectCtorAsym { get; set; } = null!;
 
     // HTTP module methods
     public MethodBuilder Fetch { get; set; } = null!;
@@ -1055,6 +1127,10 @@ public class EmittedRuntime
     public ConstructorBuilder TSPromisifiedFunctionCtor { get; set; } = null!;
     public MethodBuilder TSPromisifiedFunctionInvoke { get; set; } = null!;
 
+    // $PromisifyCallback type - emitted for standalone promisify support
+    public Type TSPromisifyCallbackType { get; set; } = null!;
+    public ConstructorBuilder TSPromisifyCallbackCtor { get; set; } = null!;
+
     // util.inherits support
     public MethodBuilder UtilInherits { get; set; } = null!;
 
@@ -1096,6 +1172,11 @@ public class EmittedRuntime
     // Readline module methods
     public MethodBuilder ReadlineQuestionSync { get; set; } = null!;
     public MethodBuilder ReadlineCreateInterface { get; set; } = null!;
+
+    // $ReadlineInterface type - emitted for standalone readline support
+    // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSReadlineInterface
+    public Type ReadlineInterfaceType { get; set; } = null!;
+    public ConstructorBuilder ReadlineInterfaceCtor { get; set; } = null!;
 
     // Child process module methods
     public MethodBuilder ChildProcessExecSync { get; set; } = null!;
@@ -1146,6 +1227,15 @@ public class EmittedRuntime
     public MethodBuilder TSAssertionErrorActualGetter { get; set; } = null!;
     public MethodBuilder TSAssertionErrorExpectedGetter { get; set; } = null!;
     public MethodBuilder TSAssertionErrorOperatorGetter { get; set; } = null!;
+
+    // FS module - emitted $NodeError type for standalone assemblies
+    // NOTE: Must stay in sync with NodeError in Runtime/BuiltIns/Modules/NodeError.cs
+    public Type NodeErrorType { get; set; } = null!;
+    public ConstructorBuilder NodeErrorCtor { get; set; } = null!;
+    public MethodBuilder NodeErrorCodeGetter { get; set; } = null!;
+    public MethodBuilder NodeErrorSyscallGetter { get; set; } = null!;
+    public MethodBuilder NodeErrorPathGetter { get; set; } = null!;
+    public MethodBuilder NodeErrorErrnoGetter { get; set; } = null!;
 
     // Assert module - helper methods
     public MethodBuilder AssertIsTruthy { get; set; } = null!;

@@ -65,11 +65,12 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Newarr, typeof(byte));
         ctorIL.Emit(OpCodes.Stfld, pendingBytesField);
 
-        // Set text encoding based on encoding string
+        // Set text encoding based on encoding string using pure IL
+        // Emit inline encoding lookup to avoid SharpTS.dll dependency
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldfld, encodingField);
-        ctorIL.Emit(OpCodes.Call, typeof(RuntimeEmitter).GetMethod("GetTextEncodingHelper", BindingFlags.Public | BindingFlags.Static)!);
+        EmitGetTextEncodingInline(ctorIL);
         ctorIL.Emit(OpCodes.Stfld, textEncodingField);
 
         ctorIL.Emit(OpCodes.Ret);
@@ -347,17 +348,95 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Helper method called from emitted code to get the appropriate System.Text.Encoding.
+    /// Emits inline IL to convert an encoding name (on stack) to a System.Text.Encoding instance.
+    /// Replaces the call to GetTextEncodingHelper to avoid SharpTS.dll dependency.
     /// </summary>
-    public static Encoding GetTextEncodingHelper(string encoding)
+    private void EmitGetTextEncodingInline(ILGenerator il)
     {
-        return encoding switch
-        {
-            "utf8" or "utf-8" => Encoding.UTF8,
-            "utf16le" or "utf-16le" or "ucs2" or "ucs-2" => Encoding.Unicode,
-            "latin1" or "binary" => Encoding.Latin1,
-            "ascii" => Encoding.ASCII,
-            _ => Encoding.UTF8
-        };
+        // Stack: encoding string
+        // Need to return: Encoding instance
+
+        var encodingLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Stloc, encodingLocal);
+
+        var utf16leLabel = il.DefineLabel();
+        var latin1Label = il.DefineLabel();
+        var asciiLabel = il.DefineLabel();
+        var defaultLabel = il.DefineLabel();
+
+        // Check for "utf8" or "utf-8" -> return Encoding.UTF8
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "utf8");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, defaultLabel); // UTF8 is the default
+
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "utf-8");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, defaultLabel);
+
+        // Check for "utf16le", "utf-16le", "ucs2", "ucs-2" -> return Encoding.Unicode
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "utf16le");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, utf16leLabel);
+
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "utf-16le");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, utf16leLabel);
+
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "ucs2");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, utf16leLabel);
+
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "ucs-2");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, utf16leLabel);
+
+        // Check for "latin1" or "binary" -> return Encoding.Latin1
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "latin1");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, latin1Label);
+
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "binary");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, latin1Label);
+
+        // Check for "ascii" -> return Encoding.ASCII
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "ascii");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, asciiLabel);
+
+        // Default: return Encoding.UTF8
+        il.Emit(OpCodes.Br, defaultLabel);
+
+        // utf16leLabel: return Encoding.Unicode
+        il.MarkLabel(utf16leLabel);
+        il.Emit(OpCodes.Call, typeof(Encoding).GetProperty("Unicode")!.GetGetMethod()!);
+        var endLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, endLabel);
+
+        // latin1Label: return Encoding.Latin1
+        il.MarkLabel(latin1Label);
+        il.Emit(OpCodes.Call, typeof(Encoding).GetProperty("Latin1")!.GetGetMethod()!);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // asciiLabel: return Encoding.ASCII
+        il.MarkLabel(asciiLabel);
+        il.Emit(OpCodes.Call, typeof(Encoding).GetProperty("ASCII")!.GetGetMethod()!);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // defaultLabel: return Encoding.UTF8
+        il.MarkLabel(defaultLabel);
+        il.Emit(OpCodes.Call, typeof(Encoding).GetProperty("UTF8")!.GetGetMethod()!);
+
+        il.MarkLabel(endLabel);
+        // Stack now has Encoding instance
     }
 }

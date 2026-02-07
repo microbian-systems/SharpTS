@@ -350,6 +350,10 @@ public class TypeProvider
     public Type ICryptoTransform => typeof(System.Security.Cryptography.ICryptoTransform);
     public Type CipherMode => typeof(System.Security.Cryptography.CipherMode);
     public Type PaddingMode => typeof(System.Security.Cryptography.PaddingMode);
+    public Type CryptographicOperations => typeof(System.Security.Cryptography.CryptographicOperations);
+    public Type HKDF => typeof(System.Security.Cryptography.HKDF);
+    public Type RSA => typeof(System.Security.Cryptography.RSA);
+    public Type RSAEncryptionPadding => typeof(System.Security.Cryptography.RSAEncryptionPadding);
 
     #endregion
 
@@ -364,6 +368,32 @@ public class TypeProvider
 
     public Type ListOfByte => MakeGenericType(ListOpen, Byte);
     public Type IEnumerableOfByte => MakeGenericType(IEnumerableOpen, Byte);
+
+    #endregion
+
+    #region List<string> Types
+
+    public Type ListOfString => MakeGenericType(ListOpen, String);
+
+    private ConstructorInfo? _listOfStringDefaultCtor;
+    public ConstructorInfo ListOfStringDefaultCtor =>
+        _listOfStringDefaultCtor ??= GetDefaultConstructor(ListOfString);
+
+    private MethodInfo? _listOfStringAdd;
+    public MethodInfo ListOfStringAdd =>
+        _listOfStringAdd ??= GetMethod(ListOfString, "Add", String);
+
+    private MethodInfo? _listOfStringToArray;
+    public MethodInfo ListOfStringToArray =>
+        _listOfStringToArray ??= GetMethodNoParams(ListOfString, "ToArray");
+
+    private MethodInfo? _listOfStringGetCount;
+    public MethodInfo ListOfStringGetCount =>
+        _listOfStringGetCount ??= GetMethodNoParams(ListOfString, "get_Count");
+
+    private MethodInfo? _listOfStringGetItem;
+    public MethodInfo ListOfStringGetItem =>
+        _listOfStringGetItem ??= GetMethod(ListOfString, "get_Item", Int32);
 
     #endregion
 
@@ -866,6 +896,22 @@ public class TypeProvider
     public MethodInfo TypeGetMethodByName =>
         _typeGetMethodByName ??= GetMethod(Type, "GetMethod", String);
 
+    private MethodInfo? _typeGetMethod;
+
+    /// <summary>
+    /// Gets the Type.GetMethod(string, Type[]) method.
+    /// </summary>
+    public MethodInfo TypeGetMethod =>
+        _typeGetMethod ??= GetMethod(Type, "GetMethod", String, MakeArrayType(Type));
+
+    private MethodInfo? _typeGetProperty;
+
+    /// <summary>
+    /// Gets the Type.GetProperty(string) method.
+    /// </summary>
+    public MethodInfo TypeGetProperty =>
+        _typeGetProperty ??= GetMethod(Type, "GetProperty", String);
+
     // String methods
     private MethodInfo? _stringToLowerInvariant;
 
@@ -892,6 +938,11 @@ public class TypeProvider
     /// </summary>
     public MethodInfo MethodInfoInvoke =>
         _methodInfoInvoke ??= GetMethod(MethodInfo, "Invoke", Object, ObjectArray);
+
+    /// <summary>
+    /// Gets the MethodBase.Invoke(object, object[]) method (alias for MethodInfoInvoke).
+    /// </summary>
+    public MethodInfo MethodBaseInvoke => MethodInfoInvoke;
 
     // Regex methods
     private MethodInfo? _regexMatchString;

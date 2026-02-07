@@ -583,7 +583,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
         EmitArgsArray(emitter, arguments);
 
         // Call PathHelpers.PosixJoin(args)
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.PosixJoin))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.PosixJoin);
         return true;
     }
 
@@ -593,7 +593,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
         var il = ctx.IL;
 
         EmitArgsArray(emitter, arguments);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.PosixResolve))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.PosixResolve);
         return true;
     }
 
@@ -621,7 +621,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
             il.Emit(OpCodes.Ldnull);
         }
 
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.PosixBasename))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.PosixBasename);
         return true;
     }
 
@@ -638,7 +638,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
 
         emitter.EmitExpression(arguments[0]);
         EmitToString(emitter, arguments[0]);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.PosixDirname))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.PosixDirname);
         return true;
     }
 
@@ -655,7 +655,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
 
         emitter.EmitExpression(arguments[0]);
         EmitToString(emitter, arguments[0]);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.PosixNormalize))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.PosixNormalize);
         return true;
     }
 
@@ -673,7 +673,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
 
         emitter.EmitExpression(arguments[0]);
         EmitToString(emitter, arguments[0]);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.PosixIsAbsolute))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.PosixIsAbsolute);
         il.Emit(OpCodes.Box, ctx.Types.Boolean);
         return true;
     }
@@ -693,7 +693,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
         EmitToString(emitter, arguments[0]);
         emitter.EmitExpression(arguments[1]);
         EmitToString(emitter, arguments[1]);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.PosixRelative))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.PosixRelative);
         return true;
     }
 
@@ -712,7 +712,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
             EmitToString(emitter, arguments[0]);
         }
 
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.PosixParse))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.PosixParse);
         il.Emit(OpCodes.Call, ctx.Runtime!.CreateObject);
         return true;
     }
@@ -730,7 +730,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
 
         emitter.EmitExpression(arguments[0]);
         emitter.EmitBoxIfNeeded(arguments[0]);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.PosixFormat))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.PosixFormat);
         return true;
     }
 
@@ -744,7 +744,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
         var il = ctx.IL;
 
         EmitArgsArray(emitter, arguments);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.Win32Join))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.Win32Join);
         return true;
     }
 
@@ -754,7 +754,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
         var il = ctx.IL;
 
         EmitArgsArray(emitter, arguments);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.Win32Resolve))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.Win32Resolve);
         return true;
     }
 
@@ -782,7 +782,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
             il.Emit(OpCodes.Ldnull);
         }
 
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.Win32Basename))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.Win32Basename);
         return true;
     }
 
@@ -799,7 +799,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
 
         emitter.EmitExpression(arguments[0]);
         EmitToString(emitter, arguments[0]);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.Win32Dirname))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.Win32Dirname);
         return true;
     }
 
@@ -816,7 +816,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
 
         emitter.EmitExpression(arguments[0]);
         EmitToString(emitter, arguments[0]);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.Win32Normalize))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.Win32Normalize);
         return true;
     }
 
@@ -834,7 +834,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
 
         emitter.EmitExpression(arguments[0]);
         EmitToString(emitter, arguments[0]);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.Win32IsAbsolute))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.Win32IsAbsolute);
         il.Emit(OpCodes.Box, ctx.Types.Boolean);
         return true;
     }
@@ -854,7 +854,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
         EmitToString(emitter, arguments[0]);
         emitter.EmitExpression(arguments[1]);
         EmitToString(emitter, arguments[1]);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.Win32Relative))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.Win32Relative);
         return true;
     }
 
@@ -873,7 +873,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
             EmitToString(emitter, arguments[0]);
         }
 
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.Win32Parse))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.Win32Parse);
         il.Emit(OpCodes.Call, ctx.Runtime!.CreateObject);
         return true;
     }
@@ -891,7 +891,7 @@ public sealed class PathModuleEmitter : IBuiltInModuleEmitter
 
         emitter.EmitExpression(arguments[0]);
         emitter.EmitBoxIfNeeded(arguments[0]);
-        il.Emit(OpCodes.Call, typeof(PathHelpers).GetMethod(nameof(PathHelpers.Win32Format))!);
+        il.Emit(OpCodes.Call, ctx.Runtime!.Win32Format);
         return true;
     }
 

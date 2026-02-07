@@ -1,12 +1,41 @@
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.InteropServices;
-using SharpTS.Runtime.BuiltIns.Modules;
 
 namespace SharpTS.Compilation;
 
 public partial class RuntimeEmitter
 {
+    /// <summary>
+    /// Emits IL to throw a $NodeError with the specified error details.
+    /// Uses the emitted $NodeError type for standalone DLL support.
+    /// </summary>
+    /// <param name="il">The IL generator.</param>
+    /// <param name="runtime">The emitted runtime containing NodeErrorCtor.</param>
+    /// <param name="code">Error code (e.g., "ENOSYS", "EINVAL").</param>
+    /// <param name="message">Error message.</param>
+    /// <param name="syscall">System call name.</param>
+    /// <param name="pathLocal">Local variable containing the path string.</param>
+    private void EmitNodeErrorThrow(ILGenerator il, EmittedRuntime runtime, string code, string message, string syscall, LocalBuilder pathLocal)
+    {
+        // Load constructor arguments: code, message, syscall, path, errno (null)
+        il.Emit(OpCodes.Ldstr, code);
+        il.Emit(OpCodes.Ldstr, message);
+        il.Emit(OpCodes.Ldstr, syscall);
+        il.Emit(OpCodes.Ldloc, pathLocal);
+
+        // For int? errno = null, we need to load a default Nullable<int>
+        var nullableInt32 = _types.MakeNullable(_types.Int32);
+        var errnoLocal = il.DeclareLocal(nullableInt32);
+        il.Emit(OpCodes.Ldloca, errnoLocal);
+        il.Emit(OpCodes.Initobj, nullableInt32);
+        il.Emit(OpCodes.Ldloc, errnoLocal);
+
+        // new $NodeError(code, message, syscall, path, errno)
+        il.Emit(OpCodes.Newobj, runtime.NodeErrorCtor);
+        il.Emit(OpCodes.Throw);
+    }
+
     /// <summary>
     /// Emits fs module helper methods.
     /// </summary>
@@ -1488,17 +1517,8 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, isOsPlatformMethod);
             il.Emit(OpCodes.Brfalse, notWindowsLabel);
 
-            // Throw ENOSYS on Windows
-            var nodeErrorCtor = typeof(NodeError).GetConstructor([
-                typeof(string), typeof(string), typeof(string), typeof(string), typeof(int?)
-            ])!;
-            il.Emit(OpCodes.Ldstr, "ENOSYS");
-            il.Emit(OpCodes.Ldstr, "function not implemented");
-            il.Emit(OpCodes.Ldstr, "chown");
-            il.Emit(OpCodes.Ldloc, pathLocal);
-            il.Emit(OpCodes.Ldnull);
-            il.Emit(OpCodes.Newobj, nodeErrorCtor);
-            il.Emit(OpCodes.Throw);
+            // Throw ENOSYS on Windows - use emitted $NodeError type for standalone DLL
+            EmitNodeErrorThrow(il, runtime, "ENOSYS", "function not implemented", "chown", pathLocal);
 
             il.MarkLabel(notWindowsLabel);
 
@@ -1579,17 +1599,8 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, isOsPlatformMethod);
             il.Emit(OpCodes.Brfalse, notWindowsLabel);
 
-            // Throw ENOSYS on Windows
-            var nodeErrorCtor = typeof(NodeError).GetConstructor([
-                typeof(string), typeof(string), typeof(string), typeof(string), typeof(int?)
-            ])!;
-            il.Emit(OpCodes.Ldstr, "ENOSYS");
-            il.Emit(OpCodes.Ldstr, "function not implemented");
-            il.Emit(OpCodes.Ldstr, "lchown");
-            il.Emit(OpCodes.Ldloc, pathLocal);
-            il.Emit(OpCodes.Ldnull);
-            il.Emit(OpCodes.Newobj, nodeErrorCtor);
-            il.Emit(OpCodes.Throw);
+            // Throw ENOSYS on Windows - use emitted $NodeError type for standalone DLL
+            EmitNodeErrorThrow(il, runtime, "ENOSYS", "function not implemented", "lchown", pathLocal);
 
             il.MarkLabel(notWindowsLabel);
 
@@ -1860,17 +1871,8 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, linkTargetLocal);
             il.Emit(OpCodes.Brtrue, validLabel);
 
-            // Not a symlink - throw EINVAL
-            var nodeErrorCtor = typeof(NodeError).GetConstructor([
-                typeof(string), typeof(string), typeof(string), typeof(string), typeof(int?)
-            ])!;
-            il.Emit(OpCodes.Ldstr, "EINVAL");
-            il.Emit(OpCodes.Ldstr, "invalid argument");
-            il.Emit(OpCodes.Ldstr, "readlink");
-            il.Emit(OpCodes.Ldloc, pathLocal);
-            il.Emit(OpCodes.Ldnull);
-            il.Emit(OpCodes.Newobj, nodeErrorCtor);
-            il.Emit(OpCodes.Throw);
+            // Not a symlink - throw EINVAL - use emitted $NodeError type for standalone DLL
+            EmitNodeErrorThrow(il, runtime, "EINVAL", "invalid argument", "readlink", pathLocal);
 
             il.MarkLabel(validLabel);
             il.Emit(OpCodes.Ldloc, linkTargetLocal);
