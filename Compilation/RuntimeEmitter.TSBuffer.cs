@@ -582,25 +582,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, typeBuilder);
         il.Emit(OpCodes.Brtrue, trueLabel);
 
-        // Check if obj is SharpTSBuffer (interpreter type) using reflection
-        // Type.GetType("SharpTS.Runtime.Types.SharpTSBuffer, SharpTS")?.IsInstanceOfType(obj) == true
-        var bufferTypeLocal = il.DeclareLocal(_types.Type);
-
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSBuffer, SharpTS");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
-        il.Emit(OpCodes.Stloc, bufferTypeLocal);
-
-        // Check if type was found (null check)
-        il.Emit(OpCodes.Ldloc, bufferTypeLocal);
-        il.Emit(OpCodes.Brfalse, falseLabel);
-
-        // Call Type.IsInstanceOfType(obj)
-        il.Emit(OpCodes.Ldloc, bufferTypeLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsInstanceOfType", _types.Object));
-        il.Emit(OpCodes.Brtrue, trueLabel);
-
-        // Neither - return false
+        // Not an emitted $Buffer - return false in standalone mode.
         il.MarkLabel(falseLabel);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Br, endLabel);

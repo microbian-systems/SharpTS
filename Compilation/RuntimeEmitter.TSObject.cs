@@ -26,6 +26,9 @@ public partial class RuntimeEmitter
         );
         runtime.TSObjectType = typeBuilder;
 
+        // Implement $IHasFields interface for unified property access
+        typeBuilder.AddInterfaceImplementation(runtime.IHasFieldsInterface);
+
         // Fields
         _tsObjectFieldsField = typeBuilder.DefineField("_fields", _types.DictionaryStringObject, FieldAttributes.Private);
         _tsObjectIsFrozenField = typeBuilder.DefineField("_isFrozen", _types.Boolean, FieldAttributes.Private);
@@ -107,7 +110,7 @@ public partial class RuntimeEmitter
 
         var getter = typeBuilder.DefineMethod(
             "get_Fields",
-            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig,
+            MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.SpecialName | MethodAttributes.HideBySig,
             _types.DictionaryStringObject,
             Type.EmptyTypes
         );
@@ -220,7 +223,7 @@ public partial class RuntimeEmitter
     {
         var method = typeBuilder.DefineMethod(
             "GetProperty",
-            MethodAttributes.Public,
+            MethodAttributes.Public | MethodAttributes.Virtual,
             _types.Object,
             [_types.String]
         );
@@ -278,7 +281,7 @@ public partial class RuntimeEmitter
     {
         var method = typeBuilder.DefineMethod(
             "SetProperty",
-            MethodAttributes.Public,
+            MethodAttributes.Public | MethodAttributes.Virtual,
             _types.Void,
             [_types.String, _types.Object]
         );
@@ -498,7 +501,7 @@ public partial class RuntimeEmitter
     {
         var method = typeBuilder.DefineMethod(
             "HasProperty",
-            MethodAttributes.Public,
+            MethodAttributes.Public | MethodAttributes.Virtual,
             _types.Boolean,
             [_types.String]
         );

@@ -18,6 +18,14 @@ public partial class CompilationContext
     // Module types (module path -> TypeBuilder)
     public Dictionary<string, TypeBuilder>? ModuleTypes { get; set; }
 
+    // Module initialization methods (module path -> init method)
+    // Used to ensure modules are initialized before their exports are accessed
+    public Dictionary<string, MethodBuilder>? ModuleInitMethods { get; set; }
+
+    // Module import fields (module path -> import name -> static field)
+    // Used to store imported values so they're accessible from module functions
+    public Dictionary<string, Dictionary<string, FieldBuilder>>? ModuleImportFields { get; set; }
+
     // Module resolver for import path resolution
     public ModuleResolver? ModuleResolver { get; set; }
 

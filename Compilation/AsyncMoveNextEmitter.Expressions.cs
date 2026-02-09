@@ -182,8 +182,17 @@ public partial class AsyncMoveNextEmitter
             return;
         }
 
+        // Check if it's an imported value (from another module) - must check BEFORE Functions
+        // because cross-module function references need to go through the import field
+        if (_ctx!.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+        {
+            _il.Emit(OpCodes.Ldsfld, topLevelField);
+            SetStackUnknown();
+            return;
+        }
+
         // Fallback: Check if it's a function
-        if (_ctx!.Functions.TryGetValue(_ctx.ResolveFunctionName(name), out var funcMethod))
+        if (_ctx.Functions.TryGetValue(_ctx.ResolveFunctionName(name), out var funcMethod))
         {
             // Create TSFunction wrapper
             _il.Emit(OpCodes.Ldnull);
@@ -209,14 +218,6 @@ public partial class AsyncMoveNextEmitter
         {
             _il.Emit(OpCodes.Ldsfld, _ctx.EntryPointDisplayClassStaticField);
             _il.Emit(OpCodes.Ldfld, entryPointField);
-            SetStackUnknown();
-            return;
-        }
-
-        // Fallback: Check if it's a top-level variable (non-captured)
-        if (_ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
-        {
-            _il.Emit(OpCodes.Ldsfld, topLevelField);
             SetStackUnknown();
             return;
         }

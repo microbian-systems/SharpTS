@@ -45,8 +45,17 @@ public partial class GeneratorMoveNextEmitter
             return;
         }
 
+        // Check if it's an imported value (from another module) - must check BEFORE Functions
+        // because cross-module function references need to go through the import field
+        if (_ctx!.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+        {
+            _il.Emit(OpCodes.Ldsfld, topLevelField);
+            SetStackUnknown();
+            return;
+        }
+
         // Fallback: Check if it's a function
-        if (_ctx!.Functions.TryGetValue(_ctx.ResolveFunctionName(name), out var funcMethod))
+        if (_ctx.Functions.TryGetValue(_ctx.ResolveFunctionName(name), out var funcMethod))
         {
             _il.Emit(OpCodes.Ldnull);
             _il.Emit(OpCodes.Ldtoken, funcMethod);

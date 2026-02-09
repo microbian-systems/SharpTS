@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Modules;
 using SharpTS.Parsing;
@@ -46,6 +47,22 @@ public partial class ILCompiler
         public Dictionary<string, Dictionary<string, MethodBuilder>> PrivateMethods { get; } = [];
         // Static private methods: class name -> method name (without #) -> MethodBuilder
         public Dictionary<string, Dictionary<string, MethodBuilder>> StaticPrivateMethods { get; } = [];
+
+        // $IHasFields interface method stubs (bodies emitted later after method definitions)
+        public Dictionary<string, HasFieldsMethodStubs> HasFieldsStubs { get; } = [];
+    }
+
+    /// <summary>
+    /// Holds the MethodBuilder stubs for $IHasFields interface methods.
+    /// Bodies are emitted later when method definitions are available.
+    /// </summary>
+    private sealed class HasFieldsMethodStubs
+    {
+        public required MethodBuilder GetFields { get; init; }
+        public required MethodBuilder GetProperty { get; init; }
+        public required MethodBuilder SetProperty { get; init; }
+        public required MethodBuilder HasProperty { get; init; }
+        public required FieldInfo FieldsField { get; init; }
     }
 
     /// <summary>
@@ -198,6 +215,13 @@ public partial class ILCompiler
         /// Example: DefaultExportClasses["./counter.ts"] = "$M_counter_Counter"
         /// </summary>
         public Dictionary<string, string> DefaultExportClasses { get; } = [];
+
+        /// <summary>
+        /// Maps module path to a dictionary of import name to static field.
+        /// Used for storing imported values so they're accessible from module functions.
+        /// Example: ImportFields["./module-a.ts"]["createCounter"] = (FieldBuilder for static field)
+        /// </summary>
+        public Dictionary<string, Dictionary<string, FieldBuilder>> ImportFields { get; } = [];
     }
 
     /// <summary>

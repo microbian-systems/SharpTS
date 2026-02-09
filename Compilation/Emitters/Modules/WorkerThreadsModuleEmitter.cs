@@ -101,9 +101,8 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
         // This is used for: const Worker = require('worker_threads').Worker
         // Then: new Worker(...)
         // We return a special marker that the new expression handler recognizes
-        // Use Type.GetType(string) instead of ldtoken to avoid compile-time dependency on SharpTS.dll
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSWorker, SharpTS");
-        il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Type, "GetType", ctx.Types.String));
+        il.Emit(OpCodes.Ldtoken, ctx.Runtime!.TSWorkerType);
+        il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Type, "GetTypeFromHandle", ctx.Types.RuntimeTypeHandle));
         return true;
     }
 
@@ -113,9 +112,8 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
         var il = ctx.IL;
 
         // Load the MessageChannel constructor type
-        // Use Type.GetType(string) instead of ldtoken to avoid compile-time dependency on SharpTS.dll
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSMessageChannel, SharpTS");
-        il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Type, "GetType", ctx.Types.String));
+        il.Emit(OpCodes.Ldtoken, ctx.Runtime!.TSMessageChannelType);
+        il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Type, "GetTypeFromHandle", ctx.Types.RuntimeTypeHandle));
         return true;
     }
 

@@ -238,10 +238,13 @@ public class EmittedRuntime
     public FieldBuilder BoundTSFunctionTargetField { get; set; } = null!;
     public TypeBuilder FunctionBindWrapperType { get; set; } = null!;
     public ConstructorBuilder FunctionBindWrapperCtor { get; set; } = null!;
+    public MethodBuilder FunctionBindWrapperInvoke { get; set; } = null!;
     public TypeBuilder FunctionCallWrapperType { get; set; } = null!;
     public ConstructorBuilder FunctionCallWrapperCtor { get; set; } = null!;
+    public MethodBuilder FunctionCallWrapperInvoke { get; set; } = null!;
     public TypeBuilder FunctionApplyWrapperType { get; set; } = null!;
     public ConstructorBuilder FunctionApplyWrapperCtor { get; set; } = null!;
+    public MethodBuilder FunctionApplyWrapperInvoke { get; set; } = null!;
     public MethodBuilder GetFunctionMethod { get; set; } = null!;
 
     // Bound array method for dynamic array property access
@@ -338,8 +341,10 @@ public class EmittedRuntime
     public MethodBuilder PromiseFromExecutor { get; set; } = null!;
     public TypeBuilder PromiseResolveCallbackType { get; set; } = null!;
     public ConstructorBuilder PromiseResolveCallbackCtor { get; set; } = null!;
+    public MethodBuilder PromiseResolveCallbackInvoke { get; set; } = null!;
     public TypeBuilder PromiseRejectCallbackType { get; set; } = null!;
     public ConstructorBuilder PromiseRejectCallbackCtor { get; set; } = null!;
+    public MethodBuilder PromiseRejectCallbackInvoke { get; set; } = null!;
 
     // Promise callback helpers (direct $TSFunction.Invoke without reflection)
     public MethodBuilder InvokeCallback { get; set; } = null!;
@@ -640,6 +645,15 @@ public class EmittedRuntime
     public MethodBuilder TSArraySetStrict { get; set; } = null!;
     public MethodBuilder TSArrayToString { get; set; } = null!;
 
+    // $IHasFields interface - for unified property access on user classes and $Object
+    // Note: These use MethodInfo instead of MethodBuilder because we need the actual
+    // methods from the created interface type (after CreateType() is called)
+    public Type IHasFieldsInterface { get; set; } = null!;
+    public MethodInfo IHasFieldsGetProperty { get; set; } = null!;
+    public MethodInfo IHasFieldsSetProperty { get; set; } = null!;
+    public MethodInfo IHasFieldsHasProperty { get; set; } = null!;
+    public MethodInfo IHasFieldsFieldsGetter { get; set; } = null!;
+
     // $Object type - emitted for standalone assemblies
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSObject
     public Type TSObjectType { get; set; } = null!;
@@ -744,12 +758,139 @@ public class EmittedRuntime
 
     // File descriptor low-level helpers (reflection-based for standalone DLLs)
     public MethodBuilder FsFlagsParse { get; set; } = null!;
+    public MethodBuilder FsFlagsParsePure { get; set; } = null!;
     public MethodBuilder FdTableGetInstance { get; set; } = null!;
     public MethodBuilder FdTableOpen { get; set; } = null!;
     public MethodBuilder FdTableClose { get; set; } = null!;
     public MethodBuilder FdTableGet { get; set; } = null!;
     public MethodBuilder CreateSharpTSDir { get; set; } = null!;
     public MethodBuilder LibCCreateHardLink { get; set; } = null!;
+    public MethodBuilder CreateHardLinkPure { get; set; } = null!;
+
+    // $FileDescriptorTable type (pure-IL for standalone DLLs)
+    public TypeBuilder FileDescriptorTableType { get; set; } = null!;
+    public FieldBuilder FileDescriptorTableInstance { get; set; } = null!;
+    public ConstructorBuilder FileDescriptorTableCtor { get; set; } = null!;
+    public MethodBuilder FileDescriptorTableOpen { get; set; } = null!;
+    public MethodBuilder FileDescriptorTableGet { get; set; } = null!;
+    public MethodBuilder FileDescriptorTableClose { get; set; } = null!;
+    public MethodBuilder FileDescriptorTableIsValid { get; set; } = null!;
+
+    // $Dir type (pure-IL for standalone DLLs)
+    public TypeBuilder DirType { get; set; } = null!;
+    public ConstructorBuilder DirCtor { get; set; } = null!;
+    public MethodBuilder DirPathGetter { get; set; } = null!;
+    public MethodBuilder DirReadSync { get; set; } = null!;
+    public MethodBuilder DirCloseSync { get; set; } = null!;
+
+    // $Dirent type (pure-IL for standalone DLLs)
+    public TypeBuilder DirentType { get; set; } = null!;
+    public ConstructorBuilder DirentCtor { get; set; } = null!;
+    public MethodBuilder DirentNameGetter { get; set; } = null!;
+    public MethodBuilder DirentIsFile { get; set; } = null!;
+    public MethodBuilder DirentIsDirectory { get; set; } = null!;
+    public MethodBuilder DirentIsSymbolicLink { get; set; } = null!;
+    public MethodBuilder DirentIsBlockDevice { get; set; } = null!;
+    public MethodBuilder DirentIsCharacterDevice { get; set; } = null!;
+    public MethodBuilder DirentIsFIFO { get; set; } = null!;
+    public MethodBuilder DirentIsSocket { get; set; } = null!;
+
+    // $ArrayBuffer type (pure-IL for standalone DLLs)
+    public TypeBuilder ArrayBufferType { get; set; } = null!;
+    public ConstructorBuilder ArrayBufferCtor { get; set; } = null!;
+    public MethodBuilder ArrayBufferByteLengthGetter { get; set; } = null!;
+    public MethodBuilder ArrayBufferGetBuffer { get; set; } = null!;
+    public MethodBuilder ArrayBufferSlice { get; set; } = null!;
+
+    // $SharedArrayBuffer type (pure-IL for standalone DLLs)
+    public TypeBuilder SharedArrayBufferType { get; set; } = null!;
+    public ConstructorBuilder SharedArrayBufferCtor { get; set; } = null!;
+    public MethodBuilder SharedArrayBufferByteLengthGetter { get; set; } = null!;
+    public MethodBuilder SharedArrayBufferGetBuffer { get; set; } = null!;
+    public MethodBuilder SharedArrayBufferSlice { get; set; } = null!;
+
+    // $DataView type (pure-IL for standalone DLLs)
+    public TypeBuilder DataViewType { get; set; } = null!;
+    public ConstructorBuilder DataViewCtor { get; set; } = null!;
+    public MethodBuilder DataViewByteLengthGetter { get; set; } = null!;
+    public MethodBuilder DataViewByteOffsetGetter { get; set; } = null!;
+    public MethodBuilder DataViewBufferGetter { get; set; } = null!;
+    public MethodBuilder DataViewGetInt8 { get; set; } = null!;
+    public MethodBuilder DataViewGetUint8 { get; set; } = null!;
+    public MethodBuilder DataViewGetInt16 { get; set; } = null!;
+    public MethodBuilder DataViewGetUint16 { get; set; } = null!;
+    public MethodBuilder DataViewGetInt32 { get; set; } = null!;
+    public MethodBuilder DataViewGetUint32 { get; set; } = null!;
+    public MethodBuilder DataViewGetFloat32 { get; set; } = null!;
+    public MethodBuilder DataViewGetFloat64 { get; set; } = null!;
+    public MethodBuilder DataViewSetInt8 { get; set; } = null!;
+    public MethodBuilder DataViewSetUint8 { get; set; } = null!;
+    public MethodBuilder DataViewSetInt16 { get; set; } = null!;
+    public MethodBuilder DataViewSetUint16 { get; set; } = null!;
+    public MethodBuilder DataViewSetInt32 { get; set; } = null!;
+    public MethodBuilder DataViewSetUint32 { get; set; } = null!;
+    public MethodBuilder DataViewSetFloat32 { get; set; } = null!;
+    public MethodBuilder DataViewSetFloat64 { get; set; } = null!;
+    public MethodBuilder DataViewGetBigInt64 { get; set; } = null!;
+    public MethodBuilder DataViewGetBigUint64 { get; set; } = null!;
+    public MethodBuilder DataViewSetBigInt64 { get; set; } = null!;
+    public MethodBuilder DataViewSetBigUint64 { get; set; } = null!;
+
+    // $TypedArray base type (pure-IL for standalone DLLs)
+    public TypeBuilder TypedArrayBaseType { get; set; } = null!;
+    public ConstructorBuilder TypedArrayBaseCtor { get; set; } = null!;
+    public MethodBuilder TypedArrayLengthGetter { get; set; } = null!;
+    public MethodBuilder TypedArrayByteOffsetGetter { get; set; } = null!;
+    public MethodBuilder TypedArrayByteLengthGetter { get; set; } = null!;
+    public MethodBuilder TypedArrayBufferGetter { get; set; } = null!;
+    public MethodBuilder TypedArrayGetBuffer { get; set; } = null!;
+    public MethodBuilder TypedArrayElementGet { get; set; } = null!;
+    public MethodBuilder TypedArrayElementSet { get; set; } = null!;
+
+    // Concrete TypedArray types (pure-IL for standalone DLLs)
+    public TypeBuilder Int8ArrayType { get; set; } = null!;
+    public ConstructorBuilder Int8ArrayLengthCtor { get; set; } = null!;
+    public ConstructorBuilder Int8ArrayBufferCtor { get; set; } = null!;
+
+    public TypeBuilder Uint8ArrayType { get; set; } = null!;
+    public ConstructorBuilder Uint8ArrayLengthCtor { get; set; } = null!;
+    public ConstructorBuilder Uint8ArrayBufferCtor { get; set; } = null!;
+
+    public TypeBuilder Uint8ClampedArrayType { get; set; } = null!;
+    public ConstructorBuilder Uint8ClampedArrayLengthCtor { get; set; } = null!;
+    public ConstructorBuilder Uint8ClampedArrayBufferCtor { get; set; } = null!;
+
+    public TypeBuilder Int16ArrayType { get; set; } = null!;
+    public ConstructorBuilder Int16ArrayLengthCtor { get; set; } = null!;
+    public ConstructorBuilder Int16ArrayBufferCtor { get; set; } = null!;
+
+    public TypeBuilder Uint16ArrayType { get; set; } = null!;
+    public ConstructorBuilder Uint16ArrayLengthCtor { get; set; } = null!;
+    public ConstructorBuilder Uint16ArrayBufferCtor { get; set; } = null!;
+
+    public TypeBuilder Int32ArrayType { get; set; } = null!;
+    public ConstructorBuilder Int32ArrayLengthCtor { get; set; } = null!;
+    public ConstructorBuilder Int32ArrayBufferCtor { get; set; } = null!;
+
+    public TypeBuilder Uint32ArrayType { get; set; } = null!;
+    public ConstructorBuilder Uint32ArrayLengthCtor { get; set; } = null!;
+    public ConstructorBuilder Uint32ArrayBufferCtor { get; set; } = null!;
+
+    public TypeBuilder Float32ArrayType { get; set; } = null!;
+    public ConstructorBuilder Float32ArrayLengthCtor { get; set; } = null!;
+    public ConstructorBuilder Float32ArrayBufferCtor { get; set; } = null!;
+
+    public TypeBuilder Float64ArrayType { get; set; } = null!;
+    public ConstructorBuilder Float64ArrayLengthCtor { get; set; } = null!;
+    public ConstructorBuilder Float64ArrayBufferCtor { get; set; } = null!;
+
+    public TypeBuilder BigInt64ArrayType { get; set; } = null!;
+    public ConstructorBuilder BigInt64ArrayLengthCtor { get; set; } = null!;
+    public ConstructorBuilder BigInt64ArrayBufferCtor { get; set; } = null!;
+
+    public TypeBuilder BigUint64ArrayType { get; set; } = null!;
+    public ConstructorBuilder BigUint64ArrayLengthCtor { get; set; } = null!;
+    public ConstructorBuilder BigUint64ArrayBufferCtor { get; set; } = null!;
 
     // Directory utilities
     public MethodBuilder FsMkdtempSync { get; set; } = null!;
@@ -1001,10 +1142,29 @@ public class EmittedRuntime
     public MethodBuilder HttpGetStatusCodes { get; set; } = null!;
     public MethodBuilder HttpGetGlobalAgent { get; set; } = null!;
 
-    // HTTP low-level helpers (reflection-based for standalone DLLs)
+    // HTTP low-level helpers (pure-IL for standalone DLLs)
     public MethodBuilder ExtractResponseHeadersHelper { get; set; } = null!;
     public MethodBuilder WrapCallbackHelper { get; set; } = null!;
     public MethodBuilder CreateHttpServerHelper { get; set; } = null!;
+
+    // $HttpServer type - emitted for standalone HTTP server support
+    public TypeBuilder TSHttpServerType { get; set; } = null!;
+    public ConstructorBuilder TSHttpServerCtor { get; set; } = null!;
+    public MethodBuilder TSHttpServerListen { get; set; } = null!;
+    public MethodBuilder TSHttpServerClose { get; set; } = null!;
+    public MethodBuilder TSHttpServerAddress { get; set; } = null!;
+    public MethodBuilder TSHttpServerGetMember { get; set; } = null!;
+
+    // $HttpRequest type - emitted for standalone HTTP request support
+    public TypeBuilder TSHttpRequestType { get; set; } = null!;
+    public ConstructorBuilder TSHttpRequestCtor { get; set; } = null!;
+    public MethodBuilder TSHttpRequestGetMember { get; set; } = null!;
+
+    // $HttpResponse type - emitted for standalone HTTP response support
+    public TypeBuilder TSHttpResponseType { get; set; } = null!;
+    public ConstructorBuilder TSHttpResponseCtor { get; set; } = null!;
+    public MethodBuilder TSHttpResponseGetMember { get; set; } = null!;
+    public MethodBuilder TSHttpResponseSetMember { get; set; } = null!;
 
     // $FetchResponse type - emitted for standalone fetch support
     public TypeBuilder TSFetchResponseType { get; set; } = null!;
@@ -1130,6 +1290,7 @@ public class EmittedRuntime
     // $PromisifyCallback type - emitted for standalone promisify support
     public Type TSPromisifyCallbackType { get; set; } = null!;
     public ConstructorBuilder TSPromisifyCallbackCtor { get; set; } = null!;
+    public MethodBuilder TSPromisifyCallbackInvoke { get; set; } = null!;
 
     // util.inherits support
     public MethodBuilder UtilInherits { get; set; } = null!;
@@ -1312,6 +1473,8 @@ public class EmittedRuntime
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSTransform
     public Type TSTransformType { get; set; } = null!;
     public ConstructorBuilder TSTransformCtor { get; set; } = null!;
+    public Type TransformDoneCallbackType { get; set; } = null!;
+    public MethodBuilder TransformDoneCallbackInvoke { get; set; } = null!;
 
     // $PassThrough type - emitted for standalone stream support
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSPassThrough

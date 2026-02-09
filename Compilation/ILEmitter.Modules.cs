@@ -51,15 +51,38 @@ public partial class ILEmitter
             return;
         }
 
-        // Default import: bind local variable to $default field
+        // Ensure the source module is initialized before reading its exports
+        // This handles cases where modules import from each other
+        if (_ctx.ModuleInitMethods?.TryGetValue(importedPath, out var sourceInitMethod) == true)
+        {
+            IL.Emit(OpCodes.Call, sourceInitMethod);
+        }
+
+        // Get import fields for current module (if any)
+        Dictionary<string, FieldBuilder>? currentModuleImportFields = null;
+        if (_ctx.CurrentModulePath != null)
+        {
+            _ctx.ModuleImportFields?.TryGetValue(_ctx.CurrentModulePath, out currentModuleImportFields);
+        }
+
+        // Default import: bind to static field or local variable
         if (import.DefaultImport != null)
         {
             string localName = import.DefaultImport.Lexeme;
             if (exportFields.TryGetValue("$default", out var defaultField))
             {
-                var local = _ctx.Locals.GetLocal(localName) ?? _ctx.Locals.DeclareLocal(localName, _ctx.Types.Object);
                 IL.Emit(OpCodes.Ldsfld, defaultField);
-                IL.Emit(OpCodes.Stloc, local);
+
+                // Store in static field if available, otherwise use local
+                if (currentModuleImportFields?.TryGetValue(localName, out var importField) == true)
+                {
+                    IL.Emit(OpCodes.Stsfld, importField);
+                }
+                else
+                {
+                    var local = _ctx.Locals.GetLocal(localName) ?? _ctx.Locals.DeclareLocal(localName, _ctx.Types.Object);
+                    IL.Emit(OpCodes.Stloc, local);
+                }
 
                 // Track if this is a default class export for direct constructor calls
                 if (_ctx.DefaultExportClasses?.TryGetValue(importedPath, out var qualifiedClassName) == true)
@@ -70,7 +93,7 @@ public partial class ILEmitter
             }
         }
 
-        // Named imports: bind local variables to named export fields
+        // Named imports: bind to static fields or local variables
         // Skip individual type-only specifiers
         if (import.NamedImports != null)
         {
@@ -85,9 +108,18 @@ public partial class ILEmitter
 
                 if (exportFields.TryGetValue(importedName, out var field))
                 {
-                    var local = _ctx.Locals.GetLocal(localName) ?? _ctx.Locals.DeclareLocal(localName, _ctx.Types.Object);
                     IL.Emit(OpCodes.Ldsfld, field);
-                    IL.Emit(OpCodes.Stloc, local);
+
+                    // Store in static field if available, otherwise use local
+                    if (currentModuleImportFields?.TryGetValue(localName, out var importField) == true)
+                    {
+                        IL.Emit(OpCodes.Stsfld, importField);
+                    }
+                    else
+                    {
+                        var local = _ctx.Locals.GetLocal(localName) ?? _ctx.Locals.DeclareLocal(localName, _ctx.Types.Object);
+                        IL.Emit(OpCodes.Stloc, local);
+                    }
 
                     // Track if this is a class export for direct constructor calls
                     if (exportedClasses?.TryGetValue(importedName, out var qualifiedClassName) == true)
@@ -103,7 +135,6 @@ public partial class ILEmitter
         if (import.NamespaceImport != null)
         {
             string localName = import.NamespaceImport.Lexeme;
-            var local = _ctx.Locals.GetLocal(localName) ?? _ctx.Locals.DeclareLocal(localName, _ctx.Types.Object);
 
             // Track this namespace import for resolving namespace-qualified class construction
             _ctx.NamespaceImports ??= new Dictionary<string, string>();
@@ -129,7 +160,17 @@ public partial class ILEmitter
 
             // Call CreateObject to wrap the dictionary
             IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateObject);
-            IL.Emit(OpCodes.Stloc, local);
+
+            // Store in static field if available, otherwise use local
+            if (currentModuleImportFields?.TryGetValue(localName, out var importField) == true)
+            {
+                IL.Emit(OpCodes.Stsfld, importField);
+            }
+            else
+            {
+                var local = _ctx.Locals.GetLocal(localName) ?? _ctx.Locals.DeclareLocal(localName, _ctx.Types.Object);
+                IL.Emit(OpCodes.Stloc, local);
+            }
         }
     }
 
@@ -175,7 +216,28 @@ public partial class ILEmitter
             return;
         }
 
-        var aliasLocal = _ctx.Locals.GetLocal(importReq.AliasName.Lexeme) ?? _ctx.Locals.DeclareLocal(importReq.AliasName.Lexeme, _ctx.Types.Object);
+        // Ensure the source module is initialized before reading its exports
+        if (_ctx.ModuleInitMethods?.TryGetValue(importedPath, out var sourceInitMethod) == true)
+        {
+            IL.Emit(OpCodes.Call, sourceInitMethod);
+        }
+
+        // Get import fields for current module (if any)
+        Dictionary<string, FieldBuilder>? currentModuleImportFields = null;
+        if (_ctx.CurrentModulePath != null)
+        {
+            _ctx.ModuleImportFields?.TryGetValue(_ctx.CurrentModulePath, out currentModuleImportFields);
+        }
+
+        string aliasName = importReq.AliasName.Lexeme;
+        FieldBuilder? importField = null;
+        bool hasImportField = currentModuleImportFields != null &&
+                              currentModuleImportFields.TryGetValue(aliasName, out importField);
+        LocalBuilder? aliasLocal = null;
+        if (!hasImportField)
+        {
+            aliasLocal = _ctx.Locals.GetLocal(aliasName) ?? _ctx.Locals.DeclareLocal(aliasName, _ctx.Types.Object);
+        }
 
         // Check if module uses export = syntax
         if (exportFields.TryGetValue("$exportAssignment", out var exportAssignField))
@@ -187,7 +249,7 @@ public partial class ILEmitter
             if (_ctx.ExportAssignmentClasses?.TryGetValue(importedPath, out var qualifiedClassName) == true)
             {
                 _ctx.ImportedClassAliases ??= new Dictionary<string, string>();
-                _ctx.ImportedClassAliases[importReq.AliasName.Lexeme] = qualifiedClassName;
+                _ctx.ImportedClassAliases[aliasName] = qualifiedClassName;
             }
         }
         else
@@ -214,14 +276,32 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateObject);
         }
 
-        IL.Emit(OpCodes.Stloc, aliasLocal);
+        // Store in static field if available, otherwise use local
+        if (hasImportField)
+        {
+            IL.Emit(OpCodes.Stsfld, importField!);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Stloc, aliasLocal!);
+        }
 
         // If this is a re-export (export import x = require('...')), store in export field
-        if (importReq.IsExported && _ctx.ModuleExportFields.TryGetValue(_ctx.CurrentModulePath, out var currentExportFields))
+        if (importReq.IsExported &&
+            _ctx.CurrentModulePath != null &&
+            _ctx.ModuleExportFields.TryGetValue(_ctx.CurrentModulePath, out var currentExportFields))
         {
-            if (currentExportFields.TryGetValue(importReq.AliasName.Lexeme, out var exportField))
+            if (currentExportFields.TryGetValue(aliasName, out var exportField))
             {
-                IL.Emit(OpCodes.Ldloc, aliasLocal);
+                // Load from import field or local
+                if (currentModuleImportFields?.TryGetValue(aliasName, out var impField) == true)
+                {
+                    IL.Emit(OpCodes.Ldsfld, impField);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldloc, aliasLocal!);
+                }
                 IL.Emit(OpCodes.Stsfld, exportField);
             }
         }
@@ -443,6 +523,12 @@ public partial class ILEmitter
             // Re-export: export { x } from './module' or export * from './module'
             string sourcePath = _ctx.ModuleResolver.ResolveModulePath(export.FromModulePath, _ctx.CurrentModulePath);
 
+            // Ensure the source module is initialized before reading its exports
+            if (_ctx.ModuleInitMethods?.TryGetValue(sourcePath, out var sourceInitMethod) == true)
+            {
+                IL.Emit(OpCodes.Call, sourceInitMethod);
+            }
+
             if (_ctx.ModuleExportFields.TryGetValue(sourcePath, out var sourceFields))
             {
                 if (export.NamedExports != null)
@@ -513,9 +599,22 @@ public partial class ILEmitter
         // Create TSFunction(null, methodInfo) - same pattern as arrow functions
         IL.Emit(OpCodes.Ldnull);  // target (null for static methods)
         IL.Emit(OpCodes.Ldtoken, method);
-        var runtimeMethodHandle = _ctx.Types.Resolve("System.RuntimeMethodHandle");
-        var methodBase = _ctx.Types.Resolve("System.Reflection.MethodBase");
-        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(methodBase, "GetMethodFromHandle", runtimeMethodHandle));
+
+        // Use two-parameter GetMethodFromHandle with declaring type for proper token resolution
+        // This is required for cross-module function references in persisted assemblies
+        var declaringType = method.DeclaringType;
+        if (declaringType != null)
+        {
+            IL.Emit(OpCodes.Ldtoken, declaringType);
+            IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.MethodBase, "GetMethodFromHandle",
+                _ctx.Types.RuntimeMethodHandle, _ctx.Types.RuntimeTypeHandle));
+        }
+        else
+        {
+            IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.MethodBase, "GetMethodFromHandle",
+                _ctx.Types.RuntimeMethodHandle));
+        }
+
         IL.Emit(OpCodes.Castclass, _ctx.Types.MethodInfo);
         IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSFunctionCtor);
     }

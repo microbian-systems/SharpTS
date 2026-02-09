@@ -225,6 +225,52 @@ public partial class ILCompiler
             {
                 DefineClassMethodsOnly(classStmt);
             }
+            else if (stmt is Stmt.Namespace nsStmt)
+            {
+                // Recursively handle classes in namespaces
+                DefineAllClassMethods(nsStmt.Members);
+            }
+            else if (stmt is Stmt.Export { Declaration: not null } exportStmt)
+            {
+                // Unwrap exported declarations (e.g., export class Foo { })
+                DefineAllClassMethods([exportStmt.Declaration]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Emits $IHasFields interface method bodies for all classes.
+    /// Called after DefineAllClassMethods so that MethodBuilders are available.
+    /// </summary>
+    private void EmitAllHasFieldsInterfaceMethodBodies(IEnumerable<Stmt> statements)
+    {
+        foreach (var stmt in statements)
+        {
+            if (stmt is Stmt.Class classStmt)
+            {
+                if (classStmt.IsDeclare)
+                    continue;
+
+                var ctx = GetDefinitionContext();
+                string qualifiedClassName = ctx.GetQualifiedClassName(classStmt.Name.Lexeme);
+
+                // Skip external types
+                if (_classes.ExternalTypes.ContainsKey(qualifiedClassName) ||
+                    _classes.ExternalTypes.ContainsKey(classStmt.Name.Lexeme))
+                    continue;
+
+                EmitHasFieldsInterfaceMethodBodies(qualifiedClassName, classStmt);
+            }
+            else if (stmt is Stmt.Namespace nsStmt)
+            {
+                // Recursively handle classes in namespaces
+                EmitAllHasFieldsInterfaceMethodBodies(nsStmt.Members);
+            }
+            else if (stmt is Stmt.Export { Declaration: not null } exportStmt)
+            {
+                // Unwrap exported declarations (e.g., export class Foo { })
+                EmitAllHasFieldsInterfaceMethodBodies([exportStmt.Declaration]);
+            }
         }
     }
 
@@ -248,6 +294,10 @@ public partial class ILCompiler
 
         if (!_classes.Builders.TryGetValue(qualifiedClassName, out var typeBuilder))
             return;  // Skip if no TypeBuilder exists for this class
+
+        // Skip if instance methods are already defined for this class
+        if (_classes.InstanceMethods.ContainsKey(qualifiedClassName))
+            return;
 
         // Pre-define constructor (if not already defined)
         if (!_classes.Constructors.ContainsKey(qualifiedClassName))
@@ -347,18 +397,19 @@ public partial class ILCompiler
             );
 
             // Track instance method for direct dispatch
-            if (!_classes.InstanceMethods.TryGetValue(typeBuilder.Name, out var classMethods))
+            if (!_classes.InstanceMethods.TryGetValue(qualifiedClassName, out var classMethods))
             {
                 classMethods = [];
-                _classes.InstanceMethods[typeBuilder.Name] = classMethods;
+                _classes.InstanceMethods[qualifiedClassName] = classMethods;
             }
             classMethods[method.Name.Lexeme] = methodBuilder;
 
             // Store the method builder for body emission later
-            if (!_classes.PreDefinedMethods.TryGetValue(classStmt.Name.Lexeme, out var preDefined))
+            // Use typeBuilder.Name to match the lookup in EmitMethod
+            if (!_classes.PreDefinedMethods.TryGetValue(typeBuilder.Name, out var preDefined))
             {
                 preDefined = [];
-                _classes.PreDefinedMethods[classStmt.Name.Lexeme] = preDefined;
+                _classes.PreDefinedMethods[typeBuilder.Name] = preDefined;
             }
             preDefined[method.Name.Lexeme] = methodBuilder;
         }
@@ -731,11 +782,11 @@ public partial class ILCompiler
                 paramTypes
             );
 
-            // Track instance method for direct dispatch
-            if (!_classes.InstanceMethods.TryGetValue(typeBuilder.Name, out var classMethods))
+            // Track instance method for direct dispatch (use FullName to match namespace-qualified lookup)
+            if (!_classes.InstanceMethods.TryGetValue(typeBuilder.FullName!, out var classMethods))
             {
                 classMethods = [];
-                _classes.InstanceMethods[typeBuilder.Name] = classMethods;
+                _classes.InstanceMethods[typeBuilder.FullName!] = classMethods;
             }
             classMethods[method.Name.Lexeme] = methodBuilder;
         }

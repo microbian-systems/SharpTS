@@ -675,48 +675,40 @@ public partial class RuntimeEmitter
         // try { invoke fn }
         il.BeginExceptionBlock();
 
-        // If fn is Delegate, call DynamicInvoke
-        var invokeReflectionLabel = il.DefineLabel();
-        var doInvokeLabel = il.DefineLabel();
+        var invokeTsFunctionLabel = il.DefineLabel();
+        var invokeBoundFunctionLabel = il.DefineLabel();
+        var invalidCallableLabel = il.DefineLabel();
+        // Emitted $TSFunction support
+        il.MarkLabel(invokeTsFunctionLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, typeof(Delegate));
-        il.Emit(OpCodes.Brfalse, invokeReflectionLabel);
-
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, invokeBoundFunctionLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeof(Delegate));
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Callvirt, _types.DelegateDynamicInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
         il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Leave, afterTryLabel);
 
-        // For other types, try to get Invoke method via reflection
-        il.MarkLabel(invokeReflectionLabel);
-        var invokeLocal = il.DeclareLocal(typeof(MethodInfo));
+        // Emitted $BoundTSFunction support
+        il.MarkLabel(invokeBoundFunctionLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("GetType")!);
-        il.Emit(OpCodes.Ldstr, "Invoke");
-        il.Emit(OpCodes.Callvirt, typeof(Type).GetMethod("GetMethod", [_types.String])!);
-        il.Emit(OpCodes.Stloc, invokeLocal);
-
-        il.Emit(OpCodes.Ldloc, invokeLocal);
-        il.Emit(OpCodes.Brtrue, doInvokeLabel);
-        // No Invoke method found, just leave without invoking
-        il.Emit(OpCodes.Leave, afterTryLabel);
-
-        il.MarkLabel(doInvokeLabel);
-        il.Emit(OpCodes.Ldloc, invokeLocal);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brfalse, invalidCallableLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.MethodInfoInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvoke);
         il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Leave, afterTryLabel);
+
+        // Non-callable input
+        il.MarkLabel(invalidCallableLabel);
+        il.Emit(OpCodes.Ldstr, "Missing function to test");
+        il.Emit(OpCodes.Newobj, _types.ArgumentExceptionCtorString);
+        il.Emit(OpCodes.Throw);
 
         // catch (Exception) { threw = true }
         il.BeginCatchBlock(_types.Exception);
@@ -777,46 +769,37 @@ public partial class RuntimeEmitter
         // try { invoke fn }
         il.BeginExceptionBlock();
 
-        var invokeReflectionLabel = il.DefineLabel();
-        var doInvokeLabel = il.DefineLabel();
+        var invokeTsFunctionLabel = il.DefineLabel();
+        var invokeBoundFunctionLabel = il.DefineLabel();
+        var invalidCallableLabel = il.DefineLabel();
+        il.MarkLabel(invokeTsFunctionLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, typeof(Delegate));
-        il.Emit(OpCodes.Brfalse, invokeReflectionLabel);
-
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, invokeBoundFunctionLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeof(Delegate));
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Callvirt, _types.DelegateDynamicInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
         il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Leave, endLabel);
 
-        il.MarkLabel(invokeReflectionLabel);
-        var invokeLocal = il.DeclareLocal(typeof(MethodInfo));
+        il.MarkLabel(invokeBoundFunctionLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("GetType")!);
-        il.Emit(OpCodes.Ldstr, "Invoke");
-        il.Emit(OpCodes.Callvirt, typeof(Type).GetMethod("GetMethod", [_types.String])!);
-        il.Emit(OpCodes.Stloc, invokeLocal);
-
-        il.Emit(OpCodes.Ldloc, invokeLocal);
-        il.Emit(OpCodes.Brtrue, doInvokeLabel);
-        // No Invoke method found, just leave
-        il.Emit(OpCodes.Leave, endLabel);
-
-        il.MarkLabel(doInvokeLabel);
-        il.Emit(OpCodes.Ldloc, invokeLocal);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brfalse, invalidCallableLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.MethodInfoInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvoke);
         il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Leave, endLabel);
+
+        il.MarkLabel(invalidCallableLabel);
+        il.Emit(OpCodes.Ldstr, "Missing function to test");
+        il.Emit(OpCodes.Newobj, _types.ArgumentExceptionCtorString);
+        il.Emit(OpCodes.Throw);
 
         // catch (Exception ex) { throw AssertionError }
         il.BeginCatchBlock(_types.Exception);

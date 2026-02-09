@@ -358,6 +358,7 @@ public partial class RuntimeEmitter
             _types.Object,
             [_types.ObjectArray]
         );
+        runtime.FunctionBindWrapperInvoke = invokeBuilder;
 
         var il = invokeBuilder.GetILGenerator();
         var thisArgLocal = il.DeclareLocal(_types.Object);
@@ -516,6 +517,7 @@ public partial class RuntimeEmitter
             _types.Object,
             [_types.ObjectArray]
         );
+        runtime.FunctionCallWrapperInvoke = invokeBuilder;
 
         var il = invokeBuilder.GetILGenerator();
         var thisArgLocal = il.DeclareLocal(_types.Object);
@@ -674,6 +676,7 @@ public partial class RuntimeEmitter
             _types.Object,
             [_types.ObjectArray]
         );
+        runtime.FunctionApplyWrapperInvoke = invokeBuilder;
 
         var il = invokeBuilder.GetILGenerator();
         var thisArgLocal = il.DeclareLocal(_types.Object);

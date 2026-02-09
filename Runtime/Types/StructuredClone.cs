@@ -152,6 +152,13 @@ public static class StructuredClone
             // EventEmitter - cannot be cloned (has listeners)
             SharpTSEventEmitter => throw new DataCloneError("EventEmitter cannot be cloned"),
 
+            // Emitted $SharedArrayBuffer type from compiled code - pass by reference
+            // Check by type name since we can't reference the dynamically emitted type
+            _ when value.GetType().Name == "$SharedArrayBuffer" => value,
+
+            // Emitted $ArrayBuffer type from compiled code - clone the bytes
+            _ when value.GetType().Name == "$ArrayBuffer" => CloneEmittedArrayBuffer(value),
+
             // Unknown type
             _ => throw new DataCloneError($"Cannot clone value of type {value.GetType().Name}")
         };
@@ -396,6 +403,42 @@ public static class StructuredClone
     }
 
     /// <summary>
+    /// Clones an emitted $ArrayBuffer type from compiled code.
+    /// Uses reflection to access the buffer and create a new instance.
+    /// </summary>
+    private static object CloneEmittedArrayBuffer(object source)
+    {
+        var type = source.GetType();
+
+        // Get ByteLength property
+        var byteLengthProp = type.GetProperty("ByteLength");
+        var byteLength = (int)(byteLengthProp?.GetValue(source) ?? 0);
+
+        // Get the backing buffer via GetBuffer() method
+        var getBufferMethod = type.GetMethod("GetBuffer");
+        var sourceBuffer = (byte[]?)getBufferMethod?.Invoke(source, null);
+
+        if (sourceBuffer == null)
+            throw new DataCloneError("Cannot clone ArrayBuffer: unable to access backing buffer");
+
+        // Create new instance with same length
+        var ctor = type.GetConstructor([typeof(int)]);
+        if (ctor == null)
+            throw new DataCloneError("Cannot clone ArrayBuffer: constructor not found");
+
+        var result = ctor.Invoke([byteLength]);
+
+        // Copy the data
+        var resultBuffer = (byte[]?)getBufferMethod?.Invoke(result, null);
+        if (resultBuffer != null && sourceBuffer != null)
+        {
+            Array.Copy(sourceBuffer, resultBuffer, byteLength);
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Validates that a value can be passed to a worker (used for compile-time validation).
     /// </summary>
     /// <param name="value">The value to validate.</param>
@@ -420,6 +463,11 @@ public static class StructuredClone
 
         // Prevent infinite recursion
         if (!seen.Add(value))
+            return;
+
+        // Check for emitted types by name (before switch for compiled code support)
+        var typeName = value.GetType().Name;
+        if (typeName == "$SharedArrayBuffer" || typeName == "$ArrayBuffer")
             return;
 
         switch (value)

@@ -2,12 +2,9 @@ namespace SharpTS.Compilation;
 
 public static partial class RuntimeTypes
 {
-    // Cached type for SharpTSUndefined checks (avoids compile-time dependency on SharpTS.dll)
-    private static readonly Type? _sharpTSUndefinedType = Type.GetType("SharpTS.Runtime.Types.SharpTSUndefined, SharpTS");
-
-    /// <summary>Helper to check if a value is SharpTSUndefined via reflection.</summary>
+    /// <summary>Helper to check if a value is SharpTSUndefined.</summary>
     private static bool IsUndefined(object? value) =>
-        value != null && _sharpTSUndefinedType?.IsInstanceOfType(value) == true;
+        value is SharpTS.Runtime.Types.SharpTSUndefined;
 
     #region Operators
 

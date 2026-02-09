@@ -360,24 +360,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, signatureBytesLocal);
         il.Emit(OpCodes.Br, signatureReadyLabel);
 
-        // Fallback - try to get Data property via reflection
+        // Standalone-only behavior: accept string, byte[], or emitted $Buffer.
         il.MarkLabel(notBufferLabel);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("GetType")!);
-        il.Emit(OpCodes.Ldstr, "Data");
-        il.Emit(OpCodes.Call, _types.TypeGetProperty);
-        var noDataPropertyLabel = il.DefineLabel();
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Brfalse, noDataPropertyLabel);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Callvirt, typeof(System.Reflection.PropertyInfo).GetMethod("GetValue", [_types.Object, typeof(object[])])!);
-        il.Emit(OpCodes.Castclass, _types.ByteArray);
-        il.Emit(OpCodes.Stloc, signatureBytesLocal);
-        il.Emit(OpCodes.Br, signatureReadyLabel);
-
-        il.MarkLabel(noDataPropertyLabel);
-        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldstr, "Signature must be a string, Buffer, or byte array");
         il.Emit(OpCodes.Newobj, typeof(ArgumentException).GetConstructor([_types.String])!);
         il.Emit(OpCodes.Throw);

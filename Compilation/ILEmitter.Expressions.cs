@@ -136,6 +136,15 @@ public partial class ILEmitter
             return;
         }
 
+        // Check if it's an imported value (from another module) - must check BEFORE Functions
+        // because cross-module function references need to go through the import field
+        if (_ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+        {
+            IL.Emit(OpCodes.Ldsfld, topLevelField);
+            SetStackUnknown();
+            return;
+        }
+
         // Check if it's a class - load the Type object
         if (_ctx.Classes.TryGetValue(_ctx.ResolveClassName(name), out var classType))
         {
@@ -182,14 +191,6 @@ public partial class ILEmitter
         if (_ctx.NamespaceFields?.TryGetValue(name, out var nsField) == true)
         {
             IL.Emit(OpCodes.Ldsfld, nsField);
-            SetStackUnknown();
-            return;
-        }
-
-        // Check if it's a top-level variable - load from static field
-        if (_ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
-        {
-            IL.Emit(OpCodes.Ldsfld, topLevelField);
             SetStackUnknown();
             return;
         }

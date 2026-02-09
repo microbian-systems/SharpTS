@@ -58,13 +58,12 @@ public sealed class DataViewEmitter : ITypeEmitterStrategy
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
 
-            // BigInt getters (with endianness)
+            // BigInt getters (with endianness) - returns object (already boxed BigInteger)
             case "getBigInt64":
             case "getBigUint64":
                 EmitByteOffsetArg(emitter, arguments, 0);
                 EmitLittleEndianArg(emitter, arguments, 1);
                 il.Emit(OpCodes.Call, GetDataViewMethod(ctx, methodName));
-                il.Emit(OpCodes.Box, ctx.Types.BigInteger);
                 return true;
 
             // 16-bit, 32-bit, float setters (with endianness)

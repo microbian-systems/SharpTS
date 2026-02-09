@@ -1,48 +1,39 @@
-using System.Reflection;
 using System.Runtime.CompilerServices;
+using SharpTS.Runtime.Types;
 
 namespace SharpTS.Compilation;
 
 public static partial class RuntimeTypes
 {
-    // Cached types for reflection-based checks (to avoid repeated Type.GetType calls)
-    private static readonly Type? _sharpTSNamespaceType = Type.GetType("SharpTS.Runtime.Types.SharpTSNamespace, SharpTS");
-    private static readonly Type? _sharpTSArrayType = Type.GetType("SharpTS.Runtime.Types.SharpTSArray, SharpTS");
-
-    /// <summary>Helper to check if value is a SharpTSNamespace and get a property via reflection.</summary>
+    /// <summary>Helper to check if value is a SharpTSNamespace and get a property.</summary>
     private static bool TryGetNamespaceProperty(object obj, string name, out object? result)
     {
         result = null;
-        if (_sharpTSNamespaceType == null || !_sharpTSNamespaceType.IsInstanceOfType(obj))
+        if (obj is not SharpTSNamespace ns)
             return false;
-        var getMethod = _sharpTSNamespaceType.GetMethod("Get", [typeof(string)]);
-        if (getMethod != null)
-            result = getMethod.Invoke(obj, [name]);
+        result = ns.Get(name);
         return true;
     }
 
-    /// <summary>Helper to check if value is a SharpTSArray and get element count via reflection.</summary>
+    /// <summary>Helper to check if value is a SharpTSArray and get element count.</summary>
     private static bool TryGetSharpTSArrayLength(object obj, out double length)
     {
         length = 0;
-        if (_sharpTSArrayType == null || !_sharpTSArrayType.IsInstanceOfType(obj))
+        if (obj is not SharpTSArray arr)
             return false;
-        var elementsProp = _sharpTSArrayType.GetProperty("Elements");
-        if (elementsProp?.GetValue(obj) is System.Collections.IList list)
-            length = list.Count;
+        length = arr.Elements.Count;
         return true;
     }
 
-    /// <summary>Helper to check if value is a SharpTSArray and get element at index via reflection.</summary>
+    /// <summary>Helper to check if value is a SharpTSArray and get element at index.</summary>
     private static bool TryGetSharpTSArrayElement(object obj, int index, out object? result)
     {
         result = null;
-        if (_sharpTSArrayType == null || !_sharpTSArrayType.IsInstanceOfType(obj))
+        if (obj is not SharpTSArray arr)
             return false;
-        var elementsProp = _sharpTSArrayType.GetProperty("Elements");
-        if (elementsProp?.GetValue(obj) is System.Collections.IList list && index >= 0 && index < list.Count)
+        if (index >= 0 && index < arr.Elements.Count)
         {
-            result = list[index];
+            result = arr.Elements[index];
             return true;
         }
         return false;
@@ -435,46 +426,6 @@ public static partial class RuntimeTypes
             return tsFunc.Invoke();
         }
 
-        // Try reflection for any callable with Invoke/InvokeWithThis methods
-        var accessorType = accessor.GetType();
-
-        // First, try InvokeWithThis which handles HasOwnThis functions
-        var invokeWithThisMethod = accessorType.GetMethod("InvokeWithThis");
-        if (invokeWithThisMethod != null)
-        {
-            var iwtParams = invokeWithThisMethod.GetParameters();
-            // InvokeWithThis(object thisArg, object[] args)
-            if (iwtParams.Length == 2 &&
-                iwtParams[0].ParameterType == typeof(object) &&
-                iwtParams[1].ParameterType == typeof(object[]))
-            {
-                return invokeWithThisMethod.Invoke(accessor, [thisArg, Array.Empty<object>()]);
-            }
-        }
-
-        // Fall back to BindThis + Invoke for arrow functions that capture 'this'
-        var invokeMethod = accessorType.GetMethod("Invoke");
-        if (invokeMethod != null)
-        {
-            // Bind 'this' if possible
-            var bindMethod = accessorType.GetMethod("BindThis");
-            bindMethod?.Invoke(accessor, [thisArg]);
-
-            var parameters = invokeMethod.GetParameters();
-
-            // Handle no parameters or all optional parameters
-            if (parameters.Length == 0 || parameters.All(p => p.IsOptional))
-            {
-                return invokeMethod.Invoke(accessor, null);
-            }
-
-            // Handle single object[] parameter (like $TSFunction.Invoke(object[] args))
-            if (parameters.Length == 1 && parameters[0].ParameterType == typeof(object[]))
-            {
-                return invokeMethod.Invoke(accessor, [Array.Empty<object>()]);
-            }
-        }
-
         return null;
     }
 
@@ -491,48 +442,6 @@ public static partial class RuntimeTypes
             tsFunc.BindThis(thisArg);
             tsFunc.Invoke(value);
             return;
-        }
-
-        // Try reflection for any callable with Invoke/InvokeWithThis methods
-        var accessorType = accessor.GetType();
-
-        // First, try InvokeWithThis which handles HasOwnThis functions
-        var invokeWithThisMethod = accessorType.GetMethod("InvokeWithThis");
-        if (invokeWithThisMethod != null)
-        {
-            var iwtParams = invokeWithThisMethod.GetParameters();
-            // InvokeWithThis(object thisArg, object[] args)
-            if (iwtParams.Length == 2 &&
-                iwtParams[0].ParameterType == typeof(object) &&
-                iwtParams[1].ParameterType == typeof(object[]))
-            {
-                invokeWithThisMethod.Invoke(accessor, [thisArg, new object?[] { value }]);
-                return;
-            }
-        }
-
-        // Fall back to BindThis + Invoke for arrow functions that capture 'this'
-        var invokeMethod = accessorType.GetMethod("Invoke");
-        if (invokeMethod != null)
-        {
-            // Bind 'this' if possible
-            var bindMethod = accessorType.GetMethod("BindThis");
-            bindMethod?.Invoke(accessor, [thisArg]);
-
-            // Invoke with the value
-            var parameters = invokeMethod.GetParameters();
-            if (parameters.Length >= 1)
-            {
-                // Handle single object[] parameter (like $TSFunction.Invoke(object[] args))
-                if (parameters[0].ParameterType == typeof(object[]))
-                {
-                    invokeMethod.Invoke(accessor, [new object?[] { value }]);
-                }
-                else
-                {
-                    invokeMethod.Invoke(accessor, [value]);
-                }
-            }
         }
     }
 

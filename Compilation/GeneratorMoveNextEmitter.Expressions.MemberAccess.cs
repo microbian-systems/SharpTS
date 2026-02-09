@@ -551,28 +551,63 @@ public partial class GeneratorMoveNextEmitter
         if (fieldName.StartsWith('#'))
             fieldName = fieldName[1..];
 
-        // Check if this is static private field access (ClassName.#field)
-        if (gp.Object is Expr.Variable classVar &&
-            _ctx?.CurrentClassName != null &&
-            classVar.Name.Lexeme == _ctx.CurrentClassName.Split('.').Last()?.Split('_').Last())
+        string? className = _ctx?.CurrentClassName;
+        if (className == null)
         {
-            // In generator state machines, we can't directly access private static fields
-            // from another class, so always use the runtime helper for static private fields
-            EmitDeclaringClassType();
-            _il.Emit(OpCodes.Ldstr, fieldName);
-            _il.Emit(OpCodes.Call, _ctx.Runtime!.GetStaticPrivateField);
+            _il.Emit(OpCodes.Ldstr, $"Cannot access private field '#{fieldName}' - class context not available");
+            _il.Emit(OpCodes.Newobj, Types.InvalidOperationExceptionCtorString);
+            _il.Emit(OpCodes.Throw);
+            return;
+        }
+
+        if (gp.Object is Expr.Variable classVar &&
+            classVar.Name.Lexeme == _ctx!.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            _ctx!.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var staticField))
+        {
+            _il.Emit(OpCodes.Ldsfld, staticField!);
             SetStackUnknown();
             return;
         }
 
-        // Instance private field access - use runtime helper
-        // Stack: GetPrivateField(instance, declaringClass, fieldName)
-        EmitExpression(gp.Object);
-        EnsureBoxed();
-        EmitDeclaringClassType();
-        _il.Emit(OpCodes.Ldstr, fieldName);
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.GetPrivateField);
-        SetStackUnknown();
+        var storageField = _ctx!.ClassRegistry!.GetPrivateFieldStorage(className);
+        if (storageField != null)
+        {
+            var cwtType = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<,>)
+                .MakeGenericType(typeof(object), typeof(Dictionary<string, object?>));
+            var dictType = typeof(Dictionary<string, object?>);
+            var dictLocal = _il.DeclareLocal(dictType);
+
+            _il.Emit(OpCodes.Ldsfld, storageField);
+            EmitExpression(gp.Object);
+            EnsureBoxed();
+            _il.Emit(OpCodes.Ldloca, dictLocal);
+            var tryGetValueMethod = cwtType.GetMethod("TryGetValue", [typeof(object), dictType.MakeByRefType()])!;
+            _il.Emit(OpCodes.Callvirt, tryGetValueMethod);
+
+            var successLabel = _il.DefineLabel();
+            _il.Emit(OpCodes.Brtrue, successLabel);
+            _il.Emit(OpCodes.Ldstr, $"TypeError: Cannot read private member #{fieldName} from an object whose class did not declare it");
+            _il.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+            _il.Emit(OpCodes.Throw);
+            _il.MarkLabel(successLabel);
+
+            _il.Emit(OpCodes.Ldloc, dictLocal);
+            _il.Emit(OpCodes.Ldstr, fieldName);
+            _il.Emit(OpCodes.Callvirt, dictType.GetMethod("get_Item", [typeof(string)])!);
+            SetStackUnknown();
+            return;
+        }
+
+        if (_ctx!.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var fallbackStaticField))
+        {
+            _il.Emit(OpCodes.Ldsfld, fallbackStaticField!);
+            SetStackUnknown();
+            return;
+        }
+
+        _il.Emit(OpCodes.Ldstr, $"Private field '#{fieldName}' not found in class '{className}'");
+        _il.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+        _il.Emit(OpCodes.Throw);
     }
 
     protected override void EmitSetPrivate(Expr.SetPrivate sp)
@@ -582,46 +617,75 @@ public partial class GeneratorMoveNextEmitter
         if (fieldName.StartsWith('#'))
             fieldName = fieldName[1..];
 
-        // Check if this is static private field access (ClassName.#field)
-        if (sp.Object is Expr.Variable classVar &&
-            _ctx?.CurrentClassName != null &&
-            classVar.Name.Lexeme == _ctx.CurrentClassName.Split('.').Last()?.Split('_').Last())
+        string? className = _ctx?.CurrentClassName;
+        if (className == null)
         {
-            // In generator state machines, we can't directly access private static fields
-            // from another class, so always use the runtime helper for static private fields
+            _il.Emit(OpCodes.Ldstr, $"Cannot write private field '#{fieldName}' - class context not available");
+            _il.Emit(OpCodes.Newobj, Types.InvalidOperationExceptionCtorString);
+            _il.Emit(OpCodes.Throw);
+            return;
+        }
+
+        if (sp.Object is Expr.Variable classVar &&
+            classVar.Name.Lexeme == _ctx!.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            _ctx!.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var staticField))
+        {
             EmitExpression(sp.Value);
             EnsureBoxed();
-            var valueTemp = _il.DeclareLocal(typeof(object));
-            _il.Emit(OpCodes.Stloc, valueTemp);
-
-            EmitDeclaringClassType();
-            _il.Emit(OpCodes.Ldstr, fieldName);
-            _il.Emit(OpCodes.Ldloc, valueTemp);
-            _il.Emit(OpCodes.Call, _ctx.Runtime!.SetStaticPrivateField);
-
-            // Leave value on stack for expression result
-            _il.Emit(OpCodes.Ldloc, valueTemp);
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Stsfld, staticField!);
             SetStackUnknown();
             return;
         }
 
-        // Instance private field assignment - use runtime helper
-        EmitExpression(sp.Value);
-        EnsureBoxed();
-        var valueLocal = _il.DeclareLocal(typeof(object));
-        _il.Emit(OpCodes.Stloc, valueLocal);
+        var storageField = _ctx!.ClassRegistry!.GetPrivateFieldStorage(className);
+        if (storageField != null)
+        {
+            var cwtType = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<,>)
+                .MakeGenericType(typeof(object), typeof(Dictionary<string, object?>));
+            var dictType = typeof(Dictionary<string, object?>);
+            var dictLocal = _il.DeclareLocal(dictType);
+            var valueLocal = _il.DeclareLocal(typeof(object));
 
-        // SetPrivateField(instance, declaringClass, fieldName, value)
-        EmitExpression(sp.Object);
-        EnsureBoxed();
-        EmitDeclaringClassType();
-        _il.Emit(OpCodes.Ldstr, fieldName);
-        _il.Emit(OpCodes.Ldloc, valueLocal);
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.SetPrivateField);
+            _il.Emit(OpCodes.Ldsfld, storageField);
+            EmitExpression(sp.Object);
+            EnsureBoxed();
+            _il.Emit(OpCodes.Ldloca, dictLocal);
+            var tryGetValueMethod = cwtType.GetMethod("TryGetValue", [typeof(object), dictType.MakeByRefType()])!;
+            _il.Emit(OpCodes.Callvirt, tryGetValueMethod);
 
-        // Leave value on stack for expression result
-        _il.Emit(OpCodes.Ldloc, valueLocal);
-        SetStackUnknown();
+            var successLabel = _il.DefineLabel();
+            _il.Emit(OpCodes.Brtrue, successLabel);
+            _il.Emit(OpCodes.Ldstr, $"TypeError: Cannot write private member #{fieldName} to an object whose class did not declare it");
+            _il.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+            _il.Emit(OpCodes.Throw);
+            _il.MarkLabel(successLabel);
+
+            EmitExpression(sp.Value);
+            EnsureBoxed();
+            _il.Emit(OpCodes.Stloc, valueLocal);
+            _il.Emit(OpCodes.Ldloc, dictLocal);
+            _il.Emit(OpCodes.Ldstr, fieldName);
+            _il.Emit(OpCodes.Ldloc, valueLocal);
+            _il.Emit(OpCodes.Callvirt, dictType.GetMethod("set_Item", [typeof(string), typeof(object)])!);
+            _il.Emit(OpCodes.Ldloc, valueLocal);
+            SetStackUnknown();
+            return;
+        }
+
+        if (_ctx!.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var fallbackStaticField))
+        {
+            EmitExpression(sp.Value);
+            EnsureBoxed();
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Stsfld, fallbackStaticField!);
+            SetStackUnknown();
+            return;
+        }
+
+        _il.Emit(OpCodes.Ldstr, $"Private field '#{fieldName}' not found in class '{className}'");
+        _il.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+        _il.Emit(OpCodes.Throw);
     }
 
     protected override void EmitCallPrivate(Expr.CallPrivate cp)
@@ -631,52 +695,95 @@ public partial class GeneratorMoveNextEmitter
         if (methodName.StartsWith('#'))
             methodName = methodName[1..];
 
-        // Check if this is static private method call (ClassName.#method())
-        if (cp.Object is Expr.Variable classVar &&
-            _ctx?.CurrentClassName != null &&
-            classVar.Name.Lexeme == _ctx.CurrentClassName.Split('.').Last()?.Split('_').Last())
+        string? className = _ctx?.CurrentClassName;
+        if (className == null)
         {
-            // In generator state machines, we can't directly call private static methods
-            // from another class, so always use the runtime helper for static private methods
-            EmitDeclaringClassType();
-            _il.Emit(OpCodes.Ldstr, methodName);
-            EmitArgumentArray(cp.Arguments);
-            _il.Emit(OpCodes.Call, _ctx.Runtime!.CallStaticPrivateMethod);
+            _il.Emit(OpCodes.Ldstr, $"Cannot call private method '#{methodName}' - class context not available");
+            _il.Emit(OpCodes.Newobj, Types.InvalidOperationExceptionCtorString);
+            _il.Emit(OpCodes.Throw);
+            return;
+        }
+
+        if (cp.Object is Expr.Variable classVar &&
+            classVar.Name.Lexeme == _ctx!.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            _ctx!.ClassRegistry!.TryGetStaticPrivateMethod(className, methodName, out var staticMethod))
+        {
+            foreach (var arg in cp.Arguments)
+            {
+                EmitExpression(arg);
+                EnsureBoxed();
+            }
+            _il.Emit(OpCodes.Call, staticMethod!);
             SetStackUnknown();
             return;
         }
 
-        // Instance private method call - use runtime helper
-        // Emit arguments first
-        var argTemps = new List<LocalBuilder>();
-        foreach (var arg in cp.Arguments)
+        if (_ctx!.ClassRegistry!.TryGetPrivateMethod(className, methodName, out var instanceMethod))
         {
-            EmitExpression(arg);
-            EnsureBoxed();
-            var temp = _il.DeclareLocal(typeof(object));
-            _il.Emit(OpCodes.Stloc, temp);
-            argTemps.Add(temp);
+            var storageField = _ctx!.ClassRegistry!.GetPrivateFieldStorage(className);
+            if (storageField != null)
+            {
+                var cwtType = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<,>)
+                    .MakeGenericType(typeof(object), typeof(Dictionary<string, object?>));
+                var dictType = typeof(Dictionary<string, object?>);
+                var objLocal = _il.DeclareLocal(typeof(object));
+                var dictLocal = _il.DeclareLocal(dictType);
+
+                EmitExpression(cp.Object);
+                EnsureBoxed();
+                _il.Emit(OpCodes.Stloc, objLocal);
+
+                _il.Emit(OpCodes.Ldsfld, storageField);
+                _il.Emit(OpCodes.Ldloc, objLocal);
+                _il.Emit(OpCodes.Ldloca, dictLocal);
+                var tryGetValueMethod = cwtType.GetMethod("TryGetValue", [typeof(object), dictType.MakeByRefType()])!;
+                _il.Emit(OpCodes.Callvirt, tryGetValueMethod);
+
+                var validLabel = _il.DefineLabel();
+                _il.Emit(OpCodes.Brtrue, validLabel);
+                _il.Emit(OpCodes.Ldstr, $"TypeError: Cannot call private method #{methodName} on an object whose class did not declare it");
+                _il.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+                _il.Emit(OpCodes.Throw);
+                _il.MarkLabel(validLabel);
+
+                _il.Emit(OpCodes.Ldloc, objLocal);
+                if (_ctx.CurrentClassBuilder != null)
+                    _il.Emit(OpCodes.Castclass, _ctx.CurrentClassBuilder);
+
+                foreach (var arg in cp.Arguments)
+                {
+                    EmitExpression(arg);
+                    EnsureBoxed();
+                }
+
+                _il.Emit(OpCodes.Callvirt, instanceMethod!);
+                SetStackUnknown();
+                return;
+            }
+            else
+            {
+                // No private field storage (class has private methods but no private fields)
+                // Skip brand check - just emit the call directly
+                EmitExpression(cp.Object);
+                EnsureBoxed();
+                if (_ctx.CurrentClassBuilder != null)
+                    _il.Emit(OpCodes.Castclass, _ctx.CurrentClassBuilder);
+
+                foreach (var arg in cp.Arguments)
+                {
+                    EmitExpression(arg);
+                    EnsureBoxed();
+                }
+
+                _il.Emit(OpCodes.Callvirt, instanceMethod!);
+                SetStackUnknown();
+                return;
+            }
         }
 
-        // CallPrivateMethod(instance, declaringClass, methodName, args[])
-        EmitExpression(cp.Object);
-        EnsureBoxed();
-        EmitDeclaringClassType();
-        _il.Emit(OpCodes.Ldstr, methodName);
-
-        // Build args array from temps
-        _il.Emit(OpCodes.Ldc_I4, argTemps.Count);
-        _il.Emit(OpCodes.Newarr, typeof(object));
-        for (int i = 0; i < argTemps.Count; i++)
-        {
-            _il.Emit(OpCodes.Dup);
-            _il.Emit(OpCodes.Ldc_I4, i);
-            _il.Emit(OpCodes.Ldloc, argTemps[i]);
-            _il.Emit(OpCodes.Stelem_Ref);
-        }
-
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.CallPrivateMethod);
-        SetStackUnknown();
+        _il.Emit(OpCodes.Ldstr, $"Private method '#{methodName}' not found in class '{className}'");
+        _il.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+        _il.Emit(OpCodes.Throw);
     }
 
     /// <summary>

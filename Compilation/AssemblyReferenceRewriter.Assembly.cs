@@ -90,13 +90,13 @@ public partial class AssemblyReferenceRewriter
             }
         }
 
-        // Copy existing assembly references (except System.Private.CoreLib)
+        // Copy existing assembly references (except System.Private.CoreLib and SharpTS)
         foreach (var asmRefHandle in _reader.AssemblyReferences)
         {
             var asmRef = _reader.GetAssemblyReference(asmRefHandle);
             var name = _reader.GetString(asmRef.Name);
 
-            if (name == "System.Private.CoreLib")
+            if (name is "System.Private.CoreLib" or "SharpTS")
                 continue;
 
             var newHandle = _metadata.AddAssemblyReference(

@@ -35,6 +35,16 @@ public partial class RuntimeEmitter
         // Constructor only in Phase 1
         EmitTSECDHCtor(_tsECDHTypeBuilder, runtime);
         // All methods that use runtime helpers are added in Phase 2
+
+        // Define GetMember signature in Phase 1 so GetProperty can reference it.
+        // The IL body is emitted in Phase 2 (EmitTSECDHGetMember).
+        var getMemberMethod = _tsECDHTypeBuilder.DefineMethod(
+            "GetMember",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.String]
+        );
+        runtime.TSECDHGetMember = getMemberMethod;
     }
 
     /// <summary>
@@ -348,13 +358,8 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitTSECDHGetMember(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "GetMember",
-            MethodAttributes.Public,
-            _types.Object,
-            [_types.String]
-        );
-        runtime.TSECDHGetMember = method;
+        // MethodBuilder was already defined in EmitTSECDHTypeDefinition (Phase 1)
+        var method = runtime.TSECDHGetMember;
 
         var il = method.GetILGenerator();
 

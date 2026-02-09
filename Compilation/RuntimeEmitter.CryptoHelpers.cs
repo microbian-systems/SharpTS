@@ -1351,41 +1351,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Brfalse, throwLabel);
 
-        // var type = key.GetType();
-        var typeLocal = il.DeclareLocal(_types.Type);
+        // Standalone-only: require emitted $Object for object key extraction.
+        var notTsObjectLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, typeLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTsObjectLabel);
 
-        // var getPropertyMethod = type.GetMethod("GetProperty", new[] { typeof(string) });
-        var getPropertyMethodLocal = il.DeclareLocal(_types.MethodInfo);
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "GetProperty");
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.String);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.TypeGetMethod);
-        il.Emit(OpCodes.Stloc, getPropertyMethodLocal);
-
-        // if (getPropertyMethod != null)
-        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
-        il.Emit(OpCodes.Brfalse, throwLabel);
-
-        // var keyValue = getPropertyMethod.Invoke(key, new object[] { "key" });
+        // var keyValue = (($Object)key).GetProperty("key");
         var keyValueLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
         il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
         il.Emit(OpCodes.Ldstr, "key");
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.MethodBaseInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
         il.Emit(OpCodes.Stloc, keyValueLocal);
 
         // if (keyValue is string keyStr) return keyStr;
@@ -1394,6 +1371,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Brtrue, returnLabel);
         il.Emit(OpCodes.Pop);
+        il.MarkLabel(notTsObjectLabel);
 
         // throw new ArgumentException(...)
         il.MarkLabel(throwLabel);
@@ -1568,41 +1546,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnDefaultLabel);
 
-        // var type = options.GetType()
-        var typeLocal = il.DeclareLocal(_types.Type);
+        // options must be emitted $Object in standalone mode.
+        var optionsObjLocal = il.DeclareLocal(runtime.TSObjectType);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // var getPropertyMethod = type.GetMethod("GetProperty", new[] { typeof(string) })
-        var getPropertyMethodLocal = il.DeclareLocal(_types.MethodInfo);
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "GetProperty");
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.String);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.TypeGetMethod);
-        il.Emit(OpCodes.Stloc, getPropertyMethodLocal);
-
-        // if (getPropertyMethod == null) return defaultValue
-        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Stloc, optionsObjLocal);
+        il.Emit(OpCodes.Ldloc, optionsObjLocal);
         il.Emit(OpCodes.Brfalse, returnDefaultLabel);
 
-        // var value = getPropertyMethod.Invoke(options, new object[] { name })
+        // var value = options.GetProperty(name)
         var valueLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
-        il.Emit(OpCodes.Ldarg_0);  // options
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, optionsObjLocal);
         il.Emit(OpCodes.Ldarg_1);  // name
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.MethodBaseInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
         il.Emit(OpCodes.Stloc, valueLocal);
 
         // if (value is double d) return (int)d
@@ -1641,41 +1597,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnDefaultLabel);
 
-        // var type = options.GetType()
-        var typeLocal = il.DeclareLocal(_types.Type);
+        // options must be emitted $Object in standalone mode.
+        var optionsObjLocal = il.DeclareLocal(runtime.TSObjectType);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // var getPropertyMethod = type.GetMethod("GetProperty", new[] { typeof(string) })
-        var getPropertyMethodLocal = il.DeclareLocal(_types.MethodInfo);
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "GetProperty");
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.String);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.TypeGetMethod);
-        il.Emit(OpCodes.Stloc, getPropertyMethodLocal);
-
-        // if (getPropertyMethod == null) return defaultValue
-        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Stloc, optionsObjLocal);
+        il.Emit(OpCodes.Ldloc, optionsObjLocal);
         il.Emit(OpCodes.Brfalse, returnDefaultLabel);
 
-        // var value = getPropertyMethod.Invoke(options, new object[] { name })
+        // var value = options.GetProperty(name)
         var valueLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldloc, getPropertyMethodLocal);
-        il.Emit(OpCodes.Ldarg_0);  // options
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, optionsObjLocal);
         il.Emit(OpCodes.Ldarg_1);  // name
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.MethodBaseInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
         il.Emit(OpCodes.Stloc, valueLocal);
 
         // if (value is string s) return s
@@ -2466,25 +2400,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, keyBytesLocal);
         il.Emit(OpCodes.Br, createKeyObjectLabel);
 
-        // Try SharpTSBuffer (interpreter mode type) - get Data property via reflection
+        // Standalone-only behavior: no interpreter SharpTSBuffer reflection fallback.
         il.MarkLabel(trySharpTSBufferLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("GetType")!);
-        il.Emit(OpCodes.Ldstr, "Data");
-        il.Emit(OpCodes.Call, _types.TypeGetProperty);
-        il.Emit(OpCodes.Dup);
-        var noDataPropertyLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, noDataPropertyLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Callvirt, typeof(PropertyInfo).GetMethod("GetValue", [_types.Object, typeof(object[])])!);
-        il.Emit(OpCodes.Castclass, _types.ByteArray);
-        il.Emit(OpCodes.Stloc, keyBytesLocal);
-        il.Emit(OpCodes.Br, createKeyObjectLabel);
-
-        il.MarkLabel(noDataPropertyLabel);
-        il.Emit(OpCodes.Pop);
-        // Fallback - throw exception
         il.Emit(OpCodes.Ldstr, "crypto.createSecretKey: key must be a Buffer or string");
         il.Emit(OpCodes.Newobj, typeof(ArgumentException).GetConstructor([_types.String])!);
         il.Emit(OpCodes.Throw);
@@ -2526,38 +2443,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, pemLocal);
         il.Emit(OpCodes.Br, createKeyObjectLabel);
 
-        // Not a string - try to get 'key' property
+        // Not a string - require emitted $Object and read its "key" property.
         il.MarkLabel(notStringLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("GetType")!);
-        il.Emit(OpCodes.Ldstr, "GetProperty");
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.String);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Call, _types.TypeGetMethod);
-        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         var noGetPropertyLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, noGetPropertyLabel);
-
-        // Call GetProperty("key")
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
         il.Emit(OpCodes.Ldstr, "key");
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.MethodBaseInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Stloc, pemLocal);
         il.Emit(OpCodes.Br, createKeyObjectLabel);
 
         il.MarkLabel(noGetPropertyLabel);
-        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldstr, "crypto.createPublicKey: key must be a PEM string or object with 'key' property");
         il.Emit(OpCodes.Newobj, typeof(ArgumentException).GetConstructor([_types.String])!);
         il.Emit(OpCodes.Throw);
@@ -2600,38 +2500,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, pemLocal);
         il.Emit(OpCodes.Br, createKeyObjectLabel);
 
-        // Not a string - try to get 'key' property
+        // Not a string - require emitted $Object and read its "key" property.
         il.MarkLabel(notStringLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("GetType")!);
-        il.Emit(OpCodes.Ldstr, "GetProperty");
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.String);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Call, _types.TypeGetMethod);
-        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         var noGetPropertyLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, noGetPropertyLabel);
-
-        // Call GetProperty("key")
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
         il.Emit(OpCodes.Ldstr, "key");
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.MethodBaseInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Stloc, pemLocal);
         il.Emit(OpCodes.Br, createKeyObjectLabel);
 
         il.MarkLabel(noGetPropertyLabel);
-        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldstr, "crypto.createPrivateKey: key must be a PEM string or object with 'key' property");
         il.Emit(OpCodes.Newobj, typeof(ArgumentException).GetConstructor([_types.String])!);
         il.Emit(OpCodes.Throw);
@@ -2864,563 +2747,5 @@ public static class ScryptImpl
     private static uint RotateLeft(uint value, int count)
     {
         return (value << count) | (value >> (32 - count));
-    }
-}
-
-/// <summary>
-/// Shared reflection-based type cache and factory methods for crypto helpers.
-/// Avoids compile-time dependencies on SharpTS.dll for standalone compiled assemblies.
-/// </summary>
-internal static class CryptoReflectionHelper
-{
-    // Cached types
-    public static readonly Type? SharpTSArrayType = Type.GetType("SharpTS.Runtime.Types.SharpTSArray, SharpTS");
-    public static readonly Type? SharpTSObjectType = Type.GetType("SharpTS.Runtime.Types.SharpTSObject, SharpTS");
-    public static readonly Type? SharpTSBufferType = Type.GetType("SharpTS.Runtime.Types.SharpTSBuffer, SharpTS");
-    public static readonly Type? SharpTSDiffieHellmanType = Type.GetType("SharpTS.Runtime.Types.SharpTSDiffieHellman, SharpTS");
-    public static readonly Type? SharpTSECDHType = Type.GetType("SharpTS.Runtime.Types.SharpTSECDH, SharpTS");
-    public static readonly Type? SharpTSKeyObjectType = Type.GetType("SharpTS.Runtime.Types.SharpTSKeyObject, SharpTS");
-    public static readonly Type? SharpTSPropertyDescriptorType = Type.GetType("SharpTS.Runtime.Types.SharpTSPropertyDescriptor, SharpTS");
-    public static readonly Type? KeyObjectTypeEnum = Type.GetType("SharpTS.Runtime.Types.KeyObjectType, SharpTS");
-
-    /// <summary>Creates a SharpTSArray from a list of items.</summary>
-    public static object CreateArray(IEnumerable<object?> items)
-    {
-        if (SharpTSArrayType == null)
-            throw new InvalidOperationException("SharpTSArray type not found");
-        return Activator.CreateInstance(SharpTSArrayType, new List<object?>(items))!;
-    }
-
-    /// <summary>Creates a SharpTSObject from a dictionary.</summary>
-    public static object CreateObject(Dictionary<string, object?> fields)
-    {
-        if (SharpTSObjectType == null)
-            throw new InvalidOperationException("SharpTSObject type not found");
-        return Activator.CreateInstance(SharpTSObjectType, fields)!;
-    }
-
-    /// <summary>Creates a SharpTSDiffieHellman with prime length.</summary>
-    public static object CreateDiffieHellman(int primeLength)
-    {
-        if (SharpTSDiffieHellmanType == null)
-            throw new InvalidOperationException("SharpTSDiffieHellman type not found");
-        return Activator.CreateInstance(SharpTSDiffieHellmanType, primeLength)!;
-    }
-
-    /// <summary>Creates a SharpTSDiffieHellman with prime and generator.</summary>
-    public static object CreateDiffieHellman(byte[] prime, byte[]? generator)
-    {
-        if (SharpTSDiffieHellmanType == null)
-            throw new InvalidOperationException("SharpTSDiffieHellman type not found");
-        return Activator.CreateInstance(SharpTSDiffieHellmanType, prime, generator)!;
-    }
-
-    /// <summary>Creates a SharpTSDiffieHellman for a named group.</summary>
-    public static object CreateDiffieHellmanGroup(string groupName)
-    {
-        if (SharpTSDiffieHellmanType == null)
-            throw new InvalidOperationException("SharpTSDiffieHellman type not found");
-        return Activator.CreateInstance(SharpTSDiffieHellmanType, groupName, true)!;
-    }
-
-    /// <summary>Creates a SharpTSECDH with curve name.</summary>
-    public static object CreateECDH(string curveName)
-    {
-        if (SharpTSECDHType == null)
-            throw new InvalidOperationException("SharpTSECDH type not found");
-        return Activator.CreateInstance(SharpTSECDHType, curveName)!;
-    }
-
-    /// <summary>Creates a SharpTSKeyObject (secret key) with bytes.</summary>
-    public static object CreateSecretKeyObject(byte[] keyBytes)
-    {
-        if (SharpTSKeyObjectType == null)
-            throw new InvalidOperationException("SharpTSKeyObject type not found");
-        return Activator.CreateInstance(SharpTSKeyObjectType, keyBytes)!;
-    }
-
-    /// <summary>Creates a public SharpTSKeyObject from PEM.</summary>
-    public static object CreatePublicKeyObject(string pem)
-    {
-        if (SharpTSKeyObjectType == null)
-            throw new InvalidOperationException("SharpTSKeyObject type not found");
-        var method = SharpTSKeyObjectType.GetMethod("CreatePublicKey", [typeof(string)]);
-        if (method == null)
-            throw new InvalidOperationException("SharpTSKeyObject.CreatePublicKey method not found");
-        return method.Invoke(null, [pem])!;
-    }
-
-    /// <summary>Creates a private SharpTSKeyObject from PEM.</summary>
-    public static object CreatePrivateKeyObject(string pem)
-    {
-        if (SharpTSKeyObjectType == null)
-            throw new InvalidOperationException("SharpTSKeyObject type not found");
-        var method = SharpTSKeyObjectType.GetMethod("CreatePrivateKey", [typeof(string)]);
-        if (method == null)
-            throw new InvalidOperationException("SharpTSKeyObject.CreatePrivateKey method not found");
-        return method.Invoke(null, [pem])!;
-    }
-
-    /// <summary>Checks if value is a SharpTSBuffer and extracts data.</summary>
-    public static byte[]? TryGetBufferData(object? value)
-    {
-        if (value == null || SharpTSBufferType == null)
-            return null;
-        if (!SharpTSBufferType.IsInstanceOfType(value))
-            return null;
-        var dataProperty = SharpTSBufferType.GetProperty("Data");
-        return dataProperty?.GetValue(value) as byte[];
-    }
-
-    /// <summary>Checks if value is a SharpTSKeyObject and extracts info.</summary>
-    public static (bool isKeyObject, object? rsaKey, bool isPrivate) TryGetKeyObjectInfo(object? value)
-    {
-        if (value == null || SharpTSKeyObjectType == null || KeyObjectTypeEnum == null)
-            return (false, null, false);
-        if (!SharpTSKeyObjectType.IsInstanceOfType(value))
-            return (false, null, false);
-
-        var rsaKeyProperty = SharpTSKeyObjectType.GetProperty("RsaKey");
-        var typeProperty = SharpTSKeyObjectType.GetProperty("Type");
-        if (rsaKeyProperty == null || typeProperty == null)
-            return (false, null, false);
-
-        var rsaKey = rsaKeyProperty.GetValue(value);
-        var keyType = typeProperty.GetValue(value);
-        var privateValue = Enum.Parse(KeyObjectTypeEnum, "Private");
-        var isPrivate = keyType?.Equals(privateValue) == true;
-
-        return (true, rsaKey, isPrivate);
-    }
-}
-
-/// <summary>
-/// Static helper for getHashes() and getCiphers().
-/// Used by compiled code.
-/// </summary>
-public static class CryptoInfoHelper
-{
-    private static readonly string[] _hashes = ["md5", "sha1", "sha256", "sha384", "sha512"];
-    private static readonly string[] _ciphers = ["aes-128-cbc", "aes-192-cbc", "aes-256-cbc", "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"];
-
-    public static object GetHashes()
-    {
-        return CryptoReflectionHelper.CreateArray(_hashes);
-    }
-
-    public static object GetCiphers()
-    {
-        return CryptoReflectionHelper.CreateArray(_ciphers);
-    }
-}
-
-/// <summary>
-/// Static helper for generateKeyPairSync().
-/// Used by compiled code.
-/// </summary>
-public static class CryptoKeyPairHelper
-{
-    public static object GenerateKeyPairSync(string type, object? options)
-    {
-        return type.ToLowerInvariant() switch
-        {
-            "rsa" => GenerateRsaKeyPair(options),
-            "ec" => GenerateEcKeyPair(options),
-            _ => throw new ArgumentException($"crypto.generateKeyPairSync: unsupported key type '{type}'")
-        };
-    }
-
-    /// <summary>
-    /// Returns raw (publicKey, privateKey) tuple for compiled mode to wrap in $Object.
-    /// </summary>
-    public static (string publicKey, string privateKey) GenerateKeyPairRaw(string type, object? options)
-    {
-        return type.ToLowerInvariant() switch
-        {
-            "rsa" => GenerateRsaKeyPairRaw(options),
-            "ec" => GenerateEcKeyPairRaw(options),
-            _ => throw new ArgumentException($"crypto.generateKeyPairSync: unsupported key type '{type}'")
-        };
-    }
-
-    private static object GenerateRsaKeyPair(object? options)
-    {
-        var (publicKey, privateKey) = GenerateRsaKeyPairRaw(options);
-        return CryptoReflectionHelper.CreateObject(new Dictionary<string, object?>
-        {
-            ["publicKey"] = publicKey,
-            ["privateKey"] = privateKey
-        });
-    }
-
-    private static (string publicKey, string privateKey) GenerateRsaKeyPairRaw(object? options)
-    {
-        int modulusLength = 2048;
-        if (options != null)
-        {
-            modulusLength = GetOptionInt(options, "modulusLength", modulusLength);
-        }
-
-        using var rsa = RSA.Create(modulusLength);
-        return (rsa.ExportSubjectPublicKeyInfoPem(), rsa.ExportPkcs8PrivateKeyPem());
-    }
-
-    private static object GenerateEcKeyPair(object? options)
-    {
-        var (publicKey, privateKey) = GenerateEcKeyPairRaw(options);
-        return CryptoReflectionHelper.CreateObject(new Dictionary<string, object?>
-        {
-            ["publicKey"] = publicKey,
-            ["privateKey"] = privateKey
-        });
-    }
-
-    private static (string publicKey, string privateKey) GenerateEcKeyPairRaw(object? options)
-    {
-        var curveName = "prime256v1";
-        if (options != null)
-        {
-            curveName = GetOptionString(options, "namedCurve", curveName);
-        }
-
-        var curve = curveName.ToLowerInvariant() switch
-        {
-            "prime256v1" or "secp256r1" or "p-256" => ECCurve.NamedCurves.nistP256,
-            "secp384r1" or "p-384" => ECCurve.NamedCurves.nistP384,
-            "secp521r1" or "p-521" => ECCurve.NamedCurves.nistP521,
-            _ => throw new ArgumentException($"crypto.generateKeyPairSync: unsupported curve '{curveName}'")
-        };
-
-        using var ecdsa = ECDsa.Create(curve);
-        return (ecdsa.ExportSubjectPublicKeyInfoPem(), ecdsa.ExportPkcs8PrivateKeyPem());
-    }
-
-    private static int GetOptionInt(object options, string name, int defaultValue)
-    {
-        var type = options.GetType();
-        var getPropertyMethod = type.GetMethod("GetProperty", [typeof(string)]);
-        if (getPropertyMethod != null)
-        {
-            var value = getPropertyMethod.Invoke(options, [name]);
-            if (value is double d) return (int)d;
-            return defaultValue;
-        }
-
-        var fieldsProperty = type.GetProperty("Fields");
-        if (fieldsProperty != null)
-        {
-            var fields = fieldsProperty.GetValue(options) as IReadOnlyDictionary<string, object?>;
-            if (fields != null && fields.TryGetValue(name, out var val) && val is double dVal)
-                return (int)dVal;
-        }
-
-        return defaultValue;
-    }
-
-    private static string GetOptionString(object options, string name, string defaultValue)
-    {
-        var type = options.GetType();
-        var getPropertyMethod = type.GetMethod("GetProperty", [typeof(string)]);
-        if (getPropertyMethod != null)
-        {
-            var value = getPropertyMethod.Invoke(options, [name]);
-            if (value is string s) return s;
-            return defaultValue;
-        }
-
-        var fieldsProperty = type.GetProperty("Fields");
-        if (fieldsProperty != null)
-        {
-            var fields = fieldsProperty.GetValue(options) as IReadOnlyDictionary<string, object?>;
-            if (fields != null && fields.TryGetValue(name, out var val) && val is string sVal)
-                return sVal;
-        }
-
-        return defaultValue;
-    }
-}
-
-/// <summary>
-/// Static helper for createDiffieHellman() and getDiffieHellman().
-/// Used by compiled code.
-/// </summary>
-public static class CryptoDHHelper
-{
-    public static object CreateDiffieHellman(object primeOrLength, object? generator)
-    {
-        if (primeOrLength is double d)
-        {
-            return CryptoReflectionHelper.CreateDiffieHellman((int)d);
-        }
-
-        var prime = ConvertToBytes(primeOrLength);
-        byte[]? gen = generator != null ? ConvertToBytes(generator) : null;
-        return CryptoReflectionHelper.CreateDiffieHellman(prime, gen);
-    }
-
-    public static object GetDiffieHellman(string groupName)
-    {
-        return CryptoReflectionHelper.CreateDiffieHellmanGroup(groupName);
-    }
-
-    private static byte[] ConvertToBytes(object value)
-    {
-        var bufferData = CryptoReflectionHelper.TryGetBufferData(value);
-        if (bufferData != null)
-            return bufferData;
-        if (value is byte[] bytes)
-            return bytes;
-        if (value is string str)
-            return System.Text.Encoding.UTF8.GetBytes(str);
-        throw new ArgumentException("Value must be a Buffer, byte array, or string");
-    }
-}
-
-/// <summary>
-/// Static helper for createECDH().
-/// Used by compiled code.
-/// </summary>
-public static class CryptoECDHHelper
-{
-    public static object CreateECDH(string curveName)
-    {
-        return CryptoReflectionHelper.CreateECDH(curveName);
-    }
-}
-
-/// <summary>
-/// Static helper for RSA encryption/decryption operations.
-/// Used by compiled code.
-/// </summary>
-public static class CryptoRsaHelper
-{
-    /// <summary>
-    /// Encrypts data using RSA-OAEP with SHA-1 (Node.js default).
-    /// Returns raw bytes for wrapping by the emitter.
-    /// </summary>
-    public static byte[] PublicEncryptRaw(object key, byte[] buffer)
-    {
-        var keyPem = ExtractKeyPem(key);
-        using var rsa = RSA.Create();
-        rsa.ImportFromPem(keyPem);
-        return rsa.Encrypt(buffer, RSAEncryptionPadding.OaepSHA1);
-    }
-
-    /// <summary>
-    /// Decrypts data using RSA-OAEP with SHA-1 (Node.js default).
-    /// Returns raw bytes for wrapping by the emitter.
-    /// </summary>
-    public static byte[] PrivateDecryptRaw(object key, byte[] buffer)
-    {
-        var keyPem = ExtractKeyPem(key);
-        using var rsa = RSA.Create();
-        rsa.ImportFromPem(keyPem);
-        return rsa.Decrypt(buffer, RSAEncryptionPadding.OaepSHA1);
-    }
-
-    /// <summary>
-    /// Encrypts data using private key with PKCS#1 v1.5 (signing primitive).
-    /// Returns raw bytes for wrapping by the emitter.
-    /// </summary>
-    public static byte[] PrivateEncryptRaw(object key, byte[] buffer)
-    {
-        var keyPem = ExtractKeyPem(key);
-        using var rsa = RSA.Create();
-        rsa.ImportFromPem(keyPem);
-        // privateEncrypt uses Decrypt with Pkcs1 as a workaround for raw RSA operation
-        return rsa.Decrypt(buffer, RSAEncryptionPadding.Pkcs1);
-    }
-
-    /// <summary>
-    /// Decrypts data using public key with PKCS#1 v1.5 (verification primitive).
-    /// Returns raw bytes for wrapping by the emitter.
-    /// </summary>
-    public static byte[] PublicDecryptRaw(object key, byte[] buffer)
-    {
-        var keyPem = ExtractKeyPem(key);
-        using var rsa = RSA.Create();
-        rsa.ImportFromPem(keyPem);
-        // publicDecrypt uses Encrypt with Pkcs1 as a workaround for raw RSA operation
-        return rsa.Encrypt(buffer, RSAEncryptionPadding.Pkcs1);
-    }
-
-    private static string ExtractKeyPem(object key)
-    {
-        if (key is string pem)
-            return pem;
-
-        // Check for SharpTSKeyObject via reflection
-        var (isKeyObject, rsaKey, isPrivate) = CryptoReflectionHelper.TryGetKeyObjectInfo(key);
-        if (isKeyObject)
-        {
-            if (rsaKey != null)
-            {
-                // rsaKey is an RSA instance
-                var rsaType = rsaKey.GetType();
-                var exportMethod = isPrivate
-                    ? rsaType.GetMethod("ExportPkcs8PrivateKeyPem", Type.EmptyTypes)
-                    : rsaType.GetMethod("ExportSubjectPublicKeyInfoPem", Type.EmptyTypes);
-                if (exportMethod != null)
-                    return (string)exportMethod.Invoke(rsaKey, null)!;
-            }
-            throw new ArgumentException("KeyObject must contain an RSA key");
-        }
-
-        // Check for object with 'key' property
-        var type = key.GetType();
-        var getPropertyMethod = type.GetMethod("GetProperty", [typeof(string)]);
-        if (getPropertyMethod != null)
-        {
-            var keyValue = getPropertyMethod.Invoke(key, ["key"]);
-            if (keyValue is string keyStr)
-                return keyStr;
-        }
-
-        var fieldsProperty = type.GetProperty("Fields");
-        if (fieldsProperty != null)
-        {
-            var fields = fieldsProperty.GetValue(key) as IReadOnlyDictionary<string, object?>;
-            if (fields != null && fields.TryGetValue("key", out var val) && val is string keyStr)
-                return keyStr;
-        }
-
-        throw new ArgumentException("Key must be a PEM string, KeyObject, or object with 'key' property");
-    }
-}
-
-/// <summary>
-/// Static helper for KeyObject creation.
-/// Used by compiled code.
-/// </summary>
-public static class CryptoKeyObjectHelper
-{
-    /// <summary>
-    /// Creates a secret (symmetric) KeyObject.
-    /// </summary>
-    public static object CreateSecretKey(object key, object? encoding)
-    {
-        byte[] keyBytes;
-
-        if (key is string keyStr)
-        {
-            var enc = encoding?.ToString() ?? "utf8";
-            keyBytes = enc.ToLowerInvariant() switch
-            {
-                "utf8" or "utf-8" => System.Text.Encoding.UTF8.GetBytes(keyStr),
-                "hex" => Convert.FromHexString(keyStr),
-                "base64" => Convert.FromBase64String(keyStr),
-                "latin1" or "binary" => System.Text.Encoding.Latin1.GetBytes(keyStr),
-                _ => throw new ArgumentException($"crypto.createSecretKey: unsupported encoding '{enc}'")
-            };
-        }
-        else
-        {
-            // Try to extract bytes from SharpTSBuffer via reflection
-            var bufferData = CryptoReflectionHelper.TryGetBufferData(key);
-            if (bufferData != null)
-            {
-                keyBytes = bufferData;
-            }
-            else if (key is byte[] bytes)
-            {
-                keyBytes = bytes;
-            }
-            else
-            {
-                // Try to extract bytes from compiled $Buffer type
-                var extracted = ExtractBufferBytes(key);
-                if (extracted == null)
-                    throw new ArgumentException("crypto.createSecretKey: key must be a Buffer or string");
-                keyBytes = extracted;
-            }
-        }
-
-        return CryptoReflectionHelper.CreateSecretKeyObject(keyBytes);
-    }
-
-    /// <summary>
-    /// Creates a public KeyObject from PEM.
-    /// </summary>
-    public static object CreatePublicKey(object key)
-    {
-        string pem = ExtractPem(key);
-        return CryptoReflectionHelper.CreatePublicKeyObject(pem);
-    }
-
-    /// <summary>
-    /// Creates a private KeyObject from PEM.
-    /// </summary>
-    public static object CreatePrivateKey(object key)
-    {
-        string pem = ExtractPem(key);
-        return CryptoReflectionHelper.CreatePrivateKeyObject(pem);
-    }
-
-    /// <summary>
-    /// Extracts bytes from a Buffer-like object (either SharpTSBuffer or compiled $Buffer).
-    /// </summary>
-    private static byte[]? ExtractBufferBytes(object obj)
-    {
-        // Try SharpTSBuffer via reflection first
-        var bufferData = CryptoReflectionHelper.TryGetBufferData(obj);
-        if (bufferData != null)
-            return bufferData;
-
-        if (obj is byte[] bytes)
-            return bytes;
-
-        var type = obj.GetType();
-
-        // Try to get Data property via reflection (for interpreter types)
-        var dataProperty = type.GetProperty("Data");
-        if (dataProperty != null && dataProperty.PropertyType == typeof(byte[]))
-        {
-            return dataProperty.GetValue(obj) as byte[];
-        }
-
-        // Try to call GetData() method via reflection (for compiled $Buffer)
-        var getDataMethod = type.GetMethod("GetData", Type.EmptyTypes);
-        if (getDataMethod != null && getDataMethod.ReturnType == typeof(byte[]))
-        {
-            return getDataMethod.Invoke(obj, null) as byte[];
-        }
-
-        return null;
-    }
-
-    private static string ExtractPem(object key)
-    {
-        if (key is string pem)
-            return pem;
-
-        // Try SharpTSBuffer via reflection
-        var bufferData = CryptoReflectionHelper.TryGetBufferData(key);
-        if (bufferData != null)
-            return System.Text.Encoding.UTF8.GetString(bufferData);
-
-        // Try to get bytes from compiled $Buffer
-        var bytes = ExtractBufferBytes(key);
-        if (bytes != null)
-            return System.Text.Encoding.UTF8.GetString(bytes);
-
-        // Check for object with 'key' property
-        var type = key.GetType();
-        var getPropertyMethod = type.GetMethod("GetProperty", [typeof(string)]);
-        if (getPropertyMethod != null)
-        {
-            var keyValue = getPropertyMethod.Invoke(key, ["key"]);
-            if (keyValue is string keyStr)
-                return keyStr;
-        }
-
-        var fieldsProperty = type.GetProperty("Fields");
-        if (fieldsProperty != null)
-        {
-            var fields = fieldsProperty.GetValue(key) as IReadOnlyDictionary<string, object?>;
-            if (fields != null && fields.TryGetValue("key", out var val) && val is string keyStr)
-                return keyStr;
-        }
-
-        throw new ArgumentException("Key must be a PEM string, Buffer, or object with 'key' property");
     }
 }

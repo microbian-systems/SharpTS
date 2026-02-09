@@ -737,6 +737,10 @@ public partial class ILEmitter
     /// </summary>
     private bool TryEmitDirectGetterCall(Expr receiver, TypeInfo? receiverType, string propertyName)
     {
+        // Resolve TypeParameter constraints (e.g., T extends Animal → Instance(Animal))
+        if (receiverType is TypeInfo.TypeParameter { Constraint: TypeInfo.Instance } tp)
+            receiverType = tp.Constraint;
+
         // Only handle Instance types (e.g., let p: Person = ...)
         if (receiverType is not TypeInfo.Instance instance)
             return false;

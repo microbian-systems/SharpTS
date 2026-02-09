@@ -409,6 +409,9 @@ public class TypeProvider
     public Type ActionTaskOfObjectAndObject => MakeGenericType(ActionOpen2, TaskOfObject, Object);
     public Type ActionOfTask => MakeGenericType(ActionOpen1, Task);
 
+    // Specialized Func types for bound methods
+    public Type FuncObjectArrayToObject => MakeGenericType(FuncOpen2, ObjectArray, Object);
+
     #endregion
 
     #region Type Resolution Methods

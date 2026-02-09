@@ -35,6 +35,7 @@ public partial class RuntimeEmitter
             _types.Object  // Standalone class, not extending $TSFunction
         );
         _tsTransformDoneCallbackType = typeBuilder;
+        runtime.TransformDoneCallbackType = typeBuilder;
 
         // Fields
         _tsTransformDoneCallbackStreamField = typeBuilder.DefineField(
@@ -72,6 +73,7 @@ public partial class RuntimeEmitter
             _types.Object,
             [_types.ObjectArray]
         );
+        runtime.TransformDoneCallbackInvoke = invokeBuilder;
 
         var invokeIL = invokeBuilder.GetILGenerator();
         var noDataLabel = invokeIL.DefineLabel();

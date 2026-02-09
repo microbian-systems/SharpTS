@@ -171,6 +171,14 @@ public partial class RuntimeEmitter
         encodingGetterIL.Emit(OpCodes.Ret);
         runtime.TSTextDecoderEncodingGetter = encodingGetter;
 
+        var encodingProp = typeBuilder.DefineProperty(
+            "Encoding",
+            PropertyAttributes.None,
+            _types.String,
+            null
+        );
+        encodingProp.SetGetMethod(encodingGetter);
+
         // Property: fatal
         var fatalGetter = typeBuilder.DefineMethod(
             "get_Fatal",
@@ -348,40 +356,43 @@ public partial class RuntimeEmitter
 
         invokeIL.MarkLabel(alreadyWarnedLabel);
 
-        // Find and call Invoke on wrapped object via reflection
-        // var invokeMethod = _wrapped.GetType().GetMethod("Invoke");
-        // if (invokeMethod != null) return invokeMethod.Invoke(_wrapped, new object[] { args });
-        var methodInfoLocal = invokeIL.DeclareLocal(_types.MethodInfo);
-        var resultLocal = invokeIL.DeclareLocal(_types.Object);
-        var noInvokeLabel = invokeIL.DefineLabel();
+        // Invoke wrapped callable through runtime dispatcher (pure IL dispatch).
+        var isTSFunctionLabel = invokeIL.DefineLabel();
+        var isBoundFunctionLabel = invokeIL.DefineLabel();
 
         invokeIL.Emit(OpCodes.Ldarg_0);
         invokeIL.Emit(OpCodes.Ldfld, wrappedField);
-        invokeIL.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
-        invokeIL.Emit(OpCodes.Ldstr, "Invoke");
-        invokeIL.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
-        invokeIL.Emit(OpCodes.Stloc, methodInfoLocal);
+        invokeIL.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        invokeIL.Emit(OpCodes.Brtrue, isTSFunctionLabel);
 
-        invokeIL.Emit(OpCodes.Ldloc, methodInfoLocal);
-        invokeIL.Emit(OpCodes.Brfalse, noInvokeLabel);
-
-        // return methodInfo.Invoke(_wrapped, new object[] { args })
-        invokeIL.Emit(OpCodes.Ldloc, methodInfoLocal);
         invokeIL.Emit(OpCodes.Ldarg_0);
         invokeIL.Emit(OpCodes.Ldfld, wrappedField);
-        invokeIL.Emit(OpCodes.Ldc_I4_1);
-        invokeIL.Emit(OpCodes.Newarr, _types.Object);
-        invokeIL.Emit(OpCodes.Dup);
-        invokeIL.Emit(OpCodes.Ldc_I4_0);
+        invokeIL.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        invokeIL.Emit(OpCodes.Brtrue, isBoundFunctionLabel);
+
+        invokeIL.Emit(OpCodes.Ldstr, "Cannot invoke deprecated function: wrapped value is not callable.");
+        invokeIL.Emit(OpCodes.Newobj, _types.InvalidOperationExceptionCtorString);
+        invokeIL.Emit(OpCodes.Throw);
+
+        invokeIL.MarkLabel(isTSFunctionLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.TSFunctionType);
         invokeIL.Emit(OpCodes.Ldarg_1);
-        invokeIL.Emit(OpCodes.Stelem_Ref);
-        invokeIL.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        invokeIL.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
         invokeIL.Emit(OpCodes.Ret);
 
-        invokeIL.MarkLabel(noInvokeLabel);
-        // Return null if no Invoke method found
-        invokeIL.Emit(OpCodes.Ldnull);
+        invokeIL.MarkLabel(isBoundFunctionLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
+        invokeIL.Emit(OpCodes.Ldarg_1);
+        invokeIL.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvoke);
         invokeIL.Emit(OpCodes.Ret);
+
+        invokeIL.Emit(OpCodes.Ldstr, "Cannot invoke deprecated function: wrapped value is not callable.");
+        invokeIL.Emit(OpCodes.Newobj, _types.InvalidOperationExceptionCtorString);
+        invokeIL.Emit(OpCodes.Throw);
 
         // Override ToString
         var toStringMethod = typeBuilder.DefineMethod(
@@ -589,6 +600,7 @@ public partial class RuntimeEmitter
         toStringIL.Emit(OpCodes.Ldstr, "[Function: promisifyCallback]");
         toStringIL.Emit(OpCodes.Ret);
 
+        runtime.TSPromisifyCallbackInvoke = invokeMethod;
         runtime.TSPromisifyCallbackType = typeBuilder.CreateType()!;
     }
 
@@ -673,42 +685,87 @@ public partial class RuntimeEmitter
         invokeIL.Emit(OpCodes.Newobj, runtime.TSPromisifyCallbackCtor);
         invokeIL.Emit(OpCodes.Stelem_Ref);
 
-        // Call wrapped function via reflection (like $DeprecatedFunction does)
-        // var invokeMethod = _wrapped.GetType().GetMethod("Invoke");
-        var methodInfoLocal = invokeIL.DeclareLocal(_types.MethodInfo);
-        var noInvokeLabel = invokeIL.DefineLabel();
+        // Call wrapped function via runtime dispatcher.
+        var invokeResultLocal = invokeIL.DeclareLocal(_types.Object);
+        var callableLabel = invokeIL.DefineLabel();
         var afterInvokeLabel = invokeIL.DefineLabel();
 
+        // If wrapped is not recognized callable type, resolve with null.
         invokeIL.Emit(OpCodes.Ldarg_0);
         invokeIL.Emit(OpCodes.Ldfld, wrappedField);
-        invokeIL.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
-        invokeIL.Emit(OpCodes.Ldstr, "Invoke");
-        invokeIL.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
-        invokeIL.Emit(OpCodes.Stloc, methodInfoLocal);
-
-        invokeIL.Emit(OpCodes.Ldloc, methodInfoLocal);
-        invokeIL.Emit(OpCodes.Brfalse, noInvokeLabel);
-
-        // invokeMethod.Invoke(_wrapped, new object[] { newArgs })
-        invokeIL.Emit(OpCodes.Ldloc, methodInfoLocal);
+        invokeIL.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        invokeIL.Emit(OpCodes.Brtrue, callableLabel);
         invokeIL.Emit(OpCodes.Ldarg_0);
         invokeIL.Emit(OpCodes.Ldfld, wrappedField);
-        invokeIL.Emit(OpCodes.Ldc_I4_1);
-        invokeIL.Emit(OpCodes.Newarr, _types.Object);
-        invokeIL.Emit(OpCodes.Dup);
-        invokeIL.Emit(OpCodes.Ldc_I4_0);
-        invokeIL.Emit(OpCodes.Ldloc, newArgsLocal);
-        invokeIL.Emit(OpCodes.Stelem_Ref);
-        invokeIL.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
-        invokeIL.Emit(OpCodes.Pop); // Discard return value
-        invokeIL.Emit(OpCodes.Br, afterInvokeLabel);
+        invokeIL.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        invokeIL.Emit(OpCodes.Brtrue, callableLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Isinst, runtime.TSDeprecatedFunctionType);
+        invokeIL.Emit(OpCodes.Brtrue, callableLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Isinst, runtime.TSPromisifiedFunctionType);
+        invokeIL.Emit(OpCodes.Brtrue, callableLabel);
 
-        invokeIL.MarkLabel(noInvokeLabel);
-        // No Invoke method found - just resolve with null
+        // No callable found - just resolve with null
         invokeIL.Emit(OpCodes.Ldloc, tcsLocal);
         invokeIL.Emit(OpCodes.Ldnull);
         var setResultMethod = tcsType.GetMethod("SetResult", [typeof(object)])!;
         invokeIL.Emit(OpCodes.Callvirt, setResultMethod);
+        invokeIL.Emit(OpCodes.Br, afterInvokeLabel);
+
+        invokeIL.MarkLabel(callableLabel);
+        var invokeBoundLabel = invokeIL.DefineLabel();
+        var invokeDeprecatedWrapperLabel = invokeIL.DefineLabel();
+        var invokePromisifiedWrapperLabel = invokeIL.DefineLabel();
+
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        invokeIL.Emit(OpCodes.Brfalse, invokeBoundLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        invokeIL.Emit(OpCodes.Ldloc, newArgsLocal);
+        invokeIL.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        invokeIL.Emit(OpCodes.Stloc, invokeResultLocal);
+        invokeIL.Emit(OpCodes.Br, afterInvokeLabel);
+
+        invokeIL.MarkLabel(invokeBoundLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        invokeIL.Emit(OpCodes.Brfalse, invokeDeprecatedWrapperLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
+        invokeIL.Emit(OpCodes.Ldloc, newArgsLocal);
+        invokeIL.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvoke);
+        invokeIL.Emit(OpCodes.Stloc, invokeResultLocal);
+        invokeIL.Emit(OpCodes.Br, afterInvokeLabel);
+
+        invokeIL.MarkLabel(invokeDeprecatedWrapperLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Isinst, runtime.TSDeprecatedFunctionType);
+        invokeIL.Emit(OpCodes.Brfalse, invokePromisifiedWrapperLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.TSDeprecatedFunctionType);
+        invokeIL.Emit(OpCodes.Ldloc, newArgsLocal);
+        invokeIL.Emit(OpCodes.Callvirt, runtime.TSDeprecatedFunctionInvoke);
+        invokeIL.Emit(OpCodes.Stloc, invokeResultLocal);
+        invokeIL.Emit(OpCodes.Br, afterInvokeLabel);
+
+        invokeIL.MarkLabel(invokePromisifiedWrapperLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.TSPromisifiedFunctionType);
+        invokeIL.Emit(OpCodes.Ldloc, newArgsLocal);
+        invokeIL.Emit(OpCodes.Callvirt, runtime.TSPromisifiedFunctionInvoke);
+        invokeIL.Emit(OpCodes.Stloc, invokeResultLocal);
+        invokeIL.Emit(OpCodes.Br, afterInvokeLabel);
 
         invokeIL.MarkLabel(afterInvokeLabel);
 

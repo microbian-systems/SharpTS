@@ -466,7 +466,12 @@ public partial class ILEmitter
             // Resolve function name (may be module-qualified in multi-module compilation)
             string resolvedFuncName = _ctx.ResolveFunctionName(funcVar.Name.Lexeme);
 
-            if (_ctx.Functions.TryGetValue(resolvedFuncName, out var methodBuilder))
+            // Check if this is an imported function (from another module)
+            // If so, we must use the import field (in TopLevelStaticVars) instead of direct call,
+            // because cross-module method token references don't work correctly
+            bool isImportedFunction = _ctx.TopLevelStaticVars?.ContainsKey(funcVar.Name.Lexeme) == true;
+
+            if (!isImportedFunction && _ctx.Functions.TryGetValue(resolvedFuncName, out var methodBuilder))
             {
                 // Determine target method (may be generic instantiation)
                 MethodInfo targetMethod = methodBuilder;

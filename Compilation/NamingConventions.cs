@@ -27,4 +27,27 @@ public static class NamingConventions
 
         return char.ToUpperInvariant(camelCase[0]) + camelCase[1..];
     }
+
+    /// <summary>
+    /// Converts a PascalCase identifier to camelCase for JavaScript-style property access.
+    /// </summary>
+    /// <remarks>
+    /// Examples:
+    /// - "Name" → "name"
+    /// - "FirstName" → "firstName"
+    /// - "Id" → "id"
+    /// - "url" → "url" (already camelCase, unchanged)
+    /// - "" → "" (empty string unchanged)
+    /// </remarks>
+    public static string ToCamelCase(string pascalCase)
+    {
+        if (string.IsNullOrEmpty(pascalCase))
+            return pascalCase;
+
+        // If already starts with lowercase, return as-is
+        if (char.IsLower(pascalCase[0]))
+            return pascalCase;
+
+        return char.ToLowerInvariant(pascalCase[0]) + pascalCase[1..];
+    }
 }

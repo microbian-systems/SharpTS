@@ -177,8 +177,8 @@ public partial class ILCompiler
         }
 
         // Always use runtime types for compilation.
-        // When --ref-asm is enabled, the assembly will be post-processed in Save()
-        // to rewrite System.Private.CoreLib references to SDK assemblies.
+        // When needed, Save() post-processes metadata to rewrite assembly references
+        // for ref-asm output and to strip leaked SharpTS assembly references.
         // This is necessary because MetadataLoadContext types cannot be used with
         // TypeBuilder.DefineType() for interface implementation (async/generator types).
         _types = TypeProvider.Runtime;
@@ -483,6 +483,11 @@ public partial class ILCompiler
     {
         EmitArrowFunctionBodies();
         DefineAllClassMethods(statements);
+
+        // Emit $IHasFields interface method bodies now that method definitions are available
+        // This uses compile-time dispatch (no runtime reflection)
+        EmitAllHasFieldsInterfaceMethodBodies(statements);
+
         EmitAsyncStateMachineBodies();
         EmitTopLevelAsyncArrowBodies(); // Emit MoveNext for top-level async arrows
         EmitGeneratorStateMachineBodies();
@@ -763,6 +768,26 @@ public partial class ILCompiler
     /// </summary>
     private void ModulePhase8_EmitMethodBodies(List<ParsedModule> modules)
     {
+        // First, define all class methods (populate InstanceMethods dictionary)
+        // This is required before EmitAllHasFieldsInterfaceMethodBodies since GetProperty
+        // uses compile-time dispatch based on registered instance methods
+        foreach (var module in modules)
+        {
+            _modules.CurrentPath = module.Path;
+            DefineAllClassMethods(module.Statements);
+        }
+        _modules.CurrentPath = null;
+
+        // Now emit $IHasFields interface method bodies for all module classes
+        // This must be done before EmitMethodBodyFromStatement since methods need to be defined
+        foreach (var module in modules)
+        {
+            _modules.CurrentPath = module.Path;
+            EmitAllHasFieldsInterfaceMethodBodies(module.Statements);
+        }
+        _modules.CurrentPath = null;
+
+        // Now emit the actual class/function method bodies
         foreach (var module in modules)
         {
             _modules.CurrentPath = module.Path;
@@ -880,15 +905,18 @@ public partial class ILCompiler
         BlobBuilder peBlob = new();
         peBuilder.Serialize(peBlob);
 
-        // If using reference assemblies, post-process to rewrite System.Private.CoreLib
-        // references to SDK reference assemblies (System.Runtime, etc.)
-        if (_useReferenceAssemblies)
-        {
-            // Write to a temp memory stream first
-            using var tempStream = new MemoryStream();
-            peBlob.WriteContentTo(tempStream);
-            tempStream.Position = 0;
+        // Write to a temp memory stream first so we can inspect and optionally rewrite.
+        using var tempStream = new MemoryStream();
+        peBlob.WriteContentTo(tempStream);
+        tempStream.Position = 0;
 
+        var hasSharpTsReference = HasAssemblyReference(tempStream, "SharpTS");
+        tempStream.Position = 0;
+
+        // Post-process when requested (--ref-asm) or when standalone output leaked
+        // a SharpTS assembly reference.
+        if (_useReferenceAssemblies || hasSharpTsReference)
+        {
             // Get the SDK reference assembly path (use explicit path if provided)
             var refAssemblyPath = _sdkPath ?? SdkResolver.FindReferenceAssembliesPath()
                 ?? throw new CompileException(
@@ -906,9 +934,26 @@ public partial class ILCompiler
         else
         {
             // Write directly to file
-            using FileStream fileStream = new(outputPath, FileMode.Create, FileAccess.Write);
-            peBlob.WriteContentTo(fileStream);
+            using var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
+            tempStream.WriteTo(fileStream);
         }
+    }
+
+    private static bool HasAssemblyReference(Stream assemblyStream, string assemblyName)
+    {
+        using var peReader = new PEReader(assemblyStream, PEStreamOptions.LeaveOpen);
+        var reader = peReader.GetMetadataReader();
+
+        foreach (var asmRefHandle in reader.AssemblyReferences)
+        {
+            var asmRef = reader.GetAssemblyReference(asmRefHandle);
+            if (string.Equals(reader.GetString(asmRef.Name), assemblyName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

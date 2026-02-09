@@ -129,24 +129,12 @@ public partial class RuntimeEmitter
         var resultLocal = il.DeclareLocal(listType);
         var dictLocal = il.DeclareLocal(dictType);
         var listLocal = il.DeclareLocal(listType);
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var fieldsLocal = il.DeclareLocal(_types.FieldInfoArray);
         var indexLocal = il.DeclareLocal(_types.Int32);
-        var fieldLocal = il.DeclareLocal(_types.FieldInfo);
-        var fieldNameLocal = il.DeclareLocal(_types.String);
-        var fieldsFieldLocal = il.DeclareLocal(_types.FieldInfo);
         var fieldsDictLocal = il.DeclareLocal(dictType);
 
         var checkListLabel = il.DefineLabel();
         var reflectionLabel = il.DefineLabel();
         var returnEmptyLabel = il.DefineLabel();
-        var fieldLoopStartLabel = il.DefineLabel();
-        var fieldLoopEndLabel = il.DefineLabel();
-        var skipFieldLabel = il.DefineLabel();
-        var checkFieldsDictLabel = il.DefineLabel();
-        var fieldsLoopStartLabel = il.DefineLabel();
-        var fieldsLoopEndLabel = il.DefineLabel();
-        var skipFieldsLabel = il.DefineLabel();
         var returnResultLabel = il.DefineLabel();
 
         // if (obj is Dictionary<string, object?> dict)
@@ -226,83 +214,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 
-        // Reflection for class instances
+        // Emitted $Object path for class instances (standalone-safe)
         il.MarkLabel(reflectionLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnEmptyLabel);
 
-        // var type = obj.GetType();
         il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, resultLocal);
+        // if (!(obj is $IHasFields)) return empty list
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("GetType")!);
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // var fields = type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance));
-        il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("GetFields", [_types.BindingFlags])!);
-        il.Emit(OpCodes.Stloc, fieldsLocal);
-
-        // foreach (var field in fields) if (field.Name.StartsWith("__")) keys.Add(field.Name.Substring(2));
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, indexLocal);
-
-        il.MarkLabel(fieldLoopStartLabel);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldloc, fieldsLocal);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Bge, fieldLoopEndLabel);
-
-        il.Emit(OpCodes.Ldloc, fieldsLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Stloc, fieldLocal);
-
-        // field.Name
-        il.Emit(OpCodes.Ldloc, fieldLocal);
-        il.Emit(OpCodes.Callvirt, _types.FieldInfo.GetProperty("Name")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, fieldNameLocal);
-
-        // if (field.Name.StartsWith("__"))
-        il.Emit(OpCodes.Ldloc, fieldNameLocal);
-        il.Emit(OpCodes.Ldstr, "__");
-        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("StartsWith", [_types.String])!);
-        il.Emit(OpCodes.Brfalse, skipFieldLabel);
-
-        // keys.Add(field.Name.Substring(2));
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldloc, fieldNameLocal);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Substring", [_types.Int32])!);
-        il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
-
-        il.MarkLabel(skipFieldLabel);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, indexLocal);
-        il.Emit(OpCodes.Br, fieldLoopStartLabel);
-
-        il.MarkLabel(fieldLoopEndLabel);
-
-        // Get _fields dictionary and add its keys
-        // var fieldsField = type.GetField("_fields", BindingFlags.NonPublic | BindingFlags.Instance);
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "_fields");
-        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance));
-        il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("GetField", [_types.String, _types.BindingFlags])!);
-        il.Emit(OpCodes.Stloc, fieldsFieldLocal);
-
-        // if (fieldsField != null && fieldsField.GetValue(obj) is Dictionary<string, object?> fieldsDict)
-        il.Emit(OpCodes.Ldloc, fieldsFieldLocal);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
         il.Emit(OpCodes.Brfalse, returnResultLabel);
 
-        il.Emit(OpCodes.Ldloc, fieldsFieldLocal);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.FieldInfo.GetMethod("GetValue", [_types.Object])!);
-        il.Emit(OpCodes.Isinst, dictType);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsFieldsGetter);
         il.Emit(OpCodes.Stloc, fieldsDictLocal);
         il.Emit(OpCodes.Ldloc, fieldsDictLocal);
         il.Emit(OpCodes.Brfalse, returnResultLabel);
@@ -467,94 +393,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, namesLocal);
         il.Emit(OpCodes.Ret);
 
-        // Object case: use reflection to get field names
+        // Object case: use $IHasFields fields dictionary (standalone-safe)
         il.MarkLabel(objectLabel);
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, Type.EmptyTypes));
         il.Emit(OpCodes.Stloc, namesLocal);
-
-        // var type = obj.GetType()
-        var typeLocal = il.DeclareLocal(_types.Type);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Get backing fields: type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
-        var fieldsArrayLocal = il.DeclareLocal(_types.FieldInfoArray);
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.NonPublic | BindingFlags.Instance));
-        il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("GetFields", [_types.BindingFlags])!);
-        il.Emit(OpCodes.Stloc, fieldsArrayLocal);
-
-        // Iterate fields
-        var fieldIdxLocal = il.DeclareLocal(_types.Int32);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, fieldIdxLocal);
-
-        var fieldLoopStart = il.DefineLabel();
-        var fieldLoopEnd = il.DefineLabel();
-        var fieldLoopContinue = il.DefineLabel();
-        il.Emit(OpCodes.Br, fieldLoopEnd);
-
-        il.MarkLabel(fieldLoopStart);
-        // var field = fields[i]
-        var fieldLocal = il.DeclareLocal(_types.FieldInfo);
-        il.Emit(OpCodes.Ldloc, fieldsArrayLocal);
-        il.Emit(OpCodes.Ldloc, fieldIdxLocal);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Stloc, fieldLocal);
-
-        // if (field.Name.StartsWith("__"))
-        il.Emit(OpCodes.Ldloc, fieldLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.FieldInfo, "Name"));
-        il.Emit(OpCodes.Ldstr, "__");
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "StartsWith", _types.String));
-        il.Emit(OpCodes.Brfalse, fieldLoopContinue);
-
-        // names.Add(field.Name.Substring(2))
-        il.Emit(OpCodes.Ldloc, namesLocal);
-        il.Emit(OpCodes.Ldloc, fieldLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.FieldInfo, "Name"));
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Substring", _types.Int32));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
-
-        il.MarkLabel(fieldLoopContinue);
-        // i++
-        il.Emit(OpCodes.Ldloc, fieldIdxLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, fieldIdxLocal);
-
-        il.MarkLabel(fieldLoopEnd);
-        // i < fields.Length
-        il.Emit(OpCodes.Ldloc, fieldIdxLocal);
-        il.Emit(OpCodes.Ldloc, fieldsArrayLocal);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Blt, fieldLoopStart);
-
-        // Get _fields dictionary: type.GetField("_fields", BindingFlags.NonPublic | BindingFlags.Instance)
-        var fieldsFieldLocal = il.DeclareLocal(_types.FieldInfo);
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "_fields");
-        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.NonPublic | BindingFlags.Instance));
-        il.Emit(OpCodes.Callvirt, _types.TypeGetFieldWithFlags);
-        il.Emit(OpCodes.Stloc, fieldsFieldLocal);
-
-        // if (fieldsField != null)
         var noFieldsDictLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, fieldsFieldLocal);
+        var fieldsDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
         il.Emit(OpCodes.Brfalse, noFieldsDictLabel);
 
-        // var fieldsDict = fieldsField.GetValue(obj) as Dictionary<string, object?>
-        var fieldsDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
-        il.Emit(OpCodes.Ldloc, fieldsFieldLocal);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.FieldInfo, "GetValue", _types.Object));
-        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsFieldsGetter);
         il.Emit(OpCodes.Stloc, fieldsDictLocal);
-
-        // if (fieldsDict != null)
         il.Emit(OpCodes.Ldloc, fieldsDictLocal);
         il.Emit(OpCodes.Brfalse, noFieldsDictLabel);
 
@@ -809,19 +661,9 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Ldarg_2);
         ctorIL.Emit(OpCodes.Stfld, methodNameField);
         ctorIL.Emit(OpCodes.Ret);
-    }
 
-    /// <summary>
-    /// Phase 2: Add Invoke method to $BoundArrayMethod and create the type.
-    /// Must be called after EmitRuntimeClass so array methods are available.
-    /// </summary>
-    internal void EmitBoundArrayMethodFinalize(EmittedRuntime runtime)
-    {
-        var typeBuilder = runtime.BoundArrayMethodType;
-        var listField = runtime.BoundArrayMethodListField;
-        var methodNameField = runtime.BoundArrayMethodNameField;
-
-        // Invoke method: public object Invoke(object[] args)
+        // Define Invoke method signature in Phase 1 so EmitInvokeValue can reference it.
+        // The IL body is emitted in Phase 2 (EmitBoundArrayMethodFinalize).
         var invokeBuilder = typeBuilder.DefineMethod(
             "Invoke",
             MethodAttributes.Public,
@@ -829,6 +671,18 @@ public partial class RuntimeEmitter
             [_types.ObjectArray]
         );
         runtime.BoundArrayMethodInvoke = invokeBuilder;
+    }
+
+    /// <summary>
+    /// Phase 2: Emit Invoke method body for $BoundArrayMethod and create the type.
+    /// Must be called after EmitRuntimeClass so array methods are available.
+    /// </summary>
+    internal void EmitBoundArrayMethodFinalize(EmittedRuntime runtime)
+    {
+        var typeBuilder = runtime.BoundArrayMethodType;
+        var listField = runtime.BoundArrayMethodListField;
+        var methodNameField = runtime.BoundArrayMethodNameField;
+        var invokeBuilder = runtime.BoundArrayMethodInvoke;
 
         var il = invokeBuilder.GetILGenerator();
 

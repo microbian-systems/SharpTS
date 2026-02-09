@@ -166,6 +166,10 @@ public partial class ILCompiler
 
         _modules.ExportFields[module.Path] = exportFields;
 
+        // Pre-scan imports and create static fields for imported values
+        // This allows functions in this module to access imported values
+        CreateModuleImportFields(module, moduleType);
+
         // Track which exports are classes (for direct constructor calls in importing modules)
         TrackClassExports(module);
 
@@ -240,6 +244,94 @@ public partial class ILCompiler
         Stmt.Interface or Stmt.TypeAlias => null, // Type-only, no runtime export
         _ => null
     };
+
+    /// <summary>
+    /// Creates static fields for imported values in this module.
+    /// This allows functions in the module to access imported values.
+    /// </summary>
+    private void CreateModuleImportFields(ParsedModule module, TypeBuilder moduleType)
+    {
+        Dictionary<string, FieldBuilder> importFields = [];
+
+        foreach (var stmt in module.Statements)
+        {
+            if (stmt is Stmt.Import import && !import.IsTypeOnly)
+            {
+                // Skip built-in modules - they have their own handling
+                string? builtInModuleName = Runtime.BuiltIns.Modules.BuiltInModuleRegistry.GetModuleName(import.ModulePath);
+                if (builtInModuleName != null)
+                    continue;
+
+                // Default import: import x from './module'
+                if (import.DefaultImport != null)
+                {
+                    string localName = import.DefaultImport.Lexeme;
+                    if (!importFields.ContainsKey(localName))
+                    {
+                        var field = moduleType.DefineField(
+                            $"$import_{localName}",
+                            typeof(object),
+                            FieldAttributes.Assembly | FieldAttributes.Static
+                        );
+                        importFields[localName] = field;
+                    }
+                }
+
+                // Named imports: import { x, y as z } from './module'
+                if (import.NamedImports != null)
+                {
+                    foreach (var spec in import.NamedImports.Where(s => !s.IsTypeOnly))
+                    {
+                        string localName = spec.LocalName?.Lexeme ?? spec.Imported.Lexeme;
+                        if (!importFields.ContainsKey(localName))
+                        {
+                            var field = moduleType.DefineField(
+                                $"$import_{localName}",
+                                typeof(object),
+                                FieldAttributes.Assembly | FieldAttributes.Static
+                            );
+                            importFields[localName] = field;
+                        }
+                    }
+                }
+
+                // Namespace import: import * as x from './module'
+                if (import.NamespaceImport != null)
+                {
+                    string localName = import.NamespaceImport.Lexeme;
+                    if (!importFields.ContainsKey(localName))
+                    {
+                        var field = moduleType.DefineField(
+                            $"$import_{localName}",
+                            typeof(object),
+                            FieldAttributes.Assembly | FieldAttributes.Static
+                        );
+                        importFields[localName] = field;
+                    }
+                }
+            }
+            else if (stmt is Stmt.ImportRequire importReq)
+            {
+                // Skip built-in modules
+                string? builtInModuleName = Runtime.BuiltIns.Modules.BuiltInModuleRegistry.GetModuleName(importReq.ModulePath);
+                if (builtInModuleName != null)
+                    continue;
+
+                string localName = importReq.AliasName.Lexeme;
+                if (!importFields.ContainsKey(localName))
+                {
+                    var field = moduleType.DefineField(
+                        $"$import_{localName}",
+                        typeof(object),
+                        FieldAttributes.Assembly | FieldAttributes.Static
+                    );
+                    importFields[localName] = field;
+                }
+            }
+        }
+
+        _modules.ImportFields[module.Path] = importFields;
+    }
 
     /// <summary>
     /// Emits an expression statement with special handling to wait for async return values.
@@ -343,7 +435,20 @@ public partial class ILCompiler
         ctx.CurrentModulePath = module.Path;
         ctx.ModuleExportFields = _modules.ExportFields;
         ctx.ModuleTypes = _modules.Types;
+        ctx.ModuleInitMethods = _modules.InitMethods;
+        ctx.ModuleImportFields = _modules.ImportFields;
         ctx.ModuleResolver = _modules.Resolver;
+
+        // Populate TopLevelStaticVars with this module's import fields
+        // This allows functions in this module to access imported values
+        if (_modules.ImportFields.TryGetValue(module.Path, out var moduleImportFields))
+        {
+            ctx.TopLevelStaticVars ??= new Dictionary<string, FieldBuilder>();
+            foreach (var (name, field) in moduleImportFields)
+            {
+                ctx.TopLevelStaticVars[name] = field;
+            }
+        }
 
         var emitter = new ILEmitter(ctx);
 
@@ -409,6 +514,7 @@ public partial class ILCompiler
         ctx.CurrentModulePath = script.Path;
         ctx.ModuleExportFields = _modules.ExportFields;
         ctx.ModuleTypes = _modules.Types;
+        ctx.ModuleInitMethods = _modules.InitMethods;
         ctx.ModuleResolver = _modules.Resolver;
 
         var emitter = new ILEmitter(ctx);

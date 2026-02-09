@@ -9,19 +9,23 @@ namespace SharpTS.Compilation;
 public partial class RuntimeEmitter
 {
     /// <summary>
-    /// Emits the $PromiseResolveCallback and $PromiseRejectCallback types,
-    /// and the PromiseFromExecutor method that creates promises from executor functions.
+    /// Emits the $PromiseResolveCallback and $PromiseRejectCallback types.
+    /// Must be called before EmitInvokeValue so the callback types are available for dispatch.
+    /// </summary>
+    private void EmitPromiseCallbackTypes(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        EmitPromiseResolveCallbackType(moduleBuilder, runtime);
+        EmitPromiseRejectCallbackType(moduleBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Emits the PromiseFromExecutor method that creates promises from executor functions.
+    /// Must be called after EmitInvokeValue since it depends on runtime.InvokeValue.
     /// </summary>
     private void EmitPromiseExecutorSupport(TypeBuilder runtimeType, EmittedRuntime runtime, ModuleBuilder moduleBuilder)
     {
-        // Emit the $PromiseResolveCallback type
-        var resolveCallbackType = EmitPromiseResolveCallbackType(moduleBuilder, runtime);
-
-        // Emit the $PromiseRejectCallback type
-        var rejectCallbackType = EmitPromiseRejectCallbackType(moduleBuilder, runtime);
-
         // Emit the PromiseFromExecutor method
-        EmitPromiseFromExecutorMethod(runtimeType, runtime, resolveCallbackType, rejectCallbackType);
+        EmitPromiseFromExecutorMethod(runtimeType, runtime, runtime.PromiseResolveCallbackType, runtime.PromiseRejectCallbackType);
     }
 
     /// <summary>
@@ -151,6 +155,7 @@ public partial class RuntimeEmitter
         typeBuilder.CreateType();
         runtime.PromiseResolveCallbackType = typeBuilder;
         runtime.PromiseResolveCallbackCtor = ctor;
+        runtime.PromiseResolveCallbackInvoke = invokeMethod;
         return typeBuilder;
     }
 
@@ -273,6 +278,7 @@ public partial class RuntimeEmitter
         typeBuilder.CreateType();
         runtime.PromiseRejectCallbackType = typeBuilder;
         runtime.PromiseRejectCallbackCtor = ctor;
+        runtime.PromiseRejectCallbackInvoke = invokeMethod;
         return typeBuilder;
     }
 

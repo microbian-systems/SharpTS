@@ -197,5 +197,30 @@ public class CommonJSModuleTests
         Assert.Equal("3.14159\n16\n", output);
     }
 
+    /// <summary>
+    /// Tests import = require() alias access inside a function scope.
+    /// Ensures alias bindings do not get shadowed by uninitialized locals.
+    /// </summary>
+    [Fact]
+    public void ImportRequire_AliasAccessInsideFunction()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["./lib.ts"] = """
+                export const value: string = "ok";
+                """,
+            ["./main.ts"] = """
+                import lib = require('./lib');
+                function printValue() {
+                    console.log(lib.value);
+                }
+                printValue();
+                """
+        };
+
+        var output = TestHarness.RunModulesCompiled(files, "./main.ts");
+        Assert.Equal("ok\n", output);
+    }
+
     #endregion
 }

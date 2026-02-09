@@ -94,312 +94,23 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitFsLowLevelHelpers(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        EmitFsFlagsParseHelper(typeBuilder, runtime);
-        EmitFdTableGetInstanceHelper(typeBuilder, runtime);
-        EmitFdTableOpenHelper(typeBuilder, runtime);
-        EmitFdTableCloseHelper(typeBuilder, runtime);
-        EmitFdTableGetHelper(typeBuilder, runtime);
+        // Pure-IL helpers for standalone DLLs (no reflection)
+        EmitFsFlagsParsePureHelper(typeBuilder, runtime);
+
+        // Remaining reflection-based helpers (to be converted)
         EmitCreateSharpTSDirHelper(typeBuilder, runtime);
-        EmitLibCCreateHardLinkHelper(typeBuilder, runtime);
+
+        // Pure P/Invoke hard link implementation (Phase 21)
+        EmitHardLinkPInvokeMethods(typeBuilder, runtime);
     }
 
-    /// <summary>
-    /// Emits: public static object FsFlagsParse(object flags)
-    /// Calls FsFlags.Parse via reflection to avoid compile-time dependency on SharpTS.dll.
-    /// Returns a ValueTuple&lt;FileMode, FileAccess, FileShare&gt; as object.
-    /// </summary>
-    private void EmitFsFlagsParseHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "FsFlagsParse",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            [_types.Object]
-        );
-        runtime.FsFlagsParse = method;
-
-        var il = method.GetILGenerator();
-
-        // Use reflection: Type.GetType("...FsFlags, SharpTS").GetMethod("Parse").Invoke(null, [flags])
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-
-        // Get the FsFlags type
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.Modules.Interop.FsFlags, SharpTS");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Get the Parse method: type.GetMethod("Parse", new[] { typeof(object) })
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "Parse");
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.Object);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
-        il.Emit(OpCodes.Stloc, methodInfoLocal);
-
-        // Create args array
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Invoke: methodInfo.Invoke(null, args)
-        il.Emit(OpCodes.Ldloc, methodInfoLocal);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
-        il.Emit(OpCodes.Ret);
-    }
-
-    /// <summary>
-    /// Emits: public static object FdTableGetInstance()
-    /// Gets FileDescriptorTable.Instance via reflection.
-    /// </summary>
-    private void EmitFdTableGetInstanceHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "FdTableGetInstance",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            []
-        );
-        runtime.FdTableGetInstance = method;
-
-        var il = method.GetILGenerator();
-
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var fieldInfoLocal = il.DeclareLocal(_types.FieldInfo);
-
-        // Get the FileDescriptorTable type
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.Modules.Interop.FileDescriptorTable, SharpTS");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Get the Instance field
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "Instance");
-        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetField", _types.String, typeof(BindingFlags)));
-        il.Emit(OpCodes.Stloc, fieldInfoLocal);
-
-        // Get the value: fieldInfo.GetValue(null)
-        il.Emit(OpCodes.Ldloc, fieldInfoLocal);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.FieldInfo, "GetValue", _types.Object));
-        il.Emit(OpCodes.Ret);
-    }
-
-    /// <summary>
-    /// Emits: public static int FdTableOpen(object instance, string path, int mode, int access, int share)
-    /// Calls FileDescriptorTable.Open via reflection.
-    /// </summary>
-    private void EmitFdTableOpenHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "FdTableOpen",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Int32,
-            [_types.Object, _types.String, _types.Int32, _types.Int32, _types.Int32]
-        );
-        runtime.FdTableOpen = method;
-
-        var il = method.GetILGenerator();
-
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-
-        // Get the type from the instance
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Get the Open method
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "Open");
-        il.Emit(OpCodes.Ldc_I4_4);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.String);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldtoken, typeof(FileMode));
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldtoken, typeof(FileAccess));
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Ldtoken, typeof(FileShare));
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
-        il.Emit(OpCodes.Stloc, methodInfoLocal);
-
-        // Create args array: new object[] { path, (FileMode)mode, (FileAccess)access, (FileShare)share }
-        il.Emit(OpCodes.Ldc_I4_4);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Box, typeof(FileMode));
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_3);
-        il.Emit(OpCodes.Box, typeof(FileAccess));
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Ldarg, 4);
-        il.Emit(OpCodes.Box, typeof(FileShare));
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Invoke and return as int
-        il.Emit(OpCodes.Ldloc, methodInfoLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
-        il.Emit(OpCodes.Unbox_Any, _types.Int32);
-        il.Emit(OpCodes.Ret);
-    }
-
-    /// <summary>
-    /// Emits: public static void FdTableClose(object instance, int fd)
-    /// Calls FileDescriptorTable.Close via reflection.
-    /// </summary>
-    private void EmitFdTableCloseHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "FdTableClose",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Void,
-            [_types.Object, _types.Int32]
-        );
-        runtime.FdTableClose = method;
-
-        var il = method.GetILGenerator();
-
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-
-        // Get the type from the instance
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Get the Close method
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "Close");
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.Int32);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
-        il.Emit(OpCodes.Stloc, methodInfoLocal);
-
-        // Create args array
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Box, _types.Int32);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Invoke
-        il.Emit(OpCodes.Ldloc, methodInfoLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ret);
-    }
-
-    /// <summary>
-    /// Emits: public static object FdTableGet(object instance, int fd)
-    /// Calls FileDescriptorTable.Get via reflection. Returns FileStream as object.
-    /// </summary>
-    private void EmitFdTableGetHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "FdTableGet",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            [_types.Object, _types.Int32]
-        );
-        runtime.FdTableGet = method;
-
-        var il = method.GetILGenerator();
-
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-
-        // Get the type from the instance
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Get the Get method
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "Get");
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.Int32);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
-        il.Emit(OpCodes.Stloc, methodInfoLocal);
-
-        // Create args array
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Box, _types.Int32);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Invoke and return
-        il.Emit(OpCodes.Ldloc, methodInfoLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
-        il.Emit(OpCodes.Ret);
-    }
+    // Old reflection-based helpers removed - now using pure-IL:
+    // - FsFlagsParse -> FsFlagsParsePure (RuntimeEmitter.TSFsFlags.cs)
+    // - FdTable* -> $FileDescriptorTable (RuntimeEmitter.TSFileDescriptorTable.cs)
 
     /// <summary>
     /// Emits: public static object CreateSharpTSDir(string path)
-    /// Creates SharpTSDir via reflection.
+    /// Creates emitted $Dir directly.
     /// </summary>
     private void EmitCreateSharpTSDirHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -413,46 +124,14 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var ctorLocal = il.DeclareLocal(_types.ConstructorInfo);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-
-        // Get the SharpTSDir type
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSDir, SharpTS");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Get the constructor
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.String);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", _types.MakeArrayType(_types.Type)));
-        il.Emit(OpCodes.Stloc, ctorLocal);
-
-        // Create args array
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Invoke constructor
-        il.Emit(OpCodes.Ldloc, ctorLocal);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConstructorInfo, "Invoke", _types.ObjectArray));
+        il.Emit(OpCodes.Newobj, runtime.DirCtor);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits: public static void LibCCreateHardLink(string existingPath, string newPath)
-    /// Calls LibC.CreateHardLink via reflection.
+    /// Calls pure-IL hard link helper.
     /// </summary>
     private void EmitLibCCreateHardLinkHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -466,52 +145,9 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-
-        // Get the LibC type
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.Modules.Interop.LibC, SharpTS");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Get the CreateHardLink method
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "CreateHardLink");
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.String);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldtoken, _types.String);
-        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.MakeArrayType(_types.Type)));
-        il.Emit(OpCodes.Stloc, methodInfoLocal);
-
-        // Create args array
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Invoke static method
-        il.Emit(OpCodes.Ldloc, methodInfoLocal);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
-        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Call, runtime.CreateHardLinkPure);
         il.Emit(OpCodes.Ret);
     }
 
@@ -2568,24 +2204,19 @@ public partial class RuntimeEmitter
 
         EmitWithFsErrorHandling(il, runtime, pathLocal, "open", afterTry =>
         {
-            // Parse flags using reflection-based FsFlagsParse helper
+            // Parse flags using pure-IL FsFlagsParsePure helper (no reflection, standalone-compatible)
             il.Emit(OpCodes.Ldarg_1); // flags
-            il.Emit(OpCodes.Call, runtime.FsFlagsParse);
+            il.Emit(OpCodes.Call, runtime.FsFlagsParsePure);
 
-            // The result is a boxed ValueTuple<FileMode, FileAccess, FileShare>
-            // Unbox it to decompose
+            // The result is a ValueTuple<FileMode, FileAccess, FileShare> (not boxed)
             var tupleType = typeof(ValueTuple<FileMode, FileAccess, FileShare>);
             var tupleLocal = il.DeclareLocal(tupleType);
-            il.Emit(OpCodes.Unbox_Any, tupleType);
             il.Emit(OpCodes.Stloc, tupleLocal);
 
-            // Get FileDescriptorTable.Instance via reflection helper
-            il.Emit(OpCodes.Call, runtime.FdTableGetInstance);
-            var fdTableInstance = il.DeclareLocal(_types.Object);
-            il.Emit(OpCodes.Stloc, fdTableInstance);
+            // Get $FileDescriptorTable.Instance (pure-IL, no reflection)
+            il.Emit(OpCodes.Ldsfld, runtime.FileDescriptorTableInstance);
 
-            // Call FdTableOpen(instance, path, mode, access, share)
-            il.Emit(OpCodes.Ldloc, fdTableInstance);
+            // Call instance.Open(path, mode, access, share)
             il.Emit(OpCodes.Ldloc, pathLocal);
             il.Emit(OpCodes.Ldloca, tupleLocal);
             il.Emit(OpCodes.Ldfld, tupleType.GetField("Item1")!);
@@ -2593,7 +2224,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldfld, tupleType.GetField("Item2")!);
             il.Emit(OpCodes.Ldloca, tupleLocal);
             il.Emit(OpCodes.Ldfld, tupleType.GetField("Item3")!);
-            il.Emit(OpCodes.Call, runtime.FdTableOpen);
+            il.Emit(OpCodes.Callvirt, runtime.FileDescriptorTableOpen);
             il.Emit(OpCodes.Conv_R8);
             il.Emit(OpCodes.Stloc, resultLocal);
             il.Emit(OpCodes.Leave, afterTry);
@@ -2632,12 +2263,12 @@ public partial class RuntimeEmitter
 
         EmitWithFsErrorHandling(il, runtime, pathLocal, "close", afterTry =>
         {
-            // Get FileDescriptorTable.Instance via reflection helper
-            il.Emit(OpCodes.Call, runtime.FdTableGetInstance);
+            // Get $FileDescriptorTable.Instance (pure-IL, no reflection)
+            il.Emit(OpCodes.Ldsfld, runtime.FileDescriptorTableInstance);
 
-            // Call FdTableClose(instance, fd)
+            // Call instance.Close(fd)
             il.Emit(OpCodes.Ldloc, fdLocal);
-            il.Emit(OpCodes.Call, runtime.FdTableClose);
+            il.Emit(OpCodes.Callvirt, runtime.FileDescriptorTableClose);
             il.Emit(OpCodes.Leave, afterTry);
         });
         il.Emit(OpCodes.Ret);
@@ -2691,12 +2322,11 @@ public partial class RuntimeEmitter
             var fileStreamReadMethod = typeof(FileStream).GetMethod("Read", [typeof(byte[]), typeof(int), typeof(int)])!;
             var fileStreamSeekMethod = typeof(FileStream).GetMethod("Seek")!;
 
-            // Get FileStream from fd table via reflection helper
-            il.Emit(OpCodes.Call, runtime.FdTableGetInstance);
+            // Get FileStream from $FileDescriptorTable (pure-IL, no reflection)
+            il.Emit(OpCodes.Ldsfld, runtime.FileDescriptorTableInstance);
             il.Emit(OpCodes.Ldloc, fdLocal);
-            il.Emit(OpCodes.Call, runtime.FdTableGet);
+            il.Emit(OpCodes.Callvirt, runtime.FileDescriptorTableGet);
             var streamLocal = il.DeclareLocal(typeof(FileStream));
-            il.Emit(OpCodes.Castclass, typeof(FileStream));
             il.Emit(OpCodes.Stloc, streamLocal);
 
             // Handle position (if not null, seek to it)
@@ -2774,12 +2404,11 @@ public partial class RuntimeEmitter
             var fileStreamWriteMethod = typeof(FileStream).GetMethod("Write", [typeof(byte[]), typeof(int), typeof(int)])!;
             var fileStreamSeekMethod = typeof(FileStream).GetMethod("Seek")!;
 
-            // Get FileStream from fd table via reflection helper
-            il.Emit(OpCodes.Call, runtime.FdTableGetInstance);
+            // Get FileStream from $FileDescriptorTable (pure-IL, no reflection)
+            il.Emit(OpCodes.Ldsfld, runtime.FileDescriptorTableInstance);
             il.Emit(OpCodes.Ldloc, fdLocal);
-            il.Emit(OpCodes.Call, runtime.FdTableGet);
+            il.Emit(OpCodes.Callvirt, runtime.FileDescriptorTableGet);
             var streamLocal = il.DeclareLocal(typeof(FileStream));
-            il.Emit(OpCodes.Castclass, typeof(FileStream));
             il.Emit(OpCodes.Stloc, streamLocal);
 
             // Handle position (if not null and not undefined, seek to it)
@@ -2917,12 +2546,11 @@ public partial class RuntimeEmitter
         {
             var lengthGetter = typeof(FileStream).GetProperty("Length")!.GetMethod!;
 
-            // Get FileStream from fd table via reflection helper
-            il.Emit(OpCodes.Call, runtime.FdTableGetInstance);
+            // Get FileStream from $FileDescriptorTable (pure-IL, no reflection)
+            il.Emit(OpCodes.Ldsfld, runtime.FileDescriptorTableInstance);
             il.Emit(OpCodes.Ldloc, fdLocal);
-            il.Emit(OpCodes.Call, runtime.FdTableGet);
+            il.Emit(OpCodes.Callvirt, runtime.FileDescriptorTableGet);
             var streamLocal = il.DeclareLocal(typeof(FileStream));
-            il.Emit(OpCodes.Castclass, typeof(FileStream));
             il.Emit(OpCodes.Stloc, streamLocal);
 
             // Get file size from stream
@@ -2990,12 +2618,11 @@ public partial class RuntimeEmitter
         {
             var setLengthMethod = typeof(FileStream).GetMethod("SetLength")!;
 
-            // Get FileStream from fd table via reflection helper
-            il.Emit(OpCodes.Call, runtime.FdTableGetInstance);
+            // Get FileStream from $FileDescriptorTable (pure-IL, no reflection)
+            il.Emit(OpCodes.Ldsfld, runtime.FileDescriptorTableInstance);
             il.Emit(OpCodes.Ldloc, fdLocal);
-            il.Emit(OpCodes.Call, runtime.FdTableGet);
+            il.Emit(OpCodes.Callvirt, runtime.FileDescriptorTableGet);
             var streamLocal = il.DeclareLocal(typeof(FileStream));
-            il.Emit(OpCodes.Castclass, typeof(FileStream));
             il.Emit(OpCodes.Stloc, streamLocal);
 
             // SetLength
@@ -3127,9 +2754,9 @@ public partial class RuntimeEmitter
 
             il.MarkLabel(existsLabel);
 
-            // Create new SharpTSDir(path) via reflection helper
+            // Create new $Dir(path) using emitted type
             il.Emit(OpCodes.Ldloc, pathLocal);
-            il.Emit(OpCodes.Call, runtime.CreateSharpTSDir);
+            il.Emit(OpCodes.Newobj, runtime.DirCtor);
             il.Emit(OpCodes.Stloc, resultLocal);
             il.Emit(OpCodes.Leave, afterTry);
         });
@@ -3220,10 +2847,10 @@ public partial class RuntimeEmitter
 
             il.MarkLabel(notExistsLabel);
 
-            // LibC.CreateHardLink(existingPath, newPath) via reflection helper
+            // CreateHardLinkPure(existingPath, newPath) via P/Invoke (Phase 21)
             il.Emit(OpCodes.Ldloc, existingPathLocal);
             il.Emit(OpCodes.Ldloc, newPathLocal);
-            il.Emit(OpCodes.Call, runtime.LibCCreateHardLink);
+            il.Emit(OpCodes.Call, runtime.CreateHardLinkPure);
             il.Emit(OpCodes.Leave, afterTry);
         });
         il.Emit(OpCodes.Ret);

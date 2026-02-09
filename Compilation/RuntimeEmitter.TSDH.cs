@@ -75,6 +75,16 @@ public partial class RuntimeEmitter
         EmitTSDHCtorPrimeLength(_tsDHTypeBuilder, runtime);
         EmitTSDHCtorPrimeGenerator(_tsDHTypeBuilder, runtime);
         EmitTSDHCtorGroup(_tsDHTypeBuilder, runtime);
+
+        // Define GetMember signature in Phase 1 so GetProperty can reference it.
+        // The IL body is emitted in Phase 2 (EmitTSDHGetMember).
+        var getMemberMethod = _tsDHTypeBuilder.DefineMethod(
+            "GetMember",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.String]
+        );
+        runtime.TSDHGetMember = getMemberMethod;
     }
 
     /// <summary>
@@ -904,13 +914,8 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitTSDHGetMember(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "GetMember",
-            MethodAttributes.Public,
-            _types.Object,
-            [_types.String]
-        );
-        runtime.TSDHGetMember = method;
+        // MethodBuilder was already defined in EmitTSDHTypeDefinition (Phase 1)
+        var method = runtime.TSDHGetMember;
 
         var il = method.GetILGenerator();
 

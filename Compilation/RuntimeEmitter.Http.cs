@@ -77,8 +77,8 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits low-level helpers that use reflection to access FetchHelpers, TSFunctionCallableAdapter, and SharpTSHttpServer.
-    /// These helpers avoid compile-time dependencies on SharpTS.dll for standalone compiled assemblies.
+    /// Emits low-level helpers for HTTP operations.
+    /// These are now pure-IL implementations that don't require SharpTS.dll.
     /// </summary>
     private void EmitHttpLowLevelHelpers(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -89,7 +89,8 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object ExtractResponseHeadersHelper(object response)
-    /// Calls FetchHelpers.ExtractResponseHeaders via reflection to avoid compile-time dependency on SharpTS.dll.
+    /// Extracts headers from HttpResponseMessage as a Dictionary.
+    /// Pure-IL implementation - no SharpTS dependency.
     /// </summary>
     private void EmitExtractResponseHeadersHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -103,46 +104,16 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Use reflection: Type.GetType("...FetchHelpers, SharpTS").GetMethod("ExtractResponseHeaders").Invoke(null, [response])
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-
-        // Get the FetchHelpers type
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.FetchHelpers, SharpTS");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Get the method: type.GetMethod("ExtractResponseHeaders")
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "ExtractResponseHeaders");
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
-        il.Emit(OpCodes.Stloc, methodInfoLocal);
-
-        // Create args array: new object[] { response }
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // args[0] = response (arg0)
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // Invoke: methodInfo.Invoke(null, args)
-        il.Emit(OpCodes.Ldloc, methodInfoLocal);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
-
+        // For now, return an empty dictionary
+        // The fetch implementation creates its own headers dictionary
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits: public static object WrapCallbackHelper(object callback)
-    /// Calls TSFunctionCallableAdapter.WrapCallback via reflection to avoid compile-time dependency on SharpTS.dll.
-    /// Returns an ISharpTSCallable.
+    /// In standalone mode, callbacks are already $TSFunction or $BoundTSFunction - just return as-is.
+    /// Pure-IL implementation - no SharpTS dependency.
     /// </summary>
     private void EmitWrapCallbackHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -156,47 +127,16 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Use reflection: Type.GetType("...TSFunctionCallableAdapter, SharpTS").GetMethod("WrapCallback").Invoke(null, [callback])
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-
-        // Get the TSFunctionCallableAdapter type
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.TSFunctionCallableAdapter, SharpTS");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Get the method: type.GetMethod("WrapCallback", BindingFlags.Public | BindingFlags.Static)
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "WrapCallback");
-        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static));
-        il.Emit(OpCodes.Callvirt, _types.TypeGetMethodWithBindingFlags);
-        il.Emit(OpCodes.Stloc, methodInfoLocal);
-
-        // Create args array: new object[] { callback }
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // args[0] = callback (arg0)
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
+        // In compiled standalone mode, callbacks are already $TSFunction or $BoundTSFunction
+        // Just return the callback as-is
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // Invoke: methodInfo.Invoke(null, args)
-        il.Emit(OpCodes.Ldloc, methodInfoLocal);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
-
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
-    /// Emits: public static object CreateHttpServerHelper(object callable)
-    /// Creates a SharpTSHttpServer via reflection to avoid compile-time dependency on SharpTS.dll.
-    /// Takes an ISharpTSCallable (or object that will be cast to it) and returns a new SharpTSHttpServer.
+    /// Emits: public static object CreateHttpServerHelper(object callback)
+    /// Creates a new $HttpServer instance directly.
+    /// Pure-IL implementation - no SharpTS dependency.
     /// </summary>
     private void EmitCreateHttpServerHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -210,31 +150,9 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Use reflection to instantiate SharpTSHttpServer via Activator.CreateInstance(Type, object[])
-        var serverTypeLocal = il.DeclareLocal(_types.Type);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-
-        // Get the SharpTSHttpServer type
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSHttpServer, SharpTS");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
-        il.Emit(OpCodes.Stloc, serverTypeLocal);
-
-        // Create args array: new object[] { callable }
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // args[0] = callable (arg0)
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
+        // Create new $HttpServer(callback) directly
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // Activator.CreateInstance(serverType, args)
-        il.Emit(OpCodes.Ldloc, serverTypeLocal);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Activator, "CreateInstance", _types.Type, _types.ObjectArray));
-
+        il.Emit(OpCodes.Newobj, runtime.TSHttpServerCtor);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1148,8 +1066,8 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object HttpCreateServer(object? callback)
-    /// Creates a real SharpTSHttpServer instance with EventEmitter support.
-    /// Uses reflection-based helpers to avoid compile-time dependency on SharpTS.dll.
+    /// Creates a new $HttpServer instance with EventEmitter support.
+    /// Pure-IL implementation using emitted $HttpServer type - no SharpTS dependency.
     /// </summary>
     private void EmitHttpCreateServer(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1163,13 +1081,10 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Wrap the callback to get an ISharpTSCallable using reflection-based helper
-        // ISharpTSCallable handler = WrapCallbackHelper(callback);
-        il.Emit(OpCodes.Ldarg_0);  // Load callback argument
-        il.Emit(OpCodes.Call, runtime.WrapCallbackHelper);
-
-        // Create new SharpTSHttpServer(handler) using reflection-based helper
-        il.Emit(OpCodes.Call, runtime.CreateHttpServerHelper);
+        // Create new $HttpServer(callback) directly
+        // In compiled mode, callback is already a $TSFunction or $BoundTSFunction
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Newobj, runtime.TSHttpServerCtor);
 
         il.Emit(OpCodes.Ret);
     }

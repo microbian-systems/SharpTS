@@ -67,6 +67,10 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSArray
         EmitTSArrayClass(moduleBuilder, runtime);
 
+        // Emit $IHasFields interface for unified property access
+        // Must come before $Object which implements it
+        EmitHasFieldsInterface(moduleBuilder, runtime);
+
         // Emit $Object class for standalone object support
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSObject
         EmitTSObjectClass(moduleBuilder, runtime);
@@ -163,6 +167,25 @@ public partial class RuntimeEmitter
         // NOTE: Must come after BoundTSFunction (uses TSFunctionType, BoundTSFunctionType)
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSEventEmitter
         EmitTSEventEmitterClass(moduleBuilder, runtime);
+
+        // Emit HTTP types for standalone HTTP server support
+        // NOTE: Must come after EventEmitter ($HttpServer extends $EventEmitter)
+        EmitHttpTypes(moduleBuilder, runtime);
+
+        // Emit $FileDescriptorTable for standalone fs fd-based operations (Phase 21)
+        // NOTE: Must come after $NodeError (uses NodeErrorCtor for EBADF errors)
+        EmitFileDescriptorTableType(moduleBuilder, runtime);
+
+        // Emit $Dirent and $Dir for standalone fs.opendirSync support (Phase 21)
+        // NOTE: Must emit Dirent first since Dir's ReadSync creates Dirent instances
+        EmitDirentType(moduleBuilder, runtime);
+        EmitDirType(moduleBuilder, runtime);
+
+        // Emit $ArrayBuffer, $SharedArrayBuffer, and $DataView for standalone TypedArray support (Phase 20)
+        EmitArrayBufferType(moduleBuilder, runtime);
+        EmitSharedArrayBufferType(moduleBuilder, runtime);
+        EmitDataViewType(moduleBuilder, runtime);
+        EmitTypedArrayTypes(moduleBuilder, runtime);
 
         // Emit stream classes for standalone stream support
         // NOTE: Must come after EventEmitter (stream types extend $EventEmitter)
@@ -352,6 +375,75 @@ public partial class RuntimeEmitter
         // Create and store the interface type
         runtime.IUnionTypeInterface = typeBuilder.CreateType()!;
         runtime.IUnionTypeValueGetter = runtime.IUnionTypeInterface.GetProperty("Value")!.GetGetMethod()!;
+    }
+
+    /// <summary>
+    /// Emits the $IHasFields interface for unified property access.
+    /// Implemented by $Object and user-defined classes to provide a standard way
+    /// to access fields without reflection.
+    /// </summary>
+    private void EmitHasFieldsInterface(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        // Define interface: public interface $IHasFields
+        var typeBuilder = moduleBuilder.DefineType(
+            "$IHasFields",
+            TypeAttributes.Public | TypeAttributes.Interface | TypeAttributes.Abstract,
+            null
+        );
+
+        // Define Fields property getter: Dictionary<string, object?> Fields { get; }
+        var fieldsGetter = typeBuilder.DefineMethod(
+            "get_Fields",
+            MethodAttributes.Public | MethodAttributes.Abstract | MethodAttributes.Virtual |
+            MethodAttributes.SpecialName | MethodAttributes.HideBySig | MethodAttributes.NewSlot,
+            _types.DictionaryStringObject,
+            Type.EmptyTypes
+        );
+
+        var fieldsProp = typeBuilder.DefineProperty(
+            "Fields",
+            PropertyAttributes.None,
+            _types.DictionaryStringObject,
+            null
+        );
+        fieldsProp.SetGetMethod(fieldsGetter);
+
+        // Define GetProperty method: object? GetProperty(string name)
+        typeBuilder.DefineMethod(
+            "GetProperty",
+            MethodAttributes.Public | MethodAttributes.Abstract | MethodAttributes.Virtual |
+            MethodAttributes.HideBySig | MethodAttributes.NewSlot,
+            _types.Object,
+            [_types.String]
+        );
+
+        // Define SetProperty method: void SetProperty(string name, object? value)
+        typeBuilder.DefineMethod(
+            "SetProperty",
+            MethodAttributes.Public | MethodAttributes.Abstract | MethodAttributes.Virtual |
+            MethodAttributes.HideBySig | MethodAttributes.NewSlot,
+            _types.Void,
+            [_types.String, _types.Object]
+        );
+
+        // Define HasProperty method: bool HasProperty(string name)
+        typeBuilder.DefineMethod(
+            "HasProperty",
+            MethodAttributes.Public | MethodAttributes.Abstract | MethodAttributes.Virtual |
+            MethodAttributes.HideBySig | MethodAttributes.NewSlot,
+            _types.Boolean,
+            [_types.String]
+        );
+
+        // Create the interface type
+        var interfaceType = typeBuilder.CreateType()!;
+        runtime.IHasFieldsInterface = interfaceType;
+
+        // Get the actual methods from the created type (not the MethodBuilder refs)
+        runtime.IHasFieldsFieldsGetter = interfaceType.GetMethod("get_Fields")!;
+        runtime.IHasFieldsGetProperty = interfaceType.GetMethod("GetProperty")!;
+        runtime.IHasFieldsSetProperty = interfaceType.GetMethod("SetProperty")!;
+        runtime.IHasFieldsHasProperty = interfaceType.GetMethod("HasProperty")!;
     }
 
     private void EmitTSFunctionClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
@@ -1110,6 +1202,7 @@ public partial class RuntimeEmitter
     private MethodBuilder EmitTSFunctionConvertArgsHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // private static void ConvertArgsForUnionTypes(MethodInfo method, object[] args)
+        // Wraps raw primitive values into union types using op_Implicit operators.
         var method = typeBuilder.DefineMethod(
             "ConvertArgsForUnionTypes",
             MethodAttributes.Private | MethodAttributes.Static,
@@ -1119,120 +1212,124 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // var parameters = method.GetParameters();
-        var paramsLocal = il.DeclareLocal(_types.MakeArrayType(_types.ParameterInfo));
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.MethodInfo.GetMethod("GetParameters")!);
-        il.Emit(OpCodes.Stloc, paramsLocal);
-
-        // for (int i = 0; i < args.Length && i < parameters.Length; i++)
-        var indexLocal = il.DeclareLocal(_types.Int32);
+        // Locals: 0=ParameterInfo[], 1=int count, 2=int i, 3=Type paramType, 4=Type argType, 5=MethodInfo implicitOp
+        var paramsLocal = il.DeclareLocal(typeof(ParameterInfo[]));
+        var countLocal = il.DeclareLocal(typeof(int));
+        var iLocal = il.DeclareLocal(typeof(int));
         var paramTypeLocal = il.DeclareLocal(_types.Type);
-        var argLocal = il.DeclareLocal(_types.Object);
         var argTypeLocal = il.DeclareLocal(_types.Type);
         var implicitOpLocal = il.DeclareLocal(_types.MethodInfo);
 
-        var loopStart = il.DefineLabel();
-        var loopEnd = il.DefineLabel();
-        var continueLoop = il.DefineLabel();
+        // params = method.GetParameters()
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, typeof(MethodBase).GetMethod("GetParameters")!);
+        il.Emit(OpCodes.Stloc, paramsLocal);
+
+        // count = Math.Min(args.Length, params.Length)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Call, typeof(Math).GetMethod("Min", [typeof(int), typeof(int)])!);
+        il.Emit(OpCodes.Stloc, countLocal);
 
         // i = 0
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Stloc, iLocal);
 
-        il.MarkLabel(loopStart);
-        // i < args.Length
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Bge, loopEnd);
+        var loopConditionLabel = il.DefineLabel();
+        var loopBodyLabel = il.DefineLabel();
+        var continueLabel = il.DefineLabel();
 
-        // i < parameters.Length
-        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Br, loopConditionLabel);
+
+        il.MarkLabel(loopBodyLabel);
+
+        // paramType = params[i].ParameterType
         il.Emit(OpCodes.Ldloc, paramsLocal);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Bge, loopEnd);
-
-        // paramType = parameters[i].ParameterType
-        il.Emit(OpCodes.Ldloc, paramsLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("ParameterType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, typeof(ParameterInfo).GetProperty("ParameterType")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, paramTypeLocal);
 
-        // arg = args[i]
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Stloc, argLocal);
-
-        // if (!typeof($IUnionType).IsAssignableFrom(paramType)) continue
-        // Load the $IUnionType interface type
-        il.Emit(OpCodes.Ldtoken, runtime.IUnionTypeInterface);
-        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        // if (!paramType.IsValueType) continue
         il.Emit(OpCodes.Ldloc, paramTypeLocal);
-        il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("IsAssignableFrom", [_types.Type])!);
-        il.Emit(OpCodes.Brfalse, continueLoop);
+        il.Emit(OpCodes.Callvirt, _types.Type.GetProperty("IsValueType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, continueLabel);
 
-        // if (arg == null) continue
-        il.Emit(OpCodes.Ldloc, argLocal);
-        il.Emit(OpCodes.Brfalse, continueLoop);
+        // if (!paramType.Name.StartsWith("Union_")) continue
+        il.Emit(OpCodes.Ldloc, paramTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.Type.GetProperty("Name")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "Union_");
+        il.Emit(OpCodes.Callvirt, typeof(string).GetMethod("StartsWith", [typeof(string)])!);
+        il.Emit(OpCodes.Brfalse, continueLabel);
 
-        // argType = arg.GetType()
-        il.Emit(OpCodes.Ldloc, argLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        // if (args[i] == null) continue
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Brfalse, continueLabel);
+
+        // argType = args[i].GetType()
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("GetType")!);
         il.Emit(OpCodes.Stloc, argTypeLocal);
 
         // if (argType == paramType) continue
         il.Emit(OpCodes.Ldloc, argTypeLocal);
         il.Emit(OpCodes.Ldloc, paramTypeLocal);
         il.Emit(OpCodes.Ceq);
-        il.Emit(OpCodes.Brtrue, continueLoop);
+        il.Emit(OpCodes.Brtrue, continueLabel);
 
-        // implicitOp = paramType.GetMethod("op_Implicit", BindingFlags.Public | BindingFlags.Static, null, new Type[] { argType }, null)
+        // implicitOp = paramType.GetMethod("op_Implicit", new Type[] { argType })
         il.Emit(OpCodes.Ldloc, paramTypeLocal);
         il.Emit(OpCodes.Ldstr, "op_Implicit");
-        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static));
-        il.Emit(OpCodes.Ldnull);  // binder
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Newarr, _types.Type);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldloc, argTypeLocal);
         il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Ldnull);  // modifiers
-        il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("GetMethod", [_types.String, _types.BindingFlags, _types.Binder, _types.MakeArrayType(_types.Type), _types.MakeArrayType(_types.ParameterModifier)])!);
+        il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("GetMethod", [typeof(string), typeof(Type[])])!);
         il.Emit(OpCodes.Stloc, implicitOpLocal);
 
         // if (implicitOp == null) continue
         il.Emit(OpCodes.Ldloc, implicitOpLocal);
-        il.Emit(OpCodes.Brfalse, continueLoop);
+        il.Emit(OpCodes.Brfalse, continueLabel);
 
-        // args[i] = implicitOp.Invoke(null, new object[] { arg })
-        il.Emit(OpCodes.Ldarg_1);  // args
-        il.Emit(OpCodes.Ldloc, indexLocal);  // i
-        il.Emit(OpCodes.Ldloc, implicitOpLocal);  // implicitOp
-        il.Emit(OpCodes.Ldnull);  // target (null for static)
+        // args[i] = implicitOp.Invoke(null, new object[] { args[i] })
+        il.Emit(OpCodes.Ldarg_1);   // args array (for stelem later)
+        il.Emit(OpCodes.Ldloc, iLocal);  // index (for stelem later)
+        il.Emit(OpCodes.Ldloc, implicitOpLocal);
+        il.Emit(OpCodes.Ldnull);     // target (null for static)
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.MethodInfo.GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
-        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, typeof(MethodBase).GetMethod("Invoke", [typeof(object), typeof(object[])])!);
+        il.Emit(OpCodes.Stelem_Ref); // args[i] = result
 
-        il.MarkLabel(continueLoop);
+        il.MarkLabel(continueLabel);
+
         // i++
-        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, indexLocal);
-        il.Emit(OpCodes.Br, loopStart);
+        il.Emit(OpCodes.Stloc, iLocal);
 
-        il.MarkLabel(loopEnd);
+        il.MarkLabel(loopConditionLabel);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, countLocal);
+        il.Emit(OpCodes.Blt, loopBodyLabel);
+
         il.Emit(OpCodes.Ret);
 
         return method;
@@ -2144,6 +2241,8 @@ public partial class RuntimeEmitter
         EmitGetArrayMethod(typeBuilder, runtime);
         EmitGetFunctionMethod(typeBuilder, runtime);  // For bind/call/apply on functions
         EmitToPascalCase(typeBuilder, runtime);  // Must be emitted before GetFieldsProperty/SetFieldsProperty
+        // Promise callback types must be created before InvokeValue (which dispatches to them)
+        EmitPromiseCallbackTypes(moduleBuilder, runtime);
         // InvokeValue/InvokeMethodValue must come before GetFieldsProperty (needs InvokeMethodValue for getters)
         // and before Promise methods (needed by InvokeCallback)
         EmitInvokeValue(typeBuilder, runtime);
@@ -2374,147 +2473,11 @@ public partial class RuntimeEmitter
         // Worker Threads support (SharedArrayBuffer, TypedArrays, Atomics, MessagePort, Worker)
         EmitWorkerHelpers(typeBuilder, runtime);
 
-        // Private field/method access helpers for async contexts
-        EmitPrivateMemberHelpers(typeBuilder, runtime);
+        // Private member helpers are no longer emitted; async/generator emitters
+        // now bind directly to class-private storage and method tokens.
 
         typeBuilder.CreateType();
     }
 
-    #region Reflection-Based Call Helpers
-
-    /// <summary>
-    /// Emits IL that calls a static void method via reflection at runtime.
-    /// This avoids compile-time dependencies on SharpTS.dll.
-    /// Assumes the arguments are already on the stack (arg_0, arg_1, etc.).
-    /// </summary>
-    /// <param name="il">The IL generator.</param>
-    /// <param name="typeName">Full type name including assembly (e.g., "SharpTS.Compilation.PropertyDescriptorStore, SharpTS").</param>
-    /// <param name="methodName">The method name to call.</param>
-    /// <param name="argCount">Number of arguments the method takes (will be loaded from arg_0, arg_1, etc.).</param>
-    private void EmitReflectionCallVoid(ILGenerator il, string typeName, string methodName, int argCount)
-    {
-        // var type = Type.GetType("...");
-        // if (type == null) goto skip;
-        // var method = type.GetMethod("...", BindingFlags.Public | BindingFlags.Static);
-        // if (method == null) goto skip;
-        // var args = new object[] { arg_0, arg_1, ... };
-        // method.Invoke(null, args);
-        // skip:
-
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var methodLocal = il.DeclareLocal(_types.MethodInfo);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        var skipLabel = il.DefineLabel();
-
-        // Get the type by name
-        il.Emit(OpCodes.Ldstr, typeName);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Check if type is null
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Brfalse, skipLabel);
-
-        // Get the method
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, methodName);
-        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
-        il.Emit(OpCodes.Stloc, methodLocal);
-
-        // Check if method is null
-        il.Emit(OpCodes.Ldloc, methodLocal);
-        il.Emit(OpCodes.Brfalse, skipLabel);
-
-        // Create args array
-        il.Emit(OpCodes.Ldc_I4, argCount);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        for (int i = 0; i < argCount; i++)
-        {
-            il.Emit(OpCodes.Dup);
-            il.Emit(OpCodes.Ldc_I4, i);
-            il.Emit(OpCodes.Ldarg, i);
-            il.Emit(OpCodes.Stelem_Ref);
-        }
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Invoke: method.Invoke(null, args)
-        il.Emit(OpCodes.Ldloc, methodLocal);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
-        il.Emit(OpCodes.Pop);  // Discard result (void method)
-
-        il.MarkLabel(skipLabel);
-    }
-
-    /// <summary>
-    /// Emits IL that calls a static method via reflection at runtime and returns the result.
-    /// This avoids compile-time dependencies on SharpTS.dll.
-    /// Assumes the arguments are already on the stack (arg_0, arg_1, etc.).
-    /// </summary>
-    /// <param name="il">The IL generator.</param>
-    /// <param name="typeName">Full type name including assembly.</param>
-    /// <param name="methodName">The method name to call.</param>
-    /// <param name="argCount">Number of arguments the method takes.</param>
-    /// <param name="fallbackValue">Label to branch to if type/method not found, or null to push null as fallback.</param>
-    private void EmitReflectionCall(ILGenerator il, string typeName, string methodName, int argCount, Label? fallbackLabel = null)
-    {
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var methodLocal = il.DeclareLocal(_types.MethodInfo);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        var skipLabel = fallbackLabel ?? il.DefineLabel();
-        var endLabel = il.DefineLabel();
-
-        // Get the type by name
-        il.Emit(OpCodes.Ldstr, typeName);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Check if type is null
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Brfalse, skipLabel);
-
-        // Get the method
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, methodName);
-        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, _types.BindingFlags));
-        il.Emit(OpCodes.Stloc, methodLocal);
-
-        // Check if method is null
-        il.Emit(OpCodes.Ldloc, methodLocal);
-        il.Emit(OpCodes.Brfalse, skipLabel);
-
-        // Create args array
-        il.Emit(OpCodes.Ldc_I4, argCount);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        for (int i = 0; i < argCount; i++)
-        {
-            il.Emit(OpCodes.Dup);
-            il.Emit(OpCodes.Ldc_I4, i);
-            il.Emit(OpCodes.Ldarg, i);
-            il.Emit(OpCodes.Stelem_Ref);
-        }
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Invoke: method.Invoke(null, args)
-        il.Emit(OpCodes.Ldloc, methodLocal);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
-        il.Emit(OpCodes.Br, endLabel);
-
-        // Fallback: push null if no label provided
-        if (fallbackLabel == null)
-        {
-            il.MarkLabel(skipLabel);
-            il.Emit(OpCodes.Ldnull);
-        }
-
-        il.MarkLabel(endLabel);
-    }
-
-    #endregion
 }
 

@@ -185,6 +185,21 @@ public partial class ILCompiler
         var hasFunctionDC = _closures.FunctionDisplayClasses.TryGetValue(qualifiedFunctionName, out var functionDCType);
         var capturedLocals = hasFunctionDC ? _closures.Analyzer.GetCapturedLocals(funcStmt) : null;
 
+        // Merge module import fields with top-level static vars
+        Dictionary<string, FieldBuilder>? topLevelVars = null;
+        if (_topLevelStaticVars.Count > 0 ||
+            (_modules.CurrentPath != null && _modules.ImportFields.TryGetValue(_modules.CurrentPath, out var moduleImportFields) && moduleImportFields.Count > 0))
+        {
+            topLevelVars = new Dictionary<string, FieldBuilder>(_topLevelStaticVars);
+            if (_modules.CurrentPath != null && _modules.ImportFields.TryGetValue(_modules.CurrentPath, out var importFields))
+            {
+                foreach (var (name, field) in importFields)
+                {
+                    topLevelVars[name] = field;
+                }
+            }
+        }
+
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
         {
             ClosureAnalyzer = _closures.Analyzer,
@@ -204,7 +219,7 @@ public partial class ILCompiler
             DeadCode = _deadCodeInfo,
             AsyncMethods = null,
             AsyncArrowBuilders = _async.ArrowBuilders.Count > 0 ? _async.ArrowBuilders : null,
-            TopLevelStaticVars = _topLevelStaticVars,
+            TopLevelStaticVars = topLevelVars,
             // Module support for multi-module compilation
             CurrentModulePath = _modules.CurrentPath,
             ClassToModule = _modules.ClassToModule,

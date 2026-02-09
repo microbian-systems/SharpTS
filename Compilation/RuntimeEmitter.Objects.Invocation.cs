@@ -82,34 +82,170 @@ public partial class RuntimeEmitter
         runtime.InvokeValue = method;
 
         var il = method.GetILGenerator();
-        // Check if value is $TSFunction and call Invoke
-        // For now, use reflection
-        il.Emit(OpCodes.Ldarg_0);
         var nullLabel = il.DefineLabel();
+        var tsFunctionLabel = il.DefineLabel();
+        var boundTsFunctionLabel = il.DefineLabel();
+        var bindWrapperLabel = il.DefineLabel();
+        var callWrapperLabel = il.DefineLabel();
+        var applyWrapperLabel = il.DefineLabel();
+        var deprecatedLabel = il.DefineLabel();
+        var promisifiedLabel = il.DefineLabel();
+        var textDecoderDecodeLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
-        // Try to find and call Invoke method
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Ldstr, "Invoke");
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
-        il.Emit(OpCodes.Dup);
-        var noInvokeLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, noInvokeLabel);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, tsFunctionLabel);
 
-        // Has Invoke - call it
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brtrue, boundTsFunctionLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.FunctionBindWrapperType);
+        il.Emit(OpCodes.Brtrue, bindWrapperLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.FunctionCallWrapperType);
+        il.Emit(OpCodes.Brtrue, callWrapperLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.FunctionApplyWrapperType);
+        il.Emit(OpCodes.Brtrue, applyWrapperLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSDeprecatedFunctionType);
+        il.Emit(OpCodes.Brtrue, deprecatedLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSPromisifiedFunctionType);
+        il.Emit(OpCodes.Brtrue, promisifiedLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSTextDecoderDecodeMethodType);
+        il.Emit(OpCodes.Brtrue, textDecoderDecodeLabel);
+
+        var transformCbLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TransformDoneCallbackType);
+        il.Emit(OpCodes.Brtrue, transformCbLabel);
+
+        var resolveCallbackLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.PromiseResolveCallbackType);
+        il.Emit(OpCodes.Brtrue, resolveCallbackLabel);
+
+        var rejectCallbackLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.PromiseRejectCallbackType);
+        il.Emit(OpCodes.Brtrue, rejectCallbackLabel);
+
+        var promisifyCallbackLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSPromisifyCallbackType);
+        il.Emit(OpCodes.Brtrue, promisifyCallbackLabel);
+
+        var boundArrayMethodLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Brtrue, boundArrayMethodLabel);
+
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(noInvokeLabel);
-        il.Emit(OpCodes.Pop);
+        il.MarkLabel(tsFunctionLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(boundTsFunctionLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(bindWrapperLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.FunctionBindWrapperType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.FunctionBindWrapperInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(callWrapperLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.FunctionCallWrapperType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.FunctionCallWrapperInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(applyWrapperLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.FunctionApplyWrapperType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.FunctionApplyWrapperInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(deprecatedLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSDeprecatedFunctionType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.TSDeprecatedFunctionInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(promisifiedLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSPromisifiedFunctionType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.TSPromisifiedFunctionInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(textDecoderDecodeLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSTextDecoderDecodeMethodType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.TSTextDecoderDecodeMethodInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(transformCbLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TransformDoneCallbackType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.TransformDoneCallbackInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(resolveCallbackLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.PromiseResolveCallbackType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.PromiseResolveCallbackInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(rejectCallbackLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.PromiseRejectCallbackType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.PromiseRejectCallbackInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(promisifyCallbackLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSPromisifyCallbackType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.TSPromisifyCallbackInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(boundArrayMethodLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.BoundArrayMethodInvoke);
+        il.Emit(OpCodes.Ret);
+
         il.MarkLabel(nullLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
@@ -147,23 +283,176 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
         il.Emit(OpCodes.Ret);
 
-        // Not a TSFunction - try InvokeValue fallback
+        // Not a TSFunction - handle known callable wrappers without calling InvokeValue
         il.MarkLabel(notTSFunctionLabel);
         il.Emit(OpCodes.Pop);  // Pop the null from isinst
+        var notBoundLabel = il.DefineLabel();
+        var notBindWrapperLabel = il.DefineLabel();
+        var notCallWrapperLabel = il.DefineLabel();
 
-        // Fall back to InvokeValue(function, args)
-        il.Emit(OpCodes.Ldarg_1);  // function
-        il.Emit(OpCodes.Ldarg_2);  // args
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brfalse, notBoundLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvokeWithThis);
         il.Emit(OpCodes.Ret);
 
+        il.MarkLabel(notBoundLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.FunctionBindWrapperType);
+        il.Emit(OpCodes.Brfalse, notBindWrapperLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.FunctionBindWrapperType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.FunctionBindWrapperInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notBindWrapperLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.FunctionCallWrapperType);
+        il.Emit(OpCodes.Brfalse, notCallWrapperLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.FunctionCallWrapperType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.FunctionCallWrapperInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notCallWrapperLabel);
+        var notApplyWrapperLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.FunctionApplyWrapperType);
+        il.Emit(OpCodes.Brfalse, notApplyWrapperLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.FunctionApplyWrapperType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.FunctionApplyWrapperInvoke);
+        il.Emit(OpCodes.Ret);
+
+        // Check $DeprecatedFunction
+        il.MarkLabel(notApplyWrapperLabel);
+        var notDeprecatedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSDeprecatedFunctionType);
+        il.Emit(OpCodes.Brfalse, notDeprecatedLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TSDeprecatedFunctionType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.TSDeprecatedFunctionInvoke);
+        il.Emit(OpCodes.Ret);
+
+        // Check $PromisifiedFunction
+        il.MarkLabel(notDeprecatedLabel);
+        var notPromisifiedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSPromisifiedFunctionType);
+        il.Emit(OpCodes.Brfalse, notPromisifiedLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TSPromisifiedFunctionType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.TSPromisifiedFunctionInvoke);
+        il.Emit(OpCodes.Ret);
+
+        // Check $TextDecoderDecodeMethod
+        il.MarkLabel(notPromisifiedLabel);
+        var notTextDecoderDecodeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSTextDecoderDecodeMethodType);
+        il.Emit(OpCodes.Brfalse, notTextDecoderDecodeLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TSTextDecoderDecodeMethodType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.TSTextDecoderDecodeMethodInvoke);
+        il.Emit(OpCodes.Ret);
+
+        // Check $TransformDoneCallback
+        il.MarkLabel(notTextDecoderDecodeLabel);
+        var notTransformCbLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TransformDoneCallbackType);
+        il.Emit(OpCodes.Brfalse, notTransformCbLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TransformDoneCallbackType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.TransformDoneCallbackInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notTransformCbLabel);
+
+        // Check $PromiseResolveCallback
+        var notResolveCallbackLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.PromiseResolveCallbackType);
+        il.Emit(OpCodes.Brfalse, notResolveCallbackLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.PromiseResolveCallbackType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.PromiseResolveCallbackInvoke);
+        il.Emit(OpCodes.Ret);
+
+        // Check $PromiseRejectCallback
+        il.MarkLabel(notResolveCallbackLabel);
+        var notRejectCallbackLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.PromiseRejectCallbackType);
+        il.Emit(OpCodes.Brfalse, notRejectCallbackLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.PromiseRejectCallbackType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.PromiseRejectCallbackInvoke);
+        il.Emit(OpCodes.Ret);
+
+        // Check $PromisifyCallback
+        il.MarkLabel(notRejectCallbackLabel);
+        var notPromisifyCallbackLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSPromisifyCallbackType);
+        il.Emit(OpCodes.Brfalse, notPromisifyCallbackLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TSPromisifyCallbackType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.TSPromisifyCallbackInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notPromisifyCallbackLabel);
+
+        // Check $BoundArrayMethod
+        var notBoundArrayMethodLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Brfalse, notBoundArrayMethodLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.BoundArrayMethodInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notBoundArrayMethodLabel);
+
+        // Handle Func<object?[], object?> (from CreateBoundMethod in RuntimeTypes.Methods)
         il.MarkLabel(nullLabel);
+        var notFuncLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.FuncObjectArrayToObject);
+        il.Emit(OpCodes.Brfalse, notFuncLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.FuncObjectArrayToObject);
+        il.Emit(OpCodes.Ldarg_2);  // args
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.FuncObjectArrayToObject, "Invoke", _types.ObjectArray));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notFuncLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
     }
 
     private void EmitGetSuperMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // GetSuperMethod(object instance, string methodName) -> object
+        // Finds a method on the parent class using .NET type hierarchy (BaseType)
+        // and wraps it in a $TSFunction for invocation.
         var method = typeBuilder.DefineMethod(
             "GetSuperMethod",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -173,37 +462,55 @@ public partial class RuntimeEmitter
         runtime.GetSuperMethod = method;
 
         var il = method.GetILGenerator();
-        var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
         var baseTypeLocal = il.DeclareLocal(_types.Type);
+        var methodInfoLocal = il.DeclareLocal(typeof(MethodInfo));
         var nullLabel = il.DefineLabel();
+        var loopLabel = il.DefineLabel();
+        var foundLabel = il.DefineLabel();
 
         // Check if instance is null
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
-        // Get base type and store it
+        // Get instance.GetType().BaseType
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!);
         il.Emit(OpCodes.Stloc, baseTypeLocal);
 
-        // Check if baseType is null
+        // Walk up the type hierarchy looking for the method
+        il.MarkLabel(loopLabel);
+
+        // If baseType is null or System.Object, return null
         il.Emit(OpCodes.Ldloc, baseTypeLocal);
         il.Emit(OpCodes.Brfalse, nullLabel);
-
-        // Get method from base type
         il.Emit(OpCodes.Ldloc, baseTypeLocal);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brtrue, nullLabel);
+
+        // Try to get method: baseType.GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+        il.Emit(OpCodes.Ldloc, baseTypeLocal);
+        il.Emit(OpCodes.Ldarg_1); // methodName
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
         il.Emit(OpCodes.Stloc, methodInfoLocal);
 
-        // Check if method was found
+        // If method found, wrap in $TSFunction and return
         il.Emit(OpCodes.Ldloc, methodInfoLocal);
-        il.Emit(OpCodes.Brfalse, nullLabel);
+        il.Emit(OpCodes.Brtrue, foundLabel);
 
-        // Create $TSFunction(instance, methodInfo) - a callable wrapper
-        il.Emit(OpCodes.Ldarg_0);  // instance (target)
-        il.Emit(OpCodes.Ldloc, methodInfoLocal);  // methodInfo
+        // Method not found at this level - try parent
+        il.Emit(OpCodes.Ldloc, baseTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, baseTypeLocal);
+        il.Emit(OpCodes.Br, loopLabel);
+
+        // Found the method - wrap in $TSFunction(instance, methodInfo)
+        il.MarkLabel(foundLabel);
+        il.Emit(OpCodes.Ldarg_0); // instance (target for the bound method)
+        il.Emit(OpCodes.Ldloc, methodInfoLocal);
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
         il.Emit(OpCodes.Ret);
 

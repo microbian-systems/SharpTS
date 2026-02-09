@@ -201,9 +201,6 @@ public partial class RuntimeEmitter
 
     private MethodBuilder EmitJsonStringifyHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // First emit the class instance stringify helper
-        var classInstanceHelper = EmitStringifyClassInstanceHelper(typeBuilder);
-
         var method = typeBuilder.DefineMethod(
             "StringifyValue",
             MethodAttributes.Private | MethodAttributes.Static,
@@ -261,8 +258,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
-        // Check if it's a class instance (has _fields field)
-        EmitIsClassInstanceCheck(il, valueLocal, classInstanceLabel);
+        // Check if it's an emitted $Object instance
+        EmitIsClassInstanceCheck(il, valueLocal, classInstanceLabel, runtime);
 
         // Default: return "null"
         il.MarkLabel(nullLabel);
@@ -300,12 +297,24 @@ public partial class RuntimeEmitter
         il.MarkLabel(dictLabel);
         EmitStringifyObject(il, method, valueLocal);
 
-        // Class instance - stringify via reflection
+        // Class instance - stringify via $IHasFields fields dictionary
         il.MarkLabel(classInstanceLabel);
+        var classFieldsLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var noClassFieldsLabel = il.DefineLabel();
+
         il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Ldarg_1); // indent
-        il.Emit(OpCodes.Ldarg_2); // depth
-        il.Emit(OpCodes.Call, classInstanceHelper);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsFieldsGetter);
+        il.Emit(OpCodes.Stloc, classFieldsLocal);
+
+        il.Emit(OpCodes.Ldloc, classFieldsLocal);
+        il.Emit(OpCodes.Brfalse, noClassFieldsLabel);
+        il.Emit(OpCodes.Ldloc, classFieldsLocal);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        EmitStringifyObject(il, method, valueLocal);
+
+        il.MarkLabel(noClassFieldsLabel);
+        il.Emit(OpCodes.Ldstr, "{}");
         il.Emit(OpCodes.Ret);
 
         return method;
@@ -350,11 +359,11 @@ public partial class RuntimeEmitter
     private void EmitToJsonCheck(ILGenerator il, LocalBuilder valueLocal, EmittedRuntime runtime)
     {
         var noToJsonLabel = il.DefineLabel();
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var methodLocal = il.DeclareLocal(_types.MethodInfo);
 
-        // First, check if value is a Dictionary<string, object?> (object literal)
+        // First, check if value is a Dictionary<string, object?> (object literal).
+        // If not, check for emitted $Object instance and read toJSON via TSObject.GetProperty.
         var notDictionaryLabel = il.DefineLabel();
+        var notTsObjectLabel = il.DefineLabel();
         var toJsonFieldLocal = il.DeclareLocal(_types.Object);
         var argsLocal = il.DeclareLocal(_types.ObjectArray);
 
@@ -411,51 +420,43 @@ public partial class RuntimeEmitter
         il.MarkLabel(notBoundLabel);
         il.MarkLabel(notDictionaryLabel);
 
-        // Fallback: check for toJSON method via reflection (class instances)
+        // if (!(value is $IHasFields)) return;
         il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, typeLocal);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Brfalse, notTsObjectLabel);
 
-        il.Emit(OpCodes.Ldloc, typeLocal);
+        // toJsonField = (($IHasFields)value).GetProperty("toJSON");
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
         il.Emit(OpCodes.Ldstr, "toJSON");
-        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Public |
-                                      System.Reflection.BindingFlags.Instance));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod",
-            [_types.String, _types.BindingFlags]));
-        il.Emit(OpCodes.Stloc, methodLocal);
-
-        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsGetProperty);
+        il.Emit(OpCodes.Stloc, toJsonFieldLocal);
+        il.Emit(OpCodes.Ldloc, toJsonFieldLocal);
         il.Emit(OpCodes.Brfalse, noToJsonLabel);
 
-        il.Emit(OpCodes.Ldloc, methodLocal);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke",
-            [_types.Object, _types.ObjectArray]));
-        il.Emit(OpCodes.Stloc, valueLocal);
+        // Reuse callable checks from dictionary branch.
+        il.Emit(OpCodes.Ldloc, toJsonFieldLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notTsObjectLabel);
 
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, toJsonFieldLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.Emit(OpCodes.Br, noToJsonLabel);
+
+        il.MarkLabel(notTsObjectLabel);
         il.MarkLabel(noToJsonLabel);
     }
 
-    private void EmitIsClassInstanceCheck(ILGenerator il, LocalBuilder valueLocal, Label classInstanceLabel)
+    private void EmitIsClassInstanceCheck(ILGenerator il, LocalBuilder valueLocal, Label classInstanceLabel, EmittedRuntime runtime)
     {
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var fieldLocal = il.DeclareLocal(_types.FieldInfo);
-
-        // var type = value.GetType();
         il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // var field = type.GetField("_fields", BindingFlags.NonPublic | BindingFlags.Instance);
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "_fields");
-        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetField", [_types.String, _types.BindingFlags]));
-        il.Emit(OpCodes.Stloc, fieldLocal);
-
-        // if (field != null) goto classInstanceLabel;
-        il.Emit(OpCodes.Ldloc, fieldLocal);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
         il.Emit(OpCodes.Brtrue, classInstanceLabel);
     }
 
@@ -694,488 +695,5 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    /// <summary>
-    /// Emits a helper method that stringifies class instances using reflection.
-    /// This handles objects with _fields dictionary and __ prefixed backing fields.
-    /// </summary>
-    private MethodBuilder EmitStringifyClassInstanceHelper(TypeBuilder typeBuilder)
-    {
-        // Note: This is complex because we need to iterate over:
-        // 1. Backing fields (fields starting with __)
-        // 2. _fields dictionary entries
-        // The approach: delegate to RuntimeTypes for now as pure IL is very complex.
-        // This will be inlined by the JIT and the dependency is acceptable since
-        // it's called via reflection pattern which is self-contained.
-
-        // Actually, let's emit a pure IL version that uses RuntimeTypes as a
-        // transitional step. For full standalone, we'd need to emit all the logic.
-
-        // For simplicity during this phase, create a wrapper that delegates to RuntimeTypes.
-        // This can be enhanced later if full standalone is required.
-
-        var method = typeBuilder.DefineMethod(
-            "StringifyClassInstance",
-            MethodAttributes.Private | MethodAttributes.Static,
-            _types.String,
-            [_types.Object, _types.Int32, _types.Int32] // value, indent, depth
-        );
-
-        var il = method.GetILGenerator();
-
-        // Call RuntimeTypes.StringifyClassInstance equivalent via reflection
-        // Actually no - we need this standalone. Let me emit the full logic.
-
-        // Locals
-        var typeLocal = il.DeclareLocal(_types.Type);
-        var sbLocal = il.DeclareLocal(_types.StringBuilder);
-        var fieldsLocal = il.DeclareLocal(_types.DictionaryStringObject);
-        var fieldInfoArrayLocal = il.DeclareLocal(_types.FieldInfoArray);
-        var fieldInfoLocal = il.DeclareLocal(_types.FieldInfo);
-        var iLocal = il.DeclareLocal(_types.Int32);
-        var firstLocal = il.DeclareLocal(_types.Boolean);
-        var nameLocal = il.DeclareLocal(_types.String);
-        var fieldValueLocal = il.DeclareLocal(_types.Object);
-        var stringifyResultLocal = il.DeclareLocal(_types.String);
-        var camelNameLocal = il.DeclareLocal(_types.String);
-
-        var loopStart = il.DefineLabel();
-        var loopEnd = il.DefineLabel();
-        var skipFieldLabel = il.DefineLabel();
-        var notEmptyLabel = il.DefineLabel();
-
-        // var type = value.GetType();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // StringBuilder sb = new StringBuilder("{");
-        il.Emit(OpCodes.Ldstr, "{");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, [_types.String]));
-        il.Emit(OpCodes.Stloc, sbLocal);
-
-        // bool first = true;
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Stloc, firstLocal);
-
-        // var fields = type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetFields", [_types.BindingFlags]));
-        il.Emit(OpCodes.Stloc, fieldInfoArrayLocal);
-
-        // for (int i = 0; i < fields.Length; i++)
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, iLocal);
-
-        il.MarkLabel(loopStart);
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Ldloc, fieldInfoArrayLocal);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Bge, loopEnd);
-
-        // var field = fields[i];
-        il.Emit(OpCodes.Ldloc, fieldInfoArrayLocal);
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Stloc, fieldInfoLocal);
-
-        // var name = field.Name;
-        il.Emit(OpCodes.Ldloc, fieldInfoLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.FieldInfo, "Name").GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, nameLocal);
-
-        // if (!name.StartsWith("__")) continue;
-        il.Emit(OpCodes.Ldloc, nameLocal);
-        il.Emit(OpCodes.Ldstr, "__");
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "StartsWith", [_types.String]));
-        il.Emit(OpCodes.Brfalse, skipFieldLabel);
-
-        // var fieldValue = field.GetValue(value);
-        il.Emit(OpCodes.Ldloc, fieldInfoLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.FieldInfo, "GetValue", [_types.Object]));
-        il.Emit(OpCodes.Stloc, fieldValueLocal);
-
-        // camelName = ToCamelCase(name.Substring(2))
-        // Substring(2) to skip "__"
-        il.Emit(OpCodes.Ldloc, nameLocal);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Substring", [_types.Int32]));
-        // ToCamelCase - just lowercase first character
-        // We'll emit this inline: if (s.Length > 0 && char.IsUpper(s[0])) -> char.ToLower(s[0]) + s.Substring(1)
-        EmitToCamelCase(il, camelNameLocal);
-
-        // if (!first) sb.Append(",");
-        il.Emit(OpCodes.Ldloc, firstLocal);
-        var skipComma = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, skipComma);
-        il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldstr, ",");
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
-        il.Emit(OpCodes.Pop);
-        il.MarkLabel(skipComma);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, firstLocal);
-
-        // sb.Append(EscapeJsonString(camelName));
-        il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldloc, camelNameLocal);
-        il.Emit(OpCodes.Call, _escapeJsonStringMethod!);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
-        il.Emit(OpCodes.Pop);
-
-        // sb.Append(":");
-        il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldstr, ":");
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
-        il.Emit(OpCodes.Pop);
-
-        // Stringify the field value
-        var valueString = il.DeclareLocal(_types.String);
-
-        // Check if fieldValue is null
-        var notNullLabel = il.DefineLabel();
-        var appendValueLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, fieldValueLocal);
-        il.Emit(OpCodes.Brtrue, notNullLabel);
-        il.Emit(OpCodes.Ldstr, "null");
-        il.Emit(OpCodes.Stloc, valueString);
-        il.Emit(OpCodes.Br, appendValueLabel);
-
-        il.MarkLabel(notNullLabel);
-        // For nested objects, we need to recurse. Since we can't call StringifyValue yet,
-        // we'll emit a simplified version that handles primitives and falls back to "null"
-        // for nested objects. This can be improved in a later pass.
-
-        // Check if it's a primitive type - pass method for recursive nested class calls
-        EmitSimplifiedStringify(il, fieldValueLocal, valueString, method);
-
-        il.MarkLabel(appendValueLabel);
-        il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldloc, valueString);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
-        il.Emit(OpCodes.Pop);
-
-        il.MarkLabel(skipFieldLabel);
-        // i++
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, iLocal);
-        il.Emit(OpCodes.Br, loopStart);
-
-        il.MarkLabel(loopEnd);
-
-        // Now handle _fields dictionary
-        EmitStringifyFieldsDictionary(il, typeLocal, sbLocal, firstLocal, method);
-
-        // sb.Append("}");
-        il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldstr, "}");
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
-        il.Emit(OpCodes.Pop);
-
-        il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-        il.Emit(OpCodes.Ret);
-
-        return method;
-    }
-
-    private void EmitToCamelCase(ILGenerator il, LocalBuilder resultLocal)
-    {
-        // String is on stack. Convert to camelCase (lowercase first char)
-        var inputLocal = il.DeclareLocal(_types.String);
-        il.Emit(OpCodes.Stloc, inputLocal);
-
-        var emptyLabel = il.DefineLabel();
-        var alreadyLowerLabel = il.DefineLabel();
-        var endLabel = il.DefineLabel();
-
-        // if (s.Length == 0) return s;
-        il.Emit(OpCodes.Ldloc, inputLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, emptyLabel);
-
-        // if (char.IsLower(s[0])) return s;
-        il.Emit(OpCodes.Ldloc, inputLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", [_types.Int32]));
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Char, "IsLower", [_types.Char]));
-        il.Emit(OpCodes.Brtrue, alreadyLowerLabel);
-
-        // return char.ToLowerInvariant(s[0]) + s.Substring(1);
-        il.Emit(OpCodes.Ldloc, inputLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", [_types.Int32]));
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Char, "ToLowerInvariant", [_types.Char]));
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Char, "ToString", [_types.Char]));
-        il.Emit(OpCodes.Ldloc, inputLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Substring", [_types.Int32]));
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", [_types.String, _types.String]));
-        il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, endLabel);
-
-        il.MarkLabel(emptyLabel);
-        il.MarkLabel(alreadyLowerLabel);
-        il.Emit(OpCodes.Ldloc, inputLocal);
-        il.Emit(OpCodes.Stloc, resultLocal);
-
-        il.MarkLabel(endLabel);
-    }
-
-    private void EmitSimplifiedStringify(ILGenerator il, LocalBuilder valueLocal, LocalBuilder resultLocal, MethodBuilder? classInstanceMethod = null)
-    {
-        // Simplified stringify for nested values - handles primitives
-        var boolLabel = il.DefineLabel();
-        var doubleLabel = il.DefineLabel();
-        var stringLabel = il.DefineLabel();
-        var dictLabel = il.DefineLabel();
-        var listLabel = il.DefineLabel();
-        var nestedClassLabel = il.DefineLabel();
-        var defaultLabel = il.DefineLabel();
-        var endSimplify = il.DefineLabel();
-
-        // Check bool
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, _types.Boolean);
-        il.Emit(OpCodes.Brtrue, boolLabel);
-
-        // Check double
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        il.Emit(OpCodes.Brtrue, doubleLabel);
-
-        // Check string
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brtrue, stringLabel);
-
-        // Check Dictionary
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Brtrue, dictLabel);
-
-        // Check List
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, _types.ListOfObject);
-        il.Emit(OpCodes.Brtrue, listLabel);
-
-        // Check for nested class instance (has _fields) - only if we have a method to call
-        if (classInstanceMethod != null)
-        {
-            var checkTypeLocal = il.DeclareLocal(_types.Type);
-            var checkFieldLocal = il.DeclareLocal(_types.FieldInfo);
-            il.Emit(OpCodes.Ldloc, valueLocal);
-            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-            il.Emit(OpCodes.Stloc, checkTypeLocal);
-            il.Emit(OpCodes.Ldloc, checkTypeLocal);
-            il.Emit(OpCodes.Ldstr, "_fields");
-            il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance));
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetField", [_types.String, _types.BindingFlags]));
-            il.Emit(OpCodes.Stloc, checkFieldLocal);
-            il.Emit(OpCodes.Ldloc, checkFieldLocal);
-            il.Emit(OpCodes.Brtrue, nestedClassLabel);
-        }
-
-        // Default: "null"
-        il.MarkLabel(defaultLabel);
-        il.Emit(OpCodes.Ldstr, "null");
-        il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, endSimplify);
-
-        // bool
-        il.MarkLabel(boolLabel);
-        var trueLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
-        il.Emit(OpCodes.Brtrue, trueLabel);
-        il.Emit(OpCodes.Ldstr, "false");
-        il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, endSimplify);
-        il.MarkLabel(trueLabel);
-        il.Emit(OpCodes.Ldstr, "true");
-        il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, endSimplify);
-
-        // double
-        il.MarkLabel(doubleLabel);
-        var dLocal = il.DeclareLocal(_types.Double);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Stloc, dLocal);
-        // Simple format - use ToString("G15")
-        il.Emit(OpCodes.Ldloca, dLocal);
-        il.Emit(OpCodes.Ldstr, "G15");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "ToString", [_types.String]));
-        il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, endSimplify);
-
-        // string - escape for JSON
-        il.MarkLabel(stringLabel);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Castclass, _types.String);
-        il.Emit(OpCodes.Call, _escapeJsonStringMethod!);
-        il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, endSimplify);
-
-        // Dictionary - stringify as JSON object (simplified for nested dicts)
-        il.MarkLabel(dictLabel);
-        // For nested dicts, use the main StringifyValue recursively via parent method
-        // For now, use a simple "[object Object]" placeholder to avoid System.Text.Json dependency
-        il.Emit(OpCodes.Ldstr, "{}");
-        il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, endSimplify);
-
-        // List - stringify as JSON array (simplified for nested lists)
-        il.MarkLabel(listLabel);
-        // For nested lists, use the main StringifyValue recursively via parent method
-        // For now, use a simple "[]" placeholder to avoid System.Text.Json dependency
-        il.Emit(OpCodes.Ldstr, "[]");
-        il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, endSimplify);
-
-        // Nested class instance - call StringifyClassInstance recursively
-        il.MarkLabel(nestedClassLabel);
-        if (classInstanceMethod != null)
-        {
-            il.Emit(OpCodes.Ldloc, valueLocal);
-            il.Emit(OpCodes.Ldarg_1); // indent
-            il.Emit(OpCodes.Ldarg_2); // depth
-            il.Emit(OpCodes.Ldc_I4_1);
-            il.Emit(OpCodes.Add);
-            il.Emit(OpCodes.Call, classInstanceMethod);
-            il.Emit(OpCodes.Stloc, resultLocal);
-        }
-        else
-        {
-            il.Emit(OpCodes.Ldstr, "{}");
-            il.Emit(OpCodes.Stloc, resultLocal);
-        }
-        il.Emit(OpCodes.Br, endSimplify);
-
-        il.MarkLabel(endSimplify);
-    }
-
-    private void EmitStringifyFieldsDictionary(ILGenerator il, LocalBuilder typeLocal, LocalBuilder sbLocal, LocalBuilder firstLocal, MethodBuilder classInstanceMethod)
-    {
-        // Get _fields dictionary from the object and serialize its entries
-        var fieldsFieldLocal = il.DeclareLocal(_types.FieldInfo);
-        var fieldsValueLocal = il.DeclareLocal(_types.Object);
-        var fieldsDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
-        var enumeratorLocal = il.DeclareLocal(_types.DictionaryStringObjectEnumerator);
-        var currentLocal = il.DeclareLocal(_types.KeyValuePairStringObject);
-
-        var skipFieldsLabel = il.DefineLabel();
-        var loopStart = il.DefineLabel();
-        var loopEnd = il.DefineLabel();
-
-        // var fieldsField = type.GetField("_fields", BindingFlags.NonPublic | BindingFlags.Instance);
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "_fields");
-        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetField", [_types.String, _types.BindingFlags]));
-        il.Emit(OpCodes.Stloc, fieldsFieldLocal);
-
-        // if (fieldsField == null) skip
-        il.Emit(OpCodes.Ldloc, fieldsFieldLocal);
-        il.Emit(OpCodes.Brfalse, skipFieldsLabel);
-
-        // var fieldsValue = fieldsField.GetValue(arg0);
-        il.Emit(OpCodes.Ldloc, fieldsFieldLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.FieldInfo, "GetValue", [_types.Object]));
-        il.Emit(OpCodes.Stloc, fieldsValueLocal);
-
-        // if (fieldsValue == null || !(fieldsValue is Dictionary<string, object?>)) skip
-        il.Emit(OpCodes.Ldloc, fieldsValueLocal);
-        il.Emit(OpCodes.Brfalse, skipFieldsLabel);
-        il.Emit(OpCodes.Ldloc, fieldsValueLocal);
-        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Brfalse, skipFieldsLabel);
-
-        // var dict = (Dictionary<string, object?>)fieldsValue;
-        il.Emit(OpCodes.Ldloc, fieldsValueLocal);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Stloc, fieldsDictLocal);
-
-        // Get enumerator
-        il.Emit(OpCodes.Ldloc, fieldsDictLocal);
-        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("GetEnumerator")!);
-        il.Emit(OpCodes.Stloc, enumeratorLocal);
-
-        il.MarkLabel(loopStart);
-        il.Emit(OpCodes.Ldloca, enumeratorLocal);
-        il.Emit(OpCodes.Call, _types.DictionaryStringObjectEnumerator.GetMethod("MoveNext")!);
-        il.Emit(OpCodes.Brfalse, loopEnd);
-
-        il.Emit(OpCodes.Ldloca, enumeratorLocal);
-        il.Emit(OpCodes.Call, _types.DictionaryStringObjectEnumerator.GetProperty("Current")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, currentLocal);
-
-        // if (!first) sb.Append(",");
-        il.Emit(OpCodes.Ldloc, firstLocal);
-        var skipComma = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, skipComma);
-        il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldstr, ",");
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
-        il.Emit(OpCodes.Pop);
-        il.MarkLabel(skipComma);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, firstLocal);
-
-        // sb.Append(EscapeJsonString(kv.Key));
-        il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldloca, currentLocal);
-        il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Key").GetGetMethod()!);
-        il.Emit(OpCodes.Call, _escapeJsonStringMethod!);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
-        il.Emit(OpCodes.Pop);
-
-        // sb.Append(":");
-        il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldstr, ":");
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
-        il.Emit(OpCodes.Pop);
-
-        // Serialize value - simplified
-        var valueStringLocal = il.DeclareLocal(_types.String);
-        var fieldVal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldloca, currentLocal);
-        il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Value").GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, fieldVal);
-
-        // Check for null
-        var notNullLabel = il.DefineLabel();
-        var appendLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, fieldVal);
-        il.Emit(OpCodes.Brtrue, notNullLabel);
-        il.Emit(OpCodes.Ldstr, "null");
-        il.Emit(OpCodes.Stloc, valueStringLocal);
-        il.Emit(OpCodes.Br, appendLabel);
-
-        il.MarkLabel(notNullLabel);
-        EmitSimplifiedStringify(il, fieldVal, valueStringLocal, classInstanceMethod);
-
-        il.MarkLabel(appendLabel);
-        il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldloc, valueStringLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
-        il.Emit(OpCodes.Pop);
-
-        il.Emit(OpCodes.Br, loopStart);
-
-        il.MarkLabel(loopEnd);
-
-        // Dispose enumerator
-        il.Emit(OpCodes.Ldloca, enumeratorLocal);
-        il.Emit(OpCodes.Constrained, _types.DictionaryStringObjectEnumerator);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IDisposable, "Dispose"));
-
-        il.MarkLabel(skipFieldsLabel);
-    }
 }
 
