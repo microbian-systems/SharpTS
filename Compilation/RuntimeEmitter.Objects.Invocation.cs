@@ -152,6 +152,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
         il.Emit(OpCodes.Brtrue, boundArrayMethodLabel);
 
+        // Handle Func<object?[], object?> (from CreateBoundMethod in RuntimeTypes.Methods)
+        var funcDelegateLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.FuncObjectArrayToObject);
+        il.Emit(OpCodes.Brtrue, funcDelegateLabel);
+
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
@@ -244,6 +250,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, runtime.BoundArrayMethodType);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, runtime.BoundArrayMethodInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(funcDelegateLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.FuncObjectArrayToObject);
+        il.Emit(OpCodes.Ldarg_1);  // args
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.FuncObjectArrayToObject, "Invoke", _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(nullLabel);
