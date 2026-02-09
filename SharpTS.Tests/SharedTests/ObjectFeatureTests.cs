@@ -1944,4 +1944,51 @@ public class ObjectFeatureTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("2\ntrue\ntrue\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_WithBoundGetterSetter(ExecutionMode mode)
+    {
+        // Regression: accessors stored as bound/wrapper callables must be invocable
+        var source = """
+            let backing = 0;
+            function myGetter(): number { return backing; }
+            function mySetter(v: number): void { backing = v; }
+            let obj: any = {};
+            Object.defineProperty(obj, "val", {
+                get: myGetter,
+                set: mySetter,
+                enumerable: true,
+                configurable: true
+            });
+            obj.val = 42;
+            console.log(obj.val);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_WithArrowGetterSetter(ExecutionMode mode)
+    {
+        // Regression: arrow function accessors via defineProperty
+        var source = """
+            let storage: any = { _count: 0 };
+            let obj: any = {};
+            Object.defineProperty(obj, "count", {
+                get: () => storage._count,
+                set: (v: number) => { storage._count = v; },
+                enumerable: true,
+                configurable: true
+            });
+            obj.count = 10;
+            console.log(obj.count);
+            console.log(storage._count);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n10\n", output);
+    }
 }

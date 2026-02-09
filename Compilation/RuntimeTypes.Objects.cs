@@ -426,6 +426,18 @@ public static partial class RuntimeTypes
             return tsFunc.Invoke();
         }
 
+        // Bound method delegate (from CreateBoundMethod in RuntimeTypes.Methods)
+        if (accessor is Func<object?[], object?> boundMethod)
+        {
+            return boundMethod(Array.Empty<object?>());
+        }
+
+        // Generic delegate fallback
+        if (accessor is Delegate del)
+        {
+            return del.DynamicInvoke(new object[] { Array.Empty<object?>() });
+        }
+
         return null;
     }
 
@@ -441,6 +453,20 @@ public static partial class RuntimeTypes
         {
             tsFunc.BindThis(thisArg);
             tsFunc.Invoke(value);
+            return;
+        }
+
+        // Bound method delegate (from CreateBoundMethod in RuntimeTypes.Methods)
+        if (accessor is Func<object?[], object?> boundMethod)
+        {
+            boundMethod(new object?[] { value });
+            return;
+        }
+
+        // Generic delegate fallback
+        if (accessor is Delegate del)
+        {
+            del.DynamicInvoke(new object[] { new object?[] { value } });
             return;
         }
     }
