@@ -32,6 +32,11 @@ public static class BuiltInTypes
                 StringType,
                 RequiredParams: 0,
                 HasRestParam: true),
+            "fromCodePoint" => new TypeInfo.Function(
+                [new TypeInfo.Array(NumberType)],  // rest parameter for code points
+                StringType,
+                RequiredParams: 0,
+                HasRestParam: true),
             "raw" => new TypeInfo.Function(
                 [AnyType, new TypeInfo.Array(AnyType)],  // template strings array + substitutions
                 StringType,
@@ -62,6 +67,7 @@ public static class BuiltInTypes
             "padStart" => new TypeInfo.Function([NumberType, StringType], StringType, RequiredParams: 1), // padString is optional
             "padEnd" => new TypeInfo.Function([NumberType, StringType], StringType, RequiredParams: 1), // padString is optional
             "charCodeAt" => new TypeInfo.Function([NumberType], NumberType),
+            "codePointAt" => new TypeInfo.Function([NumberType], NumberType),
             "concat" => new TypeInfo.Function([new TypeInfo.Array(StringType)], StringType, RequiredParams: 0, HasRestParam: true), // variadic - takes 0 or more string arguments
             "lastIndexOf" => new TypeInfo.Function([StringType], NumberType),
             "trimStart" => new TypeInfo.Function([], StringType),

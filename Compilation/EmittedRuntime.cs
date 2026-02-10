@@ -178,6 +178,8 @@ public class EmittedRuntime
     public MethodBuilder StringReplaceAll { get; set; } = null!;
     public MethodBuilder StringAt { get; set; } = null!;
     public MethodBuilder StringFromCharCode { get; set; } = null!;
+    public MethodBuilder StringCodePointAt { get; set; } = null!;
+    public MethodBuilder StringFromCodePoint { get; set; } = null!;
 
     // Object methods
     public MethodBuilder CreateObject { get; set; } = null!;

@@ -208,7 +208,7 @@ This document tracks TypeScript language features and their implementation statu
 |---------|--------|-------|
 | `console.log` | ✅ | Multiple arguments, printf-style format specifiers (%s, %d, %i, %f, %o, %O, %j, %%) |
 | `Math` object | ✅ | PI, E, abs, floor, ceil, round, sqrt, sin, cos, tan, log, exp, sign, trunc, pow, min, max, random |
-| String methods | ✅ | length, charAt, substring, indexOf, toUpperCase, toLowerCase, trim, replace, split, includes, startsWith, endsWith, slice, repeat, padStart, padEnd, charCodeAt, concat, lastIndexOf, trimStart, trimEnd, replaceAll, at |
+| String methods | ✅ | length, charAt, substring, indexOf, toUpperCase, toLowerCase, trim, replace, split, includes, startsWith, endsWith, slice, repeat, padStart, padEnd, charCodeAt, codePointAt, concat, lastIndexOf, trimStart, trimEnd, replaceAll, at |
 | Array methods | ✅ | push, pop, shift, unshift, reverse, slice, concat, map, filter, forEach, find, findIndex, findLast, findLastIndex, some, every, reduce, reduceRight, includes, indexOf, join, sort, toSorted, toReversed, with, flat, flatMap, splice, toSpliced, at, fill, copyWithin, entries, keys, values |
 | `JSON.parse`/`stringify` | ✅ | With reviver, replacer, indentation, class instances, toJSON(), BigInt TypeError |
 | `Object.keys`/`values`/`entries`/`fromEntries`/`hasOwn` | ✅ | Full support for object literals and class instances |
@@ -358,9 +358,9 @@ This section documents JavaScript/TypeScript features that are **not currently i
 |---------|--------|-------|
 | `normalize()` | ❌ | Unicode normalization |
 | `localeCompare()` | ❌ | Locale-aware comparison |
-| `codePointAt()` | ❌ | Use `charCodeAt()` for BMP |
+| `codePointAt()` | ✅ | Full Unicode code point at position; handles surrogate pairs for supplementary characters |
 | `String.fromCharCode()` | ✅ | Creates string from UTF-16 code units |
-| `String.fromCodePoint()` | ❌ | |
+| `String.fromCodePoint()` | ✅ | Creates string from Unicode code points; handles supplementary characters (> U+FFFF) via surrogate pairs |
 
 ### Reflect API (Standard)
 

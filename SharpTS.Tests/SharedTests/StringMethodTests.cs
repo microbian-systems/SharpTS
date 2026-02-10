@@ -644,6 +644,184 @@ public class StringMethodTests
 
     #endregion
 
+    #region String.fromCodePoint Static Method
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCodePoint_BasicBMP(ExecutionMode mode)
+    {
+        var source = """
+            console.log(String.fromCodePoint(72, 101, 108, 108, 111));
+            console.log(String.fromCodePoint(65));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Hello\nA\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCodePoint_NoArguments(ExecutionMode mode)
+    {
+        var source = """
+            console.log(">" + String.fromCodePoint() + "<");
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("><\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCodePoint_SupplementaryCharacters(ExecutionMode mode)
+    {
+        // U+1F600 = 128512 (Grinning Face emoji)
+        // U+1D11E = 119070 (Musical Symbol G Clef)
+        var source = """
+            const emoji = String.fromCodePoint(128512);
+            console.log(emoji.length);
+            const clef = String.fromCodePoint(119070);
+            console.log(clef.length);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        // Supplementary characters require 2 UTF-16 code units (surrogate pair)
+        Assert.Equal("2\n2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCodePoint_MixedBMPAndSupplementary(ExecutionMode mode)
+    {
+        var source = """
+            const s = String.fromCodePoint(65, 128512, 66);
+            console.log(s.length);
+            console.log(s.charCodeAt(0));
+            console.log(s.charCodeAt(3));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        // 'A' (1) + emoji (2 surrogates) + 'B' (1) = 4
+        Assert.Equal("4\n65\n66\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCodePoint_WithVariables(ExecutionMode mode)
+    {
+        var source = """
+            const cp = 9731;
+            const result = String.fromCodePoint(cp);
+            console.log(result.codePointAt(0));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("9731\n", output);
+    }
+
+    #endregion
+
+    #region String.prototype.codePointAt
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_CodePointAt_BasicBMP(ExecutionMode mode)
+    {
+        var source = """
+            console.log("ABC".codePointAt(0));
+            console.log("ABC".codePointAt(1));
+            console.log("ABC".codePointAt(2));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("65\n66\n67\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_CodePointAt_OutOfRange(ExecutionMode mode)
+    {
+        var source = """
+            console.log("ABC".codePointAt(3));
+            console.log("ABC".codePointAt(-1));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("null\nnull\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_CodePointAt_SurrogatePair(ExecutionMode mode)
+    {
+        // Create a string with a supplementary character and read it back
+        var source = """
+            const emoji = String.fromCodePoint(128512);
+            console.log(emoji.codePointAt(0));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("128512\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_CodePointAt_SecondSurrogate(ExecutionMode mode)
+    {
+        // Accessing index 1 of a surrogate pair should return the low surrogate's code unit value
+        var source = """
+            const emoji = String.fromCodePoint(128512);
+            const lowSurrogate = emoji.codePointAt(1);
+            console.log(lowSurrogate);
+            console.log(emoji.charCodeAt(1));
+            console.log(lowSurrogate === emoji.charCodeAt(1));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        var lines = output.TrimEnd('\n').Split('\n');
+        // The low surrogate is a regular BMP character, so codePointAt == charCodeAt
+        Assert.Equal(lines[1], lines[0]);
+        Assert.Equal("true", lines[2]);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_CodePointAt_RoundTrip(ExecutionMode mode)
+    {
+        var source = """
+            const cp = 9731;
+            const s = String.fromCodePoint(cp);
+            console.log(s.codePointAt(0) === cp);
+            const cp2 = 128512;
+            const s2 = String.fromCodePoint(cp2);
+            console.log(s2.codePointAt(0) === cp2);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_CodePointAt_MatchesCharCodeAtForBMP(ExecutionMode mode)
+    {
+        var source = """
+            const s = "Hello";
+            let allMatch = true;
+            for (let i = 0; i < s.length; i++) {
+                if (s.codePointAt(i) !== s.charCodeAt(i)) {
+                    allMatch = false;
+                }
+            }
+            console.log(allMatch);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
+
     #region New Methods on Variable and Chained
 
     [Theory]

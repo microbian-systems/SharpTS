@@ -27,6 +27,7 @@ public static class StringBuiltIns
             .Method("padStart", 1, 2, PadStart)
             .Method("padEnd", 1, 2, PadEnd)
             .Method("charCodeAt", 1, CharCodeAt)
+            .Method("codePointAt", 1, CodePointAt)
             .Method("concat", 0, int.MaxValue, Concat)
             .Method("lastIndexOf", 1, LastIndexOf)
             .Method("trimStart", 0, TrimStart)
@@ -39,6 +40,7 @@ public static class StringBuiltIns
         BuiltInStaticBuilder.Create()
             .Method("raw", 1, int.MaxValue, StringRaw)
             .Method("fromCharCode", 0, int.MaxValue, FromCharCode)
+            .Method("fromCodePoint", 0, int.MaxValue, FromCodePoint)
             .Build();
 
     public static object? GetMember(string receiver, string name)
@@ -290,6 +292,16 @@ public static class StringBuiltIns
         return (double)str[index];
     }
 
+    private static object? CodePointAt(Interpreter _, string str, List<object?> args)
+    {
+        var index = (int)(double)args[0]!;
+        if (index < 0 || index >= str.Length) return null; // undefined
+        // Check for surrogate pair
+        if (char.IsHighSurrogate(str[index]) && index + 1 < str.Length && char.IsLowSurrogate(str[index + 1]))
+            return (double)char.ConvertToUtf32(str[index], str[index + 1]);
+        return (double)str[index];
+    }
+
     private static object? Concat(Interpreter _, string str, List<object?> args)
     {
         if (args.Count == 0) return str;
@@ -412,5 +424,25 @@ public static class StringBuiltIns
                 span[i] = (char)(code & 0xFFFF);  // Truncate to 16-bit as per JavaScript spec
             }
         });
+    }
+
+    /// <summary>
+    /// String.fromCodePoint() implementation.
+    /// Creates a string from the specified sequence of Unicode code points.
+    /// Unlike fromCharCode, handles supplementary characters (> U+FFFF) via surrogate pairs.
+    /// </summary>
+    private static object? FromCodePoint(Interpreter _, List<object?> args)
+    {
+        if (args.Count == 0) return "";
+
+        var sb = new StringBuilder();
+        foreach (var arg in args)
+        {
+            var codePoint = arg is double d ? (int)d : 0;
+            if (codePoint < 0 || codePoint > 0x10FFFF)
+                throw new Exception($"RangeError: Invalid code point {codePoint}");
+            sb.Append(char.ConvertFromUtf32(codePoint));
+        }
+        return sb.ToString();
     }
 }

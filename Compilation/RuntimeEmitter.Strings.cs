@@ -998,5 +998,163 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "");
         il.Emit(OpCodes.Ret);
     }
+
+    private void EmitStringCodePointAt(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // StringCodePointAt(string str, double index) -> object (double or null)
+        var method = typeBuilder.DefineMethod(
+            "StringCodePointAt",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.String, _types.Double]
+        );
+        runtime.StringCodePointAt = method;
+
+        var il = method.GetILGenerator();
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        var nullLabel = il.DefineLabel();
+        var noSurrogate = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        // index = (int)indexArg
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        // if (index < 0 || index >= str.Length) return null
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, nullLabel);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, nullLabel);
+
+        // char c = str[index]
+        var charLocal = il.DeclareLocal(_types.Char);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
+        il.Emit(OpCodes.Stloc, charLocal);
+
+        // Check for surrogate pair: Char.IsHighSurrogate(c) && index+1 < str.Length && Char.IsLowSurrogate(str[index+1])
+        il.Emit(OpCodes.Ldloc, charLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Char, "IsHighSurrogate", _types.Char));
+        il.Emit(OpCodes.Brfalse, noSurrogate);
+
+        // index + 1 < str.Length
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, noSurrogate);
+
+        // Char.IsLowSurrogate(str[index+1])
+        var lowSurrogateLocal = il.DeclareLocal(_types.Char);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
+        il.Emit(OpCodes.Stloc, lowSurrogateLocal);
+        il.Emit(OpCodes.Ldloc, lowSurrogateLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Char, "IsLowSurrogate", _types.Char));
+        il.Emit(OpCodes.Brfalse, noSurrogate);
+
+        // return (double)Char.ConvertToUtf32(c, lowSurrogate)
+        il.Emit(OpCodes.Ldloc, charLocal);
+        il.Emit(OpCodes.Ldloc, lowSurrogateLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Char, "ConvertToUtf32", _types.Char, _types.Char));
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        // noSurrogate: return (double)c
+        il.MarkLabel(noSurrogate);
+        il.Emit(OpCodes.Ldloc, charLocal);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(nullLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitStringFromCodePoint(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // StringFromCodePoint(object[] args) -> string
+        // Creates a string from Unicode code points, handling supplementary characters via surrogate pairs
+        var method = typeBuilder.DefineMethod(
+            "StringFromCodePoint",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.ObjectArray]
+        );
+        runtime.StringFromCodePoint = method;
+
+        var il = method.GetILGenerator();
+        var lengthLocal = il.DeclareLocal(_types.Int32);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var codePointLocal = il.DeclareLocal(_types.Int32);
+        var emptyLabel = il.DefineLabel();
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        // if (args == null || args.Length == 0) return ""
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, emptyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, lengthLocal);
+        il.Emit(OpCodes.Ldloc, lengthLocal);
+        il.Emit(OpCodes.Brfalse, emptyLabel);
+
+        // Use Char.ConvertFromUtf32 + String.Concat in a loop via StringBuilder-like approach
+        // We'll build a string result by concatenating
+        var resultLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, lengthLocal);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // codePoint = (int)(double)args[i]
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, codePointLocal);
+
+        // result = string.Concat(result, Char.ConvertFromUtf32(codePoint))
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, codePointLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Char, "ConvertFromUtf32", _types.Int32));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // i++
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(emptyLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ret);
+    }
 }
 

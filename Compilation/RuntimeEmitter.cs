@@ -2373,6 +2373,8 @@ public partial class RuntimeEmitter
         EmitStringReplaceAll(typeBuilder, runtime);
         EmitStringAt(typeBuilder, runtime);
         EmitStringFromCharCode(typeBuilder, runtime);
+        EmitStringCodePointAt(typeBuilder, runtime);
+        EmitStringFromCodePoint(typeBuilder, runtime);
         // Object utilities
         EmitGetSuperMethod(typeBuilder, runtime);
         // EmitCreateException and EmitWrapException moved earlier (before Promise methods)

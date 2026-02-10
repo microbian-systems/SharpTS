@@ -96,6 +96,10 @@ public sealed class StringEmitter : ITypeEmitterStrategy
                 EmitCharCodeAt(emitter, arguments);
                 return true;
 
+            case "codePointAt":
+                EmitCodePointAt(emitter, arguments);
+                return true;
+
             case "concat":
                 EmitConcat(emitter, arguments);
                 return true;
@@ -439,6 +443,25 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         }
         il.Emit(OpCodes.Call, ctx.Runtime!.StringCharCodeAt);
         il.Emit(OpCodes.Box, ctx.Types.Double);
+    }
+
+    private static void EmitCodePointAt(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+            il.Emit(OpCodes.Unbox_Any, ctx.Types.Double);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldc_R8, 0.0);
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.StringCodePointAt);
+        // Result is already boxed (returns object: double or null)
     }
 
     private static void EmitConcat(IEmitterContext emitter, List<Expr> arguments)
