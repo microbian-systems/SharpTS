@@ -1,0 +1,260 @@
+using System.Reflection;
+using System.Reflection.Emit;
+
+namespace SharpTS.Compilation;
+
+public partial class RuntimeEmitter
+{
+    /// <summary>
+    /// Emits: public static object CryptoCreateSecretKey(object key, object? encoding)
+    /// Creates a secret (symmetric) KeyObject using pure IL (no SharpTS.dll dependency).
+    /// </summary>
+    private void EmitCryptoCreateSecretKey(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "CryptoCreateSecretKey",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]);
+        runtime.CryptoCreateSecretKey = method;
+
+        var il = method.GetILGenerator();
+
+        var keyBytesLocal = il.DeclareLocal(_types.ByteArray);
+        var encodingLocal = il.DeclareLocal(_types.String);
+
+        // Check if key is string
+        var notStringLabel = il.DefineLabel();
+        var createKeyObjectLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+
+        // key is string - get encoding
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Dup);
+        var useDefaultEncodingLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, useDefaultEncodingLabel);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        var encodingSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, encodingSetLabel);
+        il.MarkLabel(useDefaultEncodingLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "utf8");
+        il.MarkLabel(encodingSetLabel);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("ToLowerInvariant")!);
+        il.Emit(OpCodes.Stloc, encodingLocal);
+
+        // Convert string to bytes based on encoding
+        var hexLabel = il.DefineLabel();
+        var base64Label = il.DefineLabel();
+        var latin1Label = il.DefineLabel();
+        var stringConvertedLabel = il.DefineLabel();
+
+        // Check for "hex"
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "hex");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, hexLabel);
+
+        // Check for "base64"
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "base64");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, base64Label);
+
+        // Check for "latin1" or "binary"
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "latin1");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "binary");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Brtrue, latin1Label);
+
+        // Default: UTF8
+        il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("UTF8")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, typeof(System.Text.Encoding).GetMethod("GetBytes", [_types.String])!);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+        il.Emit(OpCodes.Br, stringConvertedLabel);
+
+        il.MarkLabel(hexLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, typeof(Convert).GetMethod("FromHexString", [_types.String])!);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+        il.Emit(OpCodes.Br, stringConvertedLabel);
+
+        il.MarkLabel(base64Label);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, typeof(Convert).GetMethod("FromBase64String", [_types.String])!);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+        il.Emit(OpCodes.Br, stringConvertedLabel);
+
+        il.MarkLabel(latin1Label);
+        il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("Latin1")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, typeof(System.Text.Encoding).GetMethod("GetBytes", [_types.String])!);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+
+        il.MarkLabel(stringConvertedLabel);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        // Not a string - try to get bytes from Buffer or byte[]
+        il.MarkLabel(notStringLabel);
+
+        // Try byte[] first
+        var tryBufferLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ByteArray);
+        il.Emit(OpCodes.Brfalse, tryBufferLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ByteArray);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        // Try $Buffer - call GetData() method
+        il.MarkLabel(tryBufferLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSBufferType);
+        var trySharpTSBufferLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, trySharpTSBufferLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSBufferType);
+        il.Emit(OpCodes.Call, runtime.TSBufferGetData);
+        il.Emit(OpCodes.Stloc, keyBytesLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        // Standalone-only behavior: no interpreter SharpTSBuffer reflection fallback.
+        il.MarkLabel(trySharpTSBufferLabel);
+        il.Emit(OpCodes.Ldstr, "crypto.createSecretKey: key must be a Buffer or string");
+        il.Emit(OpCodes.Newobj, typeof(ArgumentException).GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Throw);
+
+        // Create and return new $TSKeyObject(keyBytes)
+        il.MarkLabel(createKeyObjectLabel);
+        il.Emit(OpCodes.Ldloc, keyBytesLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSKeyObjectCtorSecret);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static object CryptoCreatePublicKey(object key)
+    /// Creates a public KeyObject from PEM using pure IL (no SharpTS.dll dependency).
+    /// </summary>
+    private void EmitCryptoCreatePublicKey(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "CryptoCreatePublicKey",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        runtime.CryptoCreatePublicKey = method;
+
+        var il = method.GetILGenerator();
+
+        var pemLocal = il.DeclareLocal(_types.String);
+
+        // Extract PEM from key
+        var notStringLabel = il.DefineLabel();
+        var createKeyObjectLabel = il.DefineLabel();
+
+        // Check if key is string
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, pemLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        // Not a string - require emitted $Object and read its "key" property.
+        il.MarkLabel(notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        var noGetPropertyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, noGetPropertyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Ldstr, "key");
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, pemLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        il.MarkLabel(noGetPropertyLabel);
+        il.Emit(OpCodes.Ldstr, "crypto.createPublicKey: key must be a PEM string or object with 'key' property");
+        il.Emit(OpCodes.Newobj, typeof(ArgumentException).GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Throw);
+
+        // Create and return new $TSKeyObject(pem, isPrivate: false)
+        il.MarkLabel(createKeyObjectLabel);
+        il.Emit(OpCodes.Ldloc, pemLocal);
+        il.Emit(OpCodes.Ldc_I4_0); // isPrivate = false
+        il.Emit(OpCodes.Newobj, runtime.TSKeyObjectCtorAsym);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static object CryptoCreatePrivateKey(object key)
+    /// Creates a private KeyObject from PEM using pure IL (no SharpTS.dll dependency).
+    /// </summary>
+    private void EmitCryptoCreatePrivateKey(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "CryptoCreatePrivateKey",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        runtime.CryptoCreatePrivateKey = method;
+
+        var il = method.GetILGenerator();
+
+        var pemLocal = il.DeclareLocal(_types.String);
+
+        // Extract PEM from key
+        var notStringLabel = il.DefineLabel();
+        var createKeyObjectLabel = il.DefineLabel();
+
+        // Check if key is string
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, pemLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        // Not a string - require emitted $Object and read its "key" property.
+        il.MarkLabel(notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        var noGetPropertyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, noGetPropertyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Ldstr, "key");
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, pemLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        il.MarkLabel(noGetPropertyLabel);
+        il.Emit(OpCodes.Ldstr, "crypto.createPrivateKey: key must be a PEM string or object with 'key' property");
+        il.Emit(OpCodes.Newobj, typeof(ArgumentException).GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Throw);
+
+        // Create and return new $TSKeyObject(pem, isPrivate: true)
+        il.MarkLabel(createKeyObjectLabel);
+        il.Emit(OpCodes.Ldloc, pemLocal);
+        il.Emit(OpCodes.Ldc_I4_1); // isPrivate = true
+        il.Emit(OpCodes.Newobj, runtime.TSKeyObjectCtorAsym);
+        il.Emit(OpCodes.Ret);
+    }
+}
