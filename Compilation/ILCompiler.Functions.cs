@@ -245,6 +245,13 @@ public partial class ILCompiler
             FunctionDisplayClassFields = hasFunctionDC ? _closures.FunctionDisplayClassFields[qualifiedFunctionName] : null,
             CapturedFunctionLocals = capturedLocals,
             ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
+            // Inner function support
+            InnerFunctionMethods = _innerFunctionMethods,
+            InnerFunctionDisplayClasses = _innerFunctionDisplayClasses,
+            InnerFunctionDCFields = _innerFunctionDCFields,
+            InnerFunctionDCCtors = _innerFunctionDCCtors,
+            InnerFunctionEntryPointDCFields = _innerFunctionEntryPointDCFields,
+            InnerFunctionFunctionDCFields = _innerFunctionFunctionDCFields,
             // Typed return type for unboxed return optimization
             CurrentMethodReturnType = methodBuilder.ReturnType
         };
@@ -303,6 +310,9 @@ public partial class ILCompiler
         {
             throw new CompileException($"Cannot compile function '{funcStmt.Name.Lexeme}' without a body.");
         }
+
+        // Hoist inner function declarations (create TSFunction locals before other statements)
+        EmitInnerFunctionHoisting(il, ctx, funcStmt.Body);
 
         // Use EmitStatements to handle 'using' declarations with proper try/finally disposal
         emitter.EmitStatements(funcStmt.Body);

@@ -1,4 +1,5 @@
 using System.Reflection.Emit;
+using SharpTS.Parsing;
 using static SharpTS.Parsing.Expr;
 
 namespace SharpTS.Compilation;
@@ -114,4 +115,50 @@ public partial class CompilationContext
     /// Used for accessing captured function-level variables through the $functionDC field.
     /// </summary>
     public FieldBuilder? CurrentArrowFunctionDCField { get; set; }
+
+    // ============================================
+    // Inner Function Support
+    // ============================================
+
+    /// <summary>
+    /// Maps inner Stmt.Function nodes to their compiled methods.
+    /// </summary>
+    public Dictionary<Stmt.Function, MethodBuilder>? InnerFunctionMethods { get; set; }
+
+    /// <summary>
+    /// Maps inner Stmt.Function nodes to their display class types (capturing only).
+    /// </summary>
+    public Dictionary<Stmt.Function, TypeBuilder>? InnerFunctionDisplayClasses { get; set; }
+
+    /// <summary>
+    /// Maps inner Stmt.Function nodes to their display class field mappings.
+    /// </summary>
+    public Dictionary<Stmt.Function, Dictionary<string, FieldBuilder>>? InnerFunctionDCFields { get; set; }
+
+    /// <summary>
+    /// Maps inner Stmt.Function nodes to their display class constructors.
+    /// </summary>
+    public Dictionary<Stmt.Function, ConstructorBuilder>? InnerFunctionDCCtors { get; set; }
+
+    /// <summary>
+    /// Maps inner Stmt.Function nodes to their $entryPointDC fields.
+    /// </summary>
+    public Dictionary<Stmt.Function, FieldBuilder>? InnerFunctionEntryPointDCFields { get; set; }
+
+    /// <summary>
+    /// Maps inner Stmt.Function nodes to their $functionDC fields.
+    /// </summary>
+    public Dictionary<Stmt.Function, FieldBuilder>? InnerFunctionFunctionDCFields { get; set; }
+
+    /// <summary>
+    /// Maps inner function names to their compiled methods for the current scope.
+    /// Used for direct calls and variable references within inner function bodies.
+    /// </summary>
+    public Dictionary<string, MethodBuilder>? InnerFunctionMethodsByName { get; set; }
+
+    /// <summary>
+    /// Maps inner function names to their display class types (for capturing inner functions).
+    /// Used together with InnerFunctionMethodsByName for proper call dispatch.
+    /// </summary>
+    public Dictionary<string, TypeBuilder>? InnerFunctionDisplayClassesByName { get; set; }
 }

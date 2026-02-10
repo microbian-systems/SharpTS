@@ -254,8 +254,25 @@ public partial class ILCompiler
                 // Skip overload signatures (no body)
                 if (f.Body != null)
                 {
+                    // Track inner function declarations (nested inside another function)
+                    if (_functionNestingDepth > 0)
+                    {
+                        CollectInnerFunction(f);
+                    }
+
+                    var previousEnclosing = _currentEnclosingFunctionName;
+                    if (_functionNestingDepth == 0)
+                    {
+                        // Top-level function: use its qualified name as enclosing context
+                        _currentEnclosingFunctionName = GetDefinitionContext().GetQualifiedFunctionName(f.Name.Lexeme);
+                    }
+
+                    _functionNestingDepth++;
                     foreach (var s in f.Body)
                         CollectArrowsFromStmt(s);
+                    _functionNestingDepth--;
+
+                    _currentEnclosingFunctionName = previousEnclosing;
                 }
                 foreach (var p in f.Parameters)
                     if (p.DefaultValue != null)

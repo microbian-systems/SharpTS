@@ -187,6 +187,31 @@ public partial class ILEmitter
             return;
         }
 
+        // Check if it's an inner function - wrap as TSFunction for value reference
+        if (_ctx.InnerFunctionMethodsByName?.TryGetValue(name, out var innerFuncMethod) == true)
+        {
+            TypeBuilder? innerDC = null;
+            bool isCapturing = _ctx.InnerFunctionDisplayClassesByName?.TryGetValue(name, out innerDC) == true;
+            if (isCapturing)
+            {
+                // Capturing: TSFunction(this, invokeMethod) where this is the display class instance
+                IL.Emit(OpCodes.Ldarg_0); // Load display class instance
+                IL.Emit(OpCodes.Ldtoken, innerFuncMethod);
+                IL.Emit(OpCodes.Ldtoken, innerDC!);
+                IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.MethodBase, "GetMethodFromHandle", _ctx.Types.RuntimeMethodHandle, _ctx.Types.RuntimeTypeHandle));
+            }
+            else
+            {
+                // Non-capturing: TSFunction(null, staticMethod)
+                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Ldtoken, innerFuncMethod);
+                IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.MethodBase, "GetMethodFromHandle", _ctx.Types.RuntimeMethodHandle));
+            }
+            IL.Emit(OpCodes.Castclass, _ctx.Types.MethodInfo);
+            EmitNewobjUnknown(_ctx.Runtime!.TSFunctionCtor);
+            return;
+        }
+
         // Check if it's a namespace - load the static field
         if (_ctx.NamespaceFields?.TryGetValue(name, out var nsField) == true)
         {

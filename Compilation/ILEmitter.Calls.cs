@@ -666,6 +666,14 @@ public partial class ILEmitter
             }
         }
 
+        // Inner function direct call (recursive self-calls and sibling inner function calls)
+        if (c.Callee is Expr.Variable innerFuncVar &&
+            _ctx.InnerFunctionMethodsByName?.TryGetValue(innerFuncVar.Name.Lexeme, out var innerMethod) == true)
+        {
+            EmitInnerFunctionDirectCall(innerFuncVar.Name.Lexeme, innerMethod, c.Arguments);
+            return;
+        }
+
         // Function value call (variable holding TSFunction, or direct arrow call)
         EmitFunctionValueCall(c);
     }
@@ -753,6 +761,59 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, calleeLocal);  // function
         IL.Emit(OpCodes.Ldloc, argsLocal);  // args
         IL.Emit(OpCodes.Call, _ctx.Runtime!.InvokeMethodValue);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits a direct call to an inner function method.
+    /// For non-capturing inner functions, emits a static Call.
+    /// For capturing inner functions (display class), emits Ldarg_0 + Callvirt on the Invoke method.
+    /// Handles parameter type conversion (args are boxed objects, parameters may be typed).
+    /// </summary>
+    private void EmitInnerFunctionDirectCall(string funcName, MethodBuilder innerMethod, List<Expr> arguments)
+    {
+        bool isCapturing = _ctx.InnerFunctionDisplayClassesByName?.ContainsKey(funcName) == true;
+
+        if (isCapturing)
+        {
+            // Capturing: the inner function is an instance method on the display class.
+            // Load 'this' (display class instance) as the call target.
+            IL.Emit(OpCodes.Ldarg_0);
+        }
+
+        // Get parameter info for type conversion
+        var parameters = innerMethod.GetParameters();
+
+        // Emit arguments with proper type conversion
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            EmitExpression(arguments[i]);
+            if (i < parameters.Length)
+            {
+                EmitConversionForParameter(arguments[i], parameters[i].ParameterType);
+            }
+            else
+            {
+                EmitBoxIfNeeded(arguments[i]);
+            }
+        }
+
+        // Pad missing arguments with defaults
+        for (int i = arguments.Count; i < parameters.Length; i++)
+        {
+            EmitDefaultForType(parameters[i].ParameterType);
+        }
+
+        if (isCapturing)
+        {
+            IL.Emit(OpCodes.Callvirt, innerMethod);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Call, innerMethod);
+        }
+
+        // Return type is always object for inner functions
         SetStackUnknown();
     }
 

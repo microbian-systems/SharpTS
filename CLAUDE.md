@@ -146,7 +146,7 @@ The same applies to `PropertyDescriptorStore`, `ObjectBuiltIns`, and any other S
 
 - **For Loop Desugaring:** Parser converts `for` loops into `while` loops
 - **console.log:** Hardcoded special case in type checker, interpreter, and compiler
-- **Inner function declarations:** Not supported in IL compiler - use arrow functions instead
+- **Inner function declarations:** Supported in IL compiler with hoisting, closure capture, and recursion
 - **Method Lookup:** Searches up inheritance chain (see `TypeChecker.cs` CheckGet, `Interpreter.Properties.cs` EvaluateGet)
 
 ## See Also

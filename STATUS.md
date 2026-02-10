@@ -380,7 +380,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 
 ### IL Compiler Limitations
 
-- **Inner function declarations** (`function inner() {}` inside another function) are not supported. The compiler skips inner function definitions, causing crashes when they are called. **Workaround:** Use arrow functions instead (`const inner = () => { ... }`), which are fully supported with proper closure capture.
+- ~~**Inner function declarations**~~ ✅ Inner function declarations (`function inner() {}` inside another function) are now fully supported with hoisting, closure capture, and recursion.
 
 ### Type Checker Limitations
 

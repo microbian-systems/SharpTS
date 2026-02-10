@@ -471,6 +471,7 @@ public partial class ILCompiler
     private void Phase5_CollectArrowFunctions(List<Stmt> statements)
     {
         CollectAndDefineArrowFunctions(statements);
+        DefineInnerFunctions();
         DefineTopLevelAsyncArrows(); // Define state machines for top-level async arrows
         DefineClassExpressionTypes();
         DefineClassExpressionMethods();
@@ -482,6 +483,7 @@ public partial class ILCompiler
     private void Phase6_EmitArrowAndStateMachineBodies(List<Stmt> statements)
     {
         EmitArrowFunctionBodies();
+        EmitInnerFunctionBodies();
         DefineAllClassMethods(statements);
 
         // Emit $IHasFields interface method bodies now that method definitions are available
@@ -543,6 +545,9 @@ public partial class ILCompiler
         {
             tb.CreateType();
         }
+
+        // Finalize inner function display classes
+        FinalizeInnerFunctionDisplayClasses();
 
         foreach (var tb in _closures.DisplayClasses.Values)
         {
@@ -747,6 +752,7 @@ public partial class ILCompiler
     private void ModulePhase6_CollectArrowFunctions(List<Stmt> allStatements)
     {
         CollectAndDefineArrowFunctions(allStatements);
+        DefineInnerFunctions();
         DefineTopLevelAsyncArrows(); // Define state machines for top-level async arrows
         DefineClassExpressionTypes();
         DefineClassExpressionMethods();
@@ -758,6 +764,7 @@ public partial class ILCompiler
     private void ModulePhase7_EmitArrowBodies()
     {
         EmitArrowFunctionBodies();
+        EmitInnerFunctionBodies();
         EmitAsyncStateMachineBodies();
         EmitTopLevelAsyncArrowBodies(); // Emit MoveNext for top-level async arrows
         EmitGeneratorStateMachineBodies();
@@ -856,6 +863,9 @@ public partial class ILCompiler
         {
             tb.CreateType();
         }
+
+        // Finalize inner function display classes
+        FinalizeInnerFunctionDisplayClasses();
 
         foreach (var tb in _closures.DisplayClasses.Values)
         {
