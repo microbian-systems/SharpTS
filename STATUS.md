@@ -162,6 +162,7 @@ This document tracks TypeScript language features and their implementation statu
 | Logical assignment (`&&=`, `\|\|=`, `??=`) | ✅ | Compound logical assignment operators with short-circuit evaluation |
 | `keyof` operator | ✅ | Extract keys as union type |
 | `typeof` in type position | ✅ | Extract type from value |
+| Comma operator (`,`) | ✅ | Sequence expression: evaluates left-to-right, returns last value |
 
 ---
 

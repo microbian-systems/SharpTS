@@ -54,6 +54,9 @@ public partial class TypeChecker
     // The following Visit* methods delegate to Check* methods in other partial files
     // (TypeChecker.Properties.cs, TypeChecker.Operators.cs, TypeChecker.Calls.cs)
 
+    // Comma (sequence) operator - evaluates all, returns type of last
+    internal TypeInfo VisitComma(Expr.Comma expr) { CheckExpr(expr.Left); return CheckExpr(expr.Right); }
+
     // Binary/logical operators (TypeChecker.Operators.cs)
     internal TypeInfo VisitBinary(Expr.Binary expr) => CheckBinary(expr);
     internal TypeInfo VisitLogical(Expr.Logical expr) => CheckLogical(expr);

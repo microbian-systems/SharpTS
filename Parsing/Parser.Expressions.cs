@@ -4,6 +4,25 @@ public partial class Parser
 {
     private Expr Expression() => Assignment();
 
+    /// <summary>
+    /// Parses a comma (sequence) expression. Lowest precedence operator.
+    /// Evaluates all operands left-to-right, returns the last value.
+    /// Only called from contexts where comma is an operator, not a separator
+    /// (expression statements, for loop increment, parenthesized groups).
+    /// </summary>
+    private Expr CommaExpression()
+    {
+        Expr expr = Assignment();
+
+        while (Match(TokenType.COMMA))
+        {
+            Expr right = Assignment();
+            expr = new Expr.Comma(expr, right);
+        }
+
+        return expr;
+    }
+
     private Expr Assignment()
     {
         // Check for single-parameter arrow function without parentheses: x => expr
@@ -995,8 +1014,8 @@ public partial class Parser
             Expr? arrowFunc = TryParseArrowFunction(isAsync: false);
             if (arrowFunc != null) return arrowFunc;
 
-            // Otherwise, parse as grouping
-            Expr expr = Expression();
+            // Otherwise, parse as grouping (allows comma operator inside parens)
+            Expr expr = CommaExpression();
             Consume(TokenType.RIGHT_PAREN, "Expect ')' after expression.");
             return new Expr.Grouping(expr);
         }

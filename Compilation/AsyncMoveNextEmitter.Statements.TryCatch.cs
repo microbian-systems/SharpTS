@@ -401,6 +401,8 @@ public partial class AsyncMoveNextEmitter
         {
             case Expr.Await:
                 return true;
+            case Expr.Comma c:
+                return ContainsAwaitInExpr(c.Left) || ContainsAwaitInExpr(c.Right);
             case Expr.Binary b:
                 return ContainsAwaitInExpr(b.Left) || ContainsAwaitInExpr(b.Right);
             case Expr.Logical l:

@@ -25,6 +25,7 @@ public abstract class AstVisitorBase
 
         switch (expr)
         {
+            case Expr.Comma e: VisitComma(e); break;
             case Expr.Binary e: VisitBinary(e); break;
             case Expr.Logical e: VisitLogical(e); break;
             case Expr.NullishCoalescing e: VisitNullishCoalescing(e); break;
@@ -123,6 +124,12 @@ public abstract class AstVisitorBase
     }
 
     #region Expression Visitors - Default implementations traverse children
+
+    protected virtual void VisitComma(Expr.Comma expr)
+    {
+        Visit(expr.Left);
+        Visit(expr.Right);
+    }
 
     protected virtual void VisitBinary(Expr.Binary expr)
     {

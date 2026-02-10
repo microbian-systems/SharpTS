@@ -14,6 +14,7 @@ public class AstVisitorTests
     /// </summary>
     private class ExprTypeCollector : IExprVisitor<Type>
     {
+        public Type VisitComma(Expr.Comma expr) => typeof(Expr.Comma);
         public Type VisitBinary(Expr.Binary expr) => typeof(Expr.Binary);
         public Type VisitLogical(Expr.Logical expr) => typeof(Expr.Logical);
         public Type VisitNullishCoalescing(Expr.NullishCoalescing expr) => typeof(Expr.NullishCoalescing);

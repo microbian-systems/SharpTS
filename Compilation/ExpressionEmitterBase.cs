@@ -65,6 +65,9 @@ public abstract class ExpressionEmitterBase
     {
         switch (expr)
         {
+            case Expr.Comma c:
+                EmitComma(c);
+                break;
             case Expr.Literal lit:
                 EmitLiteral(lit);
                 break;
@@ -236,6 +239,20 @@ public abstract class ExpressionEmitterBase
     protected abstract void EmitImportMeta(Expr.ImportMeta im);
     protected abstract void EmitClassExpression(Expr.ClassExpr ce);
     protected abstract void EmitDelete(Expr.Delete del);
+    #endregion
+
+    #region Virtual Methods - Comma operator
+    /// <summary>
+    /// Emits a comma (sequence) expression: evaluates left for side effects, discards its value, returns right.
+    /// </summary>
+    protected virtual void EmitComma(Expr.Comma c)
+    {
+        EmitExpression(c.Left);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Pop);
+        EmitExpression(c.Right);
+        EnsureBoxed();
+    }
     #endregion
 
     #region Virtual Methods - Pass-through expressions

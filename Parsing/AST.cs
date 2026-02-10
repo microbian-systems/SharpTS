@@ -48,6 +48,7 @@ public abstract record Expr
     /// <exception cref="InvalidOperationException">Thrown if an unknown Expr type is encountered.</exception>
     public static TResult Accept<TResult>(Expr expr, IExprVisitor<TResult> visitor) => expr switch
     {
+        Comma e => visitor.VisitComma(e),
         Binary e => visitor.VisitBinary(e),
         Logical e => visitor.VisitLogical(e),
         NullishCoalescing e => visitor.VisitNullishCoalescing(e),
@@ -95,6 +96,8 @@ public abstract record Expr
         _ => throw new InvalidOperationException($"Unknown Expr type: {expr.GetType().Name}")
     };
 
+    /// <summary>Comma (sequence) expression: evaluates all sub-expressions left-to-right, returns the last value.</summary>
+    public record Comma(Expr Left, Expr Right) : Expr;
     public record Binary(Expr Left, Token Operator, Expr Right) : Expr;
     public record Logical(Expr Left, Token Operator, Expr Right) : Expr;
     public record NullishCoalescing(Expr Left, Expr Right) : Expr;

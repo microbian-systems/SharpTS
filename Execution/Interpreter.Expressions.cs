@@ -31,6 +31,7 @@ public partial class Interpreter
 
     // Expression handlers - called by the registry
 
+    internal object? VisitComma(Expr.Comma comma) { Evaluate(comma.Left); return Evaluate(comma.Right); }
     internal object? VisitBinary(Expr.Binary binary) => EvaluateBinary(binary);
     internal object? VisitLogical(Expr.Logical logical) => EvaluateLogical(logical);
     internal object? VisitNullishCoalescing(Expr.NullishCoalescing nc) => EvaluateNullishCoalescing(nc);
@@ -98,6 +99,7 @@ public partial class Interpreter
     {
         switch (expr)
         {
+            case Expr.Comma comma: await EvaluateAsync(comma.Left); return await EvaluateAsync(comma.Right);
             case Expr.Binary binary: return await EvaluateBinaryAsync(binary);
             case Expr.Logical logical: return await EvaluateLogicalAsync(logical);
             case Expr.NullishCoalescing nc: return await EvaluateNullishCoalescingAsync(nc);

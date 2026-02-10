@@ -154,7 +154,7 @@ public partial class Parser
         Expr? increment = null;
         if (!Check(TokenType.RIGHT_PAREN))
         {
-            increment = Expression();
+            increment = CommaExpression();
         }
         Consume(TokenType.RIGHT_PAREN, "Expect ')' after for clauses.");
 
@@ -461,7 +461,7 @@ public partial class Parser
 
     private Stmt ExpressionStatement()
     {
-        Expr expr = Expression();
+        Expr expr = CommaExpression();
         // Handle console.log specially for MVP
         if (expr is Expr.Call call && call.Callee is Expr.Variable varExpr && varExpr.Name.Lexeme == "console.log")
         {

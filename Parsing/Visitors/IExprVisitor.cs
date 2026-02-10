@@ -12,6 +12,7 @@ namespace SharpTS.Parsing.Visitors;
 /// <typeparam name="TResult">The return type for all visit methods.</typeparam>
 public interface IExprVisitor<out TResult>
 {
+    TResult VisitComma(Expr.Comma expr);
     TResult VisitBinary(Expr.Binary expr);
     TResult VisitLogical(Expr.Logical expr);
     TResult VisitNullishCoalescing(Expr.NullishCoalescing expr);
