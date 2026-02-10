@@ -364,10 +364,11 @@ public static class BuiltInTypes
     {
         return name switch
         {
-            // Properties - all string
+            // Properties - all string except cause
             "name" => StringType,
             "message" => StringType,
             "stack" => StringType,
+            "cause" => new TypeInfo.Any(),
 
             // Methods
             "toString" => new TypeInfo.Function([], StringType),

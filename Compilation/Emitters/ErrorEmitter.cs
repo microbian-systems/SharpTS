@@ -60,6 +60,10 @@ public sealed class ErrorEmitter : ITypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Runtime!.ErrorGetStack);
                 return true;
 
+            case "cause":
+                il.Emit(OpCodes.Call, ctx.Runtime!.ErrorGetCause);
+                return true;
+
             case "errors":
                 // For AggregateError, get the errors array
                 il.Emit(OpCodes.Call, ctx.Runtime!.AggregateErrorGetErrors);
@@ -96,21 +100,29 @@ public sealed class ErrorEmitter : ITypeEmitterStrategy
         var valueTemp = il.DeclareLocal(ctx.Types.Object);
         il.Emit(OpCodes.Stloc, valueTemp);
 
-        // Convert to string
-        il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("ToString", Type.EmptyTypes)!);
-
-        // Call the appropriate setter
-        switch (propertyName)
+        if (propertyName == "cause")
         {
-            case "name":
-                il.Emit(OpCodes.Call, ctx.Runtime!.ErrorSetName);
-                break;
-            case "message":
-                il.Emit(OpCodes.Call, ctx.Runtime!.ErrorSetMessage);
-                break;
-            case "stack":
-                il.Emit(OpCodes.Call, ctx.Runtime!.ErrorSetStack);
-                break;
+            // cause takes object? directly, no string conversion
+            il.Emit(OpCodes.Call, ctx.Runtime!.ErrorSetCause);
+        }
+        else
+        {
+            // Convert to string for name, message, stack
+            il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("ToString", Type.EmptyTypes)!);
+
+            // Call the appropriate setter
+            switch (propertyName)
+            {
+                case "name":
+                    il.Emit(OpCodes.Call, ctx.Runtime!.ErrorSetName);
+                    break;
+                case "message":
+                    il.Emit(OpCodes.Call, ctx.Runtime!.ErrorSetMessage);
+                    break;
+                case "stack":
+                    il.Emit(OpCodes.Call, ctx.Runtime!.ErrorSetStack);
+                    break;
+            }
         }
 
         // Put value back on stack

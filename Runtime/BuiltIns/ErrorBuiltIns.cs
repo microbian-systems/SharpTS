@@ -36,7 +36,7 @@ public static class ErrorBuiltIns
     /// </summary>
     public static readonly HashSet<string> MutableProperties = new(StringComparer.Ordinal)
     {
-        "name", "message", "stack"
+        "name", "message", "stack", "cause"
     };
 
     /// <summary>
@@ -56,6 +56,7 @@ public static class ErrorBuiltIns
             "name" => receiver.Name,
             "message" => receiver.Message,
             "stack" => receiver.Stack,
+            "cause" => receiver.HasCause ? receiver.Cause : Types.SharpTSUndefined.Instance,
             "toString" => new BuiltInMethod("toString", 0, (_, recv, _) =>
                 ((SharpTSError)recv!).ToString()),
 
@@ -83,6 +84,10 @@ public static class ErrorBuiltIns
             case "stack":
                 receiver.Stack = value?.ToString() ?? "";
                 return true;
+            case "cause":
+                receiver.Cause = value;
+                receiver.HasCause = true;
+                return true;
             default:
                 return false;
         }
@@ -95,7 +100,7 @@ public static class ErrorBuiltIns
     {
         var message = args.Count > 0 ? args[0]?.ToString() : null;
 
-        return errorType switch
+        var error = errorType switch
         {
             "Error" => new SharpTSError(message),
             "TypeError" => new SharpTSTypeError(message),
@@ -107,6 +112,15 @@ public static class ErrorBuiltIns
             "AggregateError" => CreateAggregateError(args),
             _ => new SharpTSError(message)
         };
+
+        // Extract cause from options object (second arg for non-AggregateError, third for AggregateError)
+        var optionsIndex = errorType == "AggregateError" ? 2 : 1;
+        if (args.Count > optionsIndex)
+        {
+            error.SetCauseFromOptions(args[optionsIndex]);
+        }
+
+        return error;
     }
 
     /// <summary>

@@ -13,6 +13,8 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsErrorNameField = null!;
     private FieldBuilder _tsErrorMessageField = null!;
     private FieldBuilder _tsErrorStackField = null!;
+    private FieldBuilder _tsErrorCauseField = null!;
+    private FieldBuilder _tsErrorHasCauseField = null!;
 
     // AggregateError errors field
     private FieldBuilder _tsAggregateErrorErrorsField = null!;
@@ -48,6 +50,8 @@ public partial class RuntimeEmitter
         _tsErrorNameField = typeBuilder.DefineField("_name", _types.String, FieldAttributes.Private);
         _tsErrorMessageField = typeBuilder.DefineField("_message", _types.String, FieldAttributes.Private);
         _tsErrorStackField = typeBuilder.DefineField("_stack", _types.String, FieldAttributes.Private);
+        _tsErrorCauseField = typeBuilder.DefineField("_cause", _types.Object, FieldAttributes.Private);
+        _tsErrorHasCauseField = typeBuilder.DefineField("_hasCause", _types.Boolean, FieldAttributes.Private);
 
         // CaptureStackTrace helper - must be emitted first since the constructor calls it
         EmitCaptureStackTrace(typeBuilder, runtime);
@@ -59,10 +63,11 @@ public partial class RuntimeEmitter
         // Constructor: public $Error(string? message) : this("Error", message)
         EmitTSErrorCtorMessage(typeBuilder, runtime);
 
-        // Properties: Name, Message, Stack (get/set)
+        // Properties: Name, Message, Stack, Cause (get/set)
         EmitTSErrorNameProperty(typeBuilder, runtime);
         EmitTSErrorMessageProperty(typeBuilder, runtime);
         EmitTSErrorStackProperty(typeBuilder, runtime);
+        EmitTSErrorCauseProperty(typeBuilder, runtime);
 
         // ToString override
         EmitTSErrorToStringMethod(typeBuilder, runtime);
@@ -249,6 +254,63 @@ public partial class RuntimeEmitter
         setIL.Emit(OpCodes.Stfld, _tsErrorStackField);
         setIL.Emit(OpCodes.Ret);
         prop.SetSetMethod(setter);
+    }
+
+    private void EmitTSErrorCauseProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // public object? Cause { get; set; }
+        var prop = typeBuilder.DefineProperty(
+            "Cause",
+            PropertyAttributes.None,
+            _types.Object,
+            null
+        );
+
+        // Getter
+        var getter = typeBuilder.DefineMethod(
+            "get_Cause",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig | MethodAttributes.Virtual,
+            _types.Object,
+            Type.EmptyTypes
+        );
+        runtime.TSErrorCauseGetter = getter;
+        var getIL = getter.GetILGenerator();
+        getIL.Emit(OpCodes.Ldarg_0);
+        getIL.Emit(OpCodes.Ldfld, _tsErrorCauseField);
+        getIL.Emit(OpCodes.Ret);
+        prop.SetGetMethod(getter);
+
+        // Setter
+        var setter = typeBuilder.DefineMethod(
+            "set_Cause",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig | MethodAttributes.Virtual,
+            _types.Void,
+            [_types.Object]
+        );
+        runtime.TSErrorCauseSetter = setter;
+        var setIL = setter.GetILGenerator();
+        setIL.Emit(OpCodes.Ldarg_0);
+        setIL.Emit(OpCodes.Ldarg_1);
+        setIL.Emit(OpCodes.Stfld, _tsErrorCauseField);
+        // Also set _hasCause = true
+        setIL.Emit(OpCodes.Ldarg_0);
+        setIL.Emit(OpCodes.Ldc_I4_1);
+        setIL.Emit(OpCodes.Stfld, _tsErrorHasCauseField);
+        setIL.Emit(OpCodes.Ret);
+        prop.SetSetMethod(setter);
+
+        // HasCause getter (for runtime checks)
+        var hasCauseGetter = typeBuilder.DefineMethod(
+            "get_HasCause",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig | MethodAttributes.Virtual,
+            _types.Boolean,
+            Type.EmptyTypes
+        );
+        runtime.TSErrorHasCauseGetter = hasCauseGetter;
+        var hcIL = hasCauseGetter.GetILGenerator();
+        hcIL.Emit(OpCodes.Ldarg_0);
+        hcIL.Emit(OpCodes.Ldfld, _tsErrorHasCauseField);
+        hcIL.Emit(OpCodes.Ret);
     }
 
     private void EmitTSErrorToStringMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)

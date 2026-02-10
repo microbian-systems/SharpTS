@@ -445,14 +445,15 @@ public partial class TypeChecker
              // For now, disallow adding new properties to records via assignment to mimic strictness
              throw new TypeCheckException($" Property '{set.Name.Lexeme}' does not exist on type '{record}'.");
         }
-        // Handle Error property assignment (name, message, stack are all mutable strings)
+        // Handle Error property assignment (name, message, stack are mutable strings; cause is any)
         if (objType is TypeInfo.Error)
         {
             string propName = set.Name.Lexeme;
             if (ErrorBuiltIns.CanSetProperty(propName))
             {
                 TypeInfo valueType = CheckExpr(set.Value);
-                if (!IsCompatible(new TypeInfo.String(), valueType))
+                // cause accepts any type; name, message, stack must be string
+                if (propName != "cause" && !IsCompatible(new TypeInfo.String(), valueType))
                 {
                     throw new TypeCheckException($" Cannot assign '{valueType}' to property '{propName}' of type 'string'.");
                 }

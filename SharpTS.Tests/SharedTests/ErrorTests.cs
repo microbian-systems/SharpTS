@@ -329,4 +329,134 @@ public class ErrorTests
     }
 
     #endregion
+
+    #region Error.cause Tests (ES2022)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_WithCause_SetsCauseProperty(ExecutionMode mode)
+    {
+        var source = @"
+            const cause = new Error('original');
+            const e = new Error('wrapped', { cause: cause });
+            console.log(e.message);
+            console.log(e.cause.message);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("wrapped\noriginal\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_WithStringCause_SetsCauseProperty(ExecutionMode mode)
+    {
+        var source = @"
+            const e = new Error('failed', { cause: 'network timeout' });
+            console.log(e.message);
+            console.log(e.cause);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("failed\nnetwork timeout\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_WithNumberCause_SetsCauseProperty(ExecutionMode mode)
+    {
+        var source = @"
+            const e = new Error('failed', { cause: 42 });
+            console.log(e.cause);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_WithoutCause_CauseIsUndefined(ExecutionMode mode)
+    {
+        var source = @"
+            const e = new Error('no cause');
+            console.log(e.cause);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypeError_WithCause_SetsCauseProperty(ExecutionMode mode)
+    {
+        var source = @"
+            const original = new Error('root cause');
+            const e = new TypeError('type mismatch', { cause: original });
+            console.log(e.name);
+            console.log(e.message);
+            console.log(e.cause.message);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("TypeError\ntype mismatch\nroot cause\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_CauseChaining_ThreeLevels(ExecutionMode mode)
+    {
+        var source = @"
+            const root = new Error('root');
+            const mid = new Error('middle', { cause: root });
+            const top = new Error('top', { cause: mid });
+            console.log(top.message);
+            console.log(top.cause.message);
+            console.log(top.cause.cause.message);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("top\nmiddle\nroot\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_CauseInTryCatch_PreservedAfterThrow(ExecutionMode mode)
+    {
+        var source = @"
+            try {
+                const inner = new RangeError('out of range');
+                throw new Error('wrapper', { cause: inner });
+            } catch (e) {
+                console.log(e.message);
+                console.log(e.cause.name);
+                console.log(e.cause.message);
+            }
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("wrapper\nRangeError\nout of range\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_CauseIsMutable(ExecutionMode mode)
+    {
+        var source = @"
+            const e = new Error('test');
+            e.cause = 'manually set';
+            console.log(e.cause);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("manually set\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_CalledWithoutNew_WithCause(ExecutionMode mode)
+    {
+        var source = @"
+            const e = Error('without new', { cause: 'some cause' });
+            console.log(e.message);
+            console.log(e.cause);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("without new\nsome cause\n", output);
+    }
+
+    #endregion
 }

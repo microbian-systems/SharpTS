@@ -72,9 +72,9 @@ public partial class TypeChecker
         // Handle Error() and error subtypes called without 'new' - still creates error objects
         if (call.Callee is Expr.Variable errorVar && BuiltInNames.IsErrorTypeName(errorVar.Name.Lexeme))
         {
-            // Error constructors accept 0-1 argument (optional message)
-            // AggregateError accepts 0-2 arguments (errors array, optional message)
-            int maxArgs = errorVar.Name.Lexeme == "AggregateError" ? 2 : 1;
+            // Error constructors accept 0-2 arguments (message, options)
+            // AggregateError accepts 0-3 arguments (errors array, message, options)
+            int maxArgs = errorVar.Name.Lexeme == "AggregateError" ? 3 : 2;
             if (call.Arguments.Count > maxArgs)
             {
                 throw new TypeCheckException($"{errorVar.Name.Lexeme}() accepts at most {maxArgs} argument(s).");
@@ -102,13 +102,19 @@ public partial class TypeChecker
                 }
             }
 
-            if (call.Arguments.Count == 2)
+            // Validate remaining arguments
+            for (int i = 1; i < call.Arguments.Count; i++)
             {
-                var secondArgType = CheckExpr(call.Arguments[1]);
-                if (!IsString(secondArgType) && secondArgType is not TypeInfo.Any)
+                var argType = CheckExpr(call.Arguments[i]);
+                if (errorVar.Name.Lexeme == "AggregateError" && i == 1)
                 {
-                    throw new TypeCheckException($"AggregateError message must be a string, got '{secondArgType}'.");
+                    // AggregateError second arg is message (string)
+                    if (!IsString(argType) && argType is not TypeInfo.Any)
+                    {
+                        throw new TypeCheckException($"AggregateError message must be a string, got '{argType}'.");
+                    }
                 }
+                // Options argument (last arg) is an object - accept any type
             }
 
             return new TypeInfo.Error(errorVar.Name.Lexeme);

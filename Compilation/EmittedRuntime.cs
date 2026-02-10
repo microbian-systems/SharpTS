@@ -570,6 +570,9 @@ public class EmittedRuntime
     public MethodBuilder TSErrorMessageSetter { get; set; } = null!;
     public MethodBuilder TSErrorStackGetter { get; set; } = null!;
     public MethodBuilder TSErrorStackSetter { get; set; } = null!;
+    public MethodBuilder TSErrorCauseGetter { get; set; } = null!;
+    public MethodBuilder TSErrorCauseSetter { get; set; } = null!;
+    public MethodBuilder TSErrorHasCauseGetter { get; set; } = null!;
     public MethodBuilder TSErrorToStringMethod { get; set; } = null!;
     public MethodBuilder TSErrorCaptureStackTrace { get; set; } = null!;
 
@@ -610,6 +613,8 @@ public class EmittedRuntime
     public MethodBuilder ErrorSetName { get; set; } = null!;
     public MethodBuilder ErrorSetMessage { get; set; } = null!;
     public MethodBuilder ErrorSetStack { get; set; } = null!;
+    public MethodBuilder ErrorGetCause { get; set; } = null!;
+    public MethodBuilder ErrorSetCause { get; set; } = null!;
     public MethodBuilder ErrorToString { get; set; } = null!;
     public MethodBuilder AggregateErrorGetErrors { get; set; } = null!;
 

@@ -30,6 +30,17 @@ public class SharpTSError : ITypeCategorized
     public string Stack { get; set; }
 
     /// <summary>
+    /// The cause of this error (ES2022). Set via the options parameter:
+    /// <c>new Error("message", { cause: someValue })</c>
+    /// </summary>
+    public object? Cause { get; set; }
+
+    /// <summary>
+    /// Whether the cause property was explicitly set (even to undefined/null).
+    /// </summary>
+    public bool HasCause { get; internal set; }
+
+    /// <summary>
     /// Creates a new Error with the specified message.
     /// </summary>
     /// <param name="message">The error message.</param>
@@ -49,6 +60,18 @@ public class SharpTSError : ITypeCategorized
         Name = name;
         Message = message ?? "";
         Stack = CaptureStackTrace();
+    }
+
+    /// <summary>
+    /// Sets the cause property from an options object argument.
+    /// </summary>
+    internal void SetCauseFromOptions(object? options)
+    {
+        if (options is SharpTSObject obj && obj.HasProperty("cause"))
+        {
+            Cause = obj.GetProperty("cause");
+            HasCause = true;
+        }
     }
 
     /// <summary>

@@ -1803,6 +1803,12 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.ErrorGetStack);
                 SetStackType(StackType.String);
                 return true;
+            case "cause":
+                EmitExpression(g.Object);
+                EmitBoxIfNeeded(g.Object);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.ErrorGetCause);
+                SetStackUnknown();
+                return true;
             case "errors":
                 EmitExpression(g.Object);
                 EmitBoxIfNeeded(g.Object);

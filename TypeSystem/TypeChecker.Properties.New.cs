@@ -441,9 +441,9 @@ public partial class TypeChecker
         // Handle new Error(...) and error subtype constructors
         if (isSimpleName && simpleClassName != null && BuiltInNames.IsErrorTypeName(simpleClassName))
         {
-            // Error constructors accept 0-1 argument (optional message)
-            // AggregateError accepts 0-2 arguments (errors array, optional message)
-            int maxArgs = simpleClassName == "AggregateError" ? 2 : 1;
+            // Error constructors accept 0-2 arguments (message, options)
+            // AggregateError accepts 0-3 arguments (errors array, message, options)
+            int maxArgs = simpleClassName == "AggregateError" ? 3 : 2;
             if (newExpr.Arguments.Count > maxArgs)
             {
                 throw new TypeCheckException($" {simpleClassName} constructor accepts at most {maxArgs} argument(s).");
@@ -471,13 +471,19 @@ public partial class TypeChecker
                 }
             }
 
-            if (newExpr.Arguments.Count == 2)
+            // Validate remaining arguments
+            for (int i = 1; i < newExpr.Arguments.Count; i++)
             {
-                var secondArgType = CheckExpr(newExpr.Arguments[1]);
-                if (!IsString(secondArgType) && secondArgType is not TypeInfo.Any)
+                var argType = CheckExpr(newExpr.Arguments[i]);
+                if (simpleClassName == "AggregateError" && i == 1)
                 {
-                    throw new TypeCheckException($" AggregateError message must be a string, got '{secondArgType}'.");
+                    // AggregateError second arg is message (string)
+                    if (!IsString(argType) && argType is not TypeInfo.Any)
+                    {
+                        throw new TypeCheckException($" AggregateError message must be a string, got '{argType}'.");
+                    }
                 }
+                // Options argument (last arg) is an object - accept any type
             }
 
             return new TypeInfo.Error(simpleClassName!);
