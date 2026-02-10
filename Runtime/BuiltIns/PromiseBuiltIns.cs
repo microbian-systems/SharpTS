@@ -34,7 +34,7 @@ public static class PromiseBuiltIns
     /// <summary>
     /// Gets a static method from the Promise namespace.
     /// </summary>
-    public static BuiltInAsyncMethod? GetStaticMethod(string name)
+    public static ISharpTSCallable? GetStaticMethod(string name)
     {
         return name switch
         {
@@ -55,6 +55,9 @@ public static class PromiseBuiltIns
 
             "any" => new BuiltInAsyncMethod("any", 1, 1, (interp, _, args) =>
                 AnyImpl(args, interp)),
+
+            "withResolvers" => new BuiltInMethod("withResolvers", 0, (_, _, _) =>
+                WithResolversImpl()),
 
             _ => null
         };
@@ -488,6 +491,38 @@ public static class PromiseBuiltIns
         var reason = args.Count > 0 ? args[0] : null;
         // Throw to let BuiltInAsyncMethod.Call create the rejected Promise
         throw new SharpTSPromiseRejectedException(reason);
+    }
+
+    /// <summary>
+    /// Implementation of Promise.withResolvers()
+    /// Returns {promise, resolve, reject} for external promise resolution.
+    /// </summary>
+    private static object? WithResolversImpl()
+    {
+        var tcs = new TaskCompletionSource<object?>();
+
+        var resolveMethod = new BuiltInMethod("resolve", 1, (_, _, args) =>
+        {
+            var value = args.Count > 0 ? args[0] : null;
+            tcs.TrySetResult(value);
+            return null;
+        });
+
+        var rejectMethod = new BuiltInMethod("reject", 1, (_, _, args) =>
+        {
+            var reason = args.Count > 0 ? args[0] : null;
+            tcs.TrySetException(new SharpTSPromiseRejectedException(reason));
+            return null;
+        });
+
+        var promise = new SharpTSPromise(tcs.Task);
+
+        return new SharpTSObject(new Dictionary<string, object?>
+        {
+            ["promise"] = promise,
+            ["resolve"] = resolveMethod,
+            ["reject"] = rejectMethod
+        });
     }
 
     #endregion

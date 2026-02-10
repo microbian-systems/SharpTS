@@ -43,6 +43,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.IsTypedArrayMethod);
         il.Emit(OpCodes.Brtrue, typedArrayLabel);
 
+        // $Array (wrapper around List<object?>) - check before List
+        var tsArrayLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brtrue, tsArrayLabel);
+
         // List
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
@@ -115,6 +121,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
+        il.Emit(OpCodes.Ret);
+
+        // $Array handler: unwrap to List<object?> elements, then index
+        il.MarkLabel(tsArrayLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(listLabel);
@@ -261,6 +277,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.IsTypedArrayMethod);
         il.Emit(OpCodes.Brtrue, typedArraySetLabel);
 
+        // $Array (wrapper around List<object?>) - check before List
+        var tsArraySetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brtrue, tsArraySetLabel);
+
         // List
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
@@ -306,6 +328,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetFieldsProperty);
+        il.Emit(OpCodes.Ret);
+
+        // $Array handler: unwrap to List<object?> elements, then set
+        il.MarkLabel(tsArraySetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "set_Item", _types.Int32, _types.Object));
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(listLabel);

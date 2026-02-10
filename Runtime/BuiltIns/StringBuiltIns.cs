@@ -18,6 +18,7 @@ public static class StringBuiltIns
             .Method("replace", 2, Replace)
             .Method("split", 1, 2, Split)
             .Method("match", 1, Match)
+            .Method("matchAll", 1, MatchAll)
             .Method("search", 1, Search)
             .Method("includes", 1, Includes)
             .Method("startsWith", 1, StartsWith)
@@ -164,6 +165,23 @@ public static class StringBuiltIns
         var index = str.IndexOf(search);
         if (index < 0) return null;
         return new SharpTSArray([(object?)search]);
+    }
+
+    private static object? MatchAll(Interpreter _, string str, List<object?> args)
+    {
+        if (args[0] is SharpTSRegExp regex)
+        {
+            if (!regex.Global)
+                throw new Exception("TypeError: String.prototype.matchAll called with a non-global RegExp argument");
+            var matchObjects = regex.MatchAllObjects(str);
+            return new SharpTSArray(matchObjects.Select(m => (object?)m).ToList());
+        }
+
+        // String pattern: create a temporary global RegExp
+        var pattern = args[0]?.ToString() ?? "";
+        var tempRegex = new SharpTSRegExp(System.Text.RegularExpressions.Regex.Escape(pattern), "g");
+        var results = tempRegex.MatchAllObjects(str);
+        return new SharpTSArray(results.Select(m => (object?)m).ToList());
     }
 
     private static object? Search(Interpreter _, string str, List<object?> args)

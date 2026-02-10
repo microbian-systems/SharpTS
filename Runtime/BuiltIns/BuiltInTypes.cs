@@ -75,6 +75,9 @@ public static class BuiltInTypes
             "replaceAll" => new TypeInfo.Function([StringType, StringType], StringType),
             "at" => new TypeInfo.Function([NumberType], StringType), // returns string | undefined in TS
             "toString" => new TypeInfo.Function([], StringType), // primitive wrapper method
+            "match" => new TypeInfo.Function([AnyType], AnyType),
+            "matchAll" => new TypeInfo.Function([AnyType], new TypeInfo.Array(AnyType)),
+            "search" => new TypeInfo.Function([AnyType], NumberType),
             _ => null
         };
     }

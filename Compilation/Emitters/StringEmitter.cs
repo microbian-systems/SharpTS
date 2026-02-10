@@ -60,6 +60,10 @@ public sealed class StringEmitter : ITypeEmitterStrategy
                 EmitMatch(emitter, arguments);
                 return true;
 
+            case "matchAll":
+                EmitMatchAll(emitter, arguments);
+                return true;
+
             case "search":
                 EmitSearch(emitter, arguments);
                 return true;
@@ -274,6 +278,23 @@ public sealed class StringEmitter : ITypeEmitterStrategy
             il.Emit(OpCodes.Ldstr, "");
         }
         il.Emit(OpCodes.Call, ctx.Runtime!.StringMatchRegExp);
+    }
+
+    private static void EmitMatchAll(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldstr, "");
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.StringMatchAllRegExp);
     }
 
     private static void EmitSearch(IEmitterContext emitter, List<Expr> arguments)

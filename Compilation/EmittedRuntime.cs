@@ -349,6 +349,7 @@ public class EmittedRuntime
     public MethodBuilder PromiseAllSettled { get; set; } = null!;
     public MethodBuilder PromiseAny { get; set; } = null!;
     public MethodBuilder PromiseFromExecutor { get; set; } = null!;
+    public MethodBuilder PromiseWithResolvers { get; set; } = null!;
     public TypeBuilder PromiseResolveCallbackType { get; set; } = null!;
     public ConstructorBuilder PromiseResolveCallbackCtor { get; set; } = null!;
     public MethodBuilder PromiseResolveCallbackInvoke { get; set; } = null!;
@@ -554,6 +555,7 @@ public class EmittedRuntime
     public MethodBuilder StringReplaceRegExp { get; set; } = null!;
     public MethodBuilder StringSearchRegExp { get; set; } = null!;
     public MethodBuilder StringSplitRegExp { get; set; } = null!;
+    public MethodBuilder StringMatchAllRegExp { get; set; } = null!;
 
     // RegExp support - emitted $RegExp type for standalone assemblies
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSRegExp

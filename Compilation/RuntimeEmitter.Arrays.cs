@@ -34,9 +34,15 @@ public partial class RuntimeEmitter
         runtime.GetLength = method;
 
         var il = method.GetILGenerator();
+        var tsArrayLabel = il.DefineLabel();
         var listLabel = il.DefineLabel();
         var stringLabel = il.DefineLabel();
         var defaultLabel = il.DefineLabel();
+
+        // $Array (wrapper around List<object?>) - check before List
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brtrue, tsArrayLabel);
 
         // List
         il.Emit(OpCodes.Ldarg_0);
@@ -50,6 +56,14 @@ public partial class RuntimeEmitter
 
         // Default
         il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+
+        // $Array handler: unwrap to elements, get count
+        il.MarkLabel(tsArrayLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(listLabel);
@@ -76,8 +90,14 @@ public partial class RuntimeEmitter
         runtime.GetElement = method;
 
         var il = method.GetILGenerator();
+        var tsArrayElLabel = il.DefineLabel();
         var listLabel = il.DefineLabel();
         var stringLabel = il.DefineLabel();
+
+        // $Array (wrapper around List<object?>) - check before List
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brtrue, tsArrayElLabel);
 
         // List
         il.Emit(OpCodes.Ldarg_0);
@@ -91,6 +111,15 @@ public partial class RuntimeEmitter
 
         // Default
         il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        // $Array handler: unwrap to elements, get item
+        il.MarkLabel(tsArrayElLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(listLabel);

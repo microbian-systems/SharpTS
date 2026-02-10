@@ -104,6 +104,11 @@ public sealed class PromiseStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Runtime!.PromiseAny);
                 return true;
 
+            case "withResolvers":
+                // Promise.withResolvers() - returns Task<object?> wrapping {promise, resolve, reject}
+                il.Emit(OpCodes.Call, ctx.Runtime!.PromiseWithResolvers);
+                return true;
+
             default:
                 return false;
         }

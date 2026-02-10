@@ -206,6 +206,33 @@ public class SharpTSRegExp : ITypeCategorized
     }
 
     /// <summary>
+    /// Match all occurrences returning detailed match objects (used by String.matchAll).
+    /// Each object has "0" (full match), "1".."n" (groups), "index", "input", "groups".
+    /// </summary>
+    internal List<SharpTSObject> MatchAllObjects(string input)
+    {
+        var matches = _regex.Matches(input);
+        List<SharpTSObject> result = [];
+        foreach (Match m in matches)
+        {
+            var fields = new Dictionary<string, object?>
+            {
+                ["0"] = m.Value,
+                ["index"] = (double)m.Index,
+                ["input"] = input,
+                ["groups"] = null
+            };
+            for (int i = 1; i < m.Groups.Count; i++)
+            {
+                var group = m.Groups[i];
+                fields[i.ToString()] = group.Success ? group.Value : null;
+            }
+            result.Add(new SharpTSObject(fields));
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Replace occurrences in the string.
     /// </summary>
     /// <param name="input">The input string.</param>

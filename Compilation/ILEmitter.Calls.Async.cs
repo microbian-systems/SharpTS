@@ -194,6 +194,12 @@ public partial class ILEmitter
                 // Don't await here - return the Task directly
                 return;
 
+            case "withResolvers":
+                // Promise.withResolvers() - returns Task<object?> wrapping {promise, resolve, reject}
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.PromiseWithResolvers);
+                // Don't await here - return the Task directly
+                return;
+
             default:
                 IL.Emit(OpCodes.Ldnull);
                 return;

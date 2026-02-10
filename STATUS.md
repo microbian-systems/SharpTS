@@ -115,6 +115,7 @@ This document tracks TypeScript language features and their implementation statu
 | Nested await in args | ✅ | `await fn(await getValue())` |
 | `Promise.all/race/any/allSettled` | ✅ | Full interpreter support; IL compiler: all/race/allSettled as pure IL state machines, any delegates to runtime |
 | `Promise.resolve/reject` | ✅ | Static factory methods with Promise flattening |
+| `Promise.withResolvers` | ✅ | Returns `{promise, resolve, reject}` for external promise resolution (ES2024) |
 
 ---
 
@@ -209,7 +210,7 @@ This document tracks TypeScript language features and their implementation statu
 |---------|--------|-------|
 | `console.log` | ✅ | Multiple arguments, printf-style format specifiers (%s, %d, %i, %f, %o, %O, %j, %%) |
 | `Math` object | ✅ | PI, E, abs, floor, ceil, round, sqrt, sin, cos, tan, log, exp, sign, trunc, pow, min, max, random |
-| String methods | ✅ | length, charAt, substring, indexOf, toUpperCase, toLowerCase, trim, replace, split, includes, startsWith, endsWith, slice, repeat, padStart, padEnd, charCodeAt, codePointAt, concat, lastIndexOf, trimStart, trimEnd, replaceAll, at |
+| String methods | ✅ | length, charAt, substring, indexOf, toUpperCase, toLowerCase, trim, replace, split, includes, startsWith, endsWith, slice, repeat, padStart, padEnd, charCodeAt, codePointAt, concat, lastIndexOf, trimStart, trimEnd, replaceAll, at, matchAll |
 | Array methods | ✅ | push, pop, shift, unshift, reverse, slice, concat, map, filter, forEach, find, findIndex, findLast, findLastIndex, some, every, reduce, reduceRight, includes, indexOf, join, sort, toSorted, toReversed, with, flat, flatMap, splice, toSpliced, at, fill, copyWithin, entries, keys, values |
 | `JSON.parse`/`stringify` | ✅ | With reviver, replacer, indentation, class instances, toJSON(), BigInt TypeError |
 | `Object.keys`/`values`/`entries`/`fromEntries`/`hasOwn` | ✅ | Full support for object literals and class instances |
@@ -218,7 +219,7 @@ This document tracks TypeScript language features and their implementation statu
 | `Date` object | ✅ | Full local timezone support with constructors, getters, setters, conversion methods |
 | `Map`/`Set` | ✅ | Full API (get, set, has, delete, clear, size, keys, values, entries, forEach); for...of iteration; reference equality for object keys; ES2025 Set operations (union, intersection, difference, symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom) |
 | `WeakMap`/`WeakSet` | ✅ | Full API (get, set, has, delete for WeakMap; add, has, delete for WeakSet); object-only keys/values; no iteration or size |
-| `RegExp` | ✅ | Full API (test, exec, source, flags, global, ignoreCase, multiline, lastIndex); `/pattern/flags` literal and `new RegExp()` constructor; string methods (match, replace, search, split) with regex support |
+| `RegExp` | ✅ | Full API (test, exec, source, flags, global, ignoreCase, multiline, lastIndex); `/pattern/flags` literal and `new RegExp()` constructor; string methods (match, replace, search, split, matchAll) with regex support |
 | `Array.from()` | ✅ | Create array from iterable with optional map function |
 | `Array.of()` | ✅ | Create array from arguments |
 | `Object.assign()` | ✅ | Merge objects - copies properties from one or more source objects to a target object, returns the target |

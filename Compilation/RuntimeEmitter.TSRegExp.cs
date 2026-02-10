@@ -37,7 +37,7 @@ public partial class RuntimeEmitter
         runtime.TSRegExpType = typeBuilder;
 
         // Fields
-        _tsRegExpRegexField = typeBuilder.DefineField("_regex", typeof(Regex), FieldAttributes.Private);
+        _tsRegExpRegexField = typeBuilder.DefineField("_regex", typeof(Regex), FieldAttributes.Assembly);
         _tsRegExpSourceField = typeBuilder.DefineField("_source", _types.String, FieldAttributes.Private);
         _tsRegExpFlagsField = typeBuilder.DefineField("_flags", _types.String, FieldAttributes.Private);
         _tsRegExpGlobalField = typeBuilder.DefineField("_global", _types.Boolean, FieldAttributes.Private);
