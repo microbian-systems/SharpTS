@@ -136,6 +136,7 @@ public sealed class BuiltInRegistry
         RegisterStringNamespace(registry);
         RegisterDateNamespace(registry);
         RegisterReflectNamespace(registry);
+        RegisterMapNamespace(registry);
         RegisterSymbolNamespace(registry);
         RegisterProcessNamespace(registry);
         RegisterGlobalThisNamespace(registry);
@@ -325,6 +326,16 @@ public sealed class BuiltInRegistry
             IsSingleton: false,
             SingletonFactory: null,
             GetMethod: name => ReflectBuiltIns.GetStaticMethod(name)
+        ));
+    }
+
+    private static void RegisterMapNamespace(BuiltInRegistry registry)
+    {
+        registry.RegisterNamespace(new BuiltInNamespace(
+            Name: "Map",
+            IsSingleton: false,
+            SingletonFactory: null,
+            GetMethod: name => MapBuiltIns.GetStaticMethod(name) as BuiltInMethod
         ));
     }
 

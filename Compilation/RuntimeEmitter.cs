@@ -2310,6 +2310,7 @@ public partial class RuntimeEmitter
         EmitGetOwnPropertySymbols(typeBuilder, runtime);
         EmitObjectGetPrototypeOf(typeBuilder, runtime, prototypeStoreField);
         EmitObjectSetPrototypeOf(typeBuilder, runtime, prototypeStoreField, nonExtensibleObjectsField);
+        EmitObjectGroupBy(typeBuilder, runtime);
         EmitReflectSet(typeBuilder, runtime);
         EmitReflectSetPrototypeOf(typeBuilder, runtime, prototypeStoreField, nonExtensibleObjectsField);
         EmitReflectDefineProperty(typeBuilder, runtime);
@@ -2415,6 +2416,7 @@ public partial class RuntimeEmitter
         EmitErrorMethods(typeBuilder, runtime);
         // Map methods
         EmitMapMethods(typeBuilder, runtime);
+        EmitMapGroupBy(typeBuilder, runtime);
         // Set methods
         EmitSetMethods(typeBuilder, runtime);
         // WeakMap methods

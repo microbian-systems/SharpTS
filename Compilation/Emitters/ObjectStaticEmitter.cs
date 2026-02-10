@@ -209,6 +209,20 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
                 }
                 il.Emit(OpCodes.Call, ctx.Runtime!.ObjectSetPrototypeOf);
                 return true;
+            case "groupBy":
+                // Object.groupBy(iterable, callback) - groups elements by callback return
+                // First argument (iterable) is already on the stack
+                if (arguments.Count > 1)
+                {
+                    emitter.EmitExpression(arguments[1]);
+                    emitter.EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ObjectGroupBy);
+                return true;
             default:
                 // Pop the argument we pushed and return false
                 il.Emit(OpCodes.Pop);

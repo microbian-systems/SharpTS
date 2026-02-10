@@ -28,6 +28,7 @@ public static class ObjectBuiltIns
             .Method("getOwnPropertySymbols", 1, GetOwnPropertySymbols)
             .Method("getPrototypeOf", 1, GetPrototypeOf)
             .Method("setPrototypeOf", 2, SetPrototypeOf)
+            .Method("groupBy", 2, GroupBy)
             .Build();
 
     /// <summary>
@@ -1388,5 +1389,34 @@ public static class ObjectBuiltIns
                 }
                 return target;
         }
+    }
+
+    private static object? GroupBy(Interpreter interp, List<object?> args)
+    {
+        var iterable = args[0] as SharpTSArray
+            ?? throw new Exception("TypeError: Object.groupBy requires an iterable as first argument");
+        var callback = args[1] as ISharpTSCallable
+            ?? throw new Exception("TypeError: Object.groupBy requires a function as second argument");
+
+        var groups = new Dictionary<string, object?>();
+        var callbackArgs = new List<object?> { null, null };
+
+        for (int i = 0; i < iterable.Elements.Count; i++)
+        {
+            var element = iterable.Elements[i];
+            callbackArgs[0] = element;
+            callbackArgs[1] = (double)i;
+            var key = callback.Call(interp, callbackArgs);
+            var keyStr = key?.ToString() ?? "undefined";
+
+            if (!groups.TryGetValue(keyStr, out var existing))
+            {
+                existing = new SharpTSArray([]);
+                groups[keyStr] = existing;
+            }
+            ((SharpTSArray)existing!).Elements.Add(element);
+        }
+
+        return new SharpTSObject(groups);
     }
 }

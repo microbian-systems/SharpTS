@@ -75,10 +75,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
-        // Class instance: check if index is string, then use GetFieldsProperty
+        // Class instance: check if index is string or numeric, then use GetFieldsProperty
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, classInstanceLabel);
+
+        // Class instance with numeric key: convert to string first
+        var classInstanceNumericLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, classInstanceNumericLabel);
 
         // Fallthrough: return null
         il.MarkLabel(nullLabel);
@@ -120,6 +126,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
+        il.Emit(OpCodes.Ret);
+
+        // Class instance with numeric key: convert to string, then use GetFieldsProperty
+        il.MarkLabel(classInstanceNumericLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
         il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
         il.Emit(OpCodes.Ret);
 

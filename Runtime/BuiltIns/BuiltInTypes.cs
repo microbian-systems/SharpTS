@@ -195,6 +195,7 @@ public static class BuiltInTypes
             "isSealed" => new TypeInfo.Function([AnyType], BooleanType),
             "getOwnPropertyNames" => new TypeInfo.Function([AnyType], new TypeInfo.Array(StringType)),
             "create" => new TypeInfo.Function([AnyType, AnyType], AnyType, RequiredParams: 1),  // proto required, propertiesObject optional
+            "groupBy" => new TypeInfo.Function([AnyType, new TypeInfo.Function([AnyType, NumberType], AnyType)], AnyType),
             _ => null
         };
     }
@@ -216,6 +217,18 @@ public static class BuiltInTypes
                 new TypeInfo.Array(AnyType),
                 RequiredParams: 0,
                 HasRestParam: true),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Type signatures for static methods on the Map namespace
+    /// </summary>
+    public static TypeInfo? GetMapStaticMethodType(string name)
+    {
+        return name switch
+        {
+            "groupBy" => new TypeInfo.Function([AnyType, new TypeInfo.Function([AnyType, NumberType], AnyType)], AnyType),
             _ => null
         };
     }
@@ -333,12 +346,6 @@ public static class BuiltInTypes
     /// </summary>
     public static TypeInfo? GetRegExpMemberType(string name)
     {
-        // exec() returns array with index/input properties, or null
-        var execResultType = new TypeInfo.Union([
-            new TypeInfo.Array(StringType),
-            new TypeInfo.Null()
-        ]);
-
         return name switch
         {
             // Properties (read-only except lastIndex)
@@ -351,7 +358,7 @@ public static class BuiltInTypes
 
             // Methods
             "test" => new TypeInfo.Function([StringType], BooleanType),
-            "exec" => new TypeInfo.Function([StringType], execResultType),
+            "exec" => new TypeInfo.Function([StringType], AnyType),
             "toString" => new TypeInfo.Function([], StringType),
 
             _ => null

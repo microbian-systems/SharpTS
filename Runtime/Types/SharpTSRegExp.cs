@@ -68,9 +68,12 @@ public class SharpTSRegExp : ITypeCategorized
         _multiline = _flags.Contains('m');
         LastIndex = 0;
 
-        var options = RegexOptions.ECMAScript; // Use ECMAScript mode for JS compatibility
+        // Named groups ((?<name>...)) are not supported in ECMAScript mode in .NET.
+        // Detect them and fall back to non-ECMAScript mode.
+        var options = HasNamedGroups(pattern) ? RegexOptions.None : RegexOptions.ECMAScript;
         if (_ignoreCase) options |= RegexOptions.IgnoreCase;
         if (_multiline) options |= RegexOptions.Multiline;
+        if (_flags.Contains('s')) options |= RegexOptions.Singleline;
 
         try
         {
@@ -88,10 +91,60 @@ public class SharpTSRegExp : ITypeCategorized
     private static string NormalizeFlags(string flags)
     {
         var sb = new StringBuilder();
-        if (flags.Contains('g') && !sb.ToString().Contains('g')) sb.Append('g');
-        if (flags.Contains('i') && !sb.ToString().Contains('i')) sb.Append('i');
-        if (flags.Contains('m') && !sb.ToString().Contains('m')) sb.Append('m');
+        if (flags.Contains('g')) sb.Append('g');
+        if (flags.Contains('i')) sb.Append('i');
+        if (flags.Contains('m')) sb.Append('m');
+        if (flags.Contains('s')) sb.Append('s');
+        if (flags.Contains('d')) sb.Append('d');
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Detects whether a regex pattern contains named capture groups (?&lt;name&gt;...).
+    /// Excludes lookbehind assertions (?&lt;= and (?&lt;!.
+    /// </summary>
+    internal static bool HasNamedGroups(string pattern)
+    {
+        int i = 0;
+        while (i < pattern.Length - 2)
+        {
+            if (pattern[i] == '\\')
+            {
+                i += 2; // skip escaped char
+                continue;
+            }
+            if (pattern[i] == '(' && i + 2 < pattern.Length && pattern[i + 1] == '?' && pattern[i + 2] == '<')
+            {
+                // Check it's not lookbehind: (?<= or (?<!
+                if (i + 3 < pattern.Length && (pattern[i + 3] == '=' || pattern[i + 3] == '!'))
+                {
+                    i += 4;
+                    continue;
+                }
+                return true;
+            }
+            i++;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Builds a groups object from named capture groups in a match result.
+    /// Returns null if there are no named groups.
+    /// </summary>
+    private SharpTSObject? BuildGroupsObject(Match match)
+    {
+        Dictionary<string, object?>? groups = null;
+        foreach (Group group in match.Groups)
+        {
+            // Skip numeric group names (unnamed groups)
+            if (int.TryParse(group.Name, out _))
+                continue;
+
+            groups ??= new Dictionary<string, object?>();
+            groups[group.Name] = group.Success ? group.Value : null;
+        }
+        return groups != null ? new SharpTSObject(groups) : null;
     }
 
     /// <summary>
@@ -132,7 +185,7 @@ public class SharpTSRegExp : ITypeCategorized
     /// </summary>
     /// <param name="input">The string to match against.</param>
     /// <returns>An array with the match and capture groups, or null if no match.</returns>
-    public SharpTSArray? Exec(string input)
+    public SharpTSObject? Exec(string input)
     {
         Match match;
 
@@ -161,24 +214,23 @@ public class SharpTSRegExp : ITypeCategorized
             LastIndex = match.Index + match.Length;
         }
 
-        // Build result array: [fullMatch, ...groups]
-        List<object?> elements = [];
-        elements.Add(match.Value);
+        // Build result object with indexed properties: "0", "1", ..., plus index, input, groups
+        var fields = new Dictionary<string, object?>
+        {
+            ["0"] = match.Value,
+            ["index"] = (double)match.Index,
+            ["input"] = input,
+            ["groups"] = BuildGroupsObject(match)
+        };
 
         // Add capture groups (skip group 0 which is the full match)
         for (int i = 1; i < match.Groups.Count; i++)
         {
             var group = match.Groups[i];
-            elements.Add(group.Success ? group.Value : null);
+            fields[i.ToString()] = group.Success ? group.Value : null;
         }
 
-        var result = new SharpTSArray(elements);
-
-        // Note: JavaScript's exec() also adds 'index' and 'input' properties to the result array.
-        // SharpTSArray currently doesn't support arbitrary properties, so we skip this for now.
-        // The array elements themselves are the primary result.
-
-        return result;
+        return new SharpTSObject(fields);
     }
 
     /// <summary>
@@ -220,7 +272,7 @@ public class SharpTSRegExp : ITypeCategorized
                 ["0"] = m.Value,
                 ["index"] = (double)m.Index,
                 ["input"] = input,
-                ["groups"] = null
+                ["groups"] = BuildGroupsObject(m)
             };
             for (int i = 1; i < m.Groups.Count; i++)
             {

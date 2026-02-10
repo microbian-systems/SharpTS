@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-05 (Added Object.create() with prototype copying and propertiesObject support; Added Object.getOwnPropertyNames() for interpreter and compiled mode; Added Object.defineProperty() and Object.getOwnPropertyDescriptor() with full interpreter support; compiled mode supports basic value setting; Added DataView with full API support; Added Array.copyWithin(); Added spreading iterators: `[...arr.entries()]`, `[...set]`, `[...map]`; Added destructuring in for...of: `for (const [i, val] of arr.entries())`; Fixed string concat optimizer bug; Added Array.entries(), Array.keys(), Array.values(); Added Array.reduceRight(); Added String.fromCharCode(); Added Object.is(); Added TypedArray/SharedArrayBuffer/Atomics docs; added Not Implemented section; setImmediate, structuredClone, property narrowing)
+**Last Updated:** 2026-02-10 (Added RegExp named capture groups with `.groups` property on exec/match/matchAll; Added `Object.groupBy()` and `Map.groupBy()` ES2024 grouping methods; both features fully supported in interpreter and compiled modes)
 
 ## Legend
 - ✅ Implemented
@@ -217,9 +217,9 @@ This document tracks TypeScript language features and their implementation statu
 | `Array.isArray` | ✅ | Type guard for array detection |
 | `Number` methods | ✅ | parseInt, parseFloat, isNaN, isFinite, isInteger, isSafeInteger, toFixed, toPrecision, toExponential, toString(radix); constants: MAX_VALUE, MIN_VALUE, NaN, POSITIVE_INFINITY, NEGATIVE_INFINITY, MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, EPSILON |
 | `Date` object | ✅ | Full local timezone support with constructors, getters, setters, conversion methods |
-| `Map`/`Set` | ✅ | Full API (get, set, has, delete, clear, size, keys, values, entries, forEach); for...of iteration; reference equality for object keys; ES2025 Set operations (union, intersection, difference, symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom) |
+| `Map`/`Set` | ✅ | Full API (get, set, has, delete, clear, size, keys, values, entries, forEach); for...of iteration; reference equality for object keys; `Map.groupBy()` (ES2024); ES2025 Set operations (union, intersection, difference, symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom) |
 | `WeakMap`/`WeakSet` | ✅ | Full API (get, set, has, delete for WeakMap; add, has, delete for WeakSet); object-only keys/values; no iteration or size |
-| `RegExp` | ✅ | Full API (test, exec, source, flags, global, ignoreCase, multiline, lastIndex); `/pattern/flags` literal and `new RegExp()` constructor; string methods (match, replace, search, split, matchAll) with regex support |
+| `RegExp` | ✅ | Full API (test, exec, source, flags, global, ignoreCase, multiline, lastIndex); `/pattern/flags` literal and `new RegExp()` constructor; string methods (match, replace, search, split, matchAll) with regex support; named capture groups (`(?<name>...)`) with `.groups` property on match results |
 | `Array.from()` | ✅ | Create array from iterable with optional map function |
 | `Array.of()` | ✅ | Create array from arguments |
 | `Object.assign()` | ✅ | Merge objects - copies properties from one or more source objects to a target object, returns the target |
@@ -342,6 +342,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | `Object.getOwnPropertySymbols()` | ✅ | Returns array of symbol-keyed properties |
 | `Object.preventExtensions()` | ✅ | Prevents adding new properties to an object |
 | `Object.isExtensible()` | ✅ | Returns whether object allows new properties |
+| `Object.groupBy()` | ✅ | Groups iterable elements by callback return value (ES2024); returns plain object with string keys |
 
 ### Array Methods
 

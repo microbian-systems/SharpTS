@@ -25,6 +25,7 @@ public partial class RuntimeEmitter
     private MethodBuilder _tsRegExpReplaceMethod = null!;
     private MethodBuilder _tsRegExpSearchMethod = null!;
     private MethodBuilder _tsRegExpSplitMethod = null!;
+    private MethodBuilder _tsRegExpHasNamedGroupsMethod = null!;
 
     private void EmitTSRegExpClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
@@ -48,6 +49,9 @@ public partial class RuntimeEmitter
         // Helper method for normalizing flags
         EmitTSRegExpNormalizeFlags(typeBuilder, runtime);
 
+        // Static helper for detecting named groups (must be emitted before constructors which use it)
+        EmitTSRegExpHasNamedGroups(typeBuilder);
+
         // Constructors (pattern+flags first because pattern-only calls it)
         EmitTSRegExpCtorPatternFlags(typeBuilder, runtime);
         EmitTSRegExpCtorPattern(typeBuilder, runtime);
@@ -60,6 +64,9 @@ public partial class RuntimeEmitter
         EmitTSRegExpMultilineGetter(typeBuilder, runtime);
         EmitTSRegExpLastIndexGetter(typeBuilder, runtime);
         EmitTSRegExpLastIndexSetter(typeBuilder, runtime);
+
+        // Static helper for named groups (must be emitted before Exec which uses it)
+        EmitTSRegExpBuildNamedGroups(typeBuilder, runtime);
 
         // Instance methods
         EmitTSRegExpTest(typeBuilder, runtime);
@@ -97,6 +104,8 @@ public partial class RuntimeEmitter
         EmitAppendFlagIfContains(il, sbLocal, 'g');
         EmitAppendFlagIfContains(il, sbLocal, 'i');
         EmitAppendFlagIfContains(il, sbLocal, 'm');
+        EmitAppendFlagIfContains(il, sbLocal, 's');
+        EmitAppendFlagIfContains(il, sbLocal, 'd');
 
         // return sb.ToString()
         il.Emit(OpCodes.Ldloc, sbLocal);
@@ -121,6 +130,153 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
 
         il.MarkLabel(skipLabel);
+    }
+
+    /// <summary>
+    /// Emits a static method: bool HasNamedGroups(string pattern)
+    /// Detects (?&lt;name&gt;...) patterns, excluding lookbehind (?&lt;= and (?&lt;!.
+    /// </summary>
+    private void EmitTSRegExpHasNamedGroups(TypeBuilder typeBuilder)
+    {
+        var method = typeBuilder.DefineMethod(
+            "HasNamedGroups",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.String]
+        );
+        _tsRegExpHasNamedGroupsMethod = method;
+
+        var il = method.GetILGenerator();
+        var iLocal = il.DeclareLocal(_types.Int32);
+
+        var loopCondLabel = il.DefineLabel();
+        var loopBodyLabel = il.DefineLabel();
+        var incrementLabel = il.DefineLabel();
+        var returnTrueLabel = il.DefineLabel();
+
+        // i = 0
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopCondLabel);
+
+        // Loop body
+        il.MarkLabel(loopBodyLabel);
+
+        // if (pattern[i] == '\\') { i += 2; continue; }
+        var notEscapeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, (int)'\\');
+        il.Emit(OpCodes.Bne_Un, notEscapeLabel);
+        // i += 2
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopCondLabel);
+
+        il.MarkLabel(notEscapeLabel);
+
+        // Check: pattern[i] == '('
+        var notOpenParenLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, (int)'(');
+        il.Emit(OpCodes.Bne_Un, notOpenParenLabel);
+
+        // Check: i + 2 < pattern.Length
+        var notMatchLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.String.GetProperty("Length")!.GetGetMethod()!);
+        il.Emit(OpCodes.Bge, notMatchLabel);
+
+        // Check: pattern[i+1] == '?'
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, (int)'?');
+        il.Emit(OpCodes.Bne_Un, notMatchLabel);
+
+        // Check: pattern[i+2] == '<'
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, (int)'<');
+        il.Emit(OpCodes.Bne_Un, notMatchLabel);
+
+        // We found (?< — check if it's lookbehind: (?<= or (?<!
+        // Check: i + 3 < pattern.Length
+        var notLookbehindLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.String.GetProperty("Length")!.GetGetMethod()!);
+        il.Emit(OpCodes.Bge, returnTrueLabel); // i+3 >= Length means no char after <, so it IS a named group
+
+        // Check: pattern[i+3] == '=' || pattern[i+3] == '!'
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        var charAfterLessThan = il.DeclareLocal(_types.Char);
+        il.Emit(OpCodes.Stloc, charAfterLessThan);
+
+        il.Emit(OpCodes.Ldloc, charAfterLessThan);
+        il.Emit(OpCodes.Ldc_I4, (int)'=');
+        il.Emit(OpCodes.Beq, notLookbehindLabel);
+        il.Emit(OpCodes.Ldloc, charAfterLessThan);
+        il.Emit(OpCodes.Ldc_I4, (int)'!');
+        il.Emit(OpCodes.Beq, notLookbehindLabel);
+
+        // Not lookbehind — it's a named group
+        il.Emit(OpCodes.Br, returnTrueLabel);
+
+        // It IS lookbehind — i += 4; continue
+        il.MarkLabel(notLookbehindLabel);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopCondLabel);
+
+        il.MarkLabel(notMatchLabel);
+        il.MarkLabel(notOpenParenLabel);
+
+        // i++
+        il.MarkLabel(incrementLabel);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        // Loop condition: while (i < pattern.Length - 2)
+        il.MarkLabel(loopCondLabel);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.String.GetProperty("Length")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Blt, loopBodyLabel);
+
+        // return false
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+
+        // return true
+        il.MarkLabel(returnTrueLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
     }
 
     private void EmitTSRegExpCtorPattern(TypeBuilder typeBuilder, EmittedRuntime runtime)
@@ -202,9 +358,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, _tsRegExpLastIndexField);
 
-        // var options = RegexOptions.ECMAScript
+        // Named groups require non-ECMAScript mode in .NET
+        // if (HasNamedGroups(pattern)) options = None; else options = ECMAScript;
+        var noNamedGroupsLabel = il.DefineLabel();
+        var afterOptionsLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_1); // pattern
+        il.Emit(OpCodes.Call, _tsRegExpHasNamedGroupsMethod);
+        il.Emit(OpCodes.Brfalse, noNamedGroupsLabel);
+
+        // Named groups: use RegexOptions.None
+        il.Emit(OpCodes.Ldc_I4, (int)RegexOptions.None);
+        il.Emit(OpCodes.Stloc, optionsLocal);
+        il.Emit(OpCodes.Br, afterOptionsLabel);
+
+        il.MarkLabel(noNamedGroupsLabel);
+        // No named groups: use ECMAScript
         il.Emit(OpCodes.Ldc_I4, (int)RegexOptions.ECMAScript);
         il.Emit(OpCodes.Stloc, optionsLocal);
+
+        il.MarkLabel(afterOptionsLabel);
 
         // if (_ignoreCase) options |= RegexOptions.IgnoreCase
         var skipIgnoreCaseLabel = il.DefineLabel();
@@ -227,6 +400,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Or);
         il.Emit(OpCodes.Stloc, optionsLocal);
         il.MarkLabel(skipMultilineLabel);
+
+        // if (_flags.Contains('s')) options |= RegexOptions.Singleline
+        var skipSinglelineLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpFlagsField);
+        il.Emit(OpCodes.Ldc_I4, (int)'s');
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Contains", [_types.Char])!);
+        il.Emit(OpCodes.Brfalse, skipSinglelineLabel);
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)RegexOptions.Singleline);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Stloc, optionsLocal);
+        il.MarkLabel(skipSinglelineLabel);
 
         // try { _regex = new Regex(pattern, options); }
         il.BeginExceptionBlock();
@@ -460,7 +646,7 @@ public partial class RuntimeEmitter
 
     private void EmitTSRegExpExec(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // public object? Exec(string input) - returns $Array or null
+        // public object? Exec(string input) - returns $Object or null
         var method = typeBuilder.DefineMethod(
             "Exec",
             MethodAttributes.Public,
@@ -475,13 +661,12 @@ public partial class RuntimeEmitter
         var checkSuccessLabel = il.DefineLabel();
         var matchSuccessLabel = il.DefineLabel();
         var noMatchLabel = il.DefineLabel();
-        var buildResultLabel = il.DefineLabel();
         var loopStartLabel = il.DefineLabel();
         var loopEndLabel = il.DefineLabel();
 
         var matchLocal = il.DeclareLocal(typeof(Match));
         var startIndexLocal = il.DeclareLocal(_types.Int32);
-        var elementsLocal = il.DeclareLocal(_types.ListOfObject);
+        var fieldsLocal = il.DeclareLocal(_types.DictionaryStringObject);
         var iLocal = il.DeclareLocal(_types.Int32);
         var groupLocal = il.DeclareLocal(typeof(Group));
 
@@ -572,24 +757,45 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stfld, _tsRegExpLastIndexField);
         il.MarkLabel(skipUpdateLabel);
 
-        // Build result array
-        // var elements = new List<object?>()
-        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
-        il.Emit(OpCodes.Stloc, elementsLocal);
+        // Build result as $Object with "0", "1", ..., "index", "input", "groups"
+        var dictSetItem = _types.DictionaryStringObject.GetMethod("set_Item", [_types.String, _types.Object])!;
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Stloc, fieldsLocal);
 
-        // elements.Add(match.Value)
-        il.Emit(OpCodes.Ldloc, elementsLocal);
+        // fields["0"] = match.Value
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Ldstr, "0");
         il.Emit(OpCodes.Ldloc, matchLocal);
         il.Emit(OpCodes.Callvirt, typeof(Capture).GetProperty("Value")!.GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
+        il.Emit(OpCodes.Callvirt, dictSetItem);
 
-        // Add capture groups (skip group 0 which is the full match)
-        // for (int i = 1; i < match.Groups.Count; i++)
+        // fields["index"] = (double)match.Index
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Ldstr, "index");
+        il.Emit(OpCodes.Ldloc, matchLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Capture).GetProperty("Index")!.GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Callvirt, dictSetItem);
+
+        // fields["input"] = input (arg_1)
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Ldstr, "input");
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, dictSetItem);
+
+        // fields["groups"] = BuildNamedGroups(match)
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Ldstr, "groups");
+        il.Emit(OpCodes.Ldloc, matchLocal);
+        il.Emit(OpCodes.Call, runtime.BuildNamedGroups!);
+        il.Emit(OpCodes.Callvirt, dictSetItem);
+
+        // Add capture groups: for (int i = 1; i < match.Groups.Count; i++)
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stloc, iLocal);
 
         il.MarkLabel(loopStartLabel);
-        // i < match.Groups.Count
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldloc, matchLocal);
         il.Emit(OpCodes.Callvirt, typeof(Match).GetProperty("Groups")!.GetGetMethod()!);
@@ -603,25 +809,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, typeof(GroupCollection).GetMethod("get_Item", [_types.Int32])!);
         il.Emit(OpCodes.Stloc, groupLocal);
 
-        // elements.Add(group.Success ? group.Value : null)
+        // fields[i.ToString()] = group.Success ? group.Value : null
         var groupSuccessLabel = il.DefineLabel();
         var addGroupEndLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, elementsLocal);
+
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Ldloca, iLocal);
+        il.Emit(OpCodes.Call, _types.Int32.GetMethod("ToString", Type.EmptyTypes)!);
+
         il.Emit(OpCodes.Ldloc, groupLocal);
         il.Emit(OpCodes.Callvirt, typeof(Group).GetProperty("Success")!.GetGetMethod()!);
         il.Emit(OpCodes.Brtrue, groupSuccessLabel);
 
-        // Not success: add null
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Br, addGroupEndLabel);
 
-        // Success: add value
         il.MarkLabel(groupSuccessLabel);
         il.Emit(OpCodes.Ldloc, groupLocal);
         il.Emit(OpCodes.Callvirt, typeof(Capture).GetProperty("Value")!.GetGetMethod()!);
 
         il.MarkLabel(addGroupEndLabel);
-        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
+        il.Emit(OpCodes.Callvirt, dictSetItem);
 
         // i++
         il.Emit(OpCodes.Ldloc, iLocal);
@@ -632,9 +840,9 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(loopEndLabel);
 
-        // return new $Array(elements)
-        il.Emit(OpCodes.Ldloc, elementsLocal);
-        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor!);
+        // return new $Object(fields)
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSObjectCtor!);
         il.Emit(OpCodes.Ret);
     }
 
@@ -828,6 +1036,130 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsRegExpRegexField);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, typeof(Regex).GetMethod("Split", [_types.String])!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static object? BuildNamedGroups(Match match)
+    /// on the $RegExp class. Returns a $Object with named group values, or null.
+    /// </summary>
+    private void EmitTSRegExpBuildNamedGroups(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "BuildNamedGroups",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [typeof(Match)]
+        );
+        runtime.BuildNamedGroups = method;
+
+        var il = method.GetILGenerator();
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var groupCollLocal = il.DeclareLocal(typeof(GroupCollection));
+        var enumeratorLocal = il.DeclareLocal(typeof(System.Collections.IEnumerator));
+        var groupLocal = il.DeclareLocal(typeof(Group));
+        var nameLocal = il.DeclareLocal(_types.String);
+        var intParseResultLocal = il.DeclareLocal(_types.Int32);
+
+        var loopStartLabel = il.DefineLabel();
+        var loopEndLabel = il.DefineLabel();
+        var groupNotSuccessLabel = il.DefineLabel();
+        var afterValueLabel = il.DefineLabel();
+        var dictReadyLabel = il.DefineLabel();
+        var returnNullLabel = il.DefineLabel();
+        var finallyLabel = il.DefineLabel();
+
+        // dict = null (initially)
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, dictLocal);
+
+        // var groupColl = match.Groups
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, typeof(Match).GetProperty("Groups")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, groupCollLocal);
+
+        // Get enumerator
+        il.Emit(OpCodes.Ldloc, groupCollLocal);
+        il.Emit(OpCodes.Callvirt, typeof(GroupCollection).GetMethod("GetEnumerator")!);
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        il.BeginExceptionBlock();
+
+        il.MarkLabel(loopStartLabel);
+        il.Emit(OpCodes.Ldloc, enumeratorLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, loopEndLabel);
+
+        // group = (Group)enumerator.Current
+        il.Emit(OpCodes.Ldloc, enumeratorLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Collections.IEnumerator).GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Castclass, typeof(Group));
+        il.Emit(OpCodes.Stloc, groupLocal);
+
+        // name = group.Name
+        il.Emit(OpCodes.Ldloc, groupLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Group).GetProperty("Name")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, nameLocal);
+
+        // if (int.TryParse(name, out _)) continue (skip numeric group names)
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldloca, intParseResultLocal);
+        il.Emit(OpCodes.Call, _types.Int32.GetMethod("TryParse", [_types.String, _types.Int32.MakeByRefType()])!);
+        il.Emit(OpCodes.Brtrue, loopStartLabel);
+
+        // Ensure dict is initialized
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Brtrue, dictReadyLabel);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Stloc, dictLocal);
+        il.MarkLabel(dictReadyLabel);
+
+        // dict[name] = group.Success ? group.Value : null
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+
+        il.Emit(OpCodes.Ldloc, groupLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Group).GetProperty("Success")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, groupNotSuccessLabel);
+
+        il.Emit(OpCodes.Ldloc, groupLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Capture).GetProperty("Value")!.GetGetMethod()!);
+        il.Emit(OpCodes.Br, afterValueLabel);
+
+        il.MarkLabel(groupNotSuccessLabel);
+        il.Emit(OpCodes.Ldnull);
+
+        il.MarkLabel(afterValueLabel);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item", [_types.String, _types.Object])!);
+        il.Emit(OpCodes.Br, loopStartLabel);
+
+        il.MarkLabel(loopEndLabel);
+        il.Emit(OpCodes.Leave, finallyLabel);
+
+        // Finally block
+        il.BeginFinallyBlock();
+        var disposeEndLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, enumeratorLocal);
+        il.Emit(OpCodes.Isinst, typeof(IDisposable));
+        il.Emit(OpCodes.Brfalse, disposeEndLabel);
+        il.Emit(OpCodes.Ldloc, enumeratorLocal);
+        il.Emit(OpCodes.Castclass, typeof(IDisposable));
+        il.Emit(OpCodes.Callvirt, _types.DisposableDispose);
+        il.MarkLabel(disposeEndLabel);
+        il.EndExceptionBlock();
+
+        il.MarkLabel(finallyLabel);
+
+        // return dict == null ? null : new $Object(dict)
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSObjectCtor!);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(returnNullLabel);
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
     }
 }

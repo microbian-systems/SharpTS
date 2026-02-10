@@ -573,6 +573,11 @@ public class EmittedRuntime
     public MethodBuilder TSRegExpTestMethod { get; set; } = null!;
     public MethodBuilder TSRegExpExecMethod { get; set; } = null!;
     public MethodBuilder TSRegExpToStringMethod { get; set; } = null!;
+    public MethodBuilder BuildNamedGroups { get; set; } = null!;
+
+    // groupBy support
+    public MethodBuilder ObjectGroupBy { get; set; } = null!;
+    public MethodBuilder MapGroupBy { get; set; } = null!;
 
     // Error support - emitted types for standalone assemblies
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSError and subclasses

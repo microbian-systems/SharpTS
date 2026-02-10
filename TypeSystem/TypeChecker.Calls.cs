@@ -146,6 +146,19 @@ public partial class TypeChecker
             }
         }
 
+        // Handle Map.groupBy()
+        if (call.Callee is Expr.Get mapGet &&
+            mapGet.Object is Expr.Variable mapVar &&
+            mapVar.Name.Lexeme == "Map")
+        {
+            var methodType = BuiltInTypes.GetMapStaticMethodType(mapGet.Name.Lexeme);
+            if (methodType is TypeInfo.Function mapMethodType)
+            {
+                foreach (var arg in call.Arguments) CheckExpr(arg);
+                return mapMethodType.ReturnType;
+            }
+        }
+
         // Handle JSON.parse(), JSON.stringify()
         if (call.Callee is Expr.Get jsonGet &&
             jsonGet.Object is Expr.Variable jsonVar &&

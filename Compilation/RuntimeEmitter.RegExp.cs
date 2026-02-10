@@ -664,10 +664,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, dictSetItem);
 
-        // fields["groups"] = null
+        // fields["groups"] = BuildNamedGroups(match)
         il.Emit(OpCodes.Ldloc, fieldsLocal);
         il.Emit(OpCodes.Ldstr, "groups");
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, matchLocal);
+        il.Emit(OpCodes.Call, runtime.BuildNamedGroups);
         il.Emit(OpCodes.Callvirt, dictSetItem);
 
         // for (int gi = 1; gi < match.Groups.Count; gi++)
