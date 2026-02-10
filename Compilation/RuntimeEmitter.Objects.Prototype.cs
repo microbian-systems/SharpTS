@@ -1,0 +1,545 @@
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Reflection.Emit;
+
+namespace SharpTS.Compilation;
+
+public partial class RuntimeEmitter
+{
+    /// <summary>
+    /// Emits Object.create(proto, propertiesObject?) - creates a new object with prototype.
+    /// Signature: object ObjectCreate(object proto, object propertiesObject)
+    /// Fully standalone - uses emitted $PropertyDescriptorStore for descriptor storage.
+    /// </summary>
+    private void EmitObjectCreate(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder prototypeStoreField)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectCreate",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]
+        );
+        runtime.ObjectCreate = method;
+
+        var il = method.GetILGenerator();
+
+        // Locals
+        var resultLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var propsLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var enumeratorLocal = il.DeclareLocal(typeof(Dictionary<string, object?>.Enumerator));
+        var currentLocal = il.DeclareLocal(typeof(KeyValuePair<string, object?>));
+        var propKeyLocal = il.DeclareLocal(_types.String);
+        var propDescLocal = il.DeclareLocal(_types.Object);
+
+        var noPropsLabel = il.DefineLabel();
+        var loopStartLabel = il.DefineLabel();
+        var loopEndLabel = il.DefineLabel();
+        var returnLabel = il.DefineLabel();
+
+        // result = new Dictionary<string, object?>()
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // Set prototype: $PropertyDescriptorStore.SetPrototype(result, proto)
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldarg_0);  // proto
+        il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
+
+        // Copy properties from prototype if it's a Dictionary (for Object.keys compatibility)
+        var protoDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var protoEnumeratorLocal = il.DeclareLocal(typeof(Dictionary<string, object?>.Enumerator));
+        var protoCurrentLocal = il.DeclareLocal(typeof(KeyValuePair<string, object?>));
+        var skipProtoCopyLabel = il.DefineLabel();
+        var protoCopyLoopLabel = il.DefineLabel();
+        var protoCopyDoneLabel = il.DefineLabel();
+
+        // Check if proto is Dictionary<string, object?>
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, protoDictLocal);
+        il.Emit(OpCodes.Ldloc, protoDictLocal);
+        il.Emit(OpCodes.Brfalse, skipProtoCopyLabel);
+
+        // Copy properties from prototype to result
+        il.Emit(OpCodes.Ldloc, protoDictLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "GetEnumerator"));
+        il.Emit(OpCodes.Stloc, protoEnumeratorLocal);
+
+        il.MarkLabel(protoCopyLoopLabel);
+        il.Emit(OpCodes.Ldloca, protoEnumeratorLocal);
+        var protoMoveNext = typeof(Dictionary<string, object?>.Enumerator).GetMethod("MoveNext")!;
+        il.Emit(OpCodes.Call, protoMoveNext);
+        il.Emit(OpCodes.Brfalse, protoCopyDoneLabel);
+
+        // Get current KVP
+        il.Emit(OpCodes.Ldloca, protoEnumeratorLocal);
+        var protoCurrent = typeof(Dictionary<string, object?>.Enumerator).GetProperty("Current")!.GetGetMethod()!;
+        il.Emit(OpCodes.Call, protoCurrent);
+        il.Emit(OpCodes.Stloc, protoCurrentLocal);
+
+        // result[key] = value
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloca, protoCurrentLocal);
+        var protoKeyGetter = typeof(KeyValuePair<string, object?>).GetProperty("Key")!.GetGetMethod()!;
+        il.Emit(OpCodes.Call, protoKeyGetter);
+        il.Emit(OpCodes.Ldloca, protoCurrentLocal);
+        var protoValueGetter = typeof(KeyValuePair<string, object?>).GetProperty("Value")!.GetGetMethod()!;
+        il.Emit(OpCodes.Call, protoValueGetter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+
+        il.Emit(OpCodes.Br, protoCopyLoopLabel);
+
+        il.MarkLabel(protoCopyDoneLabel);
+        il.Emit(OpCodes.Ldloca, protoEnumeratorLocal);
+        var protoDispose = typeof(Dictionary<string, object?>.Enumerator).GetMethod("Dispose")!;
+        il.Emit(OpCodes.Call, protoDispose);
+
+        il.MarkLabel(skipProtoCopyLabel);
+
+        // If propertiesObject is null, skip property definition
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, noPropsLabel);
+
+        // Cast propertiesObject to Dictionary<string, object?>
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, propsLocal);
+        il.Emit(OpCodes.Ldloc, propsLocal);
+        il.Emit(OpCodes.Brfalse, noPropsLabel);
+
+        // Get enumerator: enumerator = props.GetEnumerator()
+        il.Emit(OpCodes.Ldloc, propsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "GetEnumerator"));
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        // Loop start
+        il.MarkLabel(loopStartLabel);
+
+        // if (!enumerator.MoveNext()) goto loopEnd
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        var moveNextMethod = typeof(Dictionary<string, object?>.Enumerator).GetMethod("MoveNext")!;
+        il.Emit(OpCodes.Call, moveNextMethod);
+        il.Emit(OpCodes.Brfalse, loopEndLabel);
+
+        // current = enumerator.Current
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        var currentGetter = typeof(Dictionary<string, object?>.Enumerator).GetProperty("Current")!.GetGetMethod()!;
+        il.Emit(OpCodes.Call, currentGetter);
+        il.Emit(OpCodes.Stloc, currentLocal);
+
+        // propKey = current.Key
+        il.Emit(OpCodes.Ldloca, currentLocal);
+        var keyGetter = typeof(KeyValuePair<string, object?>).GetProperty("Key")!.GetGetMethod()!;
+        il.Emit(OpCodes.Call, keyGetter);
+        il.Emit(OpCodes.Stloc, propKeyLocal);
+
+        // propDesc = current.Value
+        il.Emit(OpCodes.Ldloca, currentLocal);
+        var valueGetter = typeof(KeyValuePair<string, object?>).GetProperty("Value")!.GetGetMethod()!;
+        il.Emit(OpCodes.Call, valueGetter);
+        il.Emit(OpCodes.Stloc, propDescLocal);
+
+        // Skip null descriptors
+        var notNullDescLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, propDescLocal);
+        il.Emit(OpCodes.Brtrue, notNullDescLabel);
+        il.Emit(OpCodes.Br, loopStartLabel);  // Continue to next iteration
+
+        il.MarkLabel(notNullDescLabel);
+
+        // Call ObjectDefineProperty(result, propKey, propDesc) for this property
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, propKeyLocal);
+        il.Emit(OpCodes.Ldloc, propDescLocal);
+        il.Emit(OpCodes.Call, runtime.ObjectDefineProperty);
+        il.Emit(OpCodes.Pop);  // Discard return value
+
+        // Continue loop
+        il.Emit(OpCodes.Br, loopStartLabel);
+
+        il.MarkLabel(loopEndLabel);
+
+        // Dispose enumerator (it's a struct, but good practice)
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        var disposeMethod = typeof(Dictionary<string, object?>.Enumerator).GetMethod("Dispose")!;
+        il.Emit(OpCodes.Call, disposeMethod);
+
+        il.MarkLabel(noPropsLabel);
+
+        // Return result
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.preventExtensions(obj) - prevents adding new properties.
+    /// Signature: object ObjectPreventExtensions(object obj)
+    /// Uses PropertyDescriptorStore for enforcement and local table for standalone checks.
+    /// </summary>
+    private void EmitObjectPreventExtensions(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder nonExtensibleObjectsField, FieldBuilder frozenObjectsField, FieldBuilder sealedObjectsField)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectPreventExtensions",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.ObjectPreventExtensions = method;
+
+        var il = method.GetILGenerator();
+        var returnLabel = il.DefineLabel();
+
+        // If obj is null, just return it
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, returnLabel);
+
+        // Call $PropertyDescriptorStore.PreventExtensions(obj) - fully standalone, no reflection
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSPreventExtensions);
+
+        // Also add to local non-extensible objects table for standalone checks
+        il.Emit(OpCodes.Ldsfld, nonExtensibleObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1); // true
+        il.Emit(OpCodes.Box, _types.Boolean);
+        var addOrUpdateMethod = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<object, object>)
+            .GetMethod("AddOrUpdate");
+        if (addOrUpdateMethod != null)
+        {
+            il.Emit(OpCodes.Callvirt, addOrUpdateMethod);
+        }
+        else
+        {
+            var setItem = _types.ConditionalWeakTable.GetMethod("set_Item")
+                ?? _types.ConditionalWeakTable.GetProperty("Item")?.GetSetMethod();
+            if (setItem != null)
+            {
+                il.Emit(OpCodes.Callvirt, setItem);
+            }
+            else
+            {
+                il.Emit(OpCodes.Pop);
+                il.Emit(OpCodes.Pop);
+                il.Emit(OpCodes.Pop);
+            }
+        }
+
+        il.MarkLabel(returnLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.isExtensible(obj) - returns whether object can have new properties.
+    /// Signature: bool ObjectIsExtensible(object obj)
+    /// Checks both PropertyDescriptorStore and local tables for compatibility.
+    /// Returns false for primitives, frozen, sealed, or explicitly non-extensible objects.
+    /// </summary>
+    private void EmitObjectIsExtensible(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder nonExtensibleObjectsField, FieldBuilder frozenObjectsField, FieldBuilder sealedObjectsField)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectIsExtensible",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object]
+        );
+        runtime.ObjectIsExtensible = method;
+
+        var il = method.GetILGenerator();
+        var returnFalseLabel = il.DefineLabel();
+        var checkStringLabel = il.DefineLabel();
+        var checkNumberLabel = il.DefineLabel();
+        var checkBooleanLabel = il.DefineLabel();
+        var checkPropertyStoreLabel = il.DefineLabel();
+        var checkLocalTablesLabel = il.DefineLabel();
+        var checkFrozenLabel = il.DefineLabel();
+        var checkSealedLabel = il.DefineLabel();
+
+        var valueLocal = il.DeclareLocal(_types.Object);
+
+        // If obj is null, return false (primitives are not extensible)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, checkStringLabel);
+        il.Emit(OpCodes.Br, returnFalseLabel);
+
+        // If obj is string, return false (immutable)
+        il.MarkLabel(checkStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel);
+
+        // If obj is double (boxed number), return false (immutable)
+        il.MarkLabel(checkNumberLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel);
+
+        // If obj is bool (boxed boolean), return false (immutable)
+        il.MarkLabel(checkBooleanLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel);
+
+        // Check $PropertyDescriptorStore.IsExtensible(obj) - fully standalone, no reflection
+        il.MarkLabel(checkPropertyStoreLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsExtensible);
+        il.Emit(OpCodes.Brfalse, returnFalseLabel); // Not extensible per property store
+
+        // Also check local tables for backward compatibility
+        // Check if obj is in the non-extensible objects table
+        il.MarkLabel(checkLocalTablesLabel);
+        il.Emit(OpCodes.Ldsfld, nonExtensibleObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        var tryGetValue = _types.ConditionalWeakTable.GetMethod("TryGetValue");
+        il.Emit(OpCodes.Callvirt, tryGetValue!);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel); // Found = not extensible
+
+        // Check if obj is in the frozen objects table
+        il.MarkLabel(checkFrozenLabel);
+        il.Emit(OpCodes.Ldsfld, frozenObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        il.Emit(OpCodes.Callvirt, tryGetValue!);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel); // Frozen = not extensible
+
+        // Check if obj is in the sealed objects table
+        il.MarkLabel(checkSealedLabel);
+        il.Emit(OpCodes.Ldsfld, sealedObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        il.Emit(OpCodes.Callvirt, tryGetValue!);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel); // Sealed = not extensible
+
+        // Not in any table, object is extensible
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+
+        // Return false
+        il.MarkLabel(returnFalseLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.getOwnPropertySymbols(obj) - returns array of symbol-keyed properties.
+    /// Signature: object GetOwnPropertySymbols(object obj)
+    /// Uses the compiled assembly's GetSymbolDict to retrieve symbol keys.
+    /// </summary>
+    private void EmitGetOwnPropertySymbols(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetOwnPropertySymbols",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.GetOwnPropertySymbols = method;
+
+        var il = method.GetILGenerator();
+
+        // Create the result list
+        // var result = new List<object?>();
+        var resultLocal = il.DeclareLocal(_types.ListOfObjectNullable);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObjectNullable));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // Get symbol dictionary: var symbolDict = GetSymbolDict(obj);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        var symbolDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        il.Emit(OpCodes.Stloc, symbolDictLocal);
+
+        // Get keys and iterate: foreach (var key in symbolDict.Keys) result.Add(key);
+        // symbolDict.Keys
+        il.Emit(OpCodes.Ldloc, symbolDictLocal);
+        var keysProperty = _types.DictionaryObjectObject.GetProperty("Keys")!.GetGetMethod()!;
+        il.Emit(OpCodes.Callvirt, keysProperty);
+
+        // Get enumerator
+        var keysCollectionType = keysProperty.ReturnType;
+        var getEnumeratorMethod = keysCollectionType.GetMethod("GetEnumerator")!;
+        il.Emit(OpCodes.Callvirt, getEnumeratorMethod);
+        var enumeratorType = getEnumeratorMethod.ReturnType;
+        var enumeratorLocal = il.DeclareLocal(enumeratorType);
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        // Loop: while (enumerator.MoveNext())
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        var moveNextMethod = enumeratorType.GetMethod("MoveNext")!;
+        il.Emit(OpCodes.Call, moveNextMethod);
+        il.Emit(OpCodes.Brfalse, loopEnd);
+
+        // result.Add(enumerator.Current);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        var currentProperty = enumeratorType.GetProperty("Current")!.GetGetMethod()!;
+        il.Emit(OpCodes.Call, currentProperty);
+        var addMethod = _types.ListOfObjectNullable.GetMethod("Add", [_types.Object])!;
+        il.Emit(OpCodes.Callvirt, addMethod);
+
+        il.Emit(OpCodes.Br, loopStart);
+        il.MarkLabel(loopEnd);
+
+        // Return result
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.getPrototypeOf(obj) - returns the prototype of an object.
+    /// Signature: object ObjectGetPrototypeOf(object obj)
+    /// Checks PropertyDescriptorStore first, then local table for compatibility.
+    /// </summary>
+    private void EmitObjectGetPrototypeOf(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder prototypeStoreField)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectGetPrototypeOf",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.ObjectGetPrototypeOf = method;
+
+        var il = method.GetILGenerator();
+        var checkLocalTableLabel = il.DefineLabel();
+        var foundInLocalLabel = il.DefineLabel();
+
+        var resultLocal = il.DeclareLocal(_types.Object);
+        var tempLocal = il.DeclareLocal(_types.Object);
+
+        // Check $PropertyDescriptorStore.GetPrototype(obj) - fully standalone, no reflection
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSGetPrototype);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // If result is not null, return it
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Brfalse, checkLocalTableLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        // Also check local _prototypeStore table for backward compatibility
+        il.MarkLabel(checkLocalTableLabel);
+        il.Emit(OpCodes.Ldsfld, prototypeStoreField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, tempLocal);
+        var tryGetValue = _types.ConditionalWeakTable.GetMethod("TryGetValue");
+        il.Emit(OpCodes.Callvirt, tryGetValue!);
+        il.Emit(OpCodes.Brtrue, foundInLocalLabel);
+
+        // Not found in either: return null
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        // Found in local table: return it
+        il.MarkLabel(foundInLocalLabel);
+        il.Emit(OpCodes.Ldloc, tempLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.setPrototypeOf(obj, proto) - sets the prototype of an object.
+    /// Signature: object ObjectSetPrototypeOf(object obj, object proto)
+    /// Uses reflection to call RuntimeSetPrototypeOf helper for complex object type handling.
+    /// Also stores in local prototype table for standalone checks.
+    /// </summary>
+    private void EmitObjectSetPrototypeOf(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder prototypeStoreField, FieldBuilder nonExtensibleObjectsField)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectSetPrototypeOf",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]
+        );
+        runtime.ObjectSetPrototypeOf = method;
+
+        var il = method.GetILGenerator();
+
+        // Check if object is null - if so, skip checks
+        var nullCheckDoneLabel = il.DefineLabel();
+        var notExtensibleLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, nullCheckDoneLabel);
+
+        // Check if object is a class instance (IHasFields but not $Object) - throw TypeError
+        var notClassInstanceLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Brfalse, notClassInstanceLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, notClassInstanceLabel);
+        // It's a class instance - throw TypeError
+        il.Emit(OpCodes.Ldstr, "Cannot set prototype of class instance");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notClassInstanceLabel);
+
+        // Check if object is extensible - if not, throw TypeError
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ObjectIsExtensible);
+        il.Emit(OpCodes.Brtrue, nullCheckDoneLabel);  // Object is extensible, proceed
+
+        // Object is not extensible - throw TypeError
+        il.Emit(OpCodes.Ldstr, "Cannot set prototype of non-extensible object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(nullCheckDoneLabel);
+
+        // Store in $PropertyDescriptorStore for standalone operation.
+        var skipLocalStoreLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, skipLocalStoreLabel); // Skip if null
+
+        // Call $PropertyDescriptorStore.SetPrototype(obj, proto)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
+
+        // Also store in local prototype table for backward compatibility
+        il.Emit(OpCodes.Ldsfld, prototypeStoreField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        var addOrUpdateMethod = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<object, object>)
+            .GetMethod("AddOrUpdate");
+        if (addOrUpdateMethod != null)
+        {
+            il.Emit(OpCodes.Callvirt, addOrUpdateMethod);
+        }
+        else
+        {
+            // Fallback: Remove then Add
+            var removeMethod = _types.ConditionalWeakTable.GetMethod("Remove", [_types.Object]);
+            il.Emit(OpCodes.Pop); // Pop proto
+            il.Emit(OpCodes.Pop); // Pop target
+            il.Emit(OpCodes.Pop); // Pop table
+            il.Emit(OpCodes.Ldsfld, prototypeStoreField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, removeMethod!);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ldsfld, prototypeStoreField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            var addMethod = _types.ConditionalWeakTable.GetMethod("Add");
+            il.Emit(OpCodes.Callvirt, addMethod!);
+        }
+
+        il.MarkLabel(skipLocalStoreLabel);
+        // Return obj (arg_0)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+}
