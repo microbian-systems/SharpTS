@@ -2427,6 +2427,8 @@ public partial class RuntimeEmitter
         EmitWeakSetMethods(typeBuilder, runtime);
         // WeakRef methods
         EmitWeakRefMethods(typeBuilder, runtime);
+        // Proxy methods
+        EmitProxyMethods(typeBuilder, runtime);
         // Dynamic import methods
         EmitDynamicImportMethods(typeBuilder, runtime);
         // Async generator await continuation helper

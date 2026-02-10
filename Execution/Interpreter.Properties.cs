@@ -62,6 +62,13 @@ public partial class Interpreter
         // Evaluate the callee expression to get the class/constructor
         object? klass = await ctx.EvaluateExprAsync(newExpr.Callee);
 
+        // Handle Proxy construct trap
+        if (klass is SharpTSProxy proxy)
+        {
+            List<object?> proxyArgs = await ctx.EvaluateAllAsync(newExpr.Arguments);
+            return proxy.TrapConstruct(proxyArgs, this);
+        }
+
         // Handle callable constructors (like SharpTSEventEmitterConstructor)
         // These implement ISharpTSCallable and are used for module-imported types
         if (klass is ISharpTSCallable callable && klass is not SharpTSClass && klass is not BoundFunction)
@@ -136,6 +143,17 @@ public partial class Interpreter
 
         // Evaluate the callee expression to get the class/constructor
         object? klass = Evaluate(newExpr.Callee);
+
+        // Handle Proxy construct trap
+        if (klass is SharpTSProxy proxy)
+        {
+            List<object?> proxyArgs = [];
+            foreach (var arg in newExpr.Arguments)
+            {
+                proxyArgs.Add(Evaluate(arg));
+            }
+            return proxy.TrapConstruct(proxyArgs, this);
+        }
 
         // Handle callable constructors (like SharpTSEventEmitterConstructor)
         // These implement ISharpTSCallable and are used for module-imported types
@@ -235,6 +253,12 @@ public partial class Interpreter
         if (get.Optional && (obj == null || obj is Runtime.Types.SharpTSUndefined))
         {
             return Runtime.Types.SharpTSUndefined.Instance;
+        }
+
+        // Proxy interception - must be before any other dispatch
+        if (obj is SharpTSProxy proxy)
+        {
+            return proxy.TrapGet(get.Name.Lexeme, this);
         }
 
         var category = TypeCategoryResolver.ClassifyRuntime(obj);
@@ -421,6 +445,13 @@ public partial class Interpreter
     /// </summary>
     private object? EvaluateSetOnObject(Expr.Set set, object? obj, object? value)
     {
+        // Proxy interception - must be before any other dispatch
+        if (obj is SharpTSProxy proxy)
+        {
+            proxy.TrapSet(set.Name.Lexeme, value, this);
+            return value;
+        }
+
         bool strictMode = _environment.IsStrictMode;
 
         // Handle static property assignment

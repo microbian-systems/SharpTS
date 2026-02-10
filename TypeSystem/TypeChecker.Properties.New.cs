@@ -285,6 +285,23 @@ public partial class TypeChecker
             return new TypeInfo.WeakRef(targetType);
         }
 
+        // Handle new Proxy(target, handler) constructor
+        if (isSimpleName && simpleClassName == "Proxy")
+        {
+            // Proxy() requires exactly 2 arguments (target, handler)
+            if (newExpr.Arguments.Count != 2)
+            {
+                throw new TypeCheckException("Proxy constructor requires exactly 2 arguments (target, handler).");
+            }
+
+            // Check argument types - both must be checked
+            TypeInfo targetType = CheckExpr(newExpr.Arguments[0]);
+            CheckExpr(newExpr.Arguments[1]);
+
+            // Return any type since proxy is transparent to the type system
+            return new TypeInfo.Any();
+        }
+
         // Handle new EventEmitter() constructor
         if (isSimpleName && simpleClassName == "EventEmitter")
         {

@@ -701,6 +701,13 @@ public partial class Interpreter
         object? obj = Evaluate(getIndex.Object);
         object? index = Evaluate(getIndex.Index);
 
+        // Proxy: intercept index access via get trap
+        if (obj is SharpTSProxy proxy)
+        {
+            string key = index?.ToString() ?? "";
+            return proxy.TrapGet(key, this);
+        }
+
         return ResolveIndexTarget(obj, index) switch
         {
             IndexTarget.Array t => t.Target.Get(t.Index),
@@ -734,6 +741,13 @@ public partial class Interpreter
         object? index = Evaluate(setIndex.Index);
         object? value = Evaluate(setIndex.Value);
         bool strictMode = _environment.IsStrictMode;
+
+        // Proxy: intercept index assignment via set trap
+        if (obj is SharpTSProxy proxy)
+        {
+            string key = index?.ToString() ?? "";
+            return proxy.TrapSet(key, value, this);
+        }
 
         var target = ResolveIndexTarget(obj, index);
 

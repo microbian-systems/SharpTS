@@ -806,6 +806,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
+        var notProxyLabel = il.DefineLabel();
+        EmitProxyGetPropertyCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), notProxyLabel);
+
+        il.MarkLabel(notProxyLabel);
+
         // $TSNamespace - call ns.Get(name)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSNamespaceType);
@@ -1463,6 +1469,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
+        var notProxyLabel = il.DefineLabel();
+        EmitProxySetPropertyCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), () => il.Emit(OpCodes.Ldarg_2), notProxyLabel);
+
+        il.MarkLabel(notProxyLabel);
+
         // $Object (with setter support) - call obj.SetProperty(name, value)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
@@ -1831,6 +1843,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, trueLabel);
 
+        // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
+        var notProxyLabel = il.DefineLabel();
+        EmitProxyDeleteCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), notProxyLabel);
+
+        il.MarkLabel(notProxyLabel);
+
         // Check if $TSObject
         var sharpTSObjectLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -1923,6 +1941,12 @@ public partial class RuntimeEmitter
         // null check - return true (deleting from null is allowed in JS)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, trueLabel);
+
+        // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
+        var notProxyLabel = il.DefineLabel();
+        EmitProxyDeleteCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), notProxyLabel);
+
+        il.MarkLabel(notProxyLabel);
 
         // Check if $TSObject
         var sharpTSObjectLabel = il.DefineLabel();

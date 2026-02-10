@@ -120,6 +120,10 @@ public static partial class RuntimeTypes
     {
         if (obj == null) return null;
 
+        // Proxy interception
+        if (obj is SharpTSProxy proxy)
+            return proxy.TrapGet(name, null);
+
         // Namespace (TypeScript namespace object) - checked via reflection
         if (TryGetNamespaceProperty(obj, name, out var nsResult))
         {
@@ -222,6 +226,13 @@ public static partial class RuntimeTypes
     {
         if (obj == null) return;
 
+        // Proxy interception
+        if (obj is SharpTSProxy proxy)
+        {
+            proxy.TrapSet(name, value, null);
+            return;
+        }
+
         // Dictionary
         if (TryGetDictionary(obj, out var dict))
         {
@@ -265,6 +276,13 @@ public static partial class RuntimeTypes
     public static object? GetIndex(object? obj, object? index)
     {
         if (obj == null) return null;
+
+        // Proxy interception
+        if (obj is SharpTSProxy proxy)
+        {
+            string proxyKey = index?.ToString() ?? "";
+            return proxy.TrapGet(proxyKey, null);
+        }
 
         // Object/Dictionary with string key
         if (TryGetDictionary(obj, out var dict) && index is string key)
@@ -363,6 +381,14 @@ public static partial class RuntimeTypes
     public static void SetIndex(object? obj, object? index, object? value)
     {
         if (obj == null) return;
+
+        // Proxy interception
+        if (obj is SharpTSProxy proxy)
+        {
+            string proxyKey = index?.ToString() ?? "";
+            proxy.TrapSet(proxyKey, value, null);
+            return;
+        }
 
         // Object/Dictionary with string key
         if (TryGetDictionary(obj, out var dict) && index is string key)

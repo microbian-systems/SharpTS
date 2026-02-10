@@ -32,6 +32,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
+        var notProxyLabel = il.DefineLabel();
+        EmitProxyGetIndexCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), notProxyLabel);
+
+        il.MarkLabel(notProxyLabel);
+
         // Check if index is a symbol first (symbols work on any object type)
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
@@ -279,6 +285,12 @@ public partial class RuntimeEmitter
         // null check on obj
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
+        var notProxyLabel = il.DefineLabel();
+        EmitProxySetIndexCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), () => il.Emit(OpCodes.Ldarg_2), notProxyLabel);
+
+        il.MarkLabel(notProxyLabel);
 
         // Check if index is a symbol first (symbols work on any object type)
         il.Emit(OpCodes.Ldarg_1);

@@ -158,6 +158,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.FuncObjectArrayToObject);
         il.Emit(OpCodes.Brtrue, funcDelegateLabel);
 
+        // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
+        var notProxyLabel = il.DefineLabel();
+        EmitProxyInvokeCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), notProxyLabel);
+
+        il.MarkLabel(notProxyLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 

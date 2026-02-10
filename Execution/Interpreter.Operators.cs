@@ -321,6 +321,9 @@ public partial class Interpreter
         object? obj = Evaluate(get.Object);
         string name = get.Name.Lexeme;
 
+        if (obj is SharpTSProxy proxy)
+            return proxy.TrapDeleteProperty(name, this);
+
         return obj switch
         {
             SharpTSObject tsObj => tsObj.DeletePropertyStrict(name, strictMode),
@@ -339,6 +342,9 @@ public partial class Interpreter
         object? obj = await EvaluateAsync(get.Object);
         string name = get.Name.Lexeme;
 
+        if (obj is SharpTSProxy proxy)
+            return proxy.TrapDeleteProperty(name, this);
+
         return obj switch
         {
             SharpTSObject tsObj => tsObj.DeletePropertyStrict(name, strictMode),
@@ -356,6 +362,13 @@ public partial class Interpreter
     {
         object? obj = Evaluate(getIndex.Object);
         object? key = Evaluate(getIndex.Index);
+
+        // Handle proxy
+        if (obj is SharpTSProxy proxy)
+        {
+            string proxyKey = key is SharpTSSymbol ? key.ToString()! : Stringify(key);
+            return proxy.TrapDeleteProperty(proxyKey, this);
+        }
 
         // Handle symbol keys
         if (key is SharpTSSymbol symbol)
@@ -387,6 +400,13 @@ public partial class Interpreter
     {
         object? obj = await EvaluateAsync(getIndex.Object);
         object? key = await EvaluateAsync(getIndex.Index);
+
+        // Handle proxy
+        if (obj is SharpTSProxy proxy)
+        {
+            string proxyKey = key is SharpTSSymbol ? key.ToString()! : Stringify(key);
+            return proxy.TrapDeleteProperty(proxyKey, this);
+        }
 
         // Handle symbol keys
         if (key is SharpTSSymbol symbol)
@@ -449,6 +469,7 @@ public partial class Interpreter
         string => "string",
         SharpTSSymbol => "symbol",
         SharpTSBigInt or System.Numerics.BigInteger => "bigint",
+        SharpTSProxy proxy => proxy.IsCallable ? "function" : "object",
         SharpTSFunction or SharpTSArrowFunction or SharpTSClass or BuiltInMethod or ISharpTSCallable => "function",
         _ => "object"
     };
@@ -528,6 +549,13 @@ public partial class Interpreter
     private object EvaluateIn(object? left, object? right)
     {
         // 'in' operator checks if a property exists in an object
+        // Handle proxy has trap
+        if (right is SharpTSProxy proxy)
+        {
+            string proxyKey = left is SharpTSSymbol ? left.ToString()! : (left?.ToString() ?? "");
+            return proxy.TrapHas(proxyKey, this);
+        }
+
         // Handle symbol keys specially
         if (left is SharpTSSymbol symbol)
         {

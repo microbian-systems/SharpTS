@@ -315,7 +315,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `Proxy` | ❌ | No proxy/handler support |
+| `Proxy` | ✅ | `new Proxy(target, handler)`, `Proxy.revocable()`, traps: get/set/has/deleteProperty/apply/construct |
 | `WeakRef` | ✅ | `new WeakRef(target)`, `.deref()` |
 | `FinalizationRegistry` | ❌ | No GC finalization callbacks |
 | `Intl` | ❌ | No internationalization API |

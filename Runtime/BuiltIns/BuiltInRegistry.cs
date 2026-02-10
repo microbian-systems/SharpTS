@@ -138,6 +138,7 @@ public sealed class BuiltInRegistry
         RegisterReflectNamespace(registry);
         RegisterMapNamespace(registry);
         RegisterSymbolNamespace(registry);
+        RegisterProxyNamespace(registry);
         RegisterProcessNamespace(registry);
         RegisterGlobalThisNamespace(registry);
 
@@ -346,6 +347,36 @@ public sealed class BuiltInRegistry
             IsSingleton: false,
             SingletonFactory: null,
             GetMethod: name => SymbolBuiltIns.GetStaticMember(name) as BuiltInMethod
+        ));
+    }
+
+    private static void RegisterProxyNamespace(BuiltInRegistry registry)
+    {
+        registry.RegisterNamespace(new BuiltInNamespace(
+            Name: "Proxy",
+            IsSingleton: false,
+            SingletonFactory: null,
+            GetMethod: name => name switch
+            {
+                "revocable" => new BuiltInMethod("revocable", 2, (interp, _, args) =>
+                {
+                    if (args.Count < 2)
+                        throw new Exception("Runtime Error: Proxy.revocable requires exactly 2 arguments (target, handler).");
+                    var proxy = new SharpTSProxy(args[0]!, args[1]!);
+                    var revoke = new BuiltInMethod("revoke", 0, (_, _, _) =>
+                    {
+                        proxy.Revoke();
+                        return SharpTSUndefined.Instance;
+                    });
+                    var result = new SharpTSObject(new Dictionary<string, object?>
+                    {
+                        ["proxy"] = proxy,
+                        ["revoke"] = revoke
+                    });
+                    return result;
+                }),
+                _ => null
+            }
         ));
     }
 

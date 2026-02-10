@@ -21,6 +21,9 @@ public partial class Interpreter
     {
         switch (obj)
         {
+            case SharpTSProxy proxy:
+                value = proxy.TrapGet(name.Lexeme, this);
+                return true;
             case SharpTSClass klass:
                 value = klass.GetStaticProperty(name.Lexeme);
                 return true;
@@ -68,6 +71,9 @@ public partial class Interpreter
     {
         switch (obj)
         {
+            case SharpTSProxy proxy:
+                proxy.TrapSet(name.Lexeme, value, this);
+                return true;
             case SharpTSClass klass:
                 klass.SetStaticProperty(name.Lexeme, value);
                 return true;

@@ -30,6 +30,12 @@ public static class BuiltInConstructorFactory
         [BuiltInNames.WeakSet] = _ => new SharpTSWeakSet(),
         [BuiltInNames.WeakRef] = args => new SharpTSWeakRef(args.Count > 0 ? args[0] : null),
         [BuiltInNames.EventEmitter] = _ => new SharpTSEventEmitter(),
+        [BuiltInNames.Proxy] = args =>
+        {
+            if (args.Count != 2)
+                throw new Exception("Runtime Error: Proxy constructor requires exactly 2 arguments (target, handler).");
+            return new SharpTSProxy(args[0]!, args[1]!);
+        },
     };
 
     /// <summary>

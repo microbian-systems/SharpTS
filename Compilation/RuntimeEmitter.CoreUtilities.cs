@@ -1942,6 +1942,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, falseLabel);
 
+        // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
+        // Note: HasIn signature is (key, obj) so obj is arg_1
+        var notProxyLabel = il.DefineLabel();
+        EmitProxyHasCheck(il, () => il.Emit(OpCodes.Ldarg_1), () => il.Emit(OpCodes.Ldarg_0), notProxyLabel);
+
+        il.MarkLabel(notProxyLabel);
+
         // Check if key is a symbol
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.IsSymbolMethod);

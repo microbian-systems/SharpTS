@@ -107,6 +107,13 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new Proxy(target, handler) constructor
+        if (isSimpleName && simpleClassName == "Proxy")
+        {
+            EmitNewProxy(n.Arguments);
+            return;
+        }
+
         // Special case: new RegExp(...) constructor
         if (isSimpleName && simpleClassName == "RegExp")
         {
@@ -597,6 +604,37 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateWeakRef);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits code for new Proxy(target, handler) construction.
+    /// </summary>
+    private void EmitNewProxy(List<Expr> arguments)
+    {
+        // Emit target argument (boxed)
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        // Emit handler argument (boxed)
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateProxy);
         SetStackUnknown();
     }
 

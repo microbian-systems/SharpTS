@@ -27,6 +27,7 @@ public class StandaloneDllTests
         "Compilation/ConstantFolder.cs",              // SharpTSUndefined detection
         "Compilation/PropertyDescriptorStore.cs",     // SharpTSPropertyDescriptor/Object fallback
         "Compilation/RuntimeEmitter.Worker.cs",       // TypedArray/Worker/Atomics interpreter fallback
+        "Compilation/RuntimeEmitter.Proxy.cs",        // Proxy CreateProxy/CreateRevocableProxy (requires SharpTS.dll at runtime)
     };
 
     /// <summary>

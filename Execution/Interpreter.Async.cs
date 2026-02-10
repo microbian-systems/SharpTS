@@ -690,6 +690,13 @@ public partial class Interpreter
     // Helper methods for index operations
     private object? EvaluateIndexGet(object? obj, object? index)
     {
+        // Proxy interception for index access
+        if (obj is SharpTSProxy proxy)
+        {
+            string key = index is SharpTSSymbol ? index.ToString()! : Stringify(index);
+            return proxy.TrapGet(key, this);
+        }
+
         if (obj is SharpTSArray array && index is double idx)
         {
             return array.Get((int)idx);
@@ -727,6 +734,14 @@ public partial class Interpreter
 
     private object? EvaluateIndexSet(object? obj, object? index, object? value)
     {
+        // Proxy interception for index set
+        if (obj is SharpTSProxy proxy)
+        {
+            string key = index is SharpTSSymbol ? index.ToString()! : Stringify(index);
+            proxy.TrapSet(key, value, this);
+            return value;
+        }
+
         bool strictMode = _environment.IsStrictMode;
 
         if (obj is SharpTSArray array && index is double idx)

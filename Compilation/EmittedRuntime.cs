@@ -493,6 +493,10 @@ public class EmittedRuntime
     public MethodBuilder CreateWeakRef { get; set; } = null!;
     public MethodBuilder WeakRefDeref { get; set; } = null!;
 
+    // Proxy support
+    public MethodBuilder CreateProxy { get; set; } = null!;
+    public MethodBuilder CreateRevocableProxy { get; set; } = null!;
+
     // WeakMap/WeakSet/WeakRef validation helpers
     public MethodBuilder ValidateWeakMapKey { get; set; } = null!;
     public MethodBuilder ValidateWeakSetValue { get; set; } = null!;

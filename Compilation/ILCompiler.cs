@@ -619,6 +619,7 @@ public partial class ILCompiler
         _typeEmitterRegistry.RegisterStatic("Atomics", new AtomicsStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("ArrayBuffer", new ArrayBufferStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("Reflect", new ReflectStaticEmitter());
+        _typeEmitterRegistry.RegisterStatic("Proxy", new ProxyStaticEmitter());
 
         // Built-in module emitters
         _builtInModuleEmitterRegistry.Register(new PathModuleEmitter());

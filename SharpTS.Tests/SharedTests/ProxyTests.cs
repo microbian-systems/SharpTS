@@ -1,0 +1,279 @@
+using SharpTS.Tests.Infrastructure;
+using Xunit;
+
+namespace SharpTS.Tests.SharedTests;
+
+/// <summary>
+/// Tests for JavaScript Proxy object functionality.
+/// Runs against both interpreter and compiler.
+/// </summary>
+public class ProxyTests
+{
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_GetTrap(ExecutionMode mode)
+    {
+        var source = @"
+            const target = { name: ""world"" };
+            const handler = {
+                get(target: any, prop: string, receiver: any) {
+                    if (prop === ""name"") return ""intercepted"";
+                    return target[prop];
+                }
+            };
+            const p = new Proxy(target, handler);
+            console.log(p.name);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("intercepted\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_SetTrap(ExecutionMode mode)
+    {
+        var source = @"
+            const target: any = { count: 0 };
+            const handler = {
+                set(target: any, prop: string, value: any, receiver: any) {
+                    target[prop] = value * 2;
+                    return true;
+                }
+            };
+            const p: any = new Proxy(target, handler);
+            p.count = 5;
+            console.log(target.count);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_HasTrap(ExecutionMode mode)
+    {
+        var source = @"
+            const target = { a: 1, b: 2 };
+            const handler = {
+                has(target: any, prop: string) {
+                    if (prop === ""c"") return true;
+                    return prop in target;
+                }
+            };
+            const p = new Proxy(target, handler);
+            console.log(""a"" in p);
+            console.log(""c"" in p);
+            console.log(""d"" in p);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_DeletePropertyTrap(ExecutionMode mode)
+    {
+        var source = @"
+            const target: any = { x: 1, y: 2 };
+            let deletedProp = """";
+            const handler = {
+                deleteProperty(target: any, prop: string) {
+                    deletedProp = prop;
+                    delete target[prop];
+                    return true;
+                }
+            };
+            const p: any = new Proxy(target, handler);
+            delete p.x;
+            console.log(deletedProp);
+            console.log(target.x);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("x\nundefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_DefaultForwarding_Get(ExecutionMode mode)
+    {
+        var source = @"
+            const target = { name: ""original"" };
+            const handler = {};
+            const p = new Proxy(target, handler);
+            console.log(p.name);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("original\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_DefaultForwarding_Set(ExecutionMode mode)
+    {
+        var source = @"
+            const target: any = { count: 0 };
+            const handler = {};
+            const p: any = new Proxy(target, handler);
+            p.count = 42;
+            console.log(target.count);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_Typeof(ExecutionMode mode)
+    {
+        var source = @"
+            const target = { x: 1 };
+            const handler = {};
+            const p = new Proxy(target, handler);
+            console.log(typeof p);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("object\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Proxy_ApplyTrap(ExecutionMode mode)
+    {
+        var source = @"
+            function greet(name: string): string {
+                return ""Hello, "" + name;
+            }
+            const handler = {
+                apply(target: any, thisArg: any, args: any[]) {
+                    return target(args[0]) + ""!"";
+                }
+            };
+            const p = new Proxy(greet, handler);
+            console.log(p(""World""));
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Hello, World!\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Proxy_TypeofFunction(ExecutionMode mode)
+    {
+        var source = @"
+            function myFunc(): number { return 1; }
+            const handler = {};
+            const p = new Proxy(myFunc, handler);
+            console.log(typeof p);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_Revocable(ExecutionMode mode)
+    {
+        var source = @"
+            const target = { value: 42 };
+            const result = Proxy.revocable(target, {});
+            const proxy = result.proxy;
+            const revoke = result.revoke;
+            console.log(proxy.value);
+            revoke();
+            try {
+                console.log(proxy.value);
+            } catch(e) {
+                console.log(""revoked"");
+            }
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\nrevoked\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_RevokedThrows(ExecutionMode mode)
+    {
+        var source = @"
+            const target: any = { x: 1 };
+            const result = Proxy.revocable(target, {});
+            const proxy: any = result.proxy;
+            const revoke = result.revoke;
+            revoke();
+            let caught = false;
+            try {
+                proxy.x = 5;
+            } catch(e) {
+                caught = true;
+            }
+            console.log(caught);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_GetTrap_MultipleProperties(ExecutionMode mode)
+    {
+        var source = @"
+            const target = { a: 1, b: 2 };
+            const log: string[] = [];
+            const handler = {
+                get(target: any, prop: string) {
+                    log.push(prop);
+                    return target[prop];
+                }
+            };
+            const p = new Proxy(target, handler);
+            const x = p.a;
+            const y = p.b;
+            console.log(log.join("",""));
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("a,b\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_SetTrap_ReturnsValue(ExecutionMode mode)
+    {
+        var source = @"
+            const target: any = {};
+            const handler = {
+                set(target: any, prop: string, value: any) {
+                    target[prop] = value + 1;
+                    return true;
+                }
+            };
+            const p: any = new Proxy(target, handler);
+            p.x = 10;
+            console.log(p.x);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("11\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_NestedTraps(ExecutionMode mode)
+    {
+        var source = @"
+            const inner = { value: ""base"" };
+            const innerProxy = new Proxy(inner, {
+                get(target: any, prop: string) {
+                    if (prop === ""value"") return ""inner_"" + target[prop];
+                    return target[prop];
+                }
+            });
+            const outerProxy = new Proxy(innerProxy, {
+                get(target: any, prop: string) {
+                    return ""outer_"" + target[prop];
+                }
+            });
+            console.log(outerProxy.value);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("outer_inner_base\n", output);
+    }
+}
