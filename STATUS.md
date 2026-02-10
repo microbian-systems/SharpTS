@@ -366,13 +366,19 @@ This section documents JavaScript/TypeScript features that are **not currently i
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `Reflect.get()` | ❌ | Only metadata API implemented |
-| `Reflect.set()` | ❌ | |
-| `Reflect.has()` | ❌ | Use `in` operator |
-| `Reflect.deleteProperty()` | ❌ | Use `delete` operator |
-| `Reflect.apply()` | ❌ | |
-| `Reflect.construct()` | ❌ | Use `new` operator |
-| `Reflect.ownKeys()` | ❌ | Use `Object.keys()` |
+| `Reflect.get()` | ✅ | Property access on target object |
+| `Reflect.set()` | ✅ | Returns `bool`; `false` for frozen objects |
+| `Reflect.has()` | ✅ | Equivalent to `in` operator |
+| `Reflect.deleteProperty()` | ✅ | Returns `bool`; `false` for frozen objects |
+| `Reflect.apply()` | ✅ | Calls function with thisArg and args array |
+| `Reflect.construct()` | ✅ | Creates instance; interpreter mode only for classes |
+| `Reflect.ownKeys()` | ✅ | Returns string keys + symbol keys |
+| `Reflect.getPrototypeOf()` | ✅ | Returns object prototype |
+| `Reflect.setPrototypeOf()` | ✅ | Returns `bool`; `false` for non-extensible objects |
+| `Reflect.isExtensible()` | ✅ | Returns `bool` |
+| `Reflect.preventExtensions()` | ✅ | Returns `true` |
+| `Reflect.getOwnPropertyDescriptor()` | ✅ | Returns property descriptor or undefined |
+| `Reflect.defineProperty()` | ✅ | Returns `bool`; `false` on failure (unlike `Object.defineProperty` which throws) |
 
 ---
 

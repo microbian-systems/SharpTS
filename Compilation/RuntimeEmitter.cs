@@ -2310,6 +2310,12 @@ public partial class RuntimeEmitter
         EmitGetOwnPropertySymbols(typeBuilder, runtime);
         EmitObjectGetPrototypeOf(typeBuilder, runtime, prototypeStoreField);
         EmitObjectSetPrototypeOf(typeBuilder, runtime, prototypeStoreField, nonExtensibleObjectsField);
+        EmitReflectSet(typeBuilder, runtime);
+        EmitReflectSetPrototypeOf(typeBuilder, runtime, prototypeStoreField, nonExtensibleObjectsField);
+        EmitReflectDefineProperty(typeBuilder, runtime);
+        EmitReflectOwnKeys(typeBuilder, runtime);
+        EmitReflectApply(typeBuilder, runtime);
+        EmitReflectConstruct(typeBuilder, runtime);
         EmitIsArray(typeBuilder, runtime);
         EmitSpreadArray(typeBuilder, runtime);
         EmitConcatArrays(typeBuilder, runtime);

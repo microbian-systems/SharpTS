@@ -617,6 +617,7 @@ public partial class ILCompiler
         _typeEmitterRegistry.RegisterStatic("globalThis", new GlobalThisStaticEmitter(_typeEmitterRegistry));
         _typeEmitterRegistry.RegisterStatic("Atomics", new AtomicsStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("ArrayBuffer", new ArrayBufferStaticEmitter());
+        _typeEmitterRegistry.RegisterStatic("Reflect", new ReflectStaticEmitter());
 
         // Built-in module emitters
         _builtInModuleEmitterRegistry.Register(new PathModuleEmitter());

@@ -1,3 +1,4 @@
+using SharpTS.Compilation;
 using SharpTS.Execution;
 using SharpTS.Runtime.Types;
 
@@ -106,6 +107,289 @@ public static class ReflectBuiltIns
 
                 // Return a decorator function that defines the metadata
                 return new MetadataDecorator(key, value);
+            }),
+
+            // --- Standard ES2015 Reflect API ---
+
+            "has" => new BuiltInMethod("has", 2, (_, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.has requires a target object.");
+                var propertyKey = args[1]?.ToString() ?? "";
+                return target switch
+                {
+                    SharpTSObject obj => obj.Fields.ContainsKey(propertyKey) || obj.HasGetter(propertyKey),
+                    SharpTSInstance inst => inst.GetFieldNames().Contains(propertyKey),
+                    Dictionary<string, object?> dict => dict.ContainsKey(propertyKey),
+                    _ => false
+                };
+            }),
+
+            "deleteProperty" => new BuiltInMethod("deleteProperty", 2, (_, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.deleteProperty requires a target object.");
+                var propertyKey = args[1]?.ToString() ?? "";
+                switch (target)
+                {
+                    case SharpTSObject obj:
+                        if (obj.IsFrozen) return false;
+                        obj.DeleteProperty(propertyKey);
+                        return true;
+                    case SharpTSInstance inst:
+                        if (inst.IsFrozen) return false;
+                        inst.DeleteField(propertyKey);
+                        return true;
+                    case Dictionary<string, object?> dict:
+                        if (PropertyDescriptorStore.IsFrozen(dict)) return false;
+                        dict.Remove(propertyKey);
+                        return true;
+                    default:
+                        return true;
+                }
+            }),
+
+            "get" => new BuiltInMethod("get", 2, 3, (_, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.get requires a target object.");
+                var propertyKey = args[1]?.ToString() ?? "";
+                return target switch
+                {
+                    SharpTSObject obj => obj.GetProperty(propertyKey),
+                    SharpTSInstance inst => inst.GetRawField(propertyKey),
+                    Dictionary<string, object?> dict => dict.TryGetValue(propertyKey, out var v) ? v : null,
+                    _ => null
+                };
+            }),
+
+            "set" => new BuiltInMethod("set", 3, 4, (_, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.set requires a target object.");
+                var propertyKey = args[1]?.ToString() ?? "";
+                var value = args[2];
+                try
+                {
+                    switch (target)
+                    {
+                        case SharpTSObject obj:
+                            if (obj.IsFrozen) return false;
+                            obj.SetProperty(propertyKey, value);
+                            return true;
+                        case SharpTSInstance inst:
+                            if (inst.IsFrozen) return false;
+                            inst.SetRawField(propertyKey, value);
+                            return true;
+                        case Dictionary<string, object?> dict:
+                            if (PropertyDescriptorStore.IsFrozen(dict)) return false;
+                            dict[propertyKey] = value;
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+                catch
+                {
+                    return false;
+                }
+            }),
+
+            "getPrototypeOf" => new BuiltInMethod("getPrototypeOf", 1, (_, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.getPrototypeOf requires a target object.");
+                return target switch
+                {
+                    SharpTSObject obj => obj.Prototype,
+                    SharpTSInstance inst => inst.Prototype,
+                    Dictionary<string, object?> dict => PropertyDescriptorStore.GetPrototype(dict),
+                    _ => null
+                };
+            }),
+
+            "setPrototypeOf" => new BuiltInMethod("setPrototypeOf", 2, (_, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.setPrototypeOf requires a target object.");
+                var proto = args[1];
+                try
+                {
+                    switch (target)
+                    {
+                        case SharpTSObject obj:
+                            if (!obj.IsExtensible) return false;
+                            obj.Prototype = proto;
+                            return true;
+                        case Dictionary<string, object?> dict:
+                            if (!PropertyDescriptorStore.IsExtensible(dict)) return false;
+                            PropertyDescriptorStore.SetPrototype(dict, proto);
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+                catch
+                {
+                    return false;
+                }
+            }),
+
+            "isExtensible" => new BuiltInMethod("isExtensible", 1, (_, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.isExtensible requires a target object.");
+                return target switch
+                {
+                    SharpTSObject obj => obj.IsExtensible,
+                    SharpTSInstance inst => inst.IsExtensible,
+                    SharpTSArray arr => arr.IsExtensible,
+                    Dictionary<string, object?> dict => PropertyDescriptorStore.IsExtensible(dict),
+                    _ => false
+                };
+            }),
+
+            "preventExtensions" => new BuiltInMethod("preventExtensions", 1, (_, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.preventExtensions requires a target object.");
+                switch (target)
+                {
+                    case SharpTSObject obj:
+                        obj.PreventExtensions();
+                        break;
+                    case SharpTSInstance inst:
+                        inst.PreventExtensions();
+                        break;
+                    case SharpTSArray arr:
+                        arr.PreventExtensions();
+                        break;
+                    case Dictionary<string, object?> dict:
+                        PropertyDescriptorStore.PreventExtensions(dict);
+                        break;
+                }
+                return true;
+            }),
+
+            "getOwnPropertyDescriptor" => new BuiltInMethod("getOwnPropertyDescriptor", 2, (_, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.getOwnPropertyDescriptor requires a target object.");
+                var propertyKey = args[1]?.ToString() ?? "";
+                // Delegate to ObjectBuiltIns which handles all target types
+                return ObjectBuiltIns.RuntimeGetOwnPropertyDescriptor(target, propertyKey);
+            }),
+
+            "defineProperty" => new BuiltInMethod("defineProperty", 3, (_, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.defineProperty requires a target object.");
+                var propertyKey = args[1]?.ToString() ?? "";
+                var descriptorArg = args[2] ?? throw new Exception("TypeError: Property description must be an object");
+                try
+                {
+                    SharpTSPropertyDescriptor descriptor = SharpTSPropertyDescriptor.FromAnyObject(descriptorArg);
+                    switch (target)
+                    {
+                        case SharpTSObject obj:
+                            return obj.DefineProperty(propertyKey, descriptor);
+                        case SharpTSInstance inst:
+                            return inst.DefineProperty(propertyKey, descriptor);
+                        case SharpTSArray arr:
+                            return arr.DefineProperty(propertyKey, descriptor);
+                        default:
+                            return false;
+                    }
+                }
+                catch
+                {
+                    return false;
+                }
+            }),
+
+            "ownKeys" => new BuiltInMethod("ownKeys", 1, (_, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.ownKeys requires a target object.");
+                List<object?> keys = [];
+                switch (target)
+                {
+                    case SharpTSObject obj:
+                        keys.AddRange(obj.Fields.Keys.Select(k => (object?)k));
+                        keys.AddRange(obj.GetSymbolPropertyNames().Select(s => (object?)s));
+                        break;
+                    case SharpTSInstance inst:
+                        keys.AddRange(inst.GetFieldNames().Select(k => (object?)k));
+                        keys.AddRange(inst.GetSymbolPropertyNames().Select(s => (object?)s));
+                        break;
+                    case Dictionary<string, object?> dict:
+                        keys.AddRange(dict.Keys.Select(k => (object?)k));
+                        keys.AddRange(PropertyDescriptorStore.GetSymbolKeys(dict).Select(s => (object?)s));
+                        break;
+                }
+                return new SharpTSArray(keys);
+            }),
+
+            "apply" => new BuiltInMethod("apply", 3, (interpreter, _, args) =>
+            {
+                var target = args[0] as ISharpTSCallable
+                    ?? throw new Exception("Runtime Error: Reflect.apply requires a function target.");
+                var thisArg = args[1];
+                var argsList = args[2];
+
+                List<object?> callArgs;
+                if (argsList == null)
+                {
+                    callArgs = [];
+                }
+                else if (argsList is SharpTSArray tsArray)
+                {
+                    callArgs = new List<object?>(tsArray.Elements);
+                }
+                else if (argsList is List<object?> list)
+                {
+                    callArgs = new List<object?>(list);
+                }
+                else
+                {
+                    throw new Exception("Runtime Error: Reflect.apply third argument must be an array-like object.");
+                }
+
+                // Invoke with this binding
+                if (target is SharpTSFunction fn)
+                {
+                    var bound = new BoundFunction(fn, thisArg, []);
+                    return bound.Call(interpreter, callArgs);
+                }
+                if (target is SharpTSArrowFunction arrow && arrow.HasOwnThis)
+                {
+                    var bound = arrow.Bind(thisArg!);
+                    return bound.Call(interpreter, callArgs);
+                }
+                return target.Call(interpreter, callArgs);
+            }),
+
+            "construct" => new BuiltInMethod("construct", 2, 3, (interpreter, _, args) =>
+            {
+                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.construct requires a constructor.");
+                var argsList = args[1];
+
+                List<object?> callArgs;
+                if (argsList == null)
+                {
+                    callArgs = [];
+                }
+                else if (argsList is SharpTSArray tsArray)
+                {
+                    callArgs = new List<object?>(tsArray.Elements);
+                }
+                else if (argsList is List<object?> list)
+                {
+                    callArgs = new List<object?>(list);
+                }
+                else
+                {
+                    throw new Exception("Runtime Error: Reflect.construct second argument must be an array-like object.");
+                }
+
+                if (target is SharpTSClass cls)
+                {
+                    return cls.Call(interpreter, callArgs);
+                }
+                if (target is ISharpTSCallable callable)
+                {
+                    return callable.Call(interpreter, callArgs);
+                }
+                throw new Exception("Runtime Error: Reflect.construct target is not a constructor.");
             }),
 
             _ => null

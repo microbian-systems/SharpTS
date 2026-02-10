@@ -224,6 +224,14 @@ public class EmittedRuntime
     public FieldBuilder NonExtensibleObjectsField { get; set; } = null!;
     public FieldBuilder PrototypeStoreField { get; set; } = null!;
 
+    // Reflect API helpers
+    public MethodBuilder ReflectOwnKeys { get; set; } = null!;
+    public MethodBuilder ReflectSetPrototypeOf { get; set; } = null!;
+    public MethodBuilder ReflectDefineProperty { get; set; } = null!;
+    public MethodBuilder ReflectApply { get; set; } = null!;
+    public MethodBuilder ReflectConstruct { get; set; } = null!;
+    public MethodBuilder ReflectSet { get; set; } = null!;
+
     // Resource disposal for using declarations
     public MethodBuilder DisposeResource { get; set; } = null!;
 
