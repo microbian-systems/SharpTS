@@ -186,6 +186,8 @@ sharpts -c <file.ts> [options]
 | Option | Description |
 |--------|-------------|
 | `-o <path>` | Set output path (default: `<input>.dll`) |
+| `-t, --target <type>` | Output type: `dll` (default) or `exe` (single-file executable) |
+| `--bundler <mode>` | Bundler selection for `-t exe`: `auto` (default), `sdk`, or `canonical` |
 | `--preserveConstEnums` | Keep const enum declarations in output |
 | `--ref-asm` | Emit reference-assembly-compatible output |
 | `--sdk-path <path>` | Explicit path to .NET SDK reference assemblies |
@@ -226,7 +228,7 @@ sharpts
 For production deployment, compile your application:
 
 ```bash
-# Compile with verification
+# Compile to DLL with verification
 sharpts --compile myapp.ts --verify
 
 # Test the compiled output
@@ -234,6 +236,29 @@ dotnet myapp.dll
 
 # Deploy: copy myapp.dll and myapp.runtimeconfig.json
 ```
+
+### Self-Contained Executable
+
+Compile to a single-file executable that bundles the .NET host, assembly, and runtime config:
+
+```bash
+# Compile to self-contained exe (auto-selects best bundler)
+sharpts --compile myapp.ts -t exe
+
+# Force the canonical bundler (mirrors .NET HostModel behavior)
+sharpts --compile myapp.ts -t exe --bundler canonical
+
+# Run directly
+./myapp.exe
+```
+
+**Bundler modes:**
+
+| Mode | Description |
+|------|-------------|
+| `auto` | (Default) Uses SDK bundler with fallback to canonical |
+| `sdk` | Forces the SDK bundler (requires .NET SDK) |
+| `canonical` | Uses the canonical bundler (mirrors .NET HostModel format, no SDK required) |
 
 ### CI/CD Integration
 

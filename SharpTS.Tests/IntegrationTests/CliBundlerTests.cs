@@ -27,7 +27,7 @@ public class CliBundlerTests
 
         // When SDK is available, should specifically use SDK bundler (not fall back)
         Assert.Contains("SDK bundler", result.StandardOutput);
-        Assert.DoesNotContain("built-in bundler", result.StandardOutput);
+        Assert.DoesNotContain("canonical bundler", result.StandardOutput);
     }
 
     [Fact]
@@ -81,7 +81,7 @@ public class CliBundlerTests
         Assert.Contains("Compiled to", result.StandardOutput);
         Assert.True(
             result.StandardOutput.Contains("SDK bundler") ||
-            result.StandardOutput.Contains("built-in bundler"),
+            result.StandardOutput.Contains("canonical bundler"),
             $"Expected output to contain bundler technique, got: {result.StandardOutput}");
     }
 
@@ -205,7 +205,7 @@ public class CliBundlerTests
         Assert.Contains("custom.exe", result.StandardOutput);
         Assert.True(
             result.StandardOutput.Contains("SDK bundler") ||
-            result.StandardOutput.Contains("built-in bundler"));
+            result.StandardOutput.Contains("canonical bundler"));
     }
 
     [Fact]
@@ -227,22 +227,23 @@ public class CliBundlerTests
 
         // When --bundler sdk is specified, must use SDK bundler
         Assert.Contains("SDK bundler", result.StandardOutput);
-        Assert.DoesNotContain("built-in bundler", result.StandardOutput);
+        Assert.DoesNotContain("canonical bundler", result.StandardOutput);
     }
 
     [Fact]
-    public void Compile_TargetExe_BundlerBuiltin_UsesBuiltinBundler()
+    public void Compile_TargetExe_BundlerBuiltin_MapsToCanonical()
     {
         using var tempDir = CliTestHelper.CreateTempDirectory();
         var scriptPath = tempDir.CreateFile("app.ts", CliFixtures.SimpleHelloWorld);
 
+        // "builtin" is kept as a backward-compatible alias for "canonical"
         var result = CliTestHelper.RunCli($"-c \"{scriptPath}\" -t exe --bundler builtin", tempDir.Path);
 
         Assert.Equal(0, result.ExitCode);
         Assert.True(File.Exists(tempDir.GetPath("app.exe")));
 
-        // When --bundler builtin is specified, must use built-in bundler
-        Assert.Contains("built-in bundler", result.StandardOutput);
+        // Should use canonical bundler (builtin maps to canonical)
+        Assert.Contains("canonical bundler", result.StandardOutput);
         Assert.DoesNotContain("SDK bundler", result.StandardOutput);
     }
 
@@ -254,9 +255,9 @@ public class CliBundlerTests
 
         var compileResult = CliTestHelper.RunCli($"-c \"{scriptPath}\" -t exe --bundler builtin", tempDir.Path);
 
-        // Must use built-in bundler
+        // Must use canonical bundler (builtin alias)
         Assert.Equal(0, compileResult.ExitCode);
-        Assert.Contains("built-in bundler", compileResult.StandardOutput);
+        Assert.Contains("canonical bundler", compileResult.StandardOutput);
 
         // The exe must actually run correctly
         var exePath = tempDir.GetPath("hello.exe");
@@ -290,7 +291,7 @@ public class CliBundlerTests
         // Auto mode should show which bundler was used (same as default)
         Assert.True(
             result.StandardOutput.Contains("SDK bundler") ||
-            result.StandardOutput.Contains("built-in bundler"));
+            result.StandardOutput.Contains("canonical bundler"));
     }
 
     [Fact]
@@ -305,7 +306,7 @@ public class CliBundlerTests
         Assert.Contains("Invalid bundler", result.StandardOutput);
         Assert.Contains("auto", result.StandardOutput);
         Assert.Contains("sdk", result.StandardOutput);
-        Assert.Contains("builtin", result.StandardOutput);
+        Assert.Contains("canonical", result.StandardOutput);
     }
 
     [Fact]

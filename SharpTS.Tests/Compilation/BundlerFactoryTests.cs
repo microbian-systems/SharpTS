@@ -1,4 +1,5 @@
 using SharpTS.Compilation.Bundling;
+using SharpTS.Compilation.Bundling.Canonical;
 using Xunit;
 
 namespace SharpTS.Tests.Compilation;
@@ -47,14 +48,6 @@ public class BundlerFactoryTests
     }
 
     [Fact]
-    public void GetBundler_ByTechnique_ReturnsCorrectType()
-    {
-        var manualBundler = BundlerFactory.GetBundler(BundleTechnique.ManualBundler);
-        Assert.IsType<ManualBundler>(manualBundler);
-        Assert.Equal(BundleTechnique.ManualBundler, manualBundler.Technique);
-    }
-
-    [Fact]
     public void GetBundler_ByTechnique_SdkBundler_RequiresSdk()
     {
         if (SdkBundlerDetector.IsSdkAvailable)
@@ -77,7 +70,7 @@ public class BundlerFactoryTests
 
         Assert.True(
             technique == BundleTechnique.SdkBundler ||
-            technique == BundleTechnique.ManualBundler);
+            technique == BundleTechnique.CanonicalBundler);
     }
 
     [Fact]
@@ -99,9 +92,24 @@ public class BundlerFactoryTests
     }
 
     [Fact]
-    public void ManualBundler_TechniqueDescription_IsBuiltIn()
+    public void CanonicalBundler_TechniqueDescription_IsCanonical()
     {
-        var result = new BundleResult("test.exe", BundleTechnique.ManualBundler);
-        Assert.Equal("built-in bundler", result.TechniqueDescription);
+        var result = new BundleResult("test.exe", BundleTechnique.CanonicalBundler);
+        Assert.Equal("canonical bundler", result.TechniqueDescription);
+    }
+
+    [Fact]
+    public void GetBundler_ByTechnique_CanonicalBundler_ReturnsCorrectType()
+    {
+        var bundler = BundlerFactory.GetBundler(BundleTechnique.CanonicalBundler);
+        Assert.IsType<CanonicalBundler>(bundler);
+        Assert.Equal(BundleTechnique.CanonicalBundler, bundler.Technique);
+    }
+
+    [Fact]
+    public void GetBundler_ByMode_Canonical_ReturnsCanonicalBundler()
+    {
+        var bundler = BundlerFactory.GetBundler(BundlerMode.Canonical);
+        Assert.IsType<CanonicalBundler>(bundler);
     }
 }

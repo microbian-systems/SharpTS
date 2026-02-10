@@ -438,7 +438,7 @@ static void CompileModuleFile(string absolutePath, string outputPath, bool prese
             }
             catch (Exception ex) when (bundlerMode != BundlerMode.Auto)
             {
-                var bundlerName = bundlerMode == BundlerMode.Sdk ? "SDK" : "built-in";
+                var bundlerName = bundlerMode switch { BundlerMode.Sdk => "SDK", _ => "canonical" };
                 Console.WriteLine($"Error: {bundlerName} bundler failed: {ex.Message}");
                 Console.WriteLine($"The {bundlerName} bundler was explicitly requested. Use '--bundler auto' to allow fallback.");
                 Environment.Exit(1);
@@ -529,7 +529,7 @@ static void CompileSingleFile(List<Stmt> statements, string outputPath, bool pre
             }
             catch (Exception ex) when (bundlerMode != BundlerMode.Auto)
             {
-                var bundlerName = bundlerMode == BundlerMode.Sdk ? "SDK" : "built-in";
+                var bundlerName = bundlerMode switch { BundlerMode.Sdk => "SDK", _ => "canonical" };
                 Console.WriteLine($"Error: {bundlerName} bundler failed: {ex.Message}");
                 Console.WriteLine($"The {bundlerName} bundler was explicitly requested. Use '--bundler auto' to allow fallback.");
                 Environment.Exit(1);
@@ -771,7 +771,7 @@ static void PrintHelp()
     Console.WriteLine("  -c, --compile <file.ts>       Compile TypeScript to .NET assembly");
     Console.WriteLine("  -o <path>                     Output file path (default: <input>.dll or .exe)");
     Console.WriteLine("  -t, --target <type>           Output type: dll (default) or exe");
-    Console.WriteLine("  --bundler <mode>              Bundler selection: auto (default), sdk, or builtin");
+    Console.WriteLine("  --bundler <mode>              Bundler selection: auto (default), sdk, or canonical");
     Console.WriteLine("  -r, --reference <asm.dll>     Add assembly reference (repeatable)");
     Console.WriteLine("  --preserveConstEnums          Preserve const enum declarations");
     Console.WriteLine("  --ref-asm                     Emit reference-assembly-compatible output");
@@ -805,7 +805,7 @@ static void PrintCompileUsage()
     Console.WriteLine("Options:");
     Console.WriteLine("  -o <path>              Output file path (default: <input>.dll or .exe)");
     Console.WriteLine("  -t, --target <type>    Output type: dll (default) or exe");
-    Console.WriteLine("  --bundler <mode>       Bundler selection: auto (default), sdk, or builtin");
+    Console.WriteLine("  --bundler <mode>       Bundler selection: auto (default), sdk, or canonical");
     Console.WriteLine("  -r, --reference <dll>  Add assembly reference (repeatable)");
     Console.WriteLine("  --preserveConstEnums   Preserve const enum declarations");
     Console.WriteLine("  --ref-asm              Emit reference-assembly-compatible output");

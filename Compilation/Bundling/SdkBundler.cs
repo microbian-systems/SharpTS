@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
+using SharpTS.Compilation.Bundling.Canonical;
 using SharpTS.Diagnostics.Exceptions;
 
 namespace SharpTS.Compilation.Bundling;
@@ -37,7 +38,7 @@ public class SdkBundler : IBundler
     public BundleResult CreateSingleFileExecutable(string dllPath, string exePath, string assemblyName)
     {
         // Find the apphost template
-        var (apphostPath, sdkVersion) = ManualBundler.FindAppHostTemplateWithVersion();
+        var (apphostPath, sdkVersion) = AppHostTemplateResolver.FindAppHostTemplateWithVersion();
         if (apphostPath == null || sdkVersion == null)
         {
             throw new CompileException(
@@ -178,7 +179,7 @@ public class SdkBundler : IBundler
                             File.Move(actualOutputPath, outputPath);
                         }
                         // If same path, file is already in the right place
-                        ManualBundler.SetExecutePermission(outputPath);
+                        CanonicalHostWriter.SetExecutePermission(outputPath);
                         return; // Success!
                     }
 
@@ -197,7 +198,7 @@ public class SdkBundler : IBundler
                             }
                             File.Move(altOutputPath, outputPath);
                         }
-                        ManualBundler.SetExecutePermission(outputPath);
+                        CanonicalHostWriter.SetExecutePermission(outputPath);
                         return; // Success!
                     }
 

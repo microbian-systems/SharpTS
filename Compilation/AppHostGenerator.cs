@@ -1,4 +1,5 @@
 using SharpTS.Compilation.Bundling;
+using SharpTS.Compilation.Bundling.Canonical;
 
 namespace SharpTS.Compilation;
 
@@ -11,7 +12,7 @@ public static class AppHostGenerator
 {
     /// <summary>
     /// Creates a single-file executable from a managed DLL.
-    /// Automatically selects the best available bundler (SDK or manual).
+    /// Automatically selects the best available bundler (SDK or canonical).
     /// </summary>
     /// <param name="managedDllPath">Path to the managed assembly (.dll)</param>
     /// <param name="outputExePath">Path for the output executable (.exe)</param>
@@ -28,7 +29,7 @@ public static class AppHostGenerator
     /// <param name="managedDllPath">Path to the managed assembly (.dll)</param>
     /// <param name="outputExePath">Path for the output executable (.exe)</param>
     /// <param name="assemblyName">Name of the assembly (without extension)</param>
-    /// <param name="mode">Bundler selection mode (auto, sdk, or builtin)</param>
+    /// <param name="mode">Bundler selection mode (auto, sdk, or canonical)</param>
     /// <returns>Result containing the output path and which bundling technique was used.</returns>
     public static BundleResult CreateSingleFileExecutable(string managedDllPath, string outputExePath, string assemblyName, BundlerMode mode)
     {
@@ -50,7 +51,7 @@ public static class AppHostGenerator
     }
 
     /// <summary>
-    /// Finds the apphost template from the installed .NET SDK.
+    /// Finds the apphost template from the installed .NET SDK or NuGet cache.
     /// </summary>
     public static string? FindAppHostTemplate() => FindAppHostTemplateWithVersion().Path;
 
@@ -59,7 +60,7 @@ public static class AppHostGenerator
     /// </summary>
     public static (string? Path, Version? Version) FindAppHostTemplateWithVersion()
     {
-        return ManualBundler.FindAppHostTemplateWithVersion();
+        return AppHostTemplateResolver.FindAppHostTemplateWithVersion();
     }
 
     /// <summary>

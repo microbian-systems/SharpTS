@@ -113,6 +113,9 @@ dotnet script.dll
 ```bash
 sharpts --compile script.ts -t exe
 script.exe
+
+# Use canonical bundler (mirrors .NET HostModel format)
+sharpts --compile script.ts -t exe --bundler canonical
 ```
 
 **Additional compiler options:**

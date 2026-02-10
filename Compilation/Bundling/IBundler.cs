@@ -6,7 +6,7 @@ namespace SharpTS.Compilation.Bundling;
 public enum BundlerMode
 {
     /// <summary>
-    /// Automatically select the best available bundler (SDK with fallback to built-in).
+    /// Automatically select the best available bundler (SDK with fallback to canonical).
     /// </summary>
     Auto,
 
@@ -16,9 +16,9 @@ public enum BundlerMode
     Sdk,
 
     /// <summary>
-    /// Force use of the built-in bundler.
+    /// Force use of the canonical bundler (mirrors .NET HostModel behavior).
     /// </summary>
-    BuiltIn
+    Canonical
 }
 
 /// <summary>
@@ -32,9 +32,9 @@ public enum BundleTechnique
     SdkBundler,
 
     /// <summary>
-    /// Used the built-in manual byte-patching bundler (no SDK required).
+    /// Used the canonical bundler (mirrors .NET HostModel behavior, no SDK required).
     /// </summary>
-    ManualBundler
+    CanonicalBundler
 }
 
 /// <summary>
@@ -50,7 +50,7 @@ public record BundleResult(string OutputPath, BundleTechnique Technique)
     public string TechniqueDescription => Technique switch
     {
         BundleTechnique.SdkBundler => "SDK bundler",
-        BundleTechnique.ManualBundler => "built-in bundler",
+        BundleTechnique.CanonicalBundler => "canonical bundler",
         _ => "unknown bundler"
     };
 }

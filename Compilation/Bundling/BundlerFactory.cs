@@ -1,10 +1,11 @@
+using SharpTS.Compilation.Bundling.Canonical;
 using SharpTS.Diagnostics.Exceptions;
 
 namespace SharpTS.Compilation.Bundling;
 
 /// <summary>
 /// Factory for creating the appropriate bundler based on SDK availability.
-/// Uses SDK bundler when available, falls back to manual bundler otherwise.
+/// Uses SDK bundler when available, falls back to canonical bundler otherwise.
 /// </summary>
 public static class BundlerFactory
 {
@@ -28,17 +29,17 @@ public static class BundlerFactory
         {
             try
             {
-                // Return a bundler that tries SDK first, falls back to manual on failure
-                return new FallbackBundler(new SdkBundler(), new ManualBundler());
+                // Return a bundler that tries SDK first, falls back to canonical on failure
+                return new FallbackBundler(new SdkBundler(), new CanonicalBundler());
             }
             catch
             {
-                // If SDK bundler creation fails, fall back to manual
-                return new ManualBundler();
+                // If SDK bundler creation fails, fall back to canonical
+                return new CanonicalBundler();
             }
         }
 
-        return new ManualBundler();
+        return new CanonicalBundler();
     }
 
     /// <summary>
@@ -52,7 +53,7 @@ public static class BundlerFactory
         return technique switch
         {
             BundleTechnique.SdkBundler => new SdkBundler(),
-            BundleTechnique.ManualBundler => new ManualBundler(),
+            BundleTechnique.CanonicalBundler => new CanonicalBundler(),
             _ => throw new ArgumentOutOfRangeException(nameof(technique))
         };
     }
@@ -71,8 +72,8 @@ public static class BundlerFactory
                 ? new SdkBundler()
                 : throw new CompileException(
                     "SDK bundler is not available on this system. " +
-                    "Ensure the .NET SDK is installed, or use '--bundler builtin' for the built-in bundler."),
-            BundlerMode.BuiltIn => new ManualBundler(),
+                    "Ensure the .NET SDK is installed, or use '--bundler canonical' for the canonical bundler."),
+            BundlerMode.Canonical => new CanonicalBundler(),
             BundlerMode.Auto => CreateBundler(),
             _ => throw new ArgumentOutOfRangeException(nameof(mode))
         };
@@ -86,6 +87,6 @@ public static class BundlerFactory
     {
         return SdkBundlerDetector.IsSdkAvailable
             ? BundleTechnique.SdkBundler
-            : BundleTechnique.ManualBundler;
+            : BundleTechnique.CanonicalBundler;
     }
 }

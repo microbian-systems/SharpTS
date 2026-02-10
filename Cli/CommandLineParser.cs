@@ -323,7 +323,7 @@ public class CommandLineParser
                 if (i + 1 >= args.Length)
                 {
                     return new ParsedCommand.Error(
-                        "Error: --bundler requires a value (auto, sdk, or builtin)",
+                        "Error: --bundler requires a value (auto, sdk, or canonical)",
                         64,
                         ShowCompileUsage: true
                     );
@@ -333,13 +333,13 @@ public class CommandLineParser
                 {
                     "auto" => BundlerMode.Auto,
                     "sdk" => BundlerMode.Sdk,
-                    "builtin" => BundlerMode.BuiltIn,
+                    "canonical" or "builtin" => BundlerMode.Canonical,
                     _ => (BundlerMode)(-1) // Signal invalid value
                 };
                 if ((int)bundlerMode == -1)
                 {
                     return new ParsedCommand.Error(
-                        $"Error: Invalid bundler '{bundlerArg}'. Use 'auto', 'sdk', or 'builtin'.",
+                        $"Error: Invalid bundler '{bundlerArg}'. Use 'auto', 'sdk', or 'canonical'.",
                         64,
                         ShowCompileUsage: true
                     );
