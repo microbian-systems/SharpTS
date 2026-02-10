@@ -20,6 +20,7 @@ public enum TypeCategory
     Set,
     WeakMap,
     WeakSet,
+    WeakRef,
     Date,
     RegExp,
     Error,

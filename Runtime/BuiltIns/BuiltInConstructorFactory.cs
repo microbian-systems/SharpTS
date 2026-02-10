@@ -28,6 +28,7 @@ public static class BuiltInConstructorFactory
         [BuiltInNames.Set] = CreateSet,
         [BuiltInNames.WeakMap] = _ => new SharpTSWeakMap(),
         [BuiltInNames.WeakSet] = _ => new SharpTSWeakSet(),
+        [BuiltInNames.WeakRef] = args => new SharpTSWeakRef(args.Count > 0 ? args[0] : null),
         [BuiltInNames.EventEmitter] = _ => new SharpTSEventEmitter(),
     };
 

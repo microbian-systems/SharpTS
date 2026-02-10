@@ -100,6 +100,13 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new WeakRef(target) constructor
+        if (isSimpleName && simpleClassName == "WeakRef")
+        {
+            EmitNewWeakRef(n.Arguments);
+            return;
+        }
+
         // Special case: new RegExp(...) constructor
         if (isSimpleName && simpleClassName == "RegExp")
         {
@@ -570,6 +577,26 @@ public partial class ILEmitter
     {
         // new WeakSet() - empty weak set (no constructor arguments supported)
         IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateWeakSet);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits code for new WeakRef(target) construction.
+    /// </summary>
+    private void EmitNewWeakRef(List<Expr> arguments)
+    {
+        // Emit the target argument (boxed)
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateWeakRef);
         SetStackUnknown();
     }
 

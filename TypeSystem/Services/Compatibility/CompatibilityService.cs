@@ -392,6 +392,12 @@ public sealed class CompatibilityService : ICompatibilityService, ITypePredicate
             return IsCompatible(expWeakSet.ElementType, actWeakSet.ElementType);
         }
 
+        // WeakRef compatibility
+        if (expected is TypeInfo.WeakRef expWeakRef && actual is TypeInfo.WeakRef actWeakRef)
+        {
+            return IsCompatible(expWeakRef.TargetType, actWeakRef.TargetType);
+        }
+
         // Instance compatibility
         if (expected is TypeInfo.Instance i1 && actual is TypeInfo.Instance i2)
         {

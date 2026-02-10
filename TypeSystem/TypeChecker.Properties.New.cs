@@ -250,6 +250,41 @@ public partial class TypeChecker
             return new TypeInfo.WeakSet(elementType);
         }
 
+        // Handle new WeakRef() and new WeakRef<T>() constructor
+        if (isSimpleName && simpleClassName == "WeakRef")
+        {
+            // WeakRef() accepts exactly 1 argument (the target)
+            if (newExpr.Arguments.Count != 1)
+            {
+                throw new TypeCheckException("WeakRef constructor requires exactly 1 argument.");
+            }
+
+            // Determine target type from type argument or infer from argument
+            TypeInfo targetType;
+
+            if (newExpr.TypeArgs != null && newExpr.TypeArgs.Count == 1)
+            {
+                targetType = ToTypeInfo(newExpr.TypeArgs[0]);
+
+                // Validate that target type is not a primitive
+                if (IsPrimitiveType(targetType))
+                {
+                    throw new TypeCheckException($" WeakRef target must be an object, not '{targetType}'.");
+                }
+            }
+            else if (newExpr.TypeArgs != null && newExpr.TypeArgs.Count != 0)
+            {
+                throw new TypeCheckException("WeakRef requires exactly 1 type argument: WeakRef<T>");
+            }
+            else
+            {
+                // Infer from argument type
+                targetType = CheckExpr(newExpr.Arguments[0]);
+            }
+
+            return new TypeInfo.WeakRef(targetType);
+        }
+
         // Handle new EventEmitter() constructor
         if (isSimpleName && simpleClassName == "EventEmitter")
         {

@@ -706,6 +706,12 @@ public partial class TypeChecker
             if (memberType != null) return memberType;
             throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'WeakSet'.");
         }
+        if (objType is TypeInfo.WeakRef weakRefType)
+        {
+            var memberType = BuiltInTypes.GetWeakRefMemberType(memberName.Lexeme, weakRefType.TargetType);
+            if (memberType != null) return memberType;
+            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'WeakRef'.");
+        }
         // Handle Timeout instance methods (ref, unref) and properties (hasRef)
         if (objType is TypeInfo.Timeout)
         {

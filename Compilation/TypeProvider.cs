@@ -194,6 +194,8 @@ public class TypeProvider
     public Type HashSetOfObject => MakeGenericType(HashSetOpen, Object);
     public Type ConditionalWeakTableObjectObject => MakeGenericType(ConditionalWeakTableOpen, Object, Object);
     public Type ConditionalWeakTable => ConditionalWeakTableObjectObject;  // Alias for Object.freeze/seal tracking
+    public Type WeakReferenceOpen => Resolve("System.WeakReference`1");
+    public Type WeakReferenceObject => MakeGenericType(WeakReferenceOpen, Object);
 
     #endregion
 

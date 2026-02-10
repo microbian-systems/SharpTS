@@ -635,6 +635,12 @@ public partial class TypeChecker
             return IsCompatible(expWeakSet.ElementType, actWeakSet.ElementType);
         }
 
+        // WeakRef type compatibility - WeakRef<T1> is compatible with WeakRef<T2> if T1=T2
+        if (expected is TypeInfo.WeakRef expWeakRef && actual is TypeInfo.WeakRef actWeakRef)
+        {
+            return IsCompatible(expWeakRef.TargetType, actWeakRef.TargetType);
+        }
+
         if (expected is TypeInfo.Instance i1 && actual is TypeInfo.Instance i2)
         {
             // Handle InstantiatedGeneric expected type - check if actual's class hierarchy includes it

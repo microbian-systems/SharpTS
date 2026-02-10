@@ -595,6 +595,15 @@ public abstract record TypeInfo
     }
 
     /// <summary>
+    /// Represents the WeakRef&lt;T&gt; built-in type for weak references.
+    /// Target must be an object (not a primitive). Only method is deref().
+    /// </summary>
+    public record WeakRef(TypeInfo TargetType) : TypeInfo
+    {
+        public override string ToString() => $"WeakRef<{TargetType}>";
+    }
+
+    /// <summary>
     /// Tuple type. IsReadonly indicates a readonly tuple (from const type parameters or readonly modifier).
     /// </summary>
     public record Tuple(

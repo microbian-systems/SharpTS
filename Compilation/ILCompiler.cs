@@ -590,6 +590,7 @@ public partial class ILCompiler
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.Set>(new SetEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.WeakMap>(new WeakMapEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.WeakSet>(new WeakSetEmitter());
+        _typeEmitterRegistry.Register<TypeSystem.TypeInfo.WeakRef>(new WeakRefEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.RegExp>(new RegExpEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.AsyncGenerator>(new AsyncGeneratorEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.Error>(new ErrorEmitter());

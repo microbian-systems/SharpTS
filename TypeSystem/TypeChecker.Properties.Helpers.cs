@@ -30,6 +30,8 @@ public partial class TypeChecker
                 BuiltInTypes.GetWeakMapMemberType(memberName, wm.KeyType, wm.ValueType),
             TypeCategory.WeakSet when objType is TypeInfo.WeakSet ws =>
                 BuiltInTypes.GetWeakSetMemberType(memberName, ws.ElementType),
+            TypeCategory.WeakRef when objType is TypeInfo.WeakRef wr =>
+                BuiltInTypes.GetWeakRefMemberType(memberName, wr.TargetType),
             TypeCategory.Date => BuiltInTypes.GetDateInstanceMemberType(memberName),
             TypeCategory.RegExp => BuiltInTypes.GetRegExpMemberType(memberName),
             TypeCategory.Error when objType is TypeInfo.Error err =>

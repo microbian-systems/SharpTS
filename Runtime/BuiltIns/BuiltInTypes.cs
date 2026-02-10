@@ -487,6 +487,20 @@ public static class BuiltInTypes
     }
 
     /// <summary>
+    /// Type signatures for instance methods on WeakRef objects.
+    /// WeakRef has only a deref() method.
+    /// </summary>
+    public static TypeInfo? GetWeakRefMemberType(string name, TypeInfo targetType)
+    {
+        return name switch
+        {
+            "deref" => new TypeInfo.Function([],
+                new TypeInfo.Union([targetType, new TypeInfo.Undefined()])),
+            _ => null
+        };
+    }
+
+    /// <summary>
     /// Type signatures for static members on the Symbol namespace
     /// </summary>
     public static TypeInfo? GetSymbolStaticMemberType(string name)

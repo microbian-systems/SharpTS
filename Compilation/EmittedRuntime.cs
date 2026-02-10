@@ -478,9 +478,14 @@ public class EmittedRuntime
     public MethodBuilder WeakSetHas { get; set; } = null!;
     public MethodBuilder WeakSetDelete { get; set; } = null!;
 
-    // WeakMap/WeakSet validation helpers
+    // WeakRef support
+    public MethodBuilder CreateWeakRef { get; set; } = null!;
+    public MethodBuilder WeakRefDeref { get; set; } = null!;
+
+    // WeakMap/WeakSet/WeakRef validation helpers
     public MethodBuilder ValidateWeakMapKey { get; set; } = null!;
     public MethodBuilder ValidateWeakSetValue { get; set; } = null!;
+    public MethodBuilder ValidateWeakRefTarget { get; set; } = null!;
 
     // The emitted TSDate class
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSDate

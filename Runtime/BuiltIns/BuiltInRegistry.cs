@@ -153,6 +153,7 @@ public sealed class BuiltInRegistry
         RegisterSetType(registry);
         RegisterWeakMapType(registry);
         RegisterWeakSetType(registry);
+        RegisterWeakRefType(registry);
         RegisterIteratorType(registry);
         RegisterGeneratorType(registry);
         RegisterAsyncGeneratorType(registry);
@@ -371,6 +372,12 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterInstanceType(typeof(SharpTSWeakSet), (instance, name) =>
             WeakSetBuiltIns.GetMember((SharpTSWeakSet)instance, name));
+    }
+
+    private static void RegisterWeakRefType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSWeakRef), (instance, name) =>
+            WeakRefBuiltIns.GetMember((SharpTSWeakRef)instance, name));
     }
 
     private static void RegisterIteratorType(BuiltInRegistry registry)
