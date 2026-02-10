@@ -140,6 +140,20 @@ public class LocalVariableResolver : IVariableResolver
     }
 
     /// <inheritdoc />
+    public bool HasVariable(string name)
+    {
+        if (_ctx.TryGetParameter(name, out _)) return true;
+        if (_ctx.CapturedFunctionLocals?.Contains(name) == true &&
+            _ctx.FunctionDisplayClassFields?.ContainsKey(name) == true) return true;
+        if (_ctx.Locals.HasLocal(name)) return true;
+        if (_ctx.CapturedFields?.ContainsKey(name) == true) return true;
+        if (_ctx.CapturedTopLevelVars?.Contains(name) == true &&
+            _ctx.EntryPointDisplayClassFields?.ContainsKey(name) == true) return true;
+        if (_ctx.TopLevelStaticVars?.ContainsKey(name) == true) return true;
+        return false;
+    }
+
+    /// <inheritdoc />
     public bool TryStoreVariable(string name)
     {
         // 1. Function display class fields (captured function-local vars)

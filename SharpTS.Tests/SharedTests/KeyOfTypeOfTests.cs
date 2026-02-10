@@ -412,4 +412,66 @@ public class KeyOfTypeOfTests
     }
 
     #endregion
+
+    #region Runtime typeof on Undeclared Variables
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypeOf_UndeclaredVariable_ReturnsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            console.log(typeof undeclaredVar);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypeOf_UndeclaredVariable_InComparison(ExecutionMode mode)
+    {
+        var source = """
+            if (typeof someGlobal === "undefined") {
+                console.log("not defined");
+            } else {
+                console.log("defined");
+            }
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("not defined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypeOf_DeclaredVariable_StillWorks(ExecutionMode mode)
+    {
+        var source = """
+            let x = 42;
+            let s = "hello";
+            let b = true;
+            let u: any = undefined;
+            let n: any = null;
+            console.log(typeof x);
+            console.log(typeof s);
+            console.log(typeof b);
+            console.log(typeof u);
+            console.log(typeof n);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("number\nstring\nboolean\nundefined\nobject\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypeOf_UndeclaredVariable_MultipleChecks(ExecutionMode mode)
+    {
+        var source = """
+            let result = typeof noSuchVar === "undefined" && typeof anotherMissing === "undefined";
+            console.log(result);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
 }

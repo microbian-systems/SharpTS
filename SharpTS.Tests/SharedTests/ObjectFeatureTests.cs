@@ -1991,4 +1991,128 @@ public class ObjectFeatureTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("10\n10\n", output);
     }
+
+    // ========================
+    // Object.defineProperties
+    // ========================
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperties_BasicDataProperties(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = {};
+            Object.defineProperties(obj, {
+                name: { value: "Alice", writable: true, enumerable: true, configurable: true },
+                age: { value: 30, writable: true, enumerable: true, configurable: true }
+            });
+            console.log(obj.name);
+            console.log(obj.age);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Alice\n30\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperties_WithAccessors(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = { _value: 0 };
+            Object.defineProperties(obj, {
+                value: {
+                    get: function() { return obj._value; },
+                    set: function(v: number) { obj._value = v * 2; },
+                    enumerable: true,
+                    configurable: true
+                }
+            });
+            obj.value = 5;
+            console.log(obj.value);
+            console.log(obj._value);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n10\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperties_ReturnsTarget(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = {};
+            let result = Object.defineProperties(obj, {
+                x: { value: 42, writable: true, enumerable: true, configurable: true }
+            });
+            console.log(result === obj);
+            console.log(result.x);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n42\n", output);
+    }
+
+    // ================================
+    // Object.getOwnPropertyDescriptors
+    // ================================
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyDescriptors_BasicObject(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = { x: 1, y: 2 };
+            let descs: any = Object.getOwnPropertyDescriptors(obj);
+            console.log(descs.x.value);
+            console.log(descs.y.value);
+            console.log(descs.x.writable);
+            console.log(descs.x.enumerable);
+            console.log(descs.x.configurable);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n2\ntrue\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyDescriptors_WithDefinedProperties(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = {};
+            Object.defineProperty(obj, "name", { value: "test", writable: false, enumerable: true, configurable: false });
+            let descs: any = Object.getOwnPropertyDescriptors(obj);
+            console.log(descs.name.value);
+            console.log(descs.name.writable);
+            console.log(descs.name.configurable);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("test\nfalse\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyDescriptors_RoundTrip(ExecutionMode mode)
+    {
+        var source = """
+            let original: any = { a: 1, b: "hello" };
+            let descs = Object.getOwnPropertyDescriptors(original);
+            let copy: any = Object.defineProperties({}, descs);
+            console.log(copy.a);
+            console.log(copy.b);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\nhello\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyDescriptors_EmptyObject(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = {};
+            let descs: any = Object.getOwnPropertyDescriptors(obj);
+            console.log(Object.keys(descs).length);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n", output);
+    }
 }

@@ -253,8 +253,17 @@ public partial class Interpreter
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Logical_NOT">MDN Logical NOT</seealso>
     private object? EvaluateUnary(Expr.Unary unary)
     {
-        object? right = Evaluate(unary.Right);
-        return EvaluateUnaryOperation(unary.Operator, right);
+        // typeof never throws on undeclared variables - it returns "undefined"
+        if (unary.Operator.Type == TokenType.TYPEOF && unary.Right is Expr.Variable)
+        {
+            object? right;
+            try { right = Evaluate(unary.Right); }
+            catch (InterpreterException) { right = SharpTSUndefined.Instance; }
+            return EvaluateUnaryOperation(unary.Operator, right);
+        }
+
+        object? val = Evaluate(unary.Right);
+        return EvaluateUnaryOperation(unary.Operator, val);
     }
 
     /// <summary>

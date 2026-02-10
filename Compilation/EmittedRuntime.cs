@@ -213,6 +213,8 @@ public class EmittedRuntime
     public MethodBuilder ObjectIsSealed { get; set; } = null!;
     public MethodBuilder ObjectDefineProperty { get; set; } = null!;
     public MethodBuilder ObjectGetOwnPropertyDescriptor { get; set; } = null!;
+    public MethodBuilder ObjectDefineProperties { get; set; } = null!;
+    public MethodBuilder ObjectGetOwnPropertyDescriptors { get; set; } = null!;
     public MethodBuilder ObjectCreate { get; set; } = null!;
     public MethodBuilder ObjectPreventExtensions { get; set; } = null!;
     public MethodBuilder ObjectIsExtensible { get; set; } = null!;

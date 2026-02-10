@@ -272,9 +272,17 @@ public partial class ILEmitter
                 break;
 
             case TokenType.TYPEOF:
-                EmitExpression(u.Right);
-                EmitBoxIfNeeded(u.Right);
-                EmitCallString(_ctx.Runtime!.TypeOf);
+                // typeof never throws on undeclared variables - returns "undefined"
+                if (u.Right is Expr.Variable tv && !IsKnownVariable(tv.Name.Lexeme))
+                {
+                    IL.Emit(OpCodes.Ldstr, "undefined");
+                }
+                else
+                {
+                    EmitExpression(u.Right);
+                    EmitBoxIfNeeded(u.Right);
+                    EmitCallString(_ctx.Runtime!.TypeOf);
+                }
                 break;
 
             case TokenType.TILDE:

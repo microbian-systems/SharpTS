@@ -75,6 +75,16 @@ public class AsyncArrowVariableResolver : IVariableResolver
     }
 
     /// <inheritdoc />
+    public bool HasVariable(string name)
+    {
+        if (_builder.ParameterFields.ContainsKey(name)) return true;
+        if (_builder.LocalFields.ContainsKey(name)) return true;
+        if (_builder.IsCaptured(name) && _builder.CapturedFieldMap.ContainsKey(name)) return true;
+        if (_locals.ContainsKey(name)) return true;
+        return false;
+    }
+
+    /// <inheritdoc />
     public bool TryStoreVariable(string name)
     {
         // 1. Check if it's a parameter of this arrow

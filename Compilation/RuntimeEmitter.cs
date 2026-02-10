@@ -2304,6 +2304,8 @@ public partial class RuntimeEmitter
         EmitObjectIsSealed(typeBuilder, runtime, sealedObjectsField);
         EmitObjectDefineProperty(typeBuilder, runtime);
         EmitObjectGetOwnPropertyDescriptor(typeBuilder, runtime);
+        EmitObjectDefineProperties(typeBuilder, runtime);
+        EmitObjectGetOwnPropertyDescriptors(typeBuilder, runtime);
         EmitObjectCreate(typeBuilder, runtime, prototypeStoreField);
         EmitObjectPreventExtensions(typeBuilder, runtime, nonExtensibleObjectsField, frozenObjectsField, sealedObjectsField);
         EmitObjectIsExtensible(typeBuilder, runtime, nonExtensibleObjectsField, frozenObjectsField, sealedObjectsField);

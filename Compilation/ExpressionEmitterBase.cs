@@ -320,7 +320,16 @@ public abstract class ExpressionEmitterBase
                 _helpers.EmitUnaryNot(() => EmitExpression(u.Right), Ctx.Runtime!.IsTruthy);
                 break;
             case TokenType.TYPEOF:
-                _helpers.EmitUnaryTypeOf(() => EmitExpression(u.Right), Ctx.Runtime!.TypeOf);
+                // typeof never throws on undeclared variables - returns "undefined"
+                if (u.Right is Expr.Variable tv && !IsKnownVariable(tv.Name.Lexeme))
+                {
+                    _helpers.IL.Emit(OpCodes.Ldstr, "undefined");
+                    _helpers.SetStackUnknown();
+                }
+                else
+                {
+                    _helpers.EmitUnaryTypeOf(() => EmitExpression(u.Right), Ctx.Runtime!.TypeOf);
+                }
                 break;
             case TokenType.TILDE:
                 _helpers.EmitUnaryBitwiseNot(() => EmitExpression(u.Right));
@@ -328,6 +337,27 @@ public abstract class ExpressionEmitterBase
             default:
                 throw new NotImplementedException($"Unary operator {u.Operator.Type} not implemented");
         }
+    }
+
+    /// <summary>
+    /// Checks whether a variable name is known at compile time (without emitting IL).
+    /// Used by typeof to return "undefined" for unknown variables instead of throwing.
+    /// Checks context-level lookups (pseudo-variables, globals, classes, functions, etc).
+    /// Subclasses should override to also check resolver-level variables.
+    /// </summary>
+    protected virtual bool IsKnownVariable(string name)
+    {
+        // Check resolver (parameters, locals, captured variables, state machine fields)
+        if (Resolver.HasVariable(name)) return true;
+        // Check pseudo-variables and global constants
+        if (name is "Math" or "process" or "globalThis" or "Symbol" or "NaN" or "Infinity"
+            or "undefined" or "fetch" or "__filename" or "__dirname") return true;
+        if (Ctx.TopLevelStaticVars?.ContainsKey(name) == true) return true;
+        if (Ctx.Classes.ContainsKey(Ctx.ResolveClassName(name))) return true;
+        if (Ctx.Functions.ContainsKey(Ctx.ResolveFunctionName(name))) return true;
+        if (Ctx.InnerFunctionMethodsByName?.ContainsKey(name) == true) return true;
+        if (Ctx.NamespaceFields?.ContainsKey(name) == true) return true;
+        return false;
     }
 
     /// <summary>

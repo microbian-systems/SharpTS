@@ -520,9 +520,21 @@ public partial class TypeChecker
 
     private TypeInfo CheckUnary(Expr.Unary unary)
     {
-        TypeInfo right = CheckExpr(unary.Right);
+        // typeof never throws on undeclared variables - it returns "undefined"
         if (unary.Operator.Type == TokenType.TYPEOF)
+        {
+            // Still type-check the operand if possible, but don't fail on undeclared variables
+            if (unary.Right is Expr.Variable)
+            {
+                try { CheckExpr(unary.Right); } catch (TypeCheckException) { }
+            }
+            else
+            {
+                CheckExpr(unary.Right);
+            }
             return new TypeInfo.String();
+        }
+        TypeInfo right = CheckExpr(unary.Right);
         if (unary.Operator.Type == TokenType.VOID)
             return new TypeInfo.Undefined();
         if (unary.Operator.Type == TokenType.MINUS)

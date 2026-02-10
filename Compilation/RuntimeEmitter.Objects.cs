@@ -2327,6 +2327,169 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits Object.defineProperties(obj, props) - defines multiple properties.
+    /// Signature: object ObjectDefineProperties(object obj, object props)
+    /// Iterates over keys of props dictionary and calls ObjectDefineProperty for each.
+    /// </summary>
+    private void EmitObjectDefineProperties(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectDefineProperties",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]
+        );
+        runtime.ObjectDefineProperties = method;
+
+        var il = method.GetILGenerator();
+
+        // Cast props to Dictionary<string, object?>
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var enumeratorLocal = il.DeclareLocal(typeof(Dictionary<string, object?>.Enumerator));
+        var currentLocal = il.DeclareLocal(typeof(KeyValuePair<string, object?>));
+
+        var loopStartLabel = il.DefineLabel();
+        var loopEndLabel = il.DefineLabel();
+
+        // dict = props as Dictionary<string, object?>
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, dictLocal);
+
+        // If not a dictionary, just return obj
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, loopEndLabel);
+
+        // Get enumerator
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "GetEnumerator"));
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        // Loop
+        il.MarkLabel(loopStartLabel);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        var moveNext = typeof(Dictionary<string, object?>.Enumerator).GetMethod("MoveNext")!;
+        il.Emit(OpCodes.Call, moveNext);
+        il.Emit(OpCodes.Brfalse, loopEndLabel);
+
+        // Get current KVP
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        var currentProp = typeof(Dictionary<string, object?>.Enumerator).GetProperty("Current")!.GetGetMethod()!;
+        il.Emit(OpCodes.Call, currentProp);
+        il.Emit(OpCodes.Stloc, currentLocal);
+
+        // Call ObjectDefineProperty(obj, key, descriptor)
+        il.Emit(OpCodes.Ldarg_0);  // obj
+        il.Emit(OpCodes.Ldloca, currentLocal);
+        var keyGetter = typeof(KeyValuePair<string, object?>).GetProperty("Key")!.GetGetMethod()!;
+        il.Emit(OpCodes.Call, keyGetter);
+        il.Emit(OpCodes.Ldloca, currentLocal);
+        var valueGetter = typeof(KeyValuePair<string, object?>).GetProperty("Value")!.GetGetMethod()!;
+        il.Emit(OpCodes.Call, valueGetter);
+        il.Emit(OpCodes.Call, runtime.ObjectDefineProperty);
+        il.Emit(OpCodes.Pop);  // Discard return value from defineProperty
+
+        il.Emit(OpCodes.Br, loopStartLabel);
+
+        il.MarkLabel(loopEndLabel);
+        // Return obj
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Object.getOwnPropertyDescriptors(obj) - gets all own property descriptors.
+    /// Signature: object ObjectGetOwnPropertyDescriptors(object obj)
+    /// Iterates over keys and calls ObjectGetOwnPropertyDescriptor for each, collecting into a new dict.
+    /// </summary>
+    private void EmitObjectGetOwnPropertyDescriptors(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectGetOwnPropertyDescriptors",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.ObjectGetOwnPropertyDescriptors = method;
+
+        var il = method.GetILGenerator();
+
+        var resultLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var keysLocal = il.DeclareLocal(_types.ListOfObject);
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        var keyLocal = il.DeclareLocal(_types.String);
+        var descLocal = il.DeclareLocal(_types.Object);
+
+        var loopStartLabel = il.DefineLabel();
+        var loopEndLabel = il.DefineLabel();
+        var skipNullLabel = il.DefineLabel();
+
+        // result = new Dictionary<string, object?>()
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // Get keys using the existing GetKeys helper (returns List<object?>)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetKeys);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Stloc, keysLocal);
+
+        // If keys is null, return empty result
+        il.Emit(OpCodes.Ldloc, keysLocal);
+        il.Emit(OpCodes.Brfalse, loopEndLabel);
+
+        // index = 0
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        // Loop
+        il.MarkLabel(loopStartLabel);
+        // if (index >= keys.Count) break
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, keysLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, loopEndLabel);
+
+        // key = keys[index].ToString()
+        il.Emit(OpCodes.Ldloc, keysLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
+        il.Emit(OpCodes.Stloc, keyLocal);
+
+        // desc = ObjectGetOwnPropertyDescriptor(obj, key)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Call, runtime.ObjectGetOwnPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descLocal);
+
+        // if (desc == null || desc is undefined) skip
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Brfalse, skipNullLabel);
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Beq, skipNullLabel);
+
+        // result[key] = desc
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+
+        il.MarkLabel(skipNullLabel);
+        // index++
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStartLabel);
+
+        il.MarkLabel(loopEndLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits Object.create(proto, propertiesObject?) - creates a new object with prototype.
     /// Signature: object ObjectCreate(object proto, object propertiesObject)
     /// Fully standalone - uses emitted $PropertyDescriptorStore for descriptor storage.

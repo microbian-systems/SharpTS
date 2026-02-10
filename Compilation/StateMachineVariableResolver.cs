@@ -63,6 +63,14 @@ public class StateMachineVariableResolver : IVariableResolver
     }
 
     /// <inheritdoc />
+    public bool HasVariable(string name)
+    {
+        if (_getVariableField(name) != null) return true;
+        if (_locals.HasLocal(name)) return true;
+        return false;
+    }
+
+    /// <inheritdoc />
     public bool TryStoreVariable(string name)
     {
         // 1. Check if hoisted to state machine field

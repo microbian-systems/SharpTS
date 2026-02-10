@@ -227,6 +227,8 @@ public partial class ILEmitter
         EmitNullConstant();
     }
 
+    // IsKnownVariable is inherited from ExpressionEmitterBase
+
     protected override void EmitAssign(Expr.Assign a)
     {
         EmitExpression(a.Value);

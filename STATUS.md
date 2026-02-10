@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-10 (Added RegExp named capture groups with `.groups` property on exec/match/matchAll; Added `Object.groupBy()` and `Map.groupBy()` ES2024 grouping methods; both features fully supported in interpreter and compiled modes)
+**Last Updated:** 2026-02-10 (Added `Object.defineProperties()` and `Object.getOwnPropertyDescriptors()` batch property descriptor methods; Fixed `typeof` on undeclared variables to return `"undefined"` instead of throwing)
 
 ## Legend
 - ✅ Implemented
@@ -150,7 +150,7 @@ This document tracks TypeScript language features and their implementation statu
 | Nullish coalescing (`??`) | ✅ | |
 | Optional chaining (`?.`) | ✅ | |
 | Ternary (`? :`) | ✅ | |
-| `typeof` | ✅ | |
+| `typeof` | ✅ | Returns `"undefined"` for undeclared variables (no ReferenceError) |
 | Assignment (`=`, `+=`, `-=`, `*=`, `/=`, `%=`) | ✅ | |
 | Increment/Decrement (`++`, `--`) | ✅ | Pre and post |
 | Bitwise (`&`, `\|`, `^`, `~`, `<<`, `>>`, `>>>`) | ✅ | Including compound assignments |
@@ -343,6 +343,8 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | `Object.preventExtensions()` | ✅ | Prevents adding new properties to an object |
 | `Object.isExtensible()` | ✅ | Returns whether object allows new properties |
 | `Object.groupBy()` | ✅ | Groups iterable elements by callback return value (ES2024); returns plain object with string keys |
+| `Object.defineProperties()` | ✅ | Batch version of defineProperty; defines multiple properties from a descriptors object |
+| `Object.getOwnPropertyDescriptors()` | ✅ | Returns all own property descriptors as an object; works with defineProperties for proper object cloning |
 
 ### Array Methods
 
@@ -394,6 +396,9 @@ This section documents JavaScript/TypeScript features that are **not currently i
 ### Type Checker Limitations
 
 - Type alias declarations are lazily validated - errors in type alias definitions (e.g., `type R = ReturnType<string, number>;` with wrong arg count) are only caught when the alias is used, not at declaration time. TypeScript catches these at declaration.
+
+### Recently Fixed Bugs (2026-02-10)
+- ~~`typeof` on undeclared variables throws~~ - Fixed: `typeof undeclaredVar` now returns `"undefined"` instead of throwing, matching JavaScript spec. Works in type checker, interpreter, and all compiler emitters (including async/generator state machines).
 
 ### Recently Fixed Bugs (2026-02-05)
 - ~~Property descriptors in compiled mode~~ - Fixed: `Object.defineProperty()` and `Object.getOwnPropertyDescriptor()` now fully support accessor properties (get/set) and descriptor flags (writable, enumerable, configurable) in compiled mode via `PropertyDescriptorStore`.

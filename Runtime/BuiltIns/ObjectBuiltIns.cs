@@ -29,6 +29,8 @@ public static class ObjectBuiltIns
             .Method("getPrototypeOf", 1, GetPrototypeOf)
             .Method("setPrototypeOf", 2, SetPrototypeOf)
             .Method("groupBy", 2, GroupBy)
+            .Method("defineProperties", 2, DefineProperties)
+            .Method("getOwnPropertyDescriptors", 1, GetOwnPropertyDescriptors)
             .Build();
 
     /// <summary>
@@ -427,6 +429,102 @@ public static class ObjectBuiltIns
     }
 
     /// <summary>
+    /// Object.defineProperties(obj, props) - defines new or modifies existing properties on an object.
+    /// Iterates over all own enumerable properties of props and calls defineProperty for each.
+    /// </summary>
+    private static object? DefineProperties(Interpreter interpreter, List<object?> args)
+    {
+        var target = args[0];
+        var props = args[1];
+
+        if (target == null)
+        {
+            throw new Exception("TypeError: Object.defineProperties called on null or undefined");
+        }
+
+        if (props == null)
+        {
+            throw new Exception("TypeError: Cannot convert undefined or null to object");
+        }
+
+        // Get keys from the properties object
+        IEnumerable<string> keys = props switch
+        {
+            SharpTSObject obj => obj.Fields.Keys,
+            SharpTSInstance inst => inst.GetFieldNames(),
+            Dictionary<string, object?> dict => dict.Keys,
+            _ => throw new Exception("TypeError: Property descriptions must be an object")
+        };
+
+        foreach (var key in keys)
+        {
+            // Get the descriptor for this key
+            object? descriptor = props switch
+            {
+                SharpTSObject obj => obj.Fields.TryGetValue(key, out var v) ? v : null,
+                SharpTSInstance inst => inst.GetRawField(key),
+                Dictionary<string, object?> dict => dict.TryGetValue(key, out var v) ? v : null,
+                _ => null
+            };
+
+            // Delegate to defineProperty
+            DefineProperty(interpreter, [target, key, descriptor]);
+        }
+
+        return target;
+    }
+
+    /// <summary>
+    /// Object.getOwnPropertyDescriptors(obj) - returns all own property descriptors.
+    /// Returns an object whose keys are the property names and values are the corresponding descriptors.
+    /// </summary>
+    private static object? GetOwnPropertyDescriptors(Interpreter interpreter, List<object?> args)
+    {
+        var target = args[0];
+
+        if (target == null)
+        {
+            throw new Exception("TypeError: Object.getOwnPropertyDescriptors called on null or undefined");
+        }
+
+        // Get all own property names (including non-enumerable ones from defineProperty)
+        List<string> names = target switch
+        {
+            SharpTSObject obj => GetAllOwnPropertyNames(obj),
+            SharpTSInstance inst => inst.GetFieldNames().ToList(),
+            SharpTSArray arr => GetOwnPropertyNamesFromArray(arr).Select(n => n!.ToString()!).ToList(),
+            Dictionary<string, object?> dict => dict.Keys.ToList(),
+            _ => []
+        };
+
+        var result = new Dictionary<string, object?>();
+
+        foreach (var name in names)
+        {
+            var descriptor = GetOwnPropertyDescriptor(interpreter, [target, name]);
+            if (descriptor != null)
+            {
+                result[name] = descriptor;
+            }
+        }
+
+        return new SharpTSObject(result);
+    }
+
+    /// <summary>
+    /// Gets all own property names from a SharpTSObject, including accessor-only properties.
+    /// </summary>
+    private static List<string> GetAllOwnPropertyNames(SharpTSObject obj)
+    {
+        HashSet<string> names = new(obj.Fields.Keys);
+        foreach (var key in obj.PropertyNames)
+        {
+            names.Add(key);
+        }
+        return names.ToList();
+    }
+
+    /// <summary>
     /// Object.getOwnPropertyNames(obj) - returns an array of all own property names (including non-enumerable).
     /// </summary>
     private static object? GetOwnPropertyNames(Interpreter _, List<object?> args)
@@ -699,6 +797,87 @@ public static class ObjectBuiltIns
 
         // Return as an object
         return descriptor.ToObject();
+    }
+
+    /// <summary>
+    /// Runtime helper for Object.defineProperties called from compiled code.
+    /// </summary>
+    public static object? RuntimeDefineProperties(object? target, object? props)
+    {
+        if (target == null)
+        {
+            throw new Exception("TypeError: Object.defineProperties called on null or undefined");
+        }
+
+        if (props == null)
+        {
+            throw new Exception("TypeError: Cannot convert undefined or null to object");
+        }
+
+        // Get keys and values from the properties object
+        IEnumerable<KeyValuePair<string, object?>> entries = props switch
+        {
+            SharpTSObject obj => obj.Fields,
+            SharpTSInstance inst => inst.GetFieldNames().Select(k => new KeyValuePair<string, object?>(k, inst.GetRawField(k))),
+            Dictionary<string, object?> dict => dict,
+            _ => throw new Exception("TypeError: Property descriptions must be an object")
+        };
+
+        foreach (var entry in entries)
+        {
+            RuntimeDefineProperty(target, entry.Key, entry.Value);
+        }
+
+        return target;
+    }
+
+    /// <summary>
+    /// Runtime helper for Object.getOwnPropertyDescriptors called from compiled code.
+    /// </summary>
+    public static object? RuntimeGetOwnPropertyDescriptors(object? target)
+    {
+        if (target == null)
+        {
+            throw new Exception("TypeError: Object.getOwnPropertyDescriptors called on null or undefined");
+        }
+
+        // Get all own property names
+        List<string> names = target switch
+        {
+            SharpTSObject obj => GetAllOwnPropertyNames(obj),
+            SharpTSInstance inst => inst.GetFieldNames().ToList(),
+            SharpTSArray arr => GetOwnPropertyNamesFromArray(arr).Select(n => n!.ToString()!).ToList(),
+            Dictionary<string, object?> dict => dict.Keys.ToList(),
+            System.Collections.IList list => GetPropertyNamesFromList(list),
+            _ => []
+        };
+
+        var result = new Dictionary<string, object?>();
+
+        foreach (var name in names)
+        {
+            var descriptor = RuntimeGetOwnPropertyDescriptor(target, name);
+            if (descriptor != null)
+            {
+                result[name] = descriptor;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Gets property names from an IList (compiled arrays).
+    /// </summary>
+    private static List<string> GetPropertyNamesFromList(System.Collections.IList list)
+    {
+        var names = new List<string>();
+        for (int i = 0; i < list.Count; i++)
+        {
+            names.Add(i.ToString());
+        }
+        names.Add("length");
+        return names;
     }
 
     /// <summary>

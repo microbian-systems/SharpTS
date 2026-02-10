@@ -17,6 +17,14 @@ public interface IVariableResolver
     StackType? TryLoadVariable(string name);
 
     /// <summary>
+    /// Checks whether a variable is known without emitting any IL.
+    /// Used by typeof to determine if a variable exists at compile time.
+    /// </summary>
+    /// <param name="name">Variable name</param>
+    /// <returns>True if the variable is known, false if not</returns>
+    bool HasVariable(string name);
+
+    /// <summary>
     /// Attempts to store the top of stack into a variable.
     /// Assumes value is already on stack (boxed for object variables).
     /// </summary>

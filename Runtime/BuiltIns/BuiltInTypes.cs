@@ -196,6 +196,8 @@ public static class BuiltInTypes
             "getOwnPropertyNames" => new TypeInfo.Function([AnyType], new TypeInfo.Array(StringType)),
             "create" => new TypeInfo.Function([AnyType, AnyType], AnyType, RequiredParams: 1),  // proto required, propertiesObject optional
             "groupBy" => new TypeInfo.Function([AnyType, new TypeInfo.Function([AnyType, NumberType], AnyType)], AnyType),
+            "defineProperties" => new TypeInfo.Function([AnyType, AnyType], AnyType),
+            "getOwnPropertyDescriptors" => new TypeInfo.Function([AnyType], AnyType),
             _ => null
         };
     }

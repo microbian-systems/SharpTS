@@ -223,6 +223,25 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
                 }
                 il.Emit(OpCodes.Call, ctx.Runtime!.ObjectGroupBy);
                 return true;
+            case "defineProperties":
+                // Object.defineProperties(obj, props) - defines multiple properties
+                // First argument (obj) is already on the stack
+                if (arguments.Count > 1)
+                {
+                    emitter.EmitExpression(arguments[1]);
+                    emitter.EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ObjectDefineProperties);
+                return true;
+            case "getOwnPropertyDescriptors":
+                // Object.getOwnPropertyDescriptors(obj) - gets all property descriptors
+                // First argument (obj) is already on the stack
+                il.Emit(OpCodes.Call, ctx.Runtime!.ObjectGetOwnPropertyDescriptors);
+                return true;
             default:
                 // Pop the argument we pushed and return false
                 il.Emit(OpCodes.Pop);
