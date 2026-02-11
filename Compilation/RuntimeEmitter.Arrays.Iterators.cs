@@ -5,6 +5,47 @@ namespace SharpTS.Compilation;
 
 public partial class RuntimeEmitter
 {
+    /// <summary>
+    /// Emits IL to create callback args array [list[i], (double)i, list],
+    /// invoke the callback via InvokeValue, and leave the result on the stack.
+    /// Expects: arg0 = list (List&lt;object&gt;), arg1 = callback (object).
+    /// </summary>
+    private void EmitCallbackArgsAndInvoke(ILGenerator il, LocalBuilder indexLocal, EmittedRuntime runtime)
+    {
+        // var args = new object[] { list[i], (double)i, list }
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+
+        // args[0] = list[i]
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        // args[1] = (double)i
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        // args[2] = list
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        // Store args, load callback + args, call InvokeValue
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Stloc, argsLocal);
+        il.Emit(OpCodes.Ldarg_1); // callback
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Call, runtime.InvokeValue);
+    }
+
     private void EmitArrayMap(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
@@ -37,41 +78,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        // Call callback with (element, index, list) -> create args array
-        // var args = new object[] { list[i], (double)i, list }
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Newarr, _types.Object);
-
-        // args[0] = list[i]
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // args[1] = (double)i
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // args[2] = list
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // Stack: args array
-        // Load callback and args, call InvokeValue
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        il.Emit(OpCodes.Ldarg_1); // callback
-        il.Emit(OpCodes.Ldloc, argsLocal); // args
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
 
         // Store the call result
         var callResultLocal = il.DeclareLocal(_types.Object);
@@ -127,39 +134,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        // Create args array: [list[i], (double)i, list]
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Newarr, _types.Object);
-
-        // args[0] = list[i]
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // args[1] = (double)i
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // args[2] = list
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Call callback
-        il.Emit(OpCodes.Ldarg_1); // callback
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
 
         // Call IsTruthy
         il.Emit(OpCodes.Call, runtime.IsTruthy);
@@ -215,39 +190,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        // Create args array: [list[i], (double)i, list]
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Newarr, _types.Object);
-
-        // args[0] = list[i]
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // args[1] = (double)i
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // args[2] = list
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Call callback (discard result)
-        il.Emit(OpCodes.Ldarg_1); // callback
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
         il.Emit(OpCodes.Pop); // Discard result
 
         // i++
@@ -286,36 +229,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        // Create args array: [list[i], (double)i, list]
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Newarr, _types.Object);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Call callback
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
 
         // if (IsTruthy(result)) return list[i]
         il.Emit(OpCodes.Call, runtime.IsTruthy);
@@ -363,34 +277,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Newarr, _types.Object);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
         il.Emit(OpCodes.Call, runtime.IsTruthy);
 
         var notFound = il.DefineLabel();
@@ -436,34 +323,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Newarr, _types.Object);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
         il.Emit(OpCodes.Call, runtime.IsTruthy);
 
         var notFound = il.DefineLabel();
@@ -510,34 +370,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Newarr, _types.Object);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
         il.Emit(OpCodes.Call, runtime.IsTruthy);
 
         var continueLoop = il.DefineLabel();
@@ -588,36 +421,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Blt, loopEnd);
 
-        // Create args array: [list[i], (double)i, list]
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Newarr, _types.Object);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Call callback
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
 
         // if (IsTruthy(result)) return list[i]
         il.Emit(OpCodes.Call, runtime.IsTruthy);
@@ -670,35 +474,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Blt, loopEnd);
 
-        // Create args array
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Newarr, _types.Object);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
         il.Emit(OpCodes.Call, runtime.IsTruthy);
 
         var notFound = il.DefineLabel();
