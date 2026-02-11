@@ -1830,6 +1830,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.BigInteger);
         il.Emit(OpCodes.Brtrue, bigintLabel);
 
+        // Proxy => check IsCallable: "function" if callable, "object" otherwise
+        // Uses FullName comparison to avoid SharpTS.dll dependency
+        var notProxyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "FullName").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, ProxyTypeName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notProxyLabel);
+
+        // It's a proxy - check IsCallable property getter via reflection
+        EmitProxyMethodCall(il, () => il.Emit(OpCodes.Ldarg_0), "get_IsCallable", () =>
+        {
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Newarr, _types.Object);
+        });
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, functionLabel);
+        il.Emit(OpCodes.Ldstr, "object");
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(notProxyLabel);
+
         // Default => "object"
         il.Emit(OpCodes.Ldstr, "object");
         il.Emit(OpCodes.Br, endLabel);
@@ -1992,13 +2015,32 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
         il.Emit(OpCodes.Ret);
 
-        // List (array) - check if index exists
+        // List (array) - check "length" property or numeric index
         il.MarkLabel(listLabel);
         var indexLocal = il.DeclareLocal(_types.Int32);
-        // Try to convert key to int
+        var keyStrLocal = il.DeclareLocal(_types.String);
+
+        // Convert key to string
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Stloc, keyStrLocal);
+
+        // Check if key == "length" → return true
+        var notLengthLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, keyStrLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notLengthLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notLengthLabel);
+        // Try int.TryParse(key, out index) → if fails, return false
+        il.Emit(OpCodes.Ldloc, keyStrLocal);
+        il.Emit(OpCodes.Ldloca, indexLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, falseLabel);
+
         // index >= 0 && index < list.Count
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldc_I4_0);

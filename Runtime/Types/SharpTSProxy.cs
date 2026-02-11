@@ -161,7 +161,7 @@ public class SharpTSProxy : ISharpTSCallable
             return ForwardHas(prop, interp);
 
         var result = InvokeTrap(trap, interp, [_target, prop]);
-        return result is true;
+        return ToBoolean(result);
     }
 
     public bool TrapDeleteProperty(string prop, Interpreter? interp)
@@ -171,7 +171,7 @@ public class SharpTSProxy : ISharpTSCallable
             return ForwardDeleteProperty(prop);
 
         var result = InvokeTrap(trap, interp, [_target, prop]);
-        return result is true;
+        return ToBoolean(result);
     }
 
     public object? TrapApply(object? thisArg, List<object?> args, Interpreter? interp)
@@ -311,8 +311,23 @@ public class SharpTSProxy : ISharpTSCallable
 
     /// <summary>
     /// Returns whether the proxy target is callable (function-like).
+    /// Checks ISharpTSCallable (interpreter mode), Delegate, and emitted compiled function types.
     /// </summary>
-    public bool IsCallable => _target is ISharpTSCallable;
+    public bool IsCallable => _target is ISharpTSCallable or Delegate
+        || _target?.GetType().Name is "$TSFunction" or "$BoundTSFunction"
+            or "$PromisifiedFunction" or "$DeprecatedFunction";
 
     public override string ToString() => "Proxy {}";
+
+    /// <summary>
+    /// Converts a trap result to boolean using JavaScript truthiness rules.
+    /// </summary>
+    private static bool ToBoolean(object? value) => value switch
+    {
+        null => false,
+        bool b => b,
+        double d => d != 0 && !double.IsNaN(d),
+        string s => s.Length > 0,
+        _ => true
+    };
 }

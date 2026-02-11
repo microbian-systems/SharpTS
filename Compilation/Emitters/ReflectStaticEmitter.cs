@@ -89,17 +89,20 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Ldloc, deleteResultLocal);
                 il.Emit(OpCodes.Brtrue, deleteTrueLabel);
 
-                // DeleteProperty returned false. Check if object is frozen.
-                // If frozen → return false; if not frozen → return true (key just didn't exist)
+                // DeleteProperty returned false. Check if object is frozen or sealed.
+                // If frozen/sealed → return false; if neither → return true (key just didn't exist)
                 il.Emit(OpCodes.Ldloc, targetLocal);
                 il.Emit(OpCodes.Call, ctx.Runtime!.PDSIsFrozen);
-                var isFrozenLabel = il.DefineLabel();
-                il.Emit(OpCodes.Brtrue, isFrozenLabel);
-                // Not frozen: missing key → return true
+                var isFrozenOrSealedLabel = il.DefineLabel();
+                il.Emit(OpCodes.Brtrue, isFrozenOrSealedLabel);
+                il.Emit(OpCodes.Ldloc, targetLocal);
+                il.Emit(OpCodes.Call, ctx.Runtime!.PDSIsSealed);
+                il.Emit(OpCodes.Brtrue, isFrozenOrSealedLabel);
+                // Not frozen/sealed: missing key → return true
                 il.Emit(OpCodes.Ldc_I4_1);
                 il.Emit(OpCodes.Br, deleteEndLabel);
-                il.MarkLabel(isFrozenLabel);
-                // Frozen → return false
+                il.MarkLabel(isFrozenOrSealedLabel);
+                // Frozen or sealed → return false
                 il.Emit(OpCodes.Ldc_I4_0);
                 il.Emit(OpCodes.Br, deleteEndLabel);
 

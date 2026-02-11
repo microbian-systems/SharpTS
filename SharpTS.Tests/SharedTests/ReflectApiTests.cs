@@ -25,6 +25,43 @@ public class ReflectApiTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Reflect_Has_ArrayIndex(ExecutionMode mode)
+    {
+        var source = """
+            let arr: any = [10, 20, 30];
+            console.log(Reflect.has(arr, "0"));
+            console.log(Reflect.has(arr, "2"));
+            console.log(Reflect.has(arr, "3"));
+            console.log(Reflect.has(arr, "length"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\nfalse\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Reflect_Has_InheritedProperty(ExecutionMode mode)
+    {
+        var source = """
+            class Base {
+                baseMethod(): number { return 1; }
+            }
+            class Child extends Base {
+                childProp: number = 42;
+            }
+            let c: any = new Child();
+            console.log(Reflect.has(c, "childProp"));
+            console.log(Reflect.has(c, "baseMethod"));
+            console.log(Reflect.has(c, "missing"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Reflect_DeleteProperty_RemovesProperty(ExecutionMode mode)
     {
         var source = """
@@ -50,6 +87,36 @@ public class ReflectApiTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Reflect_DeleteProperty_FrozenObject_ReturnsFalse(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = { x: 1 };
+            Object.freeze(obj);
+            console.log(Reflect.deleteProperty(obj, "x"));
+            console.log(obj.x);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\n1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Reflect_DeleteProperty_SealedObject_ReturnsFalse(ExecutionMode mode)
+    {
+        var source = """
+            let obj: any = { x: 1 };
+            Object.seal(obj);
+            console.log(Reflect.deleteProperty(obj, "x"));
+            console.log(obj.x);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\n1\n", output);
     }
 
     [Theory]

@@ -38,36 +38,16 @@ public static class MapBuiltIns
         => _lookup.GetMember(receiver, name);
 
     private static object? Get(Interpreter _, SharpTSMap map, List<object?> args)
-    {
-        var key = args[0];
-        if (key == null)
-            throw new Exception("Runtime Error: Map key cannot be null.");
-        return map.Get(key);
-    }
+        => map.Get(args[0]);
 
     private static object? Set(Interpreter _, SharpTSMap map, List<object?> args)
-    {
-        var key = args[0];
-        if (key == null)
-            throw new Exception("Runtime Error: Map key cannot be null.");
-        return map.Set(key, args[1]);
-    }
+        => map.Set(args[0], args[1]);
 
     private static object? Has(Interpreter _, SharpTSMap map, List<object?> args)
-    {
-        var key = args[0];
-        if (key == null)
-            throw new Exception("Runtime Error: Map key cannot be null.");
-        return map.Has(key);
-    }
+        => map.Has(args[0]);
 
     private static object? Delete(Interpreter _, SharpTSMap map, List<object?> args)
-    {
-        var key = args[0];
-        if (key == null)
-            throw new Exception("Runtime Error: Map key cannot be null.");
-        return map.Delete(key);
-    }
+        => map.Delete(args[0]);
 
     private static object? Clear(Interpreter _, SharpTSMap map, List<object?> args)
     {
@@ -115,7 +95,7 @@ public static class MapBuiltIns
             var element = iterable.Elements[i];
             callbackArgs[0] = element;
             callbackArgs[1] = (double)i;
-            var key = callback.Call(interp, callbackArgs) ?? throw new Exception("Runtime Error: Map key cannot be null.");
+            var key = callback.Call(interp, callbackArgs);
 
             var existing = result.Get(key);
             if (existing == null)

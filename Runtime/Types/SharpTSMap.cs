@@ -17,6 +17,14 @@ public class SharpTSMap : ITypeCategorized, IEnumerable<object?>
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Map;
 
+    /// <summary>
+    /// Sentinel object used as dictionary key when the JavaScript key is null/undefined.
+    /// JavaScript Maps support null and undefined as keys, but C# Dictionary requires non-null keys.
+    /// </summary>
+    private static readonly object NullSentinel = new();
+
+    private static object NormalizeKey(object? key) => key ?? NullSentinel;
+
     private readonly Dictionary<object, object?> _map;
 
     public SharpTSMap()
@@ -42,11 +50,7 @@ public class SharpTSMap : ITypeCategorized, IEnumerable<object?>
         {
             if (entry is SharpTSArray pair && pair.Elements.Count >= 2)
             {
-                var key = pair.Elements[0];
-                if (key != null)
-                {
-                    map._map[key] = pair.Elements[1];
-                }
+                map._map[NormalizeKey(pair.Elements[0])] = pair.Elements[1];
             }
         }
         return map;
@@ -59,35 +63,39 @@ public class SharpTSMap : ITypeCategorized, IEnumerable<object?>
 
     /// <summary>
     /// Gets the value associated with the specified key, or undefined (null) if not found.
+    /// Accepts null to match JavaScript Map semantics where undefined is a valid key.
     /// </summary>
-    public object? Get(object key)
+    public object? Get(object? key)
     {
-        return _map.TryGetValue(key, out var value) ? value : null;
+        return _map.TryGetValue(NormalizeKey(key), out var value) ? value : null;
     }
 
     /// <summary>
     /// Sets the value for the specified key. Returns this Map for method chaining.
+    /// Accepts null to match JavaScript Map semantics where undefined is a valid key.
     /// </summary>
-    public SharpTSMap Set(object key, object? value)
+    public SharpTSMap Set(object? key, object? value)
     {
-        _map[key] = value;
+        _map[NormalizeKey(key)] = value;
         return this;
     }
 
     /// <summary>
     /// Returns true if the Map contains the specified key.
+    /// Accepts null to match JavaScript Map semantics where undefined is a valid key.
     /// </summary>
-    public bool Has(object key)
+    public bool Has(object? key)
     {
-        return _map.ContainsKey(key);
+        return _map.ContainsKey(NormalizeKey(key));
     }
 
     /// <summary>
     /// Removes the specified key from the Map. Returns true if the key was present.
+    /// Accepts null to match JavaScript Map semantics where undefined is a valid key.
     /// </summary>
-    public bool Delete(object key)
+    public bool Delete(object? key)
     {
-        return _map.Remove(key);
+        return _map.Remove(NormalizeKey(key));
     }
 
     /// <summary>

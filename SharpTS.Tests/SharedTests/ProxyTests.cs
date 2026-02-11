@@ -156,7 +156,7 @@ public class ProxyTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Proxy_TypeofFunction(ExecutionMode mode)
     {
         var source = @"
@@ -167,6 +167,30 @@ public class ProxyTests
         ";
         var output = TestHarness.Run(source, mode);
         Assert.Equal("function\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Proxy_HasTrap_TruthyCoercion(ExecutionMode mode)
+    {
+        var source = @"
+            const target = { a: 1 };
+            const handler = {
+                has(target: any, prop: string) {
+                    if (prop === ""x"") return 1;
+                    if (prop === ""y"") return 0;
+                    if (prop === ""z"") return ""yes"";
+                    return false;
+                }
+            };
+            const p = new Proxy(target, handler);
+            console.log(""x"" in p);
+            console.log(""y"" in p);
+            console.log(""z"" in p);
+            console.log(""w"" in p);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\ntrue\nfalse\n", output);
     }
 
     [Theory]

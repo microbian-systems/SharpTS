@@ -1134,6 +1134,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Stloc, codePointLocal);
 
+        // Validate: if (codePoint < 0 || codePoint > 0x10FFFF) throw RangeError
+        var validLabel = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, codePointLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, throwLabel);
+        il.Emit(OpCodes.Ldloc, codePointLocal);
+        il.Emit(OpCodes.Ldc_I4, 0x10FFFF);
+        il.Emit(OpCodes.Ble, validLabel);
+
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "RangeError: Invalid code point");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(validLabel);
+
         // result = string.Concat(result, Char.ConvertFromUtf32(codePoint))
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloc, codePointLocal);

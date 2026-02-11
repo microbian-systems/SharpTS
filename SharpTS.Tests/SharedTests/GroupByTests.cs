@@ -113,6 +113,25 @@ public class GroupByTests
     }
 
     [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void MapGroupBy_NullUndefinedKeys(ExecutionMode mode)
+    {
+        var source = """
+            const items = [1, 2, 3];
+            const result = Map.groupBy(items, (n: any) => n > 2 ? "big" : undefined);
+            console.log(result.size);
+            console.log(result.get(undefined).length);
+            console.log(result.get(undefined)[0]);
+            console.log(result.get(undefined)[1]);
+            console.log(result.get("big").length);
+            console.log(result.get("big")[0]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2\n2\n1\n2\n1\n3\n", output);
+    }
+
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void MapGroupBy_MultipleItemsPerGroup(ExecutionMode mode)
     {

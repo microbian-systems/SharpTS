@@ -117,8 +117,10 @@ public static class ReflectBuiltIns
                 var propertyKey = args[1]?.ToString() ?? "";
                 return target switch
                 {
-                    SharpTSObject obj => obj.Fields.ContainsKey(propertyKey) || obj.HasGetter(propertyKey),
-                    SharpTSInstance inst => inst.GetFieldNames().Contains(propertyKey),
+                    SharpTSObject obj => obj.HasProperty(propertyKey),
+                    SharpTSInstance inst => inst.HasProperty(propertyKey),
+                    SharpTSArray arr => propertyKey == "length"
+                        || (int.TryParse(propertyKey, out var idx) && idx >= 0 && idx < arr.Elements.Count),
                     Dictionary<string, object?> dict => dict.ContainsKey(propertyKey),
                     _ => false
                 };
@@ -131,15 +133,19 @@ public static class ReflectBuiltIns
                 switch (target)
                 {
                     case SharpTSObject obj:
-                        if (obj.IsFrozen) return false;
+                        if ((obj.IsFrozen || obj.IsSealed) && obj.HasProperty(propertyKey))
+                            return false;
                         obj.DeleteProperty(propertyKey);
                         return true;
                     case SharpTSInstance inst:
-                        if (inst.IsFrozen) return false;
+                        if ((inst.IsFrozen || inst.IsSealed) && inst.GetFieldNames().Contains(propertyKey))
+                            return false;
                         inst.DeleteField(propertyKey);
                         return true;
                     case Dictionary<string, object?> dict:
-                        if (PropertyDescriptorStore.IsFrozen(dict)) return false;
+                        if ((PropertyDescriptorStore.IsFrozen(dict) || PropertyDescriptorStore.IsSealed(dict))
+                            && dict.ContainsKey(propertyKey))
+                            return false;
                         dict.Remove(propertyKey);
                         return true;
                     default:
