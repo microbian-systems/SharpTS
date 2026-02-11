@@ -40,9 +40,6 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
     // Non-hoisted local variables (live within a single MoveNext invocation)
     private readonly Dictionary<string, LocalBuilder> _locals = [];
 
-    // Loop label management for break/continue statements
-    private readonly Stack<(Label BreakLabel, Label ContinueLabel, string? LabelName)> _loopLabels = new();
-
     // Variable resolver for hoisted fields, locals, and captured variables
     private IVariableResolver? _resolver;
 
@@ -192,63 +189,7 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
         _il.MarkLabel(defaultLabel);
     }
 
-    #region Helper Method Wrappers - Not in ExpressionEmitterBase
-
-    // Note: EnsureBoxed, SetStackUnknown, SetStackType, EmitNullConstant, EmitDoubleConstant,
-    // EmitBoolConstant, EmitStringConstant are inherited from ExpressionEmitterBase
-
-    protected override void EmitTruthyCheck() => _helpers.EmitTruthyCheck(_ctx!.Runtime!.IsTruthy);
-    private void EmitBoxedDoubleConstant(double value) => _helpers.EmitBoxedDoubleConstant(value);
-    private void EmitBoxedBoolConstant(bool value) => _helpers.EmitBoxedBoolConstant(value);
-    private void EmitBoxDouble() => _helpers.EmitBoxDouble();
-    private void EmitBoxBool() => _helpers.EmitBoxBool();
-    private void EmitAdd_Double() => _helpers.EmitAdd_Double();
-    private void EmitSub_Double() => _helpers.EmitSub_Double();
-    private void EmitMul_Double() => _helpers.EmitMul_Double();
-    private void EmitDiv_Double() => _helpers.EmitDiv_Double();
-    private void EmitRem_Double() => _helpers.EmitRem_Double();
-    private void EmitNeg_Double() => _helpers.EmitNeg_Double();
-    private void EmitClt_Boolean() => _helpers.EmitClt_Boolean();
-    private void EmitCgt_Boolean() => _helpers.EmitCgt_Boolean();
-    private void EmitCeq_Boolean() => _helpers.EmitCeq_Boolean();
-    private void EmitLessOrEqual_Boolean() => _helpers.EmitLessOrEqual_Boolean();
-    private void EmitGreaterOrEqual_Boolean() => _helpers.EmitGreaterOrEqual_Boolean();
-    private void EmitCallUnknown(MethodInfo method) => _helpers.EmitCallUnknown(method);
-    private void EmitCallvirtUnknown(MethodInfo method) => _helpers.EmitCallvirtUnknown(method);
-    private void EmitCallString(MethodInfo method) => _helpers.EmitCallString(method);
-    private void EmitCallBoolean(MethodInfo method) => _helpers.EmitCallBoolean(method);
-    private void EmitCallDouble(MethodInfo method) => _helpers.EmitCallDouble(method);
-    private void EmitCallAndBoxDouble(MethodInfo method) => _helpers.EmitCallAndBoxDouble(method);
-    private void EmitCallAndBoxBool(MethodInfo method) => _helpers.EmitCallAndBoxBool(method);
-    private void EmitLdlocUnknown(LocalBuilder local) => _helpers.EmitLdlocUnknown(local);
-    private void EmitLdargUnknown(int argIndex) => _helpers.EmitLdargUnknown(argIndex);
-    private void EmitLdfldUnknown(FieldInfo field) => _helpers.EmitLdfldUnknown(field);
-    private void EmitNewobjUnknown(ConstructorInfo ctor) => _helpers.EmitNewobjUnknown(ctor);
-    private void EmitConvertToDouble() => _helpers.EmitConvertToDouble();
-    private void EmitConvR8AndBox() => _helpers.EmitConvR8AndBox();
-    private void EmitObjectEqualsBoxed() => _helpers.EmitObjectEqualsBoxed();
-    private void EmitObjectNotEqualsBoxed() => _helpers.EmitObjectNotEqualsBoxed();
-
-    #endregion
-
-    #region StatementEmitterBase Abstract Implementations
-
-    protected override void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
-        => _loopLabels.Push((breakLabel, continueLabel, labelName));
-
-    protected override void ExitLoop()
-        => _loopLabels.Pop();
-
-    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? CurrentLoop
-        => _loopLabels.Count > 0 ? _loopLabels.Peek() : null;
-
-    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? FindLabeledLoop(string labelName)
-    {
-        foreach (var loop in _loopLabels)
-            if (loop.LabelName == labelName)
-                return loop;
-        return null;
-    }
+    #region StatementEmitterBase Overrides
 
     protected override LocalBuilder? DeclareLoopVariable(string name)
     {

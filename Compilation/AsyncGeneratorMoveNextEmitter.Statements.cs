@@ -184,7 +184,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         var endLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        _loopLabels.Push((endLabel, continueLabel, null));
+        EnterLoop(endLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
         EmitExpression(w.Condition);
@@ -198,7 +198,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Br, startLabel);
 
         _il.MarkLabel(endLabel);
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     protected override void EmitForOf(Stmt.ForOf f)
@@ -245,7 +245,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         var endLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        _loopLabels.Push((endLabel, continueLabel, null));
+        EnterLoop(endLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
         _il.Emit(OpCodes.Ldloc, enumLocal);
@@ -274,7 +274,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Br, startLabel);
 
         _il.MarkLabel(endLabel);
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     private void EmitForOfWithHoistedEnumerator(Stmt.ForOf f, FieldBuilder enumeratorField)
@@ -305,7 +305,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         var endLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        _loopLabels.Push((endLabel, continueLabel, null));
+        EnterLoop(endLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
 
@@ -340,7 +340,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Br, startLabel);
 
         _il.MarkLabel(endLabel);
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     private void EmitForAwaitOf(Stmt.ForOf f)
@@ -368,7 +368,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         var endLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        _loopLabels.Push((endLabel, continueLabel, null));
+        EnterLoop(endLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
 
@@ -459,7 +459,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Br, startLabel);
 
         _il.MarkLabel(endLabel);
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     protected override void EmitPrint(Stmt.Print p)
@@ -475,7 +475,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         var endLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        _loopLabels.Push((endLabel, continueLabel, null));
+        EnterLoop(endLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
         EmitStatement(dw.Body);
@@ -488,7 +488,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Brtrue, startLabel);
 
         _il.MarkLabel(endLabel);
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     protected override void EmitForIn(Stmt.ForIn f)
@@ -517,7 +517,7 @@ public partial class AsyncGeneratorMoveNextEmitter
             _ctx!.Locals.RegisterLocal(varName, loopVar);
         }
 
-        _loopLabels.Push((endLabel, continueLabel, null));
+        EnterLoop(endLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
 
@@ -556,7 +556,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Br, startLabel);
 
         _il.MarkLabel(endLabel);
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     protected override void EmitThrow(Stmt.Throw t)
@@ -656,50 +656,4 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.EndExceptionBlock();
     }
 
-    protected override void EmitBreak(Stmt.Break b)
-    {
-        if (b.Label != null)
-        {
-            foreach (var loop in _loopLabels)
-            {
-                if (loop.LabelName == b.Label.Lexeme)
-                {
-                    _il.Emit(OpCodes.Br, loop.BreakLabel);
-                    return;
-                }
-            }
-        }
-        else if (_loopLabels.Count > 0)
-        {
-            _il.Emit(OpCodes.Br, _loopLabels.Peek().BreakLabel);
-        }
-    }
-
-    protected override void EmitContinue(Stmt.Continue c)
-    {
-        if (c.Label != null)
-        {
-            foreach (var loop in _loopLabels)
-            {
-                if (loop.LabelName == c.Label.Lexeme)
-                {
-                    _il.Emit(OpCodes.Br, loop.ContinueLabel);
-                    return;
-                }
-            }
-        }
-        else if (_loopLabels.Count > 0)
-        {
-            _il.Emit(OpCodes.Br, _loopLabels.Peek().ContinueLabel);
-        }
-    }
-
-    protected override void EmitLabeledStatement(Stmt.LabeledStatement ls)
-    {
-        var breakLabel = _il.DefineLabel();
-        _loopLabels.Push((breakLabel, breakLabel, ls.Label.Lexeme));
-        EmitStatement(ls.Statement);
-        _loopLabels.Pop();
-        _il.MarkLabel(breakLabel);
-    }
 }

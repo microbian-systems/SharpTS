@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Diagnostics.Exceptions;
 using SharpTS.Parsing;
@@ -55,6 +56,52 @@ public abstract class ExpressionEmitterBase
     protected void EmitDoubleConstant(double value) => _helpers.EmitDoubleConstant(value);
     protected void EmitBoolConstant(bool value) => _helpers.EmitBoolConstant(value);
     protected void EmitStringConstant(string value) => _helpers.EmitStringConstant(value);
+    #endregion
+
+    #region Common Helper Wrappers - Delegated to StateMachineEmitHelpers
+
+    // Boxing
+    protected void EmitBoxedDoubleConstant(double value) => _helpers.EmitBoxedDoubleConstant(value);
+    protected void EmitBoxedBoolConstant(bool value) => _helpers.EmitBoxedBoolConstant(value);
+    protected void EmitBoxDouble() => _helpers.EmitBoxDouble();
+    protected void EmitBoxBool() => _helpers.EmitBoxBool();
+
+    // Arithmetic
+    protected void EmitAdd_Double() => _helpers.EmitAdd_Double();
+    protected void EmitSub_Double() => _helpers.EmitSub_Double();
+    protected void EmitMul_Double() => _helpers.EmitMul_Double();
+    protected void EmitDiv_Double() => _helpers.EmitDiv_Double();
+    protected void EmitRem_Double() => _helpers.EmitRem_Double();
+    protected void EmitNeg_Double() => _helpers.EmitNeg_Double();
+
+    // Comparison
+    protected void EmitClt_Boolean() => _helpers.EmitClt_Boolean();
+    protected void EmitCgt_Boolean() => _helpers.EmitCgt_Boolean();
+    protected void EmitCeq_Boolean() => _helpers.EmitCeq_Boolean();
+    protected void EmitLessOrEqual_Boolean() => _helpers.EmitLessOrEqual_Boolean();
+    protected void EmitGreaterOrEqual_Boolean() => _helpers.EmitGreaterOrEqual_Boolean();
+
+    // Method calls
+    protected void EmitCallUnknown(MethodInfo method) => _helpers.EmitCallUnknown(method);
+    protected void EmitCallvirtUnknown(MethodInfo method) => _helpers.EmitCallvirtUnknown(method);
+    protected void EmitCallString(MethodInfo method) => _helpers.EmitCallString(method);
+    protected void EmitCallBoolean(MethodInfo method) => _helpers.EmitCallBoolean(method);
+    protected void EmitCallDouble(MethodInfo method) => _helpers.EmitCallDouble(method);
+    protected void EmitCallAndBoxDouble(MethodInfo method) => _helpers.EmitCallAndBoxDouble(method);
+    protected void EmitCallAndBoxBool(MethodInfo method) => _helpers.EmitCallAndBoxBool(method);
+
+    // Variable loads
+    protected void EmitLdlocUnknown(LocalBuilder local) => _helpers.EmitLdlocUnknown(local);
+    protected void EmitLdargUnknown(int argIndex) => _helpers.EmitLdargUnknown(argIndex);
+    protected void EmitLdfldUnknown(FieldInfo field) => _helpers.EmitLdfldUnknown(field);
+
+    // Specialized
+    protected void EmitNewobjUnknown(ConstructorInfo ctor) => _helpers.EmitNewobjUnknown(ctor);
+    protected void EmitConvertToDouble() => _helpers.EmitConvertToDouble();
+    protected void EmitConvR8AndBox() => _helpers.EmitConvR8AndBox();
+    protected void EmitObjectEqualsBoxed() => _helpers.EmitObjectEqualsBoxed();
+    protected void EmitObjectNotEqualsBoxed() => _helpers.EmitObjectNotEqualsBoxed();
+
     #endregion
 
     #region Core Expression Dispatch

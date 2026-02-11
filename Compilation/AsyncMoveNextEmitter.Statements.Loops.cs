@@ -13,7 +13,7 @@ public partial class AsyncMoveNextEmitter
         var continueLabel = _il.DefineLabel();
 
         // Push labels for break/continue
-        _loopLabels.Push((endLabel, continueLabel, null));
+        EnterLoop(endLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
         EmitExpression(w.Condition);
@@ -27,7 +27,7 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Br, startLabel);
 
         _il.MarkLabel(endLabel);
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     protected override void EmitForOf(Stmt.ForOf f)
@@ -61,7 +61,7 @@ public partial class AsyncMoveNextEmitter
         var continueLabel = _il.DefineLabel();
 
         // Push labels for break/continue
-        _loopLabels.Push((endLabel, continueLabel, null));
+        EnterLoop(endLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
         _il.Emit(OpCodes.Ldloc, enumLocal);
@@ -91,7 +91,7 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Br, startLabel);
 
         _il.MarkLabel(endLabel);
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     private void EmitForAwaitOf(Stmt.ForOf f)
@@ -142,7 +142,7 @@ public partial class AsyncMoveNextEmitter
             var endLabel = _il.DefineLabel();
             var continueLabel = _il.DefineLabel();
 
-            _loopLabels.Push((endLabel, continueLabel, null));
+            EnterLoop(endLabel, continueLabel);
 
             _il.MarkLabel(startLabel);
 
@@ -218,7 +218,7 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Br, startLabel);
 
             _il.MarkLabel(endLabel);
-            _loopLabels.Pop();
+            ExitLoop();
             _il.Emit(OpCodes.Br, afterLoopLabel); // Skip the fallback path
         }
 
@@ -238,7 +238,7 @@ public partial class AsyncMoveNextEmitter
             var genEndLabel = _il.DefineLabel();
             var genContinueLabel = _il.DefineLabel();
 
-            _loopLabels.Push((genEndLabel, genContinueLabel, null));
+            EnterLoop(genEndLabel, genContinueLabel);
 
             _il.MarkLabel(genStartLabel);
 
@@ -298,7 +298,7 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Br, genStartLabel);
 
             _il.MarkLabel(genEndLabel);
-            _loopLabels.Pop();
+            ExitLoop();
         }
 
         // Common exit point for both paths
@@ -312,7 +312,7 @@ public partial class AsyncMoveNextEmitter
         var continueLabel = _il.DefineLabel();
 
         // Push labels for break/continue
-        _loopLabels.Push((endLabel, continueLabel, null));
+        EnterLoop(endLabel, continueLabel);
 
         // Body executes at least once
         _il.MarkLabel(startLabel);
@@ -328,7 +328,7 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Brtrue, startLabel);
 
         _il.MarkLabel(endLabel);
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     protected override void EmitForIn(Stmt.ForIn f)
@@ -361,7 +361,7 @@ public partial class AsyncMoveNextEmitter
         }
 
         // Push labels for break/continue
-        _loopLabels.Push((endLabel, continueLabel, null));
+        EnterLoop(endLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
 
@@ -405,6 +405,6 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Br, startLabel);
 
         _il.MarkLabel(endLabel);
-        _loopLabels.Pop();
+        ExitLoop();
     }
 }

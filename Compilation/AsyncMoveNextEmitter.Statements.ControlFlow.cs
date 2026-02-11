@@ -51,47 +51,4 @@ public partial class AsyncMoveNextEmitter
         _il.MarkLabel(endLabel);
     }
 
-    protected override void EmitBreak(Stmt.Break b)
-    {
-        if (b.Label != null)
-        {
-            // Labeled break - search for matching label in loop stack
-            foreach (var loop in _loopLabels)
-            {
-                if (loop.LabelName == b.Label.Lexeme)
-                {
-                    _il.Emit(OpCodes.Br, loop.BreakLabel);
-                    return;
-                }
-            }
-            // Label not found - should have been caught by type checker
-        }
-        else if (_loopLabels.Count > 0)
-        {
-            // Unlabeled break - jump to innermost loop's break label
-            _il.Emit(OpCodes.Br, _loopLabels.Peek().BreakLabel);
-        }
-    }
-
-    protected override void EmitContinue(Stmt.Continue c)
-    {
-        if (c.Label != null)
-        {
-            // Labeled continue - search for matching label in loop stack
-            foreach (var loop in _loopLabels)
-            {
-                if (loop.LabelName == c.Label.Lexeme)
-                {
-                    _il.Emit(OpCodes.Br, loop.ContinueLabel);
-                    return;
-                }
-            }
-            // Label not found - should have been caught by type checker
-        }
-        else if (_loopLabels.Count > 0)
-        {
-            // Unlabeled continue - jump to innermost loop's continue label
-            _il.Emit(OpCodes.Br, _loopLabels.Peek().ContinueLabel);
-        }
-    }
 }

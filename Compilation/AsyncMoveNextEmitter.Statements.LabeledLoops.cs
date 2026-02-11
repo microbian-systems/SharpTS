@@ -25,9 +25,9 @@ public partial class AsyncMoveNextEmitter
         {
             // Non-loop labeled statement - just push a break-only label
             // (continue doesn't make sense for non-loops)
-            _loopLabels.Push((breakLabel, breakLabel, ls.Label.Lexeme));
+            EnterLoop(breakLabel, breakLabel, ls.Label.Lexeme);
             EmitStatement(ls.Statement);
-            _loopLabels.Pop();
+            ExitLoop();
         }
 
         _il.MarkLabel(breakLabel);
@@ -62,7 +62,7 @@ public partial class AsyncMoveNextEmitter
         var continueLabel = _il.DefineLabel();
 
         // Push labels with the label name
-        _loopLabels.Push((outerBreakLabel, continueLabel, labelName));
+        EnterLoop(outerBreakLabel, continueLabel, labelName);
 
         _il.MarkLabel(startLabel);
         EmitExpression(w.Condition);
@@ -75,7 +75,7 @@ public partial class AsyncMoveNextEmitter
         _il.MarkLabel(continueLabel);
         _il.Emit(OpCodes.Br, startLabel);
 
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     private void EmitLabeledForOf(string labelName, Stmt.ForOf f, Label outerBreakLabel)
@@ -99,7 +99,7 @@ public partial class AsyncMoveNextEmitter
         var startLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        _loopLabels.Push((outerBreakLabel, continueLabel, labelName));
+        EnterLoop(outerBreakLabel, continueLabel, labelName);
 
         _il.MarkLabel(startLabel);
         _il.Emit(OpCodes.Ldloc, enumLocal);
@@ -127,7 +127,7 @@ public partial class AsyncMoveNextEmitter
         _il.MarkLabel(continueLabel);
         _il.Emit(OpCodes.Br, startLabel);
 
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     private void EmitLabeledDoWhile(string labelName, Stmt.DoWhile dw, Label outerBreakLabel)
@@ -135,7 +135,7 @@ public partial class AsyncMoveNextEmitter
         var startLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        _loopLabels.Push((outerBreakLabel, continueLabel, labelName));
+        EnterLoop(outerBreakLabel, continueLabel, labelName);
 
         _il.MarkLabel(startLabel);
         EmitStatement(dw.Body);
@@ -147,7 +147,7 @@ public partial class AsyncMoveNextEmitter
         EmitTruthyCheck();
         _il.Emit(OpCodes.Brtrue, startLabel);
 
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     private void EmitLabeledForIn(string labelName, Stmt.ForIn f, Label outerBreakLabel)
@@ -175,7 +175,7 @@ public partial class AsyncMoveNextEmitter
             _ctx!.Locals.RegisterLocal(varName, loopVar);
         }
 
-        _loopLabels.Push((outerBreakLabel, continueLabel, labelName));
+        EnterLoop(outerBreakLabel, continueLabel, labelName);
 
         _il.MarkLabel(startLabel);
 
@@ -213,7 +213,7 @@ public partial class AsyncMoveNextEmitter
 
         _il.Emit(OpCodes.Br, startLabel);
 
-        _loopLabels.Pop();
+        ExitLoop();
     }
 
     private void EmitLabeledFor(string labelName, Stmt.For f, Label outerBreakLabel)
@@ -226,7 +226,7 @@ public partial class AsyncMoveNextEmitter
         var continueLabel = _il.DefineLabel();  // Points to increment
 
         // Push labels with the label name
-        _loopLabels.Push((outerBreakLabel, continueLabel, labelName));
+        EnterLoop(outerBreakLabel, continueLabel, labelName);
 
         _il.MarkLabel(startLabel);
 
@@ -253,6 +253,6 @@ public partial class AsyncMoveNextEmitter
 
         _il.Emit(OpCodes.Br, startLabel);
 
-        _loopLabels.Pop();
+        ExitLoop();
     }
 }

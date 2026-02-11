@@ -37,78 +37,21 @@ public partial class ILEmitter
 
     #endregion
 
-    #region Literal/Constant Helpers - Delegated to StateMachineEmitHelpers
+    #region ILEmitter-only Helpers - Delegated to StateMachineEmitHelpers
 
-    private void EmitBoxedDoubleConstant(double value) => _helpers.EmitBoxedDoubleConstant(value);
-    // Note: EmitStringConstant, EmitDoubleConstant, EmitBoolConstant, EmitNullConstant are inherited from ExpressionEmitterBase
-    private void EmitBoxedBoolConstant(bool value) => _helpers.EmitBoxedBoolConstant(value);
-
-    #endregion
-
-    #region Boxing Helpers - Delegated to StateMachineEmitHelpers
-
-    private void EmitBoxDouble() => _helpers.EmitBoxDouble();
-    private void EmitBoxBool() => _helpers.EmitBoxBool();
-    // Note: SetStackUnknown, SetStackType are inherited from ExpressionEmitterBase
-
-    #endregion
-
-    #region Arithmetic Helpers - Delegated to StateMachineEmitHelpers
-
-    private void EmitAdd_Double() => _helpers.EmitAdd_Double();
-    private void EmitSub_Double() => _helpers.EmitSub_Double();
-    private void EmitMul_Double() => _helpers.EmitMul_Double();
-    private void EmitDiv_Double() => _helpers.EmitDiv_Double();
-    private void EmitRem_Double() => _helpers.EmitRem_Double();
-    private void EmitNeg_Double() => _helpers.EmitNeg_Double();
+    // Arithmetic (box-and-return variants unique to ILEmitter)
     private void EmitAddAndBox() => _helpers.EmitAddAndBox();
     private void EmitSubAndBox() => _helpers.EmitSubAndBox();
     private void EmitMulAndBox() => _helpers.EmitMulAndBox();
     private void EmitDivAndBox() => _helpers.EmitDivAndBox();
 
-    #endregion
-
-    #region Comparison Helpers - Delegated to StateMachineEmitHelpers
-
-    private void EmitClt_Boolean() => _helpers.EmitClt_Boolean();
-    private void EmitCgt_Boolean() => _helpers.EmitCgt_Boolean();
-    private void EmitCeq_Boolean() => _helpers.EmitCeq_Boolean();
-    private void EmitLessOrEqual_Boolean() => _helpers.EmitLessOrEqual_Boolean();
-    private void EmitGreaterOrEqual_Boolean() => _helpers.EmitGreaterOrEqual_Boolean();
-
-    #endregion
-
-    #region Variable Load Helpers - Delegated to StateMachineEmitHelpers
-
+    // Variable loads (unique to ILEmitter)
     private void EmitLdloc(LocalBuilder local, Type localType) => _helpers.EmitLdloc(local, localType);
-    private void EmitLdlocUnknown(LocalBuilder local) => _helpers.EmitLdlocUnknown(local);
-    private void EmitLdargUnknown(int argIndex) => _helpers.EmitLdargUnknown(argIndex);
     private void EmitLdarg0Unknown() => _helpers.EmitLdarg0Unknown();
-    private void EmitLdfldUnknown(FieldInfo field) => _helpers.EmitLdfldUnknown(field);
     private void EmitLdsfldUnknown(FieldInfo field) => _helpers.EmitLdsfldUnknown(field);
 
-    #endregion
-
-    #region Method Call Helpers - Delegated to StateMachineEmitHelpers
-
-    private void EmitCallUnknown(MethodInfo method) => _helpers.EmitCallUnknown(method);
-    private void EmitCallvirtUnknown(MethodInfo method) => _helpers.EmitCallvirtUnknown(method);
-    private void EmitCallString(MethodInfo method) => _helpers.EmitCallString(method);
-    private void EmitCallBoolean(MethodInfo method) => _helpers.EmitCallBoolean(method);
-    private void EmitCallDouble(MethodInfo method) => _helpers.EmitCallDouble(method);
-    private void EmitCallAndBoxDouble(MethodInfo method) => _helpers.EmitCallAndBoxDouble(method);
-    private void EmitCallAndBoxBool(MethodInfo method) => _helpers.EmitCallAndBoxBool(method);
-
-    #endregion
-
-    #region Specialized Helpers - Delegated to StateMachineEmitHelpers
-
-    private void EmitNewobjUnknown(ConstructorInfo ctor) => _helpers.EmitNewobjUnknown(ctor);
-    private void EmitConvertToDouble() => _helpers.EmitConvertToDouble();
-    private void EmitConvR8AndBox() => _helpers.EmitConvR8AndBox();
-    private void EmitObjectEqualsBoxed() => _helpers.EmitObjectEqualsBoxed();
+    // Specialized (unique to ILEmitter)
     private void EmitObjectEqualsBoxed_NoBox() => _helpers.EmitObjectEqualsBoxed_NoBox();
-    private void EmitObjectNotEqualsBoxed() => _helpers.EmitObjectNotEqualsBoxed();
 
     #endregion
 }

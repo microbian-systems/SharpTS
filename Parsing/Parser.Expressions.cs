@@ -55,32 +55,12 @@ public partial class Parser
 
         if (Match(TokenType.EQUAL))
         {
-            Token equals = Previous();
             Expr value = Assignment();
-
-            if (expr is Expr.Variable variable)
-            {
-                // In strict mode, cannot assign to 'eval' or 'arguments'
-                if (_isStrictMode && (variable.Name.Lexeme == "eval" || variable.Name.Lexeme == "arguments"))
-                {
-                    throw new Exception($"SyntaxError: Unexpected eval or arguments in strict mode");
-                }
-                return new Expr.Assign(variable.Name, value);
-            }
-            else if (expr is Expr.Get get)
-            {
-                return new Expr.Set(get.Object, get.Name, value);
-            }
-            else if (expr is Expr.GetPrivate getPrivate)
-            {
-                return new Expr.SetPrivate(getPrivate.Object, getPrivate.Name, value);
-            }
-            else if (expr is Expr.GetIndex getIndex)
-            {
-                return new Expr.SetIndex(getIndex.Object, getIndex.Index, value);
-            }
-
-            throw new Exception("Invalid assignment target.");
+            return DispatchAssignmentTarget(expr, value, "Invalid assignment target.",
+                onVariable: (name, val) => new Expr.Assign(name, val),
+                onGet: (get, val) => new Expr.Set(get.Object, get.Name, val),
+                onGetPrivate: (gp, val) => new Expr.SetPrivate(gp.Object, gp.Name, val),
+                onGetIndex: (gi, val) => new Expr.SetIndex(gi.Object, gi.Index, val));
         }
 
         // Compound assignment operators
@@ -91,26 +71,10 @@ public partial class Parser
         {
             Token op = Previous();
             Expr value = Assignment();
-
-            if (expr is Expr.Variable variable)
-            {
-                // In strict mode, cannot assign to 'eval' or 'arguments'
-                if (_isStrictMode && (variable.Name.Lexeme == "eval" || variable.Name.Lexeme == "arguments"))
-                {
-                    throw new Exception($"SyntaxError: Unexpected eval or arguments in strict mode");
-                }
-                return new Expr.CompoundAssign(variable.Name, op, value);
-            }
-            else if (expr is Expr.Get get)
-            {
-                return new Expr.CompoundSet(get.Object, get.Name, op, value);
-            }
-            else if (expr is Expr.GetIndex getIndex)
-            {
-                return new Expr.CompoundSetIndex(getIndex.Object, getIndex.Index, op, value);
-            }
-
-            throw new Exception("Invalid compound assignment target.");
+            return DispatchAssignmentTarget(expr, value, "Invalid compound assignment target.",
+                onVariable: (name, val) => new Expr.CompoundAssign(name, op, val),
+                onGet: (get, val) => new Expr.CompoundSet(get.Object, get.Name, op, val),
+                onGetIndex: (gi, val) => new Expr.CompoundSetIndex(gi.Object, gi.Index, op, val));
         }
 
         // Logical assignment operators (&&=, ||=, ??=) - have short-circuit semantics
@@ -118,29 +82,41 @@ public partial class Parser
         {
             Token op = Previous();
             Expr value = Assignment();
-
-            if (expr is Expr.Variable variable)
-            {
-                // In strict mode, cannot assign to 'eval' or 'arguments'
-                if (_isStrictMode && (variable.Name.Lexeme == "eval" || variable.Name.Lexeme == "arguments"))
-                {
-                    throw new Exception($"SyntaxError: Unexpected eval or arguments in strict mode");
-                }
-                return new Expr.LogicalAssign(variable.Name, op, value);
-            }
-            else if (expr is Expr.Get get)
-            {
-                return new Expr.LogicalSet(get.Object, get.Name, op, value);
-            }
-            else if (expr is Expr.GetIndex getIndex)
-            {
-                return new Expr.LogicalSetIndex(getIndex.Object, getIndex.Index, op, value);
-            }
-
-            throw new Exception("Invalid logical assignment target.");
+            return DispatchAssignmentTarget(expr, value, "Invalid logical assignment target.",
+                onVariable: (name, val) => new Expr.LogicalAssign(name, op, val),
+                onGet: (get, val) => new Expr.LogicalSet(get.Object, get.Name, op, val),
+                onGetIndex: (gi, val) => new Expr.LogicalSetIndex(gi.Object, gi.Index, op, val));
         }
 
         return expr;
+    }
+
+    /// <summary>
+    /// Dispatches an assignment to the correct AST node based on the target expression type.
+    /// Validates strict mode restrictions for variable assignments.
+    /// </summary>
+    private Expr DispatchAssignmentTarget(
+        Expr target, Expr value, string errorMessage,
+        Func<Token, Expr, Expr> onVariable,
+        Func<Expr.Get, Expr, Expr> onGet,
+        Func<Expr.GetIndex, Expr, Expr> onGetIndex,
+        Func<Expr.GetPrivate, Expr, Expr>? onGetPrivate = null)
+    {
+        switch (target)
+        {
+            case Expr.Variable variable:
+                if (_isStrictMode && (variable.Name.Lexeme == "eval" || variable.Name.Lexeme == "arguments"))
+                    throw new Exception("SyntaxError: Unexpected eval or arguments in strict mode");
+                return onVariable(variable.Name, value);
+            case Expr.Get get:
+                return onGet(get, value);
+            case Expr.GetPrivate getPrivate when onGetPrivate != null:
+                return onGetPrivate(getPrivate, value);
+            case Expr.GetIndex getIndex:
+                return onGetIndex(getIndex, value);
+            default:
+                throw new Exception(errorMessage);
+        }
     }
 
     private Expr Ternary()

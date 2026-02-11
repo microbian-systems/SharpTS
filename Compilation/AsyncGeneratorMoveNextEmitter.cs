@@ -34,9 +34,6 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
     // Variable resolver for hoisted fields and non-hoisted locals
     private IVariableResolver? _resolver;
 
-    // Loop label tracking for break/continue
-    private readonly Stack<(Label BreakLabel, Label ContinueLabel, string? LabelName)> _loopLabels = new();
-
     public AsyncGeneratorMoveNextEmitter(AsyncGeneratorStateMachineBuilder builder, AsyncGeneratorStateAnalyzer.AsyncGeneratorFunctionAnalysis analysis, TypeProvider types)
         : base(new StateMachineEmitHelpers(builder.MoveNextAsyncMethod.GetILGenerator(), types))
     {
@@ -46,32 +43,7 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
         _types = types;
     }
 
-    #region StatementEmitterBase Abstract Implementations - Loop Labels
-
-    protected override void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
-        => _loopLabels.Push((breakLabel, continueLabel, labelName));
-
-    protected override void ExitLoop()
-        => _loopLabels.Pop();
-
-    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? CurrentLoop
-        => _loopLabels.Count > 0 ? _loopLabels.Peek() : null;
-
-    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? FindLabeledLoop(string labelName)
-    {
-        foreach (var loop in _loopLabels)
-        {
-            if (loop.LabelName == labelName)
-                return loop;
-        }
-        return null;
-    }
-
-    #endregion
-
-    #region StatementEmitterBase Virtual Overrides
-
-    protected override void EmitTruthyCheck() => _helpers.EmitTruthyCheck(_ctx!.Runtime!.IsTruthy);
+    #region StatementEmitterBase Overrides
 
     protected override LocalBuilder? DeclareLoopVariable(string name)
     {
@@ -207,27 +179,12 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
         _il.Emit(OpCodes.Ret);
     }
 
-    #region Helper Method Wrappers - Not in ExpressionEmitterBase
+    #region Helper Method Wrappers - Unique to AsyncGeneratorMoveNextEmitter
 
-    // Note: EnsureBoxed, SetStackUnknown, SetStackType, EmitNullConstant, EmitDoubleConstant,
-    // EmitBoolConstant, EmitStringConstant are inherited from ExpressionEmitterBase
-    // EmitTruthyCheck is now overridden from StatementEmitterBase
-
-    private void EmitBoxedDoubleConstant(double value) => _helpers.EmitBoxedDoubleConstant(value);
-    private void EmitBoxedBoolConstant(bool value) => _helpers.EmitBoxedBoolConstant(value);
-    private void EmitBoxDouble() => _helpers.EmitBoxDouble();
-    private void EmitBoxBool() => _helpers.EmitBoxBool();
     private void SetStackNumber() => _helpers.SetStackType(StackType.Double);
     private void SetStackString() => _helpers.SetStackType(StackType.String);
     private void SetStackBoolean() => _helpers.SetStackType(StackType.Boolean);
     private void SetStackObject() => _helpers.SetStackUnknown();
-    private void EmitCallUnknown(MethodInfo method) => _helpers.EmitCallUnknown(method);
-    private void EmitCallvirtUnknown(MethodInfo method) => _helpers.EmitCallvirtUnknown(method);
-    private void EmitLdlocUnknown(LocalBuilder local) => _helpers.EmitLdlocUnknown(local);
-    private void EmitLdargUnknown(int argIndex) => _helpers.EmitLdargUnknown(argIndex);
-    private void EmitLdfldUnknown(FieldInfo field) => _helpers.EmitLdfldUnknown(field);
-    private void EmitNewobjUnknown(ConstructorInfo ctor) => _helpers.EmitNewobjUnknown(ctor);
-    private void EmitConvertToDouble() => _helpers.EmitConvertToDouble();
 
     #endregion
 }

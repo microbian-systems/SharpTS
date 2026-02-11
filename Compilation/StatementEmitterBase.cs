@@ -66,27 +66,39 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
 
     #endregion
 
-    #region Abstract Methods - Loop Label Management
+    #region Virtual Methods - Loop Label Management (default: stack-based)
+
+    protected readonly Stack<(Label BreakLabel, Label ContinueLabel, string? LabelName)> _loopLabels = new();
 
     /// <summary>
     /// Registers a loop context for break/continue resolution.
+    /// Default: pushes onto an internal stack. ILEmitter overrides to use CompilationContext.
     /// </summary>
-    protected abstract void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null);
+    protected virtual void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
+        => _loopLabels.Push((breakLabel, continueLabel, labelName));
 
     /// <summary>
     /// Exits the current loop context.
     /// </summary>
-    protected abstract void ExitLoop();
+    protected virtual void ExitLoop()
+        => _loopLabels.Pop();
 
     /// <summary>
     /// Gets the current innermost loop context, or null if not in a loop.
     /// </summary>
-    protected abstract (Label BreakLabel, Label ContinueLabel, string? LabelName)? CurrentLoop { get; }
+    protected virtual (Label BreakLabel, Label ContinueLabel, string? LabelName)? CurrentLoop
+        => _loopLabels.Count > 0 ? _loopLabels.Peek() : null;
 
     /// <summary>
     /// Finds a loop context by label name.
     /// </summary>
-    protected abstract (Label BreakLabel, Label ContinueLabel, string? LabelName)? FindLabeledLoop(string labelName);
+    protected virtual (Label BreakLabel, Label ContinueLabel, string? LabelName)? FindLabeledLoop(string labelName)
+    {
+        foreach (var loop in _loopLabels)
+            if (loop.LabelName == labelName)
+                return loop;
+        return null;
+    }
 
     #endregion
 
@@ -118,11 +130,11 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     }
 
     /// <summary>
-    /// Emits truthy check. Default calls Runtime.IsTruthy.
+    /// Emits truthy check. Default calls Runtime.IsTruthy via helpers (with stack tracking).
     /// </summary>
     protected virtual void EmitTruthyCheck()
     {
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.IsTruthy);
+        _helpers.EmitTruthyCheck(Ctx.Runtime!.IsTruthy);
     }
 
     #endregion
