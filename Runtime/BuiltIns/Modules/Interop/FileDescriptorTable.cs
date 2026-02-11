@@ -39,8 +39,8 @@ public sealed class FileDescriptorTable
     /// <returns>A file descriptor (integer >= 3).</returns>
     public int Open(string path, FileMode mode, FileAccess access, FileShare share)
     {
-        var fd = Interlocked.Increment(ref _nextFd) - 1;
         var stream = new FileStream(path, mode, access, share);
+        var fd = Interlocked.Increment(ref _nextFd) - 1;
         _streams[fd] = stream;
         return fd;
     }

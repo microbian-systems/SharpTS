@@ -151,7 +151,7 @@ public class TSFunction
 /// <seealso cref="ILCompiler"/>
 public static partial class RuntimeTypes
 {
-    private static readonly Random _random = new();
+    private static readonly System.Random _random = System.Random.Shared;
     private static readonly Dictionary<string, Type> _compiledTypes = [];
 
     // Symbol-keyed property storage: object -> (symbol -> value)

@@ -125,9 +125,19 @@ public class ILVerifier : IResolver, IDisposable
         var dllPath = Path.Combine(_sdkPath, $"{name}.dll");
         if (File.Exists(dllPath))
         {
-            var reader = new PEReader(File.OpenRead(dllPath));
-            _assemblyCache[name] = reader;
-            return reader;
+            FileStream? stream = null;
+            try
+            {
+                stream = File.OpenRead(dllPath);
+                var reader = new PEReader(stream);
+                _assemblyCache[name] = reader;
+                return reader;
+            }
+            catch
+            {
+                stream?.Dispose();
+                throw;
+            }
         }
 
         // Try runtime assemblies as fallback
@@ -137,9 +147,19 @@ public class ILVerifier : IResolver, IDisposable
             var runtimeDll = Path.Combine(runtimePath, $"{name}.dll");
             if (File.Exists(runtimeDll))
             {
-                var reader = new PEReader(File.OpenRead(runtimeDll));
-                _assemblyCache[name] = reader;
-                return reader;
+                FileStream? stream = null;
+                try
+                {
+                    stream = File.OpenRead(runtimeDll);
+                    var reader = new PEReader(stream);
+                    _assemblyCache[name] = reader;
+                    return reader;
+                }
+                catch
+                {
+                    stream?.Dispose();
+                    throw;
+                }
             }
         }
 
