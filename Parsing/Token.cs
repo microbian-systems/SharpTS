@@ -86,12 +86,18 @@ public record TemplateStringValue(string? Cooked, string Raw);
 /// </remarks>
 /// <seealso cref="TokenType"/>
 /// <seealso cref="Lexer"/>
-public class Token(TokenType type, string lexeme, object? literal, int line)
+public class Token(TokenType type, string lexeme, object? literal, int line, int start = -1)
 {
     public TokenType Type { get; } = type;
     public string Lexeme { get; } = lexeme;
     public object? Literal { get; } = literal;
     public int Line { get; } = line;
+
+    /// <summary>
+    /// Character offset in the source string where this token begins.
+    /// Used for syntax highlighting. -1 if not set.
+    /// </summary>
+    public int Start { get; } = start;
 
     public override string ToString() => $"{Type} {Lexeme} {Literal}";
 }

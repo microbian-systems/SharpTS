@@ -1070,7 +1070,7 @@ public class Lexer(string source)
     private void AddToken(TokenType type, object? literal)
     {
         string text = _source[_start.._current];
-        _tokens.Add(new Token(type, text, literal, _line));
+        _tokens.Add(new Token(type, text, literal, _line, _start));
         // Update expression state for regex literal disambiguation
         _expectExpr = !IsExpressionEnd(type);
         // Mark that we've emitted a code token (triple-slash directives no longer valid)

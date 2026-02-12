@@ -70,7 +70,7 @@ switch (command)
         break;
 
     case ParsedCommand.Repl repl:
-        RunPrompt(repl.Options.DecoratorMode);
+        RunPromptAsync(repl.Options.DecoratorMode).GetAwaiter().GetResult();
         break;
 
     case ParsedCommand.Script script:
@@ -185,23 +185,19 @@ static void RunModuleFile(string absolutePath, DecoratorMode decoratorMode, bool
     }
 }
 
-static void RunPrompt(DecoratorMode decoratorMode)
+static async Task RunPromptAsync(DecoratorMode decoratorMode)
 {
-    Interpreter interpreter = new();
-    interpreter.SetDecoratorMode(decoratorMode);
     PrintBanner();
     if (decoratorMode != DecoratorMode.None)
     {
         Console.WriteLine($"Decorator mode: {decoratorMode}");
     }
-    Console.WriteLine("Type expressions to evaluate. Press Ctrl+C to exit.");
-    for (; ; )
-    {
-        Console.Write("> ");
-        string? line = Console.ReadLine();
-        if (line == null) break;
-        Run(line, decoratorMode, false, interpreter);
-    }
+    Console.WriteLine("Type expressions to evaluate. Press Ctrl+C to cancel input.");
+    Console.WriteLine("Type .help for available commands.");
+    Console.WriteLine();
+
+    var repl = new SharpTS.Repl.ReplEngine(decoratorMode);
+    await repl.RunAsync();
 }
 
 static void Run(string source, DecoratorMode decoratorMode, bool emitDecoratorMetadata = false, Interpreter? interpreter = null)

@@ -730,6 +730,47 @@ public partial class Interpreter : IDisposable
     }
 
     /// <summary>
+    /// Interprets statements and returns the value of the last expression statement.
+    /// Used by the REPL to auto-display expression results.
+    /// </summary>
+    /// <returns>The value of the last expression statement, or null for declarations.</returns>
+    public object? InterpretRepl(List<Stmt> statements, TypeMap? typeMap = null)
+    {
+        _typeMap = typeMap;
+        object? lastExprValue = null;
+
+        // Hoist function declarations first
+        HoistFunctionDeclarations(statements);
+
+        foreach (Stmt statement in statements)
+        {
+            if (statement is Stmt.Expression exprStmt)
+            {
+                lastExprValue = Evaluate(exprStmt.Expr);
+                if (lastExprValue is SharpTSPromise promise)
+                {
+                    lastExprValue = promise.Task.GetAwaiter().GetResult();
+                }
+            }
+            else
+            {
+                lastExprValue = null;
+                var result = Execute(statement);
+                if (result.Type == ExecutionResult.ResultType.Throw)
+                {
+                    throw new InvalidOperationException($"Runtime Error: {Stringify(result.Value)}");
+                }
+                if (result.IsAbrupt)
+                {
+                    return null;
+                }
+            }
+        }
+
+        return lastExprValue;
+    }
+
+    /// <summary>
     /// Interprets multiple modules in dependency order.
     /// </summary>
     /// <param name="modules">Modules in dependency order (dependencies first)</param>

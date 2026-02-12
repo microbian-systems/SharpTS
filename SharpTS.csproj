@@ -55,6 +55,7 @@
     <PackageReference Include="Microsoft.ILVerification" Version="10.0.0" />
     <PackageReference Include="NuGet.Packaging" Version="7.0.1" />
     <PackageReference Include="NuGet.Protocol" Version="7.0.1" />
+    <PackageReference Include="PrettyPrompt" Version="4.1.*" />
     <PackageReference Include="ZstdSharp.Port" Version="0.8.1" />
   </ItemGroup>
 
