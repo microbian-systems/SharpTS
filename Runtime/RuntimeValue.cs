@@ -677,23 +677,7 @@ public readonly struct RuntimeValue : IEquatable<RuntimeValue>
         };
     }
 
-    /// <summary>
-    /// Formats a number according to JavaScript conventions.
-    /// </summary>
-    private static string FormatNumber(double d)
-    {
-        if (double.IsNaN(d)) return "NaN";
-        if (double.IsPositiveInfinity(d)) return "Infinity";
-        if (double.IsNegativeInfinity(d)) return "-Infinity";
-
-        // Remove trailing .0 for integers
-        string text = d.ToString("G17");
-        if (text.EndsWith(".0"))
-        {
-            text = text[..^2];
-        }
-        return text;
-    }
+    private static string FormatNumber(double d) => Compilation.RuntimeTypes.FormatNumber(d);
 
     #endregion
 

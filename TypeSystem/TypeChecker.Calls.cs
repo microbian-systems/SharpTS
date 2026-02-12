@@ -288,40 +288,7 @@ public partial class TypeChecker
 
         // Handle clearTimeout(handle?)
         if (call.Callee is Expr.Variable clearTimeoutVar && clearTimeoutVar.Name.Lexeme == "clearTimeout")
-        {
-            // clearTimeout accepts 0 or 1 argument
-            if (call.Arguments.Count > 1)
-            {
-                throw new TypeCheckException("clearTimeout() accepts at most one argument.");
-            }
-
-            // If argument provided, it should be Timeout, null, undefined, or any
-            if (call.Arguments.Count == 1)
-            {
-                var handleType = CheckExpr(call.Arguments[0]);
-                if (handleType is not TypeInfo.Timeout &&
-                    handleType is not TypeInfo.Null &&
-                    handleType is not TypeInfo.Undefined &&
-                    handleType is not TypeInfo.Any)
-                {
-                    // Also allow union types containing Timeout
-                    if (handleType is TypeInfo.Union union)
-                    {
-                        bool hasTimeout = union.FlattenedTypes.Any(t => t is TypeInfo.Timeout);
-                        if (!hasTimeout)
-                        {
-                            throw new TypeCheckException($"clearTimeout() argument must be a Timeout, got '{handleType}'.");
-                        }
-                    }
-                    else
-                    {
-                        throw new TypeCheckException($"clearTimeout() argument must be a Timeout, got '{handleType}'.");
-                    }
-                }
-            }
-
-            return new TypeInfo.Void();
-        }
+            return CheckClearTimerCall(call, "clearTimeout");
 
         // Handle setInterval(callback, delay?, ...args)
         if (call.Callee is Expr.Variable setIntervalVar && setIntervalVar.Name.Lexeme == "setInterval")
@@ -359,40 +326,7 @@ public partial class TypeChecker
 
         // Handle clearInterval(handle?)
         if (call.Callee is Expr.Variable clearIntervalVar && clearIntervalVar.Name.Lexeme == "clearInterval")
-        {
-            // clearInterval accepts 0 or 1 argument
-            if (call.Arguments.Count > 1)
-            {
-                throw new TypeCheckException("clearInterval() accepts at most one argument.");
-            }
-
-            // If argument provided, it should be Timeout, null, undefined, or any
-            if (call.Arguments.Count == 1)
-            {
-                var handleType = CheckExpr(call.Arguments[0]);
-                if (handleType is not TypeInfo.Timeout &&
-                    handleType is not TypeInfo.Null &&
-                    handleType is not TypeInfo.Undefined &&
-                    handleType is not TypeInfo.Any)
-                {
-                    // Also allow union types containing Timeout
-                    if (handleType is TypeInfo.Union union)
-                    {
-                        bool hasTimeout = union.FlattenedTypes.Any(t => t is TypeInfo.Timeout);
-                        if (!hasTimeout)
-                        {
-                            throw new TypeCheckException($"clearInterval() argument must be a Timeout, got '{handleType}'.");
-                        }
-                    }
-                    else
-                    {
-                        throw new TypeCheckException($"clearInterval() argument must be a Timeout, got '{handleType}'.");
-                    }
-                }
-            }
-
-            return new TypeInfo.Void();
-        }
+            return CheckClearTimerCall(call, "clearInterval");
 
         // Handle queueMicrotask(callback)
         if (call.Callee is Expr.Variable queueMicrotaskVar && queueMicrotaskVar.Name.Lexeme == "queueMicrotask")
@@ -1096,5 +1030,38 @@ public partial class TypeChecker
         }
 
         return false;
+    }
+
+    private TypeInfo CheckClearTimerCall(Expr.Call call, string functionName)
+    {
+        if (call.Arguments.Count > 1)
+        {
+            throw new TypeCheckException($"{functionName}() accepts at most one argument.");
+        }
+
+        if (call.Arguments.Count == 1)
+        {
+            var handleType = CheckExpr(call.Arguments[0]);
+            if (handleType is not TypeInfo.Timeout &&
+                handleType is not TypeInfo.Null &&
+                handleType is not TypeInfo.Undefined &&
+                handleType is not TypeInfo.Any)
+            {
+                if (handleType is TypeInfo.Union union)
+                {
+                    bool hasTimeout = union.FlattenedTypes.Any(t => t is TypeInfo.Timeout);
+                    if (!hasTimeout)
+                    {
+                        throw new TypeCheckException($"{functionName}() argument must be a Timeout, got '{handleType}'.");
+                    }
+                }
+                else
+                {
+                    throw new TypeCheckException($"{functionName}() argument must be a Timeout, got '{handleType}'.");
+                }
+            }
+        }
+
+        return new TypeInfo.Void();
     }
 }

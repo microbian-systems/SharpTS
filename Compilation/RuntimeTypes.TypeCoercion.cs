@@ -24,7 +24,7 @@ public static partial class RuntimeTypes
         };
     }
 
-    private static string FormatNumber(double d)
+    internal static string FormatNumber(double d)
     {
         if (double.IsNaN(d)) return "NaN";
         if (double.IsPositiveInfinity(d)) return "Infinity";
@@ -65,6 +65,7 @@ public static partial class RuntimeTypes
             bool b => b,
             double d => d != 0.0 && !double.IsNaN(d),
             string s => s.Length > 0,
+            System.Numerics.BigInteger bi => bi != 0,
             _ => true
         };
     }

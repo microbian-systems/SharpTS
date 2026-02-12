@@ -1,3 +1,4 @@
+using SharpTS.Compilation;
 using SharpTS.Parsing;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.Execution;
@@ -497,17 +498,7 @@ public class SharpTSAsyncGenerator
         };
     }
 
-    /// <summary>
-    /// Checks if a value is truthy (JavaScript semantics).
-    /// </summary>
-    private static bool IsTruthy(object? obj)
-    {
-        if (obj == null) return false;
-        if (obj is bool b) return b;
-        if (obj is double d) return d != 0;
-        if (obj is string s) return s.Length > 0;
-        return true;
-    }
+    private static bool IsTruthy(object? obj) => RuntimeTypes.IsTruthy(obj);
 
     public override string ToString() => "[object AsyncGenerator]";
 }

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using SharpTS.Compilation;
 using SharpTS.Execution;
 using SharpTS.Runtime.Types;
 
@@ -289,18 +290,7 @@ public static class ConsoleBuiltIns
         return false;
     }
 
-    /// <summary>
-    /// Determines if a value is truthy (for console.assert).
-    /// </summary>
-    private static bool IsTruthy(object? value)
-    {
-        if (value == null) return false;
-        if (value is SharpTSUndefined) return false;
-        if (value is bool b) return b;
-        if (value is double d) return d != 0 && !double.IsNaN(d);
-        if (value is string s) return s.Length > 0;
-        return true;
-    }
+    private static bool IsTruthy(object? value) => RuntimeTypes.IsTruthy(value);
 
     /// <summary>
     /// Writes output to stdout with group indentation.

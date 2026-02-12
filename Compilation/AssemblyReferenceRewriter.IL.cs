@@ -5,6 +5,32 @@ namespace SharpTS.Compilation;
 
 public partial class AssemblyReferenceRewriter
 {
+    // ECMA-335 II.25.4 — Method body format
+    private const byte TinyFormatFlag = 0x02;
+    private const ushort FatFormatFlags = 0x3003;   // Fat format + header size 3 dwords
+    private const ushort FatInitLocalsFlag = 0x0010;
+    private const ushort FatMoreSectionsFlag = 0x0008;
+
+    // ECMA-335 II.25.4.6 — Exception handler section
+    private const byte SmallExceptionSectionFlag = 0x01;
+    private const byte FatExceptionSectionFlag = 0x41;
+
+    // Metadata token layout
+    private const int MetadataTableMask = 0xFF;
+    private const int MetadataRowMask = 0x00FFFFFF;
+    private const int MetadataTableShift = 24;
+
+    // ECMA-335 II.22 — Metadata table indices
+    private const int TableTypeRef = 0x01;
+    private const int TableTypeDef = 0x02;
+    private const int TableFieldDef = 0x04;
+    private const int TableMethodDef = 0x06;
+    private const int TableMemberRef = 0x0A;
+    private const int TableStandAloneSig = 0x11;
+    private const int TableTypeSpec = 0x1B;
+    private const int TableMethodSpec = 0x2B;
+    private const int TableUserString = 0x70;
+
     private int CopyMethodBody(MethodDefinition method)
     {
         var body = _peReader.GetMethodBody(method.RelativeVirtualAddress);
@@ -51,7 +77,7 @@ public partial class AssemblyReferenceRewriter
             // Tiny format: 1-byte header (format bits + code size)
             // Format: (CodeSize << 2) | 0x02
             methodBodyOffset = _ilStream.Count;
-            byte header = (byte)((patchedIL.Length << 2) | 0x02);
+            byte header = (byte)((patchedIL.Length << 2) | TinyFormatFlag);
             _ilStream.WriteByte(header);
             _ilStream.WriteBytes(patchedIL);
         }
@@ -71,11 +97,11 @@ public partial class AssemblyReferenceRewriter
 
             // Fat header (12 bytes)
             // Flags (2 bytes): 0x3 = fat format, 0x10 = init locals, 0x8 = more sections
-            ushort flags = 0x3003; // Fat format, header size = 3 (dwords)
+            ushort flags = FatFormatFlags;
             if (initLocals)
-                flags |= 0x0010;
+                flags |= FatInitLocalsFlag;
             if (exceptionRegions.Length > 0)
-                flags |= 0x0008; // More sections
+                flags |= FatMoreSectionsFlag;
 
             _ilStream.WriteUInt16(flags);
             _ilStream.WriteUInt16((ushort)body.MaxStack);
@@ -112,7 +138,7 @@ public partial class AssemblyReferenceRewriter
                 {
                     // Fat exception header
                     int dataSize = 4 + (exceptionRegions.Length * 24);
-                    _ilStream.WriteByte(0x41); // Fat format, exception handling
+                    _ilStream.WriteByte(FatExceptionSectionFlag);
                     _ilStream.WriteByte((byte)(dataSize & 0xFF));
                     _ilStream.WriteByte((byte)((dataSize >> 8) & 0xFF));
                     _ilStream.WriteByte((byte)((dataSize >> 16) & 0xFF));
@@ -152,7 +178,7 @@ public partial class AssemblyReferenceRewriter
                 {
                     // Small exception header
                     int dataSize = 4 + (exceptionRegions.Length * 12);
-                    _ilStream.WriteByte(0x01); // Small format, exception handling
+                    _ilStream.WriteByte(SmallExceptionSectionFlag);
                     _ilStream.WriteByte((byte)dataSize);
                     _ilStream.WriteUInt16(0); // Reserved
 
@@ -339,55 +365,55 @@ public partial class AssemblyReferenceRewriter
 
     private int MapMetadataToken(int token)
     {
-        var tableIndex = (token >> 24) & 0xFF;
-        var rowNumber = token & 0x00FFFFFF;
+        var tableIndex = (token >> MetadataTableShift) & MetadataTableMask;
+        var rowNumber = token & MetadataRowMask;
 
         if (rowNumber == 0)
             return token;
 
         return tableIndex switch
         {
-            0x01 => // TypeRef
+            TableTypeRef =>
                 MetadataTokens.GetToken(_typeRefMap.GetValueOrDefault(
                     MetadataTokens.TypeReferenceHandle(rowNumber),
                     MetadataTokens.TypeReferenceHandle(rowNumber))),
 
-            0x02 => // TypeDef
+            TableTypeDef =>
                 MetadataTokens.GetToken(_typeDefMap.GetValueOrDefault(
                     MetadataTokens.TypeDefinitionHandle(rowNumber),
                     MetadataTokens.TypeDefinitionHandle(rowNumber))),
 
-            0x04 => // FieldDef
+            TableFieldDef =>
                 MetadataTokens.GetToken(_fieldDefMap.GetValueOrDefault(
                     MetadataTokens.FieldDefinitionHandle(rowNumber),
                     MetadataTokens.FieldDefinitionHandle(rowNumber))),
 
-            0x06 => // MethodDef
+            TableMethodDef =>
                 MetadataTokens.GetToken(_methodDefMap.GetValueOrDefault(
                     MetadataTokens.MethodDefinitionHandle(rowNumber),
                     MetadataTokens.MethodDefinitionHandle(rowNumber))),
 
-            0x0A => // MemberRef
+            TableMemberRef =>
                 MetadataTokens.GetToken(_memberRefMap.GetValueOrDefault(
                     MetadataTokens.MemberReferenceHandle(rowNumber),
                     MetadataTokens.MemberReferenceHandle(rowNumber))),
 
-            0x11 => // StandAloneSig
+            TableStandAloneSig =>
                 MetadataTokens.GetToken(_standAloneSigMap.GetValueOrDefault(
                     MetadataTokens.StandaloneSignatureHandle(rowNumber),
                     MetadataTokens.StandaloneSignatureHandle(rowNumber))),
 
-            0x1B => // TypeSpec
+            TableTypeSpec =>
                 MetadataTokens.GetToken(_typeSpecMap.GetValueOrDefault(
                     MetadataTokens.TypeSpecificationHandle(rowNumber),
                     MetadataTokens.TypeSpecificationHandle(rowNumber))),
 
-            0x2B => // MethodSpec
+            TableMethodSpec =>
                 MetadataTokens.GetToken(_methodSpecMap.GetValueOrDefault(
                     MetadataTokens.MethodSpecificationHandle(rowNumber),
                     MetadataTokens.MethodSpecificationHandle(rowNumber))),
 
-            0x70 => // UserString
+            TableUserString =>
                 MetadataTokens.GetToken(_userStringMap.GetValueOrDefault(
                     MetadataTokens.UserStringHandle(rowNumber),
                     AddUserString(MetadataTokens.UserStringHandle(rowNumber)))),

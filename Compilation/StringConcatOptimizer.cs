@@ -121,13 +121,5 @@ public static class StringConcatOptimizer
         _ => value.ToString() ?? ""
     };
 
-    private static string FormatNumber(double d)
-    {
-        if (double.IsNaN(d)) return "NaN";
-        if (double.IsPositiveInfinity(d)) return "Infinity";
-        if (double.IsNegativeInfinity(d)) return "-Infinity";
-        if (d == Math.Floor(d) && Math.Abs(d) < 1e15)
-            return ((long)d).ToString();
-        return d.ToString("G15");
-    }
+    private static string FormatNumber(double d) => RuntimeTypes.FormatNumber(d);
 }

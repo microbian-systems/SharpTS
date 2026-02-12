@@ -287,17 +287,7 @@ public static class ConstantFolder
         return true;
     }
 
-    private static bool IsTruthy(object? value)
-    {
-        if (value == null || IsUndefinedType(value)) return false;
-        return value switch
-        {
-            bool b => b,
-            double d => d != 0.0 && !double.IsNaN(d),
-            string s => s.Length > 0,
-            _ => true
-        };
-    }
+    private static bool IsTruthy(object? value) => RuntimeTypes.IsTruthy(value);
 
     private static bool IsNullish(object? value) =>
         value == null || IsUndefined(value);
@@ -318,15 +308,7 @@ public static class ConstantFolder
         };
     }
 
-    private static string FormatNumber(double d)
-    {
-        if (double.IsNaN(d)) return "NaN";
-        if (double.IsPositiveInfinity(d)) return "Infinity";
-        if (double.IsNegativeInfinity(d)) return "-Infinity";
-        if (d == Math.Floor(d) && Math.Abs(d) < 1e15)
-            return ((long)d).ToString();
-        return d.ToString("G15");
-    }
+    private static string FormatNumber(double d) => RuntimeTypes.FormatNumber(d);
 
     private static string TypeOf(object? value)
     {

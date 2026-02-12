@@ -1,3 +1,4 @@
+using SharpTS.Compilation;
 using SharpTS.Parsing;
 using SharpTS.Runtime;
 using SharpTS.Runtime.BuiltIns;
@@ -484,16 +485,7 @@ public partial class Interpreter
     /// All other values are truthy.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Glossary/Truthy">MDN Truthy</seealso>
-    private bool IsTruthy(object? obj)
-    {
-        if (obj == null) return false;
-        if (obj is SharpTSUndefined) return false;
-        if (obj is bool b) return b;
-        if (obj is double d) return d != 0 && !double.IsNaN(d);
-        if (obj is string s) return s.Length > 0;
-        if (obj is SharpTSBigInt bi) return bi.Value != 0;
-        return true;
-    }
+    private static bool IsTruthy(object? obj) => RuntimeTypes.IsTruthy(obj);
 
     /// <summary>
     /// Determines if two values are equal using loose equality (<c>==</c>).

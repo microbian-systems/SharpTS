@@ -9,6 +9,27 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class ILEmitter
 {
+    protected override void EmitConditionCheck(Expr condition)
+    {
+        EmitExpression(condition);
+        if (_stackType == StackType.Boolean)
+        {
+            // Already have unboxed boolean - ready for branch
+        }
+        else if (_stackType == StackType.Unknown && IsComparisonExpr(condition))
+        {
+            // Boxed boolean from comparison - unbox it
+            IL.Emit(OpCodes.Unbox_Any, _ctx.Types.Boolean);
+        }
+        else
+        {
+            // For other expressions (including Expr.Logical which returns boxed object),
+            // apply truthy check to convert to int for Brfalse/Brtrue
+            EnsureBoxed();
+            EmitTruthyCheck();
+        }
+    }
+
     protected override void EmitVarDeclaration(Stmt.Var v)
     {
         // If we're in a nested scope, always create a local variable to support shadowing.
@@ -229,24 +250,7 @@ public partial class ILEmitter
         var elseLabel = builder.DefineLabel("if_else");
         var endLabel = builder.DefineLabel("if_end");
 
-        EmitExpression(i.Condition);
-        // Handle condition based on what's actually on the stack
-        if (_stackType == StackType.Boolean)
-        {
-            // Already have unboxed boolean - ready for branch
-        }
-        else if (_stackType == StackType.Unknown && IsComparisonExpr(i.Condition))
-        {
-            // Boxed boolean from comparison - unbox it
-            IL.Emit(OpCodes.Unbox_Any, _ctx.Types.Boolean);
-        }
-        else
-        {
-            // For other expressions (including Expr.Logical which returns boxed object),
-            // apply truthy check to convert to int for Brfalse
-            EnsureBoxed();
-            EmitTruthyCheck();
-        }
+        EmitConditionCheck(i.Condition);
         builder.Emit_Brfalse(elseLabel);
 
         EmitStatement(i.ThenBranch);
@@ -270,24 +274,7 @@ public partial class ILEmitter
         _ctx.EnterLoop(endLabel, startLabel);
 
         builder.MarkLabel(startLabel);
-        EmitExpression(w.Condition);
-        // Handle condition based on what's actually on the stack
-        if (_stackType == StackType.Boolean)
-        {
-            // Already have unboxed boolean - ready for branch
-        }
-        else if (_stackType == StackType.Unknown && IsComparisonExpr(w.Condition))
-        {
-            // Boxed boolean from comparison - unbox it
-            IL.Emit(OpCodes.Unbox_Any, _ctx.Types.Boolean);
-        }
-        else
-        {
-            // For other expressions (including Expr.Logical which returns boxed object),
-            // apply truthy check to convert to int for Brfalse
-            EnsureBoxed();
-            EmitTruthyCheck();
-        }
+        EmitConditionCheck(w.Condition);
         builder.Emit_Brfalse(endLabel);
 
         EmitStatement(w.Body);
@@ -314,24 +301,7 @@ public partial class ILEmitter
         builder.MarkLabel(continueLabel);
 
         // Evaluate condition
-        EmitExpression(dw.Condition);
-        // Handle condition based on what's actually on the stack
-        if (_stackType == StackType.Boolean)
-        {
-            // Already have unboxed boolean - ready for branch
-        }
-        else if (_stackType == StackType.Unknown && IsComparisonExpr(dw.Condition))
-        {
-            // Boxed boolean from comparison - unbox it
-            IL.Emit(OpCodes.Unbox_Any, _ctx.Types.Boolean);
-        }
-        else
-        {
-            // For other expressions (including Expr.Logical which returns boxed object),
-            // apply truthy check to convert to int for Brtrue
-            EnsureBoxed();
-            EmitTruthyCheck();
-        }
+        EmitConditionCheck(dw.Condition);
         builder.Emit_Brtrue(startLabel);
 
         builder.MarkLabel(endLabel);

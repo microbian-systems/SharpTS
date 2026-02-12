@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using SharpTS.Compilation;
 using SharpTS.Runtime.Types;
 using Interp = SharpTS.Execution.Interpreter;
 
@@ -159,17 +160,7 @@ public static class DnsModuleInterpreter
         }
     }
 
-    private static bool IsTruthy(object? value)
-    {
-        return value switch
-        {
-            null => false,
-            bool b => b,
-            double d => d != 0 && !double.IsNaN(d),
-            string s => s.Length > 0,
-            _ => true
-        };
-    }
+    private static bool IsTruthy(object? value) => RuntimeTypes.IsTruthy(value);
 
     private static string GetErrorCode(SocketException ex)
     {
