@@ -32,24 +32,6 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     #region Abstract Methods - Emitter-specific behavior
 
     /// <summary>
-    /// Declares and initializes a variable.
-    /// Different emitters handle variable storage differently:
-    /// - ILEmitter: locals + top-level static fields, unboxed double optimization
-    /// - State machines: hoisted fields + non-hoisted locals
-    /// </summary>
-    protected abstract void EmitVarDeclaration(Stmt.Var v);
-
-    /// <summary>
-    /// Declares and initializes a const variable.
-    /// Similar to var declaration but const always has an initializer.
-    /// </summary>
-    protected virtual void EmitConstDeclaration(Stmt.Const c)
-    {
-        // Default: treat as Var with guaranteed initializer
-        EmitVarDeclaration(new Stmt.Var(c.Name, c.TypeAnnotation, c.Initializer));
-    }
-
-    /// <summary>
     /// Emits return statement. Different semantics per emitter type:
     /// - ILEmitter: void with Ret, or store + Leave inside exception blocks
     /// - Async: store result + leave to SetResult label
@@ -63,6 +45,77 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// Async emitters override with await-aware exception handling.
     /// </summary>
     protected abstract void EmitTryCatch(Stmt.TryCatch t);
+
+    #endregion
+
+    #region Virtual Methods - Variable Declaration
+
+    /// <summary>
+    /// Gets the hoisted field for a variable name, or null if not hoisted.
+    /// Override in state machine emitters to check the builder's variable fields.
+    /// </summary>
+    protected virtual FieldBuilder? GetHoistedVariableField(string name) => null;
+
+    /// <summary>
+    /// Declares and initializes a variable.
+    /// Default implementation handles hoisted fields (via GetHoistedVariableField) and
+    /// non-hoisted locals. ILEmitter and AsyncArrowMoveNextEmitter override with their
+    /// own logic.
+    /// </summary>
+    protected virtual void EmitVarDeclaration(Stmt.Var v)
+    {
+        string name = v.Name.Lexeme;
+
+        var field = GetHoistedVariableField(name);
+        if (field != null)
+        {
+            // Hoisted variable - store to field
+            if (v.Initializer != null)
+            {
+                EmitExpression(v.Initializer);
+                EnsureBoxed();
+                var temp = IL.DeclareLocal(typeof(object));
+                IL.Emit(OpCodes.Stloc, temp);
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldloc, temp);
+                IL.Emit(OpCodes.Stfld, field);
+            }
+            else
+            {
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Stfld, field);
+            }
+        }
+        else
+        {
+            // Not hoisted - use local variable
+            var local = IL.DeclareLocal(typeof(object));
+            Ctx.Locals.RegisterLocal(name, local);
+
+            if (v.Initializer != null)
+            {
+                EmitExpression(v.Initializer);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Stloc, local);
+            }
+            else
+            {
+                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Stloc, local);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Declares and initializes a const variable.
+    /// Similar to var declaration but const always has an initializer.
+    /// </summary>
+    protected virtual void EmitConstDeclaration(Stmt.Const c)
+    {
+        // Default: treat as Var with guaranteed initializer
+        EmitVarDeclaration(new Stmt.Var(c.Name, c.TypeAnnotation, c.Initializer));
+    }
 
     #endregion
 

@@ -259,7 +259,6 @@ public abstract class ExpressionEmitterBase
     protected abstract void EmitAssign(Expr.Assign a);
     protected abstract void EmitBinary(Expr.Binary b);
     protected abstract void EmitCall(Expr.Call c);
-    protected abstract void EmitGet(Expr.Get g);
     protected abstract void EmitSet(Expr.Set s);
     protected abstract void EmitGetPrivate(Expr.GetPrivate gp);
     protected abstract void EmitSetPrivate(Expr.SetPrivate sp);
@@ -428,6 +427,75 @@ public abstract class ExpressionEmitterBase
             () => { EmitExpression(nc.Left); EnsureBoxed(); },
             () => { EmitExpression(nc.Right); EnsureBoxed(); });
     }
+    #endregion
+
+    #region Virtual Methods - Property Access (EmitGet)
+
+    /// <summary>
+    /// Tries to emit a Symbol well-known property access (e.g., Symbol.iterator).
+    /// Returns true if the expression was handled.
+    /// </summary>
+    protected bool TryEmitSymbolWellKnown(Expr.Get g)
+    {
+        if (g.Object is not Expr.Variable { Name.Lexeme: "Symbol" }) return false;
+        switch (g.Name.Lexeme)
+        {
+            case "iterator":
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.SymbolIterator);
+                break;
+            case "asyncIterator":
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.SymbolAsyncIterator);
+                break;
+            case "toStringTag":
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.SymbolToStringTag);
+                break;
+            case "hasInstance":
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.SymbolHasInstance);
+                break;
+            case "isConcatSpreadable":
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.SymbolIsConcatSpreadable);
+                break;
+            case "toPrimitive":
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.SymbolToPrimitive);
+                break;
+            case "species":
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.SymbolSpecies);
+                break;
+            case "unscopables":
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.SymbolUnscopables);
+                break;
+            default:
+                return false;
+        }
+        SetStackUnknown();
+        return true;
+    }
+
+    /// <summary>
+    /// Tries to emit static field access for Class.field patterns.
+    /// Override in emitters that have access to class registry information.
+    /// Returns true if the expression was handled.
+    /// </summary>
+    protected virtual bool TryEmitStaticFieldAccess(Expr.Get g) => false;
+
+    /// <summary>
+    /// Emits a property access expression (obj.prop).
+    /// Default implementation handles Symbol well-known properties, static field access,
+    /// and falls back to dynamic property access via GetProperty.
+    /// </summary>
+    protected virtual void EmitGet(Expr.Get g)
+    {
+        if (TryEmitSymbolWellKnown(g)) return;
+        if (TryEmitStaticFieldAccess(g)) return;
+
+        // Dynamic property access fallback
+        EmitExpression(g.Object);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+        SetStackUnknown();
+    }
+
     #endregion
 
     #region Virtual Methods (override in async/generator emitters)

@@ -607,68 +607,20 @@ public partial class AsyncMoveNextEmitter
         SetStackUnknown();
     }
 
-    protected override void EmitGet(Expr.Get g)
+    protected override bool TryEmitStaticFieldAccess(Expr.Get g)
     {
-        // Special case: Symbol well-known symbols
-        if (g.Object is Expr.Variable symV && symV.Name.Lexeme == "Symbol")
-        {
-            switch (g.Name.Lexeme)
-            {
-                case "iterator":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolIterator);
-                    SetStackUnknown();
-                    return;
-                case "asyncIterator":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolAsyncIterator);
-                    SetStackUnknown();
-                    return;
-                case "toStringTag":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolToStringTag);
-                    SetStackUnknown();
-                    return;
-                case "hasInstance":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolHasInstance);
-                    SetStackUnknown();
-                    return;
-                case "isConcatSpreadable":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolIsConcatSpreadable);
-                    SetStackUnknown();
-                    return;
-                case "toPrimitive":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolToPrimitive);
-                    SetStackUnknown();
-                    return;
-                case "species":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolSpecies);
-                    SetStackUnknown();
-                    return;
-                case "unscopables":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolUnscopables);
-                    SetStackUnknown();
-                    return;
-            }
-        }
-
-        // Handle static field access: Class.field
         if (g.Object is Expr.Variable classVar &&
-            _ctx!.Classes.TryGetValue(_ctx.ResolveClassName(classVar.Name.Lexeme), out var classBuilder))
+            _ctx!.Classes.TryGetValue(_ctx.ResolveClassName(classVar.Name.Lexeme), out _))
         {
             string resolvedClassName = _ctx.ResolveClassName(classVar.Name.Lexeme);
-            // Try to find static field using stored FieldBuilders
             if (_ctx.ClassRegistry!.TryGetStaticField(resolvedClassName, g.Name.Lexeme, out var staticField))
             {
                 _il.Emit(OpCodes.Ldsfld, staticField!);
                 SetStackUnknown();
-                return;
+                return true;
             }
         }
-
-        // Default: dynamic property access
-        EmitExpression(g.Object);
-        EnsureBoxed();
-        _il.Emit(OpCodes.Ldstr, g.Name.Lexeme);
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.GetProperty);
-        SetStackUnknown();
+        return false;
     }
 
     protected override void EmitCompoundAssign(Expr.CompoundAssign ca)

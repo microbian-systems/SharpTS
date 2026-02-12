@@ -478,55 +478,6 @@ public partial class GeneratorMoveNextEmitter
         }
     }
 
-    protected override void EmitGet(Expr.Get g)
-    {
-        // Special case: Symbol well-known symbols
-        if (g.Object is Expr.Variable symV && symV.Name.Lexeme == "Symbol")
-        {
-            switch (g.Name.Lexeme)
-            {
-                case "iterator":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolIterator);
-                    SetStackUnknown();
-                    return;
-                case "asyncIterator":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolAsyncIterator);
-                    SetStackUnknown();
-                    return;
-                case "toStringTag":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolToStringTag);
-                    SetStackUnknown();
-                    return;
-                case "hasInstance":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolHasInstance);
-                    SetStackUnknown();
-                    return;
-                case "isConcatSpreadable":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolIsConcatSpreadable);
-                    SetStackUnknown();
-                    return;
-                case "toPrimitive":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolToPrimitive);
-                    SetStackUnknown();
-                    return;
-                case "species":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolSpecies);
-                    SetStackUnknown();
-                    return;
-                case "unscopables":
-                    _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.SymbolUnscopables);
-                    SetStackUnknown();
-                    return;
-            }
-        }
-
-        EmitExpression(g.Object);
-        EnsureBoxed();
-        _il.Emit(OpCodes.Ldstr, g.Name.Lexeme);
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.GetProperty);
-        SetStackUnknown();
-    }
-
     protected override void EmitSet(Expr.Set s)
     {
         EmitExpression(s.Object);
