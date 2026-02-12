@@ -58,7 +58,7 @@ public sealed class ReplEngine
 
         while (true)
         {
-            // Tick the event loop between inputs so timers/microtasks fire (Fix #2)
+            // Tick the event loop between inputs so timers/microtasks fire
             _interpreter.TickEventLoop();
 
             var response = await prompt.ReadLineAsync();
@@ -79,8 +79,8 @@ public sealed class ReplEngine
             // Handle dot-commands
             if (DotCommands.IsDotCommand(input))
             {
-                var commands = new DotCommands(_interpreter, _typeChecker, _decoratorMode,
-                    _sessionHistory, _accumulatedStatements);
+                var commands = new DotCommands(_interpreter, _resolver, _typeChecker,
+                    _decoratorMode, _sessionHistory, _accumulatedStatements);
                 commands.Execute(input);
 
                 if (commands.ExitRequested)
@@ -100,7 +100,7 @@ public sealed class ReplEngine
                 continue;
             }
 
-            // Execute TypeScript input with Ctrl+C interruption support (Fix #3)
+            // Execute TypeScript input with Ctrl+C interruption support
             ExecuteWithInterrupt(input);
         }
     }
@@ -132,8 +132,12 @@ public sealed class ReplEngine
             Console.CancelKeyPress -= handler;
             if (cancelled)
             {
-                // Clear the interrupt flag so the REPL loop continues normally
-                Thread.Sleep(0);
+                // Clear any residual interrupt flag. If the interrupt was already
+                // consumed by the catch above, Sleep(0) returns immediately.
+                // If a second interrupt arrived between catch and here, Sleep(0)
+                // throws — we catch and discard it so the REPL loop survives.
+                try { Thread.Sleep(0); }
+                catch (ThreadInterruptedException) { /* consumed */ }
             }
         }
     }
@@ -172,26 +176,27 @@ public sealed class ReplEngine
                 }
             }
 
-            // Variable resolution — reuse the same resolver to accumulate scope info (Fix #1)
-            _resolver.Resolve(parseResult.Statements);
+            // Variable resolution — reuse the persistent resolver.
+            // If resolution throws (e.g. malformed closure leaves scope stack dirty),
+            // replace with a fresh resolver. The important accumulated state lives in
+            // the interpreter's _locals dictionary, not in the resolver itself.
+            try
+            {
+                _resolver.Resolve(parseResult.Statements);
+            }
+            catch
+            {
+                _resolver = new VariableResolver(_interpreter);
+            }
 
             // Execute and capture result
             var result = _interpreter.InterpretRepl(parseResult.Statements);
 
-            // Accumulate statements for the persistent TypeChecker (Fix #4)
+            // Accumulate statements so .type can resolve types from previous inputs.
+            // Type checking is deferred — only runs when .type is actually invoked.
             _accumulatedStatements.AddRange(parseResult.Statements);
 
-            // Feed new statements to the persistent TypeChecker so .type knows about them
-            try
-            {
-                _typeChecker.CheckWithRecovery(_accumulatedStatements);
-            }
-            catch
-            {
-                // Type checking is best-effort in REPL mode — don't block execution
-            }
-
-            // Tick event loop after execution to process async work (Fix #2)
+            // Tick event loop after execution to process async work
             _interpreter.TickEventLoop();
 
             // Auto-display expression results (skip undefined, like Node.js)

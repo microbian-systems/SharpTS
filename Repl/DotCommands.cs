@@ -11,6 +11,7 @@ namespace SharpTS.Repl;
 internal sealed class DotCommands
 {
     private readonly Interpreter _interpreter;
+    private readonly VariableResolver _resolver;
     private readonly TypeChecker _typeChecker;
     private readonly DecoratorMode _decoratorMode;
     private readonly List<string> _sessionHistory;
@@ -26,11 +27,12 @@ internal sealed class DotCommands
     /// </summary>
     public bool ResetRequested { get; private set; }
 
-    public DotCommands(Interpreter interpreter, TypeChecker typeChecker,
-        DecoratorMode decoratorMode, List<string> sessionHistory,
-        List<Stmt> accumulatedStatements)
+    public DotCommands(Interpreter interpreter, VariableResolver resolver,
+        TypeChecker typeChecker, DecoratorMode decoratorMode,
+        List<string> sessionHistory, List<Stmt> accumulatedStatements)
     {
         _interpreter = interpreter;
+        _resolver = resolver;
         _typeChecker = typeChecker;
         _decoratorMode = decoratorMode;
         _sessionHistory = sessionHistory;
@@ -230,9 +232,14 @@ internal sealed class DotCommands
                 return;
             }
 
-            var resolver = new VariableResolver(_interpreter);
-            resolver.Resolve(parseResult.Statements);
-            _interpreter.Interpret(parseResult.Statements);
+            // Use the persistent resolver (not a throwaway) so loaded declarations
+            // are visible in subsequent REPL inputs.
+            _resolver.Resolve(parseResult.Statements);
+
+            // Use InterpretRepl + TickEventLoop instead of Interpret, which calls
+            // RunEventLoop → CompleteAdding() and poisons the callback queue.
+            _interpreter.InterpretRepl(parseResult.Statements);
+            _interpreter.TickEventLoop();
 
             // Accumulate loaded statements for .type resolution
             _accumulatedStatements.AddRange(parseResult.Statements);
