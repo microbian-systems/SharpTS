@@ -54,80 +54,20 @@ public partial class TypeChecker
         or TypeInfo.Map
         or TypeInfo.Set;
 
-    /// <summary>
-    /// Gets the superclass of a class type, handling both Class and InstantiatedGeneric.
-    /// </summary>
-    private static TypeInfo? GetSuperclass(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.Superclass,
-        TypeInfo.GenericClass gc => gc.Superclass,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.Superclass,
-            _ => null
-        },
-        _ => null
-    };
+    private static TypeInfo? GetSuperclass(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.Superclass, gc => gc.Superclass);
 
-    /// <summary>
-    /// Gets the methods dictionary from a class-like type (Class, GenericClass, or InstantiatedGeneric).
-    /// </summary>
-    private static FrozenDictionary<string, TypeInfo>? GetMethods(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.Methods,
-        TypeInfo.GenericClass gc => gc.Methods,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.Methods,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenDictionary<string, TypeInfo>? GetMethods(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.Methods, gc => gc.Methods);
 
-    /// <summary>
-    /// Gets the name of a class-like type (Class, GenericClass, or InstantiatedGeneric).
-    /// </summary>
-    private static string? GetClassName(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.Name,
-        TypeInfo.GenericClass gc => gc.Name,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.Name,
-            _ => null
-        },
-        _ => null
-    };
+    private static string? GetClassName(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.Name, gc => gc.Name);
 
-    /// <summary>
-    /// Gets the static methods dictionary from a class-like type.
-    /// </summary>
-    private static FrozenDictionary<string, TypeInfo>? GetStaticMethods(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.StaticMethods,
-        TypeInfo.GenericClass gc => gc.StaticMethods,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.StaticMethods,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenDictionary<string, TypeInfo>? GetStaticMethods(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.StaticMethods, gc => gc.StaticMethods);
 
-    /// <summary>
-    /// Gets the static properties dictionary from a class-like type.
-    /// </summary>
-    private static FrozenDictionary<string, TypeInfo>? GetStaticProperties(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.StaticProperties,
-        TypeInfo.GenericClass gc => gc.StaticProperties,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.StaticProperties,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenDictionary<string, TypeInfo>? GetStaticProperties(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.StaticProperties, gc => gc.StaticProperties);
 
     /// <summary>
     /// Converts a class-like type to a TypeInfo.Class for walking hierarchy.
@@ -139,138 +79,30 @@ public partial class TypeChecker
         _ => null
     };
 
-    /// <summary>
-    /// Gets the field types dictionary from a class-like type.
-    /// </summary>
-    private static FrozenDictionary<string, TypeInfo>? GetFieldTypes(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.FieldTypes,
-        TypeInfo.GenericClass gc => gc.FieldTypes,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.FieldTypes,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenDictionary<string, TypeInfo>? GetFieldTypes(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.FieldTypes, gc => gc.FieldTypes);
 
-    /// <summary>
-    /// Gets the getters dictionary from a class-like type.
-    /// </summary>
-    private static FrozenDictionary<string, TypeInfo>? GetGetters(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.Getters,
-        TypeInfo.GenericClass gc => gc.Getters,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.Getters,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenDictionary<string, TypeInfo>? GetGetters(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.Getters, gc => gc.Getters);
 
-    /// <summary>
-    /// Gets the setters dictionary from a class-like type.
-    /// </summary>
-    private static FrozenDictionary<string, TypeInfo>? GetSetters(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.Setters,
-        TypeInfo.GenericClass gc => gc.Setters,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.Setters,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenDictionary<string, TypeInfo>? GetSetters(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.Setters, gc => gc.Setters);
 
-    /// <summary>
-    /// Gets the method access dictionary from a class-like type.
-    /// </summary>
-    private static FrozenDictionary<string, AccessModifier>? GetMethodAccess(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.MethodAccess,
-        TypeInfo.GenericClass gc => gc.MethodAccess,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.MethodAccess,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenDictionary<string, AccessModifier>? GetMethodAccess(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.MethodAccess, gc => gc.MethodAccess);
 
-    /// <summary>
-    /// Gets the field access dictionary from a class-like type.
-    /// </summary>
-    private static FrozenDictionary<string, AccessModifier>? GetFieldAccess(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.FieldAccess,
-        TypeInfo.GenericClass gc => gc.FieldAccess,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.FieldAccess,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenDictionary<string, AccessModifier>? GetFieldAccess(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.FieldAccess, gc => gc.FieldAccess);
 
-    /// <summary>
-    /// Gets the readonly fields set from a class-like type.
-    /// </summary>
-    private static FrozenSet<string>? GetReadonlyFields(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.ReadonlyFields,
-        TypeInfo.GenericClass gc => gc.ReadonlyFields,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.ReadonlyFields,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenSet<string>? GetReadonlyFields(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.ReadonlyFields, gc => gc.ReadonlyFields);
 
-    /// <summary>
-    /// Gets the abstract methods set from a class-like type.
-    /// </summary>
-    private static FrozenSet<string>? GetAbstractMethods(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.AbstractMethodSet,
-        TypeInfo.GenericClass gc => gc.AbstractMethodSet,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.AbstractMethodSet,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenSet<string>? GetAbstractMethods(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.AbstractMethodSet, gc => gc.AbstractMethodSet);
 
-    /// <summary>
-    /// Gets the abstract getters set from a class-like type.
-    /// </summary>
-    private static FrozenSet<string>? GetAbstractGetters(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.AbstractGetterSet,
-        TypeInfo.GenericClass gc => gc.AbstractGetterSet,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.AbstractGetterSet,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenSet<string>? GetAbstractGetters(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.AbstractGetterSet, gc => gc.AbstractGetterSet);
 
-    /// <summary>
-    /// Gets the abstract setters set from a class-like type.
-    /// </summary>
-    private static FrozenSet<string>? GetAbstractSetters(TypeInfo? classType) => classType switch
-    {
-        TypeInfo.Class c => c.AbstractSetterSet,
-        TypeInfo.GenericClass gc => gc.AbstractSetterSet,
-        TypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
-        {
-            TypeInfo.GenericClass gc => gc.AbstractSetterSet,
-            _ => null
-        },
-        _ => null
-    };
+    private static FrozenSet<string>? GetAbstractSetters(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.AbstractSetterSet, gc => gc.AbstractSetterSet);
 }
