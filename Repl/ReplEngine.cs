@@ -16,14 +16,26 @@ namespace SharpTS.Repl;
 public sealed class ReplEngine
 {
     private Interpreter _interpreter;
+    private VariableResolver _resolver;
+    private TypeChecker _typeChecker;
     private readonly DecoratorMode _decoratorMode;
     private readonly List<string> _sessionHistory = [];
+    private readonly List<Stmt> _accumulatedStatements = [];
 
     public ReplEngine(DecoratorMode decoratorMode)
     {
         _decoratorMode = decoratorMode;
         _interpreter = new Interpreter();
         _interpreter.SetDecoratorMode(decoratorMode);
+        _resolver = new VariableResolver(_interpreter);
+        _typeChecker = CreateTypeChecker();
+    }
+
+    private TypeChecker CreateTypeChecker()
+    {
+        var checker = new TypeChecker();
+        checker.SetDecoratorMode(_decoratorMode);
+        return checker;
     }
 
     public async Task RunAsync()
@@ -46,6 +58,9 @@ public sealed class ReplEngine
 
         while (true)
         {
+            // Tick the event loop between inputs so timers/microtasks fire (Fix #2)
+            _interpreter.TickEventLoop();
+
             var response = await prompt.ReadLineAsync();
 
             if (!response.IsSuccess)
@@ -64,7 +79,8 @@ public sealed class ReplEngine
             // Handle dot-commands
             if (DotCommands.IsDotCommand(input))
             {
-                var commands = new DotCommands(_interpreter, _decoratorMode, _sessionHistory);
+                var commands = new DotCommands(_interpreter, _typeChecker, _decoratorMode,
+                    _sessionHistory, _accumulatedStatements);
                 commands.Execute(input);
 
                 if (commands.ExitRequested)
@@ -75,14 +91,50 @@ public sealed class ReplEngine
                     _interpreter.Dispose();
                     _interpreter = new Interpreter();
                     _interpreter.SetDecoratorMode(_decoratorMode);
+                    _resolver = new VariableResolver(_interpreter);
+                    _typeChecker = CreateTypeChecker();
+                    _accumulatedStatements.Clear();
                     Console.WriteLine("REPL state has been reset.");
                 }
 
                 continue;
             }
 
-            // Execute TypeScript input
-            ExecuteInput(input);
+            // Execute TypeScript input with Ctrl+C interruption support (Fix #3)
+            ExecuteWithInterrupt(input);
+        }
+    }
+
+    private void ExecuteWithInterrupt(string source)
+    {
+        var executionThread = Thread.CurrentThread;
+        var cancelled = false;
+
+        void handler(object? sender, ConsoleCancelEventArgs e)
+        {
+            e.Cancel = true; // Prevent process exit
+            cancelled = true;
+            executionThread.Interrupt();
+        }
+
+        Console.CancelKeyPress += handler;
+        try
+        {
+            ExecuteInput(source);
+        }
+        catch (ThreadInterruptedException)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Execution interrupted.");
+        }
+        finally
+        {
+            Console.CancelKeyPress -= handler;
+            if (cancelled)
+            {
+                // Clear the interrupt flag so the REPL loop continues normally
+                Thread.Sleep(0);
+            }
         }
     }
 
@@ -120,16 +172,27 @@ public sealed class ReplEngine
                 }
             }
 
-            // Skip type checking in REPL mode — the TypeChecker is stateless across lines
-            // so it can't know about variables declared in previous inputs.
-            // The interpreter handles runtime errors directly.
-
-            // Variable resolution
-            var resolver = new VariableResolver(_interpreter);
-            resolver.Resolve(parseResult.Statements);
+            // Variable resolution — reuse the same resolver to accumulate scope info (Fix #1)
+            _resolver.Resolve(parseResult.Statements);
 
             // Execute and capture result
             var result = _interpreter.InterpretRepl(parseResult.Statements);
+
+            // Accumulate statements for the persistent TypeChecker (Fix #4)
+            _accumulatedStatements.AddRange(parseResult.Statements);
+
+            // Feed new statements to the persistent TypeChecker so .type knows about them
+            try
+            {
+                _typeChecker.CheckWithRecovery(_accumulatedStatements);
+            }
+            catch
+            {
+                // Type checking is best-effort in REPL mode — don't block execution
+            }
+
+            // Tick event loop after execution to process async work (Fix #2)
+            _interpreter.TickEventLoop();
 
             // Auto-display expression results (skip undefined, like Node.js)
             if (result is not null and not SharpTSUndefined)
@@ -144,6 +207,10 @@ public sealed class ReplEngine
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("Runtime Error:"))
         {
             Console.WriteLine(ex.Message);
+        }
+        catch (ThreadInterruptedException)
+        {
+            throw; // Re-throw for the outer handler
         }
         catch (Exception ex)
         {

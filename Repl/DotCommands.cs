@@ -11,8 +11,10 @@ namespace SharpTS.Repl;
 internal sealed class DotCommands
 {
     private readonly Interpreter _interpreter;
+    private readonly TypeChecker _typeChecker;
     private readonly DecoratorMode _decoratorMode;
     private readonly List<string> _sessionHistory;
+    private readonly List<Stmt> _accumulatedStatements;
 
     /// <summary>
     /// Set to true when .exit is invoked to signal the REPL loop to terminate.
@@ -24,11 +26,15 @@ internal sealed class DotCommands
     /// </summary>
     public bool ResetRequested { get; private set; }
 
-    public DotCommands(Interpreter interpreter, DecoratorMode decoratorMode, List<string> sessionHistory)
+    public DotCommands(Interpreter interpreter, TypeChecker typeChecker,
+        DecoratorMode decoratorMode, List<string> sessionHistory,
+        List<Stmt> accumulatedStatements)
     {
         _interpreter = interpreter;
+        _typeChecker = typeChecker;
         _decoratorMode = decoratorMode;
         _sessionHistory = sessionHistory;
+        _accumulatedStatements = accumulatedStatements;
     }
 
     /// <summary>
@@ -106,7 +112,7 @@ internal sealed class DotCommands
               Enter              Submit input (or continue on incomplete input)
               Shift+Enter        Force new line
               Up/Down            Navigate command history
-              Ctrl+C             Cancel current input
+              Ctrl+C             Cancel current input / interrupt execution
               Ctrl+L             Clear screen
             """);
     }
@@ -121,6 +127,7 @@ internal sealed class DotCommands
 
         try
         {
+            // Parse the expression, with semicolon retry for bare expressions
             var lexer = new Lexer(expression);
             var tokens = lexer.ScanTokens();
             var parser = new Parser(tokens, _decoratorMode);
@@ -128,22 +135,28 @@ internal sealed class DotCommands
 
             if (!parseResult.IsSuccess)
             {
-                Console.WriteLine("Parse error in expression.");
-                return;
+                // Retry with semicolon
+                lexer = new Lexer(expression + ";");
+                tokens = lexer.ScanTokens();
+                parser = new Parser(tokens, _decoratorMode);
+                var retryResult = parser.Parse();
+                if (retryResult.IsSuccess)
+                    parseResult = retryResult;
+                else
+                {
+                    Console.WriteLine("Parse error in expression.");
+                    return;
+                }
             }
 
-            var checker = new TypeChecker();
-            checker.SetDecoratorMode(_decoratorMode);
-            var typeResult = checker.CheckWithRecovery(parseResult.Statements);
+            // Use the persistent TypeChecker that has accumulated all previous declarations.
+            // Build a combined statement list: all previous + the new expression.
+            var combinedStatements = new List<Stmt>(_accumulatedStatements);
+            combinedStatements.AddRange(parseResult.Statements);
 
-            if (!typeResult.IsSuccess)
-            {
-                foreach (var diag in typeResult.Diagnostics)
-                    Console.WriteLine($"Type Error: {diag}");
-                return;
-            }
+            var typeResult = _typeChecker.CheckWithRecovery(combinedStatements);
 
-            // Find the type of the last expression statement
+            // Find the type of the last expression statement (the one we just added)
             var lastExpr = parseResult.Statements
                 .OfType<Stmt.Expression>()
                 .LastOrDefault();
@@ -217,20 +230,12 @@ internal sealed class DotCommands
                 return;
             }
 
-            var checker = new TypeChecker();
-            checker.SetDecoratorMode(_decoratorMode);
-            var typeResult = checker.CheckWithRecovery(parseResult.Statements);
-
-            if (!typeResult.IsSuccess)
-            {
-                foreach (var diag in typeResult.Diagnostics)
-                    Console.WriteLine($"Error: {diag}");
-                return;
-            }
-
-            var resolver = new Execution.VariableResolver(_interpreter);
+            var resolver = new VariableResolver(_interpreter);
             resolver.Resolve(parseResult.Statements);
-            _interpreter.Interpret(parseResult.Statements, typeResult.TypeMap);
+            _interpreter.Interpret(parseResult.Statements);
+
+            // Accumulate loaded statements for .type resolution
+            _accumulatedStatements.AddRange(parseResult.Statements);
 
             Console.WriteLine($"Loaded {filePath}");
         }

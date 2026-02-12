@@ -12,6 +12,7 @@ internal static class ValueFormatter
     private const int MaxArrayItems = 100;
     private const int MaxObjectKeys = 50;
     private const int MaxStringLength = 250;
+    private const int MaxOutputLength = 10_000;
 
     // ANSI escape codes for terminal colors
     private const string Reset = "\x1b[0m";
@@ -27,7 +28,15 @@ internal static class ValueFormatter
     /// </summary>
     public static string Format(object? value, int maxDepth = DefaultMaxDepth)
     {
-        return FormatValue(value, 0, maxDepth, new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance));
+        var result = FormatValue(value, 0, maxDepth, new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance));
+
+        // Truncate if the total output exceeds the cap
+        if (result.Length > MaxOutputLength)
+        {
+            result = result[..MaxOutputLength] + $"{Reset}\n{Gray}... output truncated ({result.Length} chars total){Reset}";
+        }
+
+        return result;
     }
 
     private static string FormatValue(object? value, int depth, int maxDepth, HashSet<object> seen)

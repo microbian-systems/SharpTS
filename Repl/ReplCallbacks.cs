@@ -164,7 +164,9 @@ internal sealed class ReplCallbacks : PromptCallbacks
     }
 
     /// <summary>
-    /// Determines if the input appears complete (all brackets matched, no trailing operators).
+    /// Determines if the input appears complete using the Lexer for accurate tokenization.
+    /// The Lexer correctly handles regex literals, template expressions, strings, and comments
+    /// that would fool a hand-rolled character scanner.
     /// </summary>
     private static bool IsInputComplete(string text)
     {
@@ -183,58 +185,40 @@ internal sealed class ReplCallbacks : PromptCallbacks
             return false;
         }
 
-        // Count unmatched brackets using the Lexer to handle strings/comments
-        int braces = 0, parens = 0, brackets = 0;
-        bool inSingleQuote = false, inDoubleQuote = false, inTemplate = false;
-
-        for (int i = 0; i < text.Length; i++)
+        // Use the Lexer to tokenize — it correctly handles strings, regex, templates, comments
+        try
         {
-            char c = text[i];
+            var lexer = new Lexer(text);
+            var tokens = lexer.ScanTokens();
 
-            // Handle escape sequences
-            if ((inSingleQuote || inDoubleQuote || inTemplate) && c == '\\' && i + 1 < text.Length)
+            int braces = 0, parens = 0, brackets = 0;
+            bool hasTemplateHead = false;
+
+            foreach (var token in tokens)
             {
-                i++; // skip escaped char
-                continue;
+                if (token.Type == TokenType.EOF) break;
+
+                switch (token.Type)
+                {
+                    case TokenType.LEFT_BRACE: braces++; break;
+                    case TokenType.RIGHT_BRACE: braces--; break;
+                    case TokenType.LEFT_PAREN: parens++; break;
+                    case TokenType.RIGHT_PAREN: parens--; break;
+                    case TokenType.LEFT_BRACKET: brackets++; break;
+                    case TokenType.RIGHT_BRACKET: brackets--; break;
+                    // Template head without a matching tail means we're mid-template
+                    case TokenType.TEMPLATE_HEAD: hasTemplateHead = true; break;
+                    case TokenType.TEMPLATE_TAIL: hasTemplateHead = false; break;
+                }
             }
 
-            // Handle string delimiters
-            if (c == '\'' && !inDoubleQuote && !inTemplate) { inSingleQuote = !inSingleQuote; continue; }
-            if (c == '"' && !inSingleQuote && !inTemplate) { inDoubleQuote = !inDoubleQuote; continue; }
-            if (c == '`' && !inSingleQuote && !inDoubleQuote) { inTemplate = !inTemplate; continue; }
-
-            // Skip counting inside strings
-            if (inSingleQuote || inDoubleQuote || inTemplate) continue;
-
-            // Skip line comments
-            if (c == '/' && i + 1 < text.Length && text[i + 1] == '/')
-            {
-                while (i < text.Length && text[i] != '\n') i++;
-                continue;
-            }
-
-            // Skip block comments
-            if (c == '/' && i + 1 < text.Length && text[i + 1] == '*')
-            {
-                i += 2;
-                while (i + 1 < text.Length && !(text[i] == '*' && text[i + 1] == '/')) i++;
-                i++; // skip closing /
-                continue;
-            }
-
-            switch (c)
-            {
-                case '{': braces++; break;
-                case '}': braces--; break;
-                case '(': parens++; break;
-                case ')': parens--; break;
-                case '[': brackets++; break;
-                case ']': brackets--; break;
-            }
+            return braces <= 0 && parens <= 0 && brackets <= 0 && !hasTemplateHead;
         }
-
-        // If any brackets are unclosed, input is incomplete
-        return braces <= 0 && parens <= 0 && brackets <= 0 && !inTemplate;
+        catch
+        {
+            // Lexer threw on malformed input — treat as incomplete so user can continue editing
+            return false;
+        }
     }
 
     /// <summary>

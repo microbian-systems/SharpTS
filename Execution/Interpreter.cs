@@ -406,6 +406,30 @@ public partial class Interpreter : IDisposable
     internal bool HasActiveHandles => _activeHandles > 0;
 
     /// <summary>
+    /// Non-blocking event loop tick: drains pending microtasks, due timers, and queued callbacks.
+    /// Used by the REPL to process async work between input lines without blocking.
+    /// </summary>
+    public void TickEventLoop()
+    {
+        // Process microtasks (Promise callbacks, queueMicrotask)
+        ProcessMicrotasks();
+
+        // Process due timers (setTimeout/setInterval)
+        ProcessPendingCallbacks();
+
+        // Drain any queued callbacks (async I/O completions, etc.)
+        while (_callbackQueue.TryTake(out var action, TimeSpan.Zero))
+        {
+            try { action(); }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Uncaught exception in callback: {ex.Message}");
+            }
+            ProcessMicrotasks();
+        }
+    }
+
+    /// <summary>
     /// Runs the event loop, processing callbacks until there are no more active handles.
     /// This is the main loop that keeps the program alive for servers, timers, etc.
     /// </summary>
@@ -749,7 +773,9 @@ public partial class Interpreter : IDisposable
                 lastExprValue = Evaluate(exprStmt.Expr);
                 if (lastExprValue is SharpTSPromise promise)
                 {
-                    lastExprValue = promise.Task.GetAwaiter().GetResult();
+                    // Use Task.Run to avoid deadlocks when the promise's continuation
+                    // needs the current synchronization context
+                    lastExprValue = Task.Run(() => promise.Task).GetAwaiter().GetResult();
                 }
             }
             else
