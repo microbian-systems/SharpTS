@@ -31,6 +31,8 @@ public enum TypeCategory
     AsyncGenerator,
     Buffer,
     EventEmitter,
+    AbortController,
+    AbortSignal,
 
     // User-defined types
     Class,          // Static access on class constructor (Foo.staticProp)

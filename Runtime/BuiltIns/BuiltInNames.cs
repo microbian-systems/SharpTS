@@ -88,7 +88,7 @@ public static class BuiltInNames
         Map, Set, WeakMap, WeakSet, WeakRef, Proxy,
         Array, Object, Number, String, Boolean,
         Promise, ArrayBuffer, SharedArrayBuffer, DataView,
-        MessageChannel, EventEmitter,
+        MessageChannel, EventEmitter, AbortController,
         TextEncoder, TextDecoder, URL, URLSearchParams
     ];
 
@@ -116,6 +116,8 @@ public static class BuiltInNames
     public const string EventEmitter = "EventEmitter";
     public const string TextEncoder = "TextEncoder";
     public const string TextDecoder = "TextDecoder";
+    public const string AbortController = "AbortController";
+    public const string AbortSignal = "AbortSignal";
     public const string URL = "URL";
     public const string URLSearchParams = "URLSearchParams";
 

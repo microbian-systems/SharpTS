@@ -352,6 +352,9 @@ public partial class RuntimeEmitter
         EmitWeakRefMethods(typeBuilder, runtime);
         // Proxy methods
         EmitProxyMethods(typeBuilder, runtime);
+        // AbortController/AbortSignal methods (FireAbortEvent must be emitted before AbortController methods)
+        EmitFireAbortEvent(typeBuilder, runtime);
+        EmitAbortControllerMethods(typeBuilder, runtime);
         // Dynamic import methods
         EmitDynamicImportMethods(typeBuilder, runtime);
         // Async generator await continuation helper

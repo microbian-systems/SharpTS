@@ -314,6 +314,17 @@ public partial class TypeChecker
             return new TypeInfo.EventEmitter();
         }
 
+        // Handle new AbortController() constructor
+        if (isSimpleName && simpleClassName == "AbortController")
+        {
+            if (newExpr.Arguments.Count > 0)
+            {
+                throw new TypeCheckException("AbortController constructor does not accept arguments.");
+            }
+
+            return new TypeInfo.AbortController();
+        }
+
         // Handle new SharedArrayBuffer(byteLength) constructor
         if (isSimpleName && simpleClassName == "SharedArrayBuffer")
         {

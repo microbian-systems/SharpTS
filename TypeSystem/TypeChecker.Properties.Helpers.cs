@@ -45,6 +45,8 @@ public partial class TypeChecker
                     new TypeInfo.Function(gf.ParamTypes, gf.ReturnType, gf.RequiredParams, gf.HasRestParam, gf.ThisType, gf.ParamNames)),
             TypeCategory.Function when objType is TypeInfo.OverloadedFunction of =>
                 BuiltInTypes.GetFunctionMemberType(memberName, of.Implementation),
+            TypeCategory.AbortController => BuiltInTypes.GetAbortControllerMemberType(memberName),
+            TypeCategory.AbortSignal => BuiltInTypes.GetAbortSignalMemberType(memberName),
             _ => null
         };
     }

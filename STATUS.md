@@ -233,6 +233,7 @@ This document tracks TypeScript language features and their implementation statu
 | `setImmediate`/`clearImmediate` | ✅ | Immediate execution timer (runs after current event loop iteration) |
 | `globalThis` | ✅ | ES2020 global object reference with property access and method calls |
 | `structuredClone` | ✅ | Deep clone of values (objects, arrays, Map, Set, etc.) |
+| `AbortController`/`AbortSignal` | ✅ | `new AbortController()`, `signal.aborted`, `abort(reason?)`, `addEventListener`/`removeEventListener`, `throwIfAborted`, `onabort`, `AbortSignal.abort()`/`timeout()`/`any()`, fetch `signal` option |
 
 ---
 

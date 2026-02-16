@@ -184,6 +184,9 @@ public sealed class BuiltInRegistry
         RegisterHttpTypes(registry);
         RegisterWorkerTypes(registry);
         RegisterSymbolType(registry);
+        RegisterAbortSignalNamespace(registry);
+        RegisterAbortControllerType(registry);
+        RegisterAbortSignalType(registry);
 
         return registry;
     }
@@ -920,6 +923,28 @@ public sealed class BuiltInRegistry
                 _ => null
             };
         });
+    }
+
+    private static void RegisterAbortSignalNamespace(BuiltInRegistry registry)
+    {
+        registry.RegisterNamespace(new BuiltInNamespace(
+            Name: "AbortSignal",
+            IsSingleton: false,
+            SingletonFactory: null,
+            GetMethod: name => AbortSignalBuiltIns.GetStaticMethod(name)
+        ));
+    }
+
+    private static void RegisterAbortControllerType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSAbortController), (instance, name) =>
+            AbortControllerBuiltIns.GetMember((SharpTSAbortController)instance, name));
+    }
+
+    private static void RegisterAbortSignalType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSAbortSignal), (instance, name) =>
+            AbortSignalBuiltIns.GetMember((SharpTSAbortSignal)instance, name));
     }
 
     private static string Stringify(object? obj)

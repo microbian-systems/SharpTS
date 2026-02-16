@@ -30,6 +30,7 @@ public static class BuiltInConstructorFactory
         [BuiltInNames.WeakSet] = _ => new SharpTSWeakSet(),
         [BuiltInNames.WeakRef] = args => new SharpTSWeakRef(args.Count > 0 ? args[0] : null),
         [BuiltInNames.EventEmitter] = _ => new SharpTSEventEmitter(),
+        [BuiltInNames.AbortController] = _ => new SharpTSAbortController(),
         [BuiltInNames.Proxy] = args =>
         {
             if (args.Count != 2)

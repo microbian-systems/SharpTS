@@ -191,6 +191,17 @@ public partial class ILEmitter
         if (TryEmitDirectGetterCall(g.Object, objType, g.Name.Lexeme))
             return;
 
+        // Type-first dispatch: Use TypeEmitterRegistry for property getters
+        if (objType != null && _ctx.TypeEmitterRegistry != null)
+        {
+            var strategy = _ctx.TypeEmitterRegistry.GetStrategy(objType);
+            if (strategy != null && strategy.TryEmitPropertyGet(this, g.Object, g.Name.Lexeme))
+            {
+                SetStackUnknown();
+                return;
+            }
+        }
+
         // Category-based built-in type property dispatch
         if (objType != null && TryEmitBuiltInTypePropertyGet(g, objType))
             return;

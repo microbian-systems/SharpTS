@@ -805,6 +805,22 @@ public abstract record TypeInfo
     }
 
     /// <summary>
+    /// Represents the AbortController type.
+    /// </summary>
+    public record AbortController() : TypeInfo
+    {
+        public override string ToString() => "AbortController";
+    }
+
+    /// <summary>
+    /// Represents the AbortSignal type.
+    /// </summary>
+    public record AbortSignal() : TypeInfo
+    {
+        public override string ToString() => "AbortSignal";
+    }
+
+    /// <summary>
     /// Represents a Worker type from the worker_threads module.
     /// Workers execute TypeScript code in separate threads with message passing.
     /// </summary>

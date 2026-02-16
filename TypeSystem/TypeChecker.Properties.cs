@@ -461,6 +461,11 @@ public partial class TypeChecker
             }
             throw new TypeCheckException($" Property '{propName}' does not exist on type 'Error'.");
         }
+        // Allow property assignment on built-in types with settable properties
+        if (objType is TypeInfo.AbortSignal && set.Name.Lexeme == "onabort")
+        {
+            return CheckExpr(set.Value);
+        }
         // Allow property assignment on Any type (e.g., 'this' in object method shorthand)
         if (objType is TypeInfo.Any)
         {

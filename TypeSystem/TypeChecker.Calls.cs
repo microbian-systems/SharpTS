@@ -211,6 +211,19 @@ public partial class TypeChecker
             }
         }
 
+        // Handle AbortSignal.abort(), AbortSignal.timeout(), AbortSignal.any()
+        if (call.Callee is Expr.Get abortSignalGet &&
+            abortSignalGet.Object is Expr.Variable abortSignalVar &&
+            abortSignalVar.Name.Lexeme == "AbortSignal")
+        {
+            var methodType = BuiltInTypes.GetAbortSignalStaticMethodType(abortSignalGet.Name.Lexeme);
+            if (methodType is TypeInfo.Function abortSignalMethodType)
+            {
+                foreach (var arg in call.Arguments) CheckExpr(arg);
+                return abortSignalMethodType.ReturnType;
+            }
+        }
+
         // Handle String.fromCharCode(), String.raw()
         if (call.Callee is Expr.Get stringGet &&
             stringGet.Object is Expr.Variable stringVar &&

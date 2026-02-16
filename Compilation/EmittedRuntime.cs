@@ -1416,6 +1416,22 @@ public class EmittedRuntime
     public MethodBuilder TSEventEmitterGetMaxListeners { get; set; } = null!;
     public MethodBuilder TSEventEmitterAddListenerInternal { get; set; } = null!;
 
+    // $AbortController / $AbortSignal support
+    public MethodBuilder FireAbortEvent { get; set; } = null!;
+    public MethodBuilder CreateAbortController { get; set; } = null!;
+    public MethodBuilder AbortControllerAbort { get; set; } = null!;
+    public MethodBuilder AbortControllerGetSignal { get; set; } = null!;
+    public MethodBuilder AbortSignalGetAborted { get; set; } = null!;
+    public MethodBuilder AbortSignalGetReason { get; set; } = null!;
+    public MethodBuilder AbortSignalGetOnAbort { get; set; } = null!;
+    public MethodBuilder AbortSignalSetOnAbort { get; set; } = null!;
+    public MethodBuilder AbortSignalThrowIfAborted { get; set; } = null!;
+    public MethodBuilder AbortSignalAddEventListener { get; set; } = null!;
+    public MethodBuilder AbortSignalRemoveEventListener { get; set; } = null!;
+    public MethodBuilder AbortSignalAbort { get; set; } = null!;
+    public MethodBuilder AbortSignalTimeout { get; set; } = null!;
+    public MethodBuilder AbortSignalAny { get; set; } = null!;
+
     // Assert module - emitted $AssertionError type for standalone assemblies
     // NOTE: Must stay in sync with AssertionError in AssertModuleInterpreter.cs
     public TypeBuilder TSAssertionErrorType { get; set; } = null!;

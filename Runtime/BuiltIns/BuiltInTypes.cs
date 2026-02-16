@@ -794,6 +794,54 @@ public static class BuiltInTypes
     }
 
     /// <summary>
+    /// Type signatures for instance members on AbortController objects.
+    /// </summary>
+    public static TypeInfo? GetAbortControllerMemberType(string name)
+    {
+        return name switch
+        {
+            "signal" => new TypeInfo.AbortSignal(),
+            "abort" => new TypeInfo.Function([AnyType], VoidType, RequiredParams: 0),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Type signatures for instance members on AbortSignal objects.
+    /// </summary>
+    public static TypeInfo? GetAbortSignalMemberType(string name)
+    {
+        var listenerType = new TypeInfo.Function([AnyType], VoidType);
+
+        return name switch
+        {
+            "aborted" => BooleanType,
+            "reason" => AnyType,
+            "onabort" => new TypeInfo.Union([new TypeInfo.Function([], VoidType), new TypeInfo.Null()]),
+            "throwIfAborted" => new TypeInfo.Function([], VoidType),
+            "addEventListener" => new TypeInfo.Function([StringType, listenerType], VoidType),
+            "removeEventListener" => new TypeInfo.Function([StringType, listenerType], VoidType),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Type signatures for static methods on the AbortSignal namespace.
+    /// </summary>
+    public static TypeInfo? GetAbortSignalStaticMethodType(string name)
+    {
+        var signalType = new TypeInfo.AbortSignal();
+
+        return name switch
+        {
+            "abort" => new TypeInfo.Function([AnyType], signalType, RequiredParams: 0),
+            "timeout" => new TypeInfo.Function([NumberType], signalType),
+            "any" => new TypeInfo.Function([new TypeInfo.Array(signalType)], signalType),
+            _ => null
+        };
+    }
+
+    /// <summary>
     /// Type signatures for static methods on the console namespace.
     /// All console methods are variadic and return void.
     /// </summary>

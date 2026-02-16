@@ -602,6 +602,8 @@ public partial class ILCompiler
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.SharedArrayBuffer>(new SharedArrayBufferEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.ArrayBuffer>(new ArrayBufferEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.DataView>(new DataViewEmitter());
+        _typeEmitterRegistry.Register<TypeSystem.TypeInfo.AbortController>(new AbortControllerEmitter());
+        _typeEmitterRegistry.Register<TypeSystem.TypeInfo.AbortSignal>(new AbortSignalEmitter());
 
         // Static type emitters
         _typeEmitterRegistry.RegisterStatic("Math", new MathStaticEmitter());
@@ -620,6 +622,7 @@ public partial class ILCompiler
         _typeEmitterRegistry.RegisterStatic("ArrayBuffer", new ArrayBufferStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("Reflect", new ReflectStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("Proxy", new ProxyStaticEmitter());
+        _typeEmitterRegistry.RegisterStatic("AbortSignal", new AbortSignalStaticEmitter());
 
         // Built-in module emitters
         _builtInModuleEmitterRegistry.Register(new PathModuleEmitter());

@@ -542,6 +542,17 @@ public partial class Interpreter
             throw new InterpreterException($"Cannot set property '{set.Name.Lexeme}' on Error.");
         }
 
+        // Handle AbortSignal property assignment (onabort)
+        if (obj is SharpTSAbortSignal signal)
+        {
+            if (set.Name.Lexeme == "onabort")
+            {
+                signal.OnAbort = value;
+                return value;
+            }
+            throw new InterpreterException($"Cannot set property '{set.Name.Lexeme}' on AbortSignal.");
+        }
+
         throw new InterpreterException("Only instances and objects have fields.");
     }
 

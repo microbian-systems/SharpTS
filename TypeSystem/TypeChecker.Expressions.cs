@@ -1189,6 +1189,8 @@ public partial class TypeChecker
         if (name.Lexeme == "Atomics") return new TypeInfo.Any(); // Atomics static object
         if (name.Lexeme == "MessageChannel") return new TypeInfo.Any(); // MessageChannel constructor
         if (name.Lexeme == "DataView") return new TypeInfo.Any(); // DataView constructor
+        if (name.Lexeme == "AbortController") return new TypeInfo.Any(); // AbortController constructor
+        if (name.Lexeme == "AbortSignal") return new TypeInfo.Any(); // AbortSignal static namespace
         // TypedArray constructors
         if (name.Lexeme is "Int8Array" or "Uint8Array" or "Uint8ClampedArray"
             or "Int16Array" or "Uint16Array" or "Int32Array" or "Uint32Array"

@@ -135,6 +135,14 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new AbortController() constructor
+        if (isSimpleName && simpleClassName == "AbortController")
+        {
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateAbortController);
+            SetStackUnknown();
+            return;
+        }
+
         // Special case: new Promise((resolve, reject) => { ... }) constructor
         if (isSimpleName && simpleClassName == "Promise")
         {

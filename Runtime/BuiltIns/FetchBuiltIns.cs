@@ -71,8 +71,15 @@ public static class FetchBuiltIns
             throw new SharpTSPromiseRejectedException(
                 new SharpTSTypeError($"fetch failed: {ex.Message}"));
         }
-        catch (TaskCanceledException)
+        catch (TaskCanceledException ex)
         {
+            // Distinguish between abort signal cancellation and HTTP timeout
+            if (ex.CancellationToken.IsCancellationRequested && options != null &&
+                options.Fields.TryGetValue("signal", out var sig) && sig is SharpTSAbortSignal signal)
+            {
+                throw new SharpTSPromiseRejectedException(
+                    new SharpTSTypeError(signal.Reason?.ToString() ?? "AbortError: The operation was aborted"));
+            }
             throw new SharpTSPromiseRejectedException(
                 new SharpTSTypeError("fetch: request timeout"));
         }
@@ -109,12 +116,25 @@ public static class FetchBuiltIns
             request.Content = CreateContent(bodyObj, options);
         }
 
+        // Extract AbortSignal for cancellation support
+        CancellationToken cancellationToken = default;
+        if (options?.Fields.TryGetValue("signal", out var signalObj) == true &&
+            signalObj is SharpTSAbortSignal abortSignal)
+        {
+            if (abortSignal.Aborted)
+            {
+                throw new SharpTSPromiseRejectedException(
+                    new SharpTSTypeError(abortSignal.Reason?.ToString() ?? "AbortError: The operation was aborted"));
+            }
+            cancellationToken = abortSignal.Token;
+        }
+
         // Handle redirect option (follow, error, manual)
         // Note: We use the default HttpClient redirect behavior (follow)
         // For "manual" or "error", we'd need a different HttpClient configuration
         // This is a simplified implementation
 
-        var response = await _httpClient.SendAsync(request);
+        var response = await _httpClient.SendAsync(request, cancellationToken);
 
         // Get the final URL (after any redirects)
         var finalUrl = request.RequestUri?.ToString() ?? url;

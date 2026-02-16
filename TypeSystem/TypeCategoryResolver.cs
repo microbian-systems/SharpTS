@@ -38,6 +38,8 @@ public static class TypeCategoryResolver
         TypeInfo.Timeout => TypeCategory.Timeout,
         TypeInfo.Buffer => TypeCategory.Buffer,
         TypeInfo.EventEmitter => TypeCategory.EventEmitter,
+        TypeInfo.AbortController => TypeCategory.AbortController,
+        TypeInfo.AbortSignal => TypeCategory.AbortSignal,
         TypeInfo.Iterator => TypeCategory.Iterator,
         TypeInfo.Generator => TypeCategory.Generator,
         TypeInfo.AsyncGenerator => TypeCategory.AsyncGenerator,
@@ -131,6 +133,8 @@ public static class TypeCategoryResolver
         TypeCategory.Timeout => true,
         TypeCategory.Buffer => true,
         TypeCategory.Function => true,
+        TypeCategory.AbortController => true,
+        TypeCategory.AbortSignal => true,
         _ => false
     };
 
@@ -156,6 +160,8 @@ public static class TypeCategoryResolver
         TypeCategory.Iterator => true,
         TypeCategory.Generator => true,
         TypeCategory.AsyncGenerator => true,
+        TypeCategory.AbortController => true,
+        TypeCategory.AbortSignal => true,
         _ => false
     };
 
