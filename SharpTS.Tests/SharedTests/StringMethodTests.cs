@@ -853,4 +853,127 @@ public class StringMethodTests
     }
 
     #endregion
+
+    #region Normalize Method
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_Normalize_DefaultNFC(ExecutionMode mode)
+    {
+        // \u00e9 is precomposed é (NFC), e\u0301 is decomposed e + combining accent (NFD)
+        // NFC should compose e+combining accent into single precomposed char
+        var source = """
+            const composed = "\u00e9";
+            const decomposed = "e\u0301";
+            console.log(composed.length);
+            console.log(decomposed.length);
+            console.log(decomposed.normalize().length);
+            console.log(decomposed.normalize() === composed);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n2\n1\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_Normalize_NFD(ExecutionMode mode)
+    {
+        var source = """
+            const composed = "\u00e9";
+            const nfd = composed.normalize("NFD");
+            console.log(nfd.length);
+            console.log(nfd === "e\u0301");
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_Normalize_AllForms(ExecutionMode mode)
+    {
+        var source = """
+            const s = "\u00e9";
+            console.log(s.normalize("NFC").length);
+            console.log(s.normalize("NFD").length);
+            console.log(s.normalize("NFKC").length);
+            console.log(s.normalize("NFKD").length);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n2\n1\n2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_Normalize_AlreadyNormalized(ExecutionMode mode)
+    {
+        var source = """
+            const s = "hello";
+            console.log(s.normalize() === s);
+            console.log(s.normalize("NFC") === s);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    #endregion
+
+    #region LocaleCompare Method
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_LocaleCompare_Equal(ExecutionMode mode)
+    {
+        var source = """
+            console.log("abc".localeCompare("abc"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_LocaleCompare_LessThan(ExecutionMode mode)
+    {
+        var source = """
+            console.log("abc".localeCompare("def"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("-1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_LocaleCompare_GreaterThan(ExecutionMode mode)
+    {
+        var source = """
+            console.log("def".localeCompare("abc"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_LocaleCompare_WithVariables(ExecutionMode mode)
+    {
+        var source = """
+            const a: string = "apple";
+            const b: string = "banana";
+            const result: number = a.localeCompare(b);
+            console.log(result < 0);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
 }

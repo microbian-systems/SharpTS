@@ -180,6 +180,8 @@ public class EmittedRuntime
     public MethodBuilder StringFromCharCode { get; set; } = null!;
     public MethodBuilder StringCodePointAt { get; set; } = null!;
     public MethodBuilder StringFromCodePoint { get; set; } = null!;
+    public MethodBuilder StringNormalize { get; set; } = null!;
+    public MethodBuilder StringLocaleCompare { get; set; } = null!;
 
     // Object methods
     public MethodBuilder CreateObject { get; set; } = null!;

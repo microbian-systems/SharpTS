@@ -135,7 +135,8 @@ public partial class ILEmitter
         // For Any types, we need to check at runtime if the receiver is a string
         if (methodName is "padEnd" or "padStart" or "trim" or "trimStart" or "trimEnd"
             or "toUpperCase" or "toLowerCase" or "replace" or "replaceAll" or "split"
-            or "match" or "search" or "repeat" or "charCodeAt" or "at" or "lastIndexOf")
+            or "match" or "search" or "repeat" or "charCodeAt" or "at" or "lastIndexOf"
+            or "normalize" or "localeCompare")
         {
             EmitStringOnlyMethodCall(methodGet.Object, methodName, arguments);
             return;

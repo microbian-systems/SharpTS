@@ -35,6 +35,8 @@ public static class StringBuiltIns
             .Method("trimEnd", 0, TrimEnd)
             .Method("replaceAll", 2, ReplaceAll)
             .Method("at", 1, At)
+            .Method("normalize", 0, 1, Normalize)
+            .Method("localeCompare", 1, LocaleCompare)
             .Build();
 
     private static readonly BuiltInStaticMemberLookup _staticLookup =
@@ -361,6 +363,27 @@ public static class StringBuiltIns
         if (index < 0) index = str.Length + index;
         if (index < 0 || index >= str.Length) return null;
         return str[index].ToString();
+    }
+
+    private static object? Normalize(Interpreter _, string str, List<object?> args)
+    {
+        var form = args.Count > 0 && args[0] is string f ? f : "NFC";
+        var normForm = form switch
+        {
+            "NFC" => System.Text.NormalizationForm.FormC,
+            "NFD" => System.Text.NormalizationForm.FormD,
+            "NFKC" => System.Text.NormalizationForm.FormKC,
+            "NFKD" => System.Text.NormalizationForm.FormKD,
+            _ => throw new Exception($"RangeError: The normalization form should be one of NFC, NFD, NFKC, NFKD.")
+        };
+        return str.Normalize(normForm);
+    }
+
+    private static object? LocaleCompare(Interpreter _, string str, List<object?> args)
+    {
+        var that = args[0]?.ToString() ?? "";
+        var result = string.Compare(str, that, StringComparison.CurrentCulture);
+        return (double)(result < 0 ? -1 : result > 0 ? 1 : 0);
     }
 
     /// <summary>

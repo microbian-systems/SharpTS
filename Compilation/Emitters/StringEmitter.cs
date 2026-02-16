@@ -128,6 +128,14 @@ public sealed class StringEmitter : ITypeEmitterStrategy
                 EmitAt(emitter, arguments);
                 return true;
 
+            case "normalize":
+                EmitNormalize(emitter, arguments);
+                return true;
+
+            case "localeCompare":
+                EmitLocaleCompare(emitter, arguments);
+                return true;
+
             default:
                 return false;
         }
@@ -560,6 +568,44 @@ public sealed class StringEmitter : ITypeEmitterStrategy
             il.Emit(OpCodes.Ldc_R8, 0.0);
         }
         il.Emit(OpCodes.Call, ctx.Runtime!.StringAt);
+    }
+
+    private static void EmitNormalize(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        il.Emit(OpCodes.Ldc_I4, arguments.Count);
+        il.Emit(OpCodes.Ldc_I4, arguments.Count);
+        il.Emit(OpCodes.Newarr, ctx.Types.Object);
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4, i);
+            emitter.EmitExpression(arguments[i]);
+            emitter.EmitBoxIfNeeded(arguments[i]);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.StringNormalize);
+    }
+
+    private static void EmitLocaleCompare(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+            il.Emit(OpCodes.Castclass, ctx.Types.String);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldstr, "");
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.StringLocaleCompare);
+        il.Emit(OpCodes.Box, ctx.Types.Double);
     }
 
     #endregion

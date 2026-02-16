@@ -305,6 +305,8 @@ public partial class RuntimeEmitter
         EmitStringFromCharCode(typeBuilder, runtime);
         EmitStringCodePointAt(typeBuilder, runtime);
         EmitStringFromCodePoint(typeBuilder, runtime);
+        EmitStringNormalize(typeBuilder, runtime);
+        EmitStringLocaleCompare(typeBuilder, runtime);
         // Object utilities
         EmitGetSuperMethod(typeBuilder, runtime);
         // EmitCreateException and EmitWrapException moved earlier (before Promise methods)

@@ -361,8 +361,8 @@ This section documents JavaScript/TypeScript features that are **not currently i
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `normalize()` | ❌ | Unicode normalization |
-| `localeCompare()` | ❌ | Locale-aware comparison |
+| `normalize()` | ✅ | Unicode normalization (NFC, NFD, NFKC, NFKD) |
+| `localeCompare()` | ✅ | Locale-aware comparison via string.Compare with CurrentCulture |
 | `codePointAt()` | ✅ | Full Unicode code point at position; handles surrogate pairs for supplementary characters |
 | `String.fromCharCode()` | ✅ | Creates string from UTF-16 code units |
 | `String.fromCodePoint()` | ✅ | Creates string from Unicode code points; handles supplementary characters (> U+FFFF) via surrogate pairs |

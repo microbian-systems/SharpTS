@@ -74,6 +74,8 @@ public static class BuiltInTypes
             "trimEnd" => new TypeInfo.Function([], StringType),
             "replaceAll" => new TypeInfo.Function([StringType, StringType], StringType),
             "at" => new TypeInfo.Function([NumberType], StringType), // returns string | undefined in TS
+            "normalize" => new TypeInfo.Function([StringType], StringType, RequiredParams: 0),
+            "localeCompare" => new TypeInfo.Function([StringType], NumberType),
             "toString" => new TypeInfo.Function([], StringType), // primitive wrapper method
             "match" => new TypeInfo.Function([AnyType], AnyType),
             "matchAll" => new TypeInfo.Function([AnyType], new TypeInfo.Array(AnyType)),

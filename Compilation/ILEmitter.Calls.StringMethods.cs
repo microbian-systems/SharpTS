@@ -224,6 +224,36 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.StringLastIndexOf);
                 IL.Emit(OpCodes.Box, _ctx.Types.Double);
                 break;
+
+            case "normalize":
+                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+                IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+                for (int i = 0; i < arguments.Count; i++)
+                {
+                    IL.Emit(OpCodes.Dup);
+                    IL.Emit(OpCodes.Ldc_I4, i);
+                    EmitExpression(arguments[i]);
+                    EmitBoxIfNeeded(arguments[i]);
+                    IL.Emit(OpCodes.Stelem_Ref);
+                }
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.StringNormalize);
+                break;
+
+            case "localeCompare":
+                if (arguments.Count > 0)
+                {
+                    EmitExpression(arguments[0]);
+                    EmitBoxIfNeeded(arguments[0]);
+                    IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldstr, "");
+                }
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.StringLocaleCompare);
+                IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                break;
         }
         builder.Emit_Br(doneLabel);
 

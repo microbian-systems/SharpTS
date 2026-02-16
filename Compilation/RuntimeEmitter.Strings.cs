@@ -1173,5 +1173,157 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "");
         il.Emit(OpCodes.Ret);
     }
+
+    private void EmitStringNormalize(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // StringNormalize(string str, int argCount, object[] args) -> string
+        var method = typeBuilder.DefineMethod(
+            "StringNormalize",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.String, _types.Int32, _types.ObjectArray]
+        );
+        runtime.StringNormalize = method;
+
+        var il = method.GetILGenerator();
+        var formLocal = il.DeclareLocal(_types.String);
+        var nfcLabel = il.DefineLabel();
+        var nfdLabel = il.DefineLabel();
+        var nfkcLabel = il.DefineLabel();
+        var nfkdLabel = il.DefineLabel();
+        var callLabel = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+        var normFormLocal = il.DeclareLocal(_types.Int32); // NormalizationForm enum value
+
+        // if (argCount == 0) form = "NFC"
+        var hasArgLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1); // argCount
+        il.Emit(OpCodes.Brtrue, hasArgLabel);
+        il.Emit(OpCodes.Ldstr, "NFC");
+        il.Emit(OpCodes.Stloc, formLocal);
+        var afterFormLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, afterFormLabel);
+
+        // else form = (string)args[0]
+        il.MarkLabel(hasArgLabel);
+        il.Emit(OpCodes.Ldarg_2); // args
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, formLocal);
+
+        il.MarkLabel(afterFormLabel);
+
+        // Switch on form string
+        il.Emit(OpCodes.Ldloc, formLocal);
+        il.Emit(OpCodes.Ldstr, "NFC");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, nfcLabel);
+
+        il.Emit(OpCodes.Ldloc, formLocal);
+        il.Emit(OpCodes.Ldstr, "NFD");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, nfdLabel);
+
+        il.Emit(OpCodes.Ldloc, formLocal);
+        il.Emit(OpCodes.Ldstr, "NFKC");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, nfkcLabel);
+
+        il.Emit(OpCodes.Ldloc, formLocal);
+        il.Emit(OpCodes.Ldstr, "NFKD");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, nfkdLabel);
+
+        // Invalid form - throw
+        il.Emit(OpCodes.Br, throwLabel);
+
+        // NFC = FormC = 1
+        il.MarkLabel(nfcLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, normFormLocal);
+        il.Emit(OpCodes.Br, callLabel);
+
+        // NFD = FormD = 2
+        il.MarkLabel(nfdLabel);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Stloc, normFormLocal);
+        il.Emit(OpCodes.Br, callLabel);
+
+        // NFKC = FormKC = 5
+        il.MarkLabel(nfkcLabel);
+        il.Emit(OpCodes.Ldc_I4_5);
+        il.Emit(OpCodes.Stloc, normFormLocal);
+        il.Emit(OpCodes.Br, callLabel);
+
+        // NFKD = FormKD = 6
+        il.MarkLabel(nfkdLabel);
+        il.Emit(OpCodes.Ldc_I4_6);
+        il.Emit(OpCodes.Stloc, normFormLocal);
+        il.Emit(OpCodes.Br, callLabel);
+
+        // Call str.Normalize(normForm)
+        il.MarkLabel(callLabel);
+        il.Emit(OpCodes.Ldarg_0); // str
+        il.Emit(OpCodes.Ldloc, normFormLocal);
+        var normalizeMethod = _types.String.GetMethod("Normalize", [typeof(System.Text.NormalizationForm)])!;
+        il.Emit(OpCodes.Callvirt, normalizeMethod);
+        il.Emit(OpCodes.Ret);
+
+        // Throw RangeError
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "RangeError: The normalization form should be one of NFC, NFD, NFKC, NFKD.");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+    }
+
+    private void EmitStringLocaleCompare(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // StringLocaleCompare(string str, string that) -> double
+        var method = typeBuilder.DefineMethod(
+            "StringLocaleCompare",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.String, _types.String]
+        );
+        runtime.StringLocaleCompare = method;
+
+        var il = method.GetILGenerator();
+        var resultLocal = il.DeclareLocal(_types.Int32);
+        var negLabel = il.DefineLabel();
+        var posLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        // result = string.Compare(str, that, StringComparison.CurrentCulture)
+        il.Emit(OpCodes.Ldarg_0); // str
+        il.Emit(OpCodes.Ldarg_1); // that
+        il.Emit(OpCodes.Ldc_I4_1); // StringComparison.CurrentCulture = 1
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Compare", [_types.String, _types.String, typeof(StringComparison)])!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // if (result < 0) return -1.0
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, negLabel);
+
+        // if (result > 0) return 1.0
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bgt, posLabel);
+
+        // return 0.0
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(negLabel);
+        il.Emit(OpCodes.Ldc_R8, -1.0);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(posLabel);
+        il.Emit(OpCodes.Ldc_R8, 1.0);
+
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Ret);
+    }
 }
 
