@@ -1193,6 +1193,7 @@ public partial class TypeChecker
         if (name.Lexeme == "AbortSignal") return new TypeInfo.Any(); // AbortSignal static namespace
         if (name.Lexeme == "Headers") return new TypeInfo.Any(); // Headers constructor
         if (name.Lexeme == "Iterator") return new TypeInfo.Any(); // Iterator namespace (ES2025)
+        if (name.Lexeme == "Intl") return new TypeInfo.Any(); // Intl namespace
         if (name.Lexeme == "URL") return new TypeInfo.Any(); // URL constructor
         if (name.Lexeme == "URLSearchParams") return new TypeInfo.Any(); // URLSearchParams constructor
         // TypedArray constructors

@@ -585,6 +585,13 @@ public partial class AsyncArrowMoveNextEmitter
         // Extract qualified name from callee expression
         var (namespaceParts, className) = ExtractQualifiedNameFromCallee(n.Callee);
 
+        // Special case: new Intl.NumberFormat(locale?, options?) constructor
+        if (namespaceParts is ["Intl"] && className == "NumberFormat")
+        {
+            EmitNewIntlNumberFormat(n.Arguments);
+            return;
+        }
+
         // Resolve class name
         string resolvedClassName;
         if (namespaceParts.Count > 0)
@@ -635,6 +642,32 @@ public partial class AsyncArrowMoveNextEmitter
             _il.Emit(OpCodes.Ldnull);
             SetStackType(StackType.Null);
         }
+    }
+
+    private void EmitNewIntlNumberFormat(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EnsureBoxed();
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldnull);
+        }
+
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EnsureBoxed();
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldnull);
+        }
+
+        _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateIntlNumberFormat);
+        SetStackUnknown();
     }
 
     private Type ResolveTypeArg(string typeArg)

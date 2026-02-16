@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-10 (Added `Object.defineProperties()` and `Object.getOwnPropertyDescriptors()` batch property descriptor methods; Fixed `typeof` on undeclared variables to return `"undefined"` instead of throwing)
+**Last Updated:** 2026-02-16 (Added `Intl.NumberFormat` with locale-aware number/currency/percent formatting; Added missing STATUS entries for URL/URLSearchParams, TextEncoder/TextDecoder, console methods, Uint8ClampedArray, String.raw; Added Node.js built-in modules section)
 
 ## Legend
 - ✅ Implemented
@@ -235,6 +235,10 @@ This document tracks TypeScript language features and their implementation statu
 | `structuredClone` | ✅ | Deep clone of values (objects, arrays, Map, Set, etc.) |
 | `AbortController`/`AbortSignal` | ✅ | `new AbortController()`, `signal.aborted`, `abort(reason?)`, `addEventListener`/`removeEventListener`, `throwIfAborted`, `onabort`, `AbortSignal.abort()`/`timeout()`/`any()`, fetch `signal` option |
 | `fetch()` API | ✅ | `fetch(url, options?)` returns `Promise<Response>`; Response: `status`, `statusText`, `ok`, `url`, `headers`, `bodyUsed`, `json()`, `text()`, `arrayBuffer()`, `clone()`; Headers: `get()`, `set()`, `has()`, `delete()`, `append()`, `forEach()`, `entries()`, `keys()`, `values()`; options: `method`, `headers`, `body`, `signal` |
+| `URL`/`URLSearchParams` | ✅ | Full WHATWG URL API: constructor, `href`, `protocol`, `host`, `hostname`, `port`, `pathname`, `search`, `hash`, `origin`, `username`, `password`, `searchParams`, `toString()`; URLSearchParams: `get()`, `set()`, `has()`, `delete()`, `append()`, `entries()`, `keys()`, `values()`, `forEach()`, `toString()`, `sort()` |
+| `TextEncoder`/`TextDecoder` | ✅ | `TextEncoder.encode(string)` → `Uint8Array`; `TextDecoder.decode(buffer)` → `string`; UTF-8 encoding/decoding |
+| `console` methods | ✅ | `log`, `error`, `warn`, `info`, `debug`, `clear`, `time`/`timeEnd`/`timeLog`, `assert`, `count`/`countReset`, `table`, `dir`, `group`/`groupCollapsed`/`groupEnd`, `trace` |
+| `Intl.NumberFormat` | ✅ | Locale-aware number/currency/percent formatting; `format()`, `resolvedOptions()`; options: style, currency, minimumFractionDigits, maximumFractionDigits, minimumIntegerDigits, useGrouping |
 
 ---
 
@@ -301,6 +305,7 @@ This document tracks TypeScript language features and their implementation statu
 | `Float64Array` | ✅ | 64-bit float array |
 | `BigInt64Array` | ✅ | Signed 64-bit BigInt array |
 | `BigUint64Array` | ✅ | Unsigned 64-bit BigInt array |
+| `Uint8ClampedArray` | ✅ | Clamped unsigned 8-bit integer array |
 | **Shared Memory** | | |
 | `SharedArrayBuffer` | ✅ | Shared memory for worker threads |
 | `Atomics` | ✅ | load, store, add, sub, and, or, xor, exchange, compareExchange, wait, notify |
@@ -321,7 +326,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | `Proxy` | ✅ | `new Proxy(target, handler)`, `Proxy.revocable()`, traps: get/set/has/deleteProperty/apply/construct |
 | `WeakRef` | ✅ | `new WeakRef(target)`, `.deref()` |
 | `FinalizationRegistry` | ❌ | No GC finalization callbacks |
-| `Intl` | ❌ | No internationalization API |
+| `Intl.NumberFormat` | ✅ | See Section 10 |
 
 ### Global Functions
 
@@ -369,6 +374,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | `codePointAt()` | ✅ | Full Unicode code point at position; handles surrogate pairs for supplementary characters |
 | `String.fromCharCode()` | ✅ | Creates string from UTF-16 code units |
 | `String.fromCodePoint()` | ✅ | Creates string from Unicode code points; handles supplementary characters (> U+FFFF) via surrogate pairs |
+| `String.raw` | ✅ | Tagged template for raw string access without escape processing |
 
 ### Reflect API (Standard)
 
@@ -387,6 +393,36 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | `Reflect.preventExtensions()` | ✅ | Returns `true` |
 | `Reflect.getOwnPropertyDescriptor()` | ✅ | Returns property descriptor or undefined |
 | `Reflect.defineProperty()` | ✅ | Returns `bool`; `false` on failure (unlike `Object.defineProperty` which throws) |
+
+---
+
+## 15. NODE.JS BUILT-IN MODULES
+
+SharpTS implements 20+ Node.js built-in modules accessible via `import ... from "node:..."` or bare specifiers.
+
+| Module | Status | Notes |
+|--------|--------|-------|
+| `fs` / `fs/promises` | ✅ | readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, renameSync, copyFileSync, appendFileSync, readFile, writeFile, mkdir, readdir, stat, unlink, rename, rm, access, lstat, realpath, createReadStream, createWriteStream |
+| `path` | ✅ | join, resolve, dirname, basename, extname, normalize, isAbsolute, relative, parse, format, sep, delimiter, posix, win32 |
+| `os` | ✅ | platform, arch, cpus, hostname, homedir, tmpdir, type, release, uptime, totalmem, freemem, EOL, networkInterfaces, loadavg, userInfo |
+| `process` | ✅ | argv, env, cwd(), exit(), pid, platform, arch, version, stdout, stderr, stdin, hrtime, nextTick, memoryUsage, exitCode |
+| `crypto` | ✅ | createHash, createHmac, randomBytes, randomUUID, randomInt, randomFillSync, createCipheriv/Decipheriv, pbkdf2/Sync, scrypt/Sync, timingSafeEqual, generateKeyPair/Sync, createSign/Verify, createDiffieHellman, createECDH, hkdf/Sync, getHashes, getCiphers, getCurves, constants |
+| `events` | ✅ | EventEmitter: on, once, emit, removeListener, removeAllListeners, listenerCount, listeners, prependListener, prependOnceListener, off, setMaxListeners, getMaxListeners, eventNames |
+| `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough, pipeline |
+| `buffer` | ✅ | Buffer.from, Buffer.alloc, Buffer.allocUnsafe, Buffer.concat, Buffer.isBuffer, Buffer.byteLength; instance methods: toString, slice, copy, write, fill, includes, indexOf, compare, equals, readUInt/Int, writeUInt/Int, toJSON |
+| `http` | ✅ | createServer, request, get; Server: listen, close; IncomingMessage/ServerResponse; request/response streaming |
+| `child_process` | ✅ | execSync, exec, spawnSync |
+| `url` | ✅ | URL, URLSearchParams, fileURLToPath, pathToFileURL, format, parse |
+| `util` | ✅ | promisify, deprecate, types (isDate, isRegExp, isMap, isSet, etc.), format, inspect, TextEncoder, TextDecoder |
+| `querystring` | ✅ | parse, stringify, escape, unescape |
+| `zlib` | ✅ | gzipSync, gunzipSync, deflateSync, inflateSync, brotliCompressSync, brotliDecompressSync |
+| `dns` | ✅ | lookup, resolve, resolve4, resolve6, promises API |
+| `assert` | ✅ | ok, equal, notEqual, deepEqual, notDeepEqual, strictEqual, notStrictEqual, deepStrictEqual, throws, doesNotThrow, rejects, doesNotReject, fail, match, doesNotMatch, assert.strict |
+| `readline` | ✅ | createInterface, question, close |
+| `string_decoder` | ✅ | StringDecoder: write, end, encoding |
+| `timers` | ✅ | setTimeout, clearTimeout, setInterval, clearInterval, setImmediate, clearImmediate |
+| `perf_hooks` | ✅ | performance.now(), performance.mark(), performance.measure(), performance.getEntries(), PerformanceObserver |
+| `worker_threads` | ✅ | Worker, isMainThread, parentPort, workerData, MessageChannel, MessagePort |
 
 ---
 

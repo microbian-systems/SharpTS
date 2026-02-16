@@ -577,6 +577,14 @@ public partial class TypeChecker
             return new TypeInfo.Error(simpleClassName!);
         }
 
+        // Handle new Intl.NumberFormat() constructor
+        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "NumberFormat" })
+        {
+            foreach (var arg in newExpr.Arguments)
+                CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
         // Evaluate the callee expression type
         string qualifiedName = GetCalleeClassName(newExpr.Callee);
         TypeInfo calleeType = CheckExpr(newExpr.Callee);

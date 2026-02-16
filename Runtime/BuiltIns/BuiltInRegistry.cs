@@ -189,6 +189,8 @@ public sealed class BuiltInRegistry
         RegisterAbortControllerType(registry);
         RegisterAbortSignalType(registry);
         RegisterUrlTypes(registry);
+        RegisterIntlNamespace(registry);
+        RegisterIntlNumberFormatType(registry);
 
         return registry;
     }
@@ -968,6 +970,31 @@ public sealed class BuiltInRegistry
             ((SharpTSURL)instance).GetMember(name));
         registry.RegisterInstanceType(typeof(SharpTSURLSearchParams), (instance, name) =>
             ((SharpTSURLSearchParams)instance).GetMember(name));
+    }
+
+    private static void RegisterIntlNamespace(BuiltInRegistry registry)
+    {
+        registry.RegisterNamespace(new BuiltInNamespace(
+            Name: "Intl",
+            IsSingleton: false,
+            SingletonFactory: null,
+            GetMethod: name => name switch
+            {
+                "NumberFormat" => new BuiltInMethod("NumberFormat", 0, 2, (_, _, args) =>
+                {
+                    var locale = args.Count > 0 ? args[0] : null;
+                    var options = args.Count > 1 ? args[1] : null;
+                    return new SharpTSIntlNumberFormat(locale, options);
+                }),
+                _ => null
+            }
+        ));
+    }
+
+    private static void RegisterIntlNumberFormatType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSIntlNumberFormat), (instance, name) =>
+            ((SharpTSIntlNumberFormat)instance).GetMember(name));
     }
 
     private static string Stringify(object? obj)

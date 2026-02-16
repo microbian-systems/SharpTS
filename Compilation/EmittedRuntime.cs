@@ -1467,6 +1467,11 @@ public class EmittedRuntime
     public MethodBuilder AbortSignalTimeout { get; set; } = null!;
     public MethodBuilder AbortSignalAny { get; set; } = null!;
 
+    // Intl.NumberFormat support
+    public MethodBuilder CreateIntlNumberFormat { get; set; } = null!;
+    public MethodBuilder IntlNumberFormatFormat { get; set; } = null!;
+    public MethodBuilder IntlNumberFormatResolvedOptions { get; set; } = null!;
+
     // Assert module - emitted $AssertionError type for standalone assemblies
     // NOTE: Must stay in sync with AssertionError in AssertModuleInterpreter.cs
     public TypeBuilder TSAssertionErrorType { get; set; } = null!;

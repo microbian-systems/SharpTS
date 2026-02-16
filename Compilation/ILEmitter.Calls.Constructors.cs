@@ -272,6 +272,13 @@ public partial class ILEmitter
         // Extract qualified name from callee expression
         var (namespaceParts, className) = ExtractQualifiedName(n.Callee);
 
+        // Special case: new Intl.NumberFormat(locale?, options?) constructor
+        if (namespaceParts is ["Intl"] && className == "NumberFormat")
+        {
+            EmitNewIntlNumberFormat(n.Arguments);
+            return;
+        }
+
         // Special case: new util.TextEncoder() or new util.TextDecoder() (module-qualified)
         if (namespaceParts.Count == 1 && className == "TextEncoder")
         {
@@ -1250,6 +1257,37 @@ public partial class ILEmitter
     /// <summary>
     /// Checks if a name is a TypedArray constructor name.
     /// </summary>
+    /// <summary>
+    /// Emits code for new Intl.NumberFormat(locale?, options?) construction.
+    /// </summary>
+    private void EmitNewIntlNumberFormat(List<Expr> arguments)
+    {
+        // Emit locale argument (or null)
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        // Emit options argument (or null)
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateIntlNumberFormat);
+        SetStackUnknown();
+    }
+
     private static bool IsTypedArrayName(string name) => Runtime.BuiltIns.BuiltInNames.IsTypedArrayName(name);
 
     /// <summary>

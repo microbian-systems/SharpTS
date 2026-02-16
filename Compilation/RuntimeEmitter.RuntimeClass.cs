@@ -414,6 +414,9 @@ public partial class RuntimeEmitter
         // string_decoder module constructor helper
         EmitStringDecoderGetConstructor(typeBuilder, runtime);
 
+        // Intl support (Intl.NumberFormat)
+        EmitIntlMethods(typeBuilder, runtime);
+
         // Worker Threads support (SharedArrayBuffer, TypedArrays, Atomics, MessagePort, Worker)
         EmitWorkerHelpers(typeBuilder, runtime);
 
