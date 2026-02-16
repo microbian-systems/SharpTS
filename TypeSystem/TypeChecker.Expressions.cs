@@ -1192,6 +1192,8 @@ public partial class TypeChecker
         if (name.Lexeme == "AbortController") return new TypeInfo.Any(); // AbortController constructor
         if (name.Lexeme == "AbortSignal") return new TypeInfo.Any(); // AbortSignal static namespace
         if (name.Lexeme == "Headers") return new TypeInfo.Any(); // Headers constructor
+        if (name.Lexeme == "URL") return new TypeInfo.Any(); // URL constructor
+        if (name.Lexeme == "URLSearchParams") return new TypeInfo.Any(); // URLSearchParams constructor
         // TypedArray constructors
         if (name.Lexeme is "Int8Array" or "Uint8Array" or "Uint8ClampedArray"
             or "Int16Array" or "Uint16Array" or "Int32Array" or "Uint32Array"

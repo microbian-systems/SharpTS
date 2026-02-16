@@ -150,6 +150,20 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new URL(...) constructor
+        if (isSimpleName && simpleClassName == "URL")
+        {
+            EmitNewUrl(n.Arguments);
+            return;
+        }
+
+        // Special case: new URLSearchParams(...) constructor
+        if (isSimpleName && simpleClassName == "URLSearchParams")
+        {
+            EmitNewUrlSearchParams(n.Arguments);
+            return;
+        }
+
         // Special case: new Promise((resolve, reject) => { ... }) constructor
         if (isSimpleName && simpleClassName == "Promise")
         {
@@ -786,6 +800,56 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSHeadersCtor);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits code for new URL(url, base?) construction.
+    /// </summary>
+    private void EmitNewUrl(List<Expr> arguments)
+    {
+        // Emit url argument (required)
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        // Emit base argument (optional)
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSUrlCtor);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits code for new URLSearchParams(init?) construction.
+    /// </summary>
+    private void EmitNewUrlSearchParams(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSUrlSearchParamsCtor);
         SetStackUnknown();
     }
 

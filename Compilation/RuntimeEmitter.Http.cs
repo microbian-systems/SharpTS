@@ -62,6 +62,9 @@ public partial class RuntimeEmitter
         var moduleBuilder = typeBuilder.Module as ModuleBuilder ?? throw new CompileException("Module is not a ModuleBuilder");
         EmitHeadersClass(moduleBuilder, runtime);
 
+        // Emit $URL and $URLSearchParams classes
+        EmitUrlClasses(moduleBuilder, runtime);
+
         // Emit the $FetchResponse class
         EmitFetchResponseClass(moduleBuilder, runtime);
 

@@ -1,11 +1,17 @@
+using SharpTS.Runtime.BuiltIns;
+using SharpTS.TypeSystem;
+
 namespace SharpTS.Runtime.Types;
 
 /// <summary>
 /// Runtime representation of the WHATWG URL API.
 /// Wraps System.Uri and provides Node.js/browser-compatible URL properties.
 /// </summary>
-public class SharpTSURL
+public class SharpTSURL : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.Record;
+
     private readonly Uri _uri;
     private SharpTSURLSearchParams? _searchParams;
 
@@ -103,14 +109,42 @@ public class SharpTSURL
     /// Returns the URL as JSON (same as href).
     /// </summary>
     public string ToJSON() => Href;
+
+    /// <summary>
+    /// Gets a member (method or property) by name for interpreter dispatch.
+    /// </summary>
+    public object? GetMember(string name)
+    {
+        return name switch
+        {
+            "href" => Href,
+            "protocol" => Protocol,
+            "host" => Host,
+            "hostname" => Hostname,
+            "port" => Port,
+            "pathname" => Pathname,
+            "search" => Search,
+            "hash" => Hash,
+            "origin" => Origin,
+            "username" => Username,
+            "password" => Password,
+            "searchParams" => SearchParams,
+            "toString" => new BuiltInMethod("toString", 0, (_, _, _) => (object)Href),
+            "toJSON" => new BuiltInMethod("toJSON", 0, (_, _, _) => (object)Href),
+            _ => null
+        };
+    }
 }
 
 /// <summary>
 /// Runtime representation of URLSearchParams API.
 /// Provides methods to work with the query string of a URL.
 /// </summary>
-public class SharpTSURLSearchParams
+public class SharpTSURLSearchParams : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.Record;
+
     private readonly List<(string Key, string Value)> _params = [];
 
     public SharpTSURLSearchParams()
@@ -207,17 +241,19 @@ public class SharpTSURLSearchParams
     }
 
     /// <summary>
-    /// Returns all keys.
+    /// Sorts all key/value pairs by key name, alphabetically.
+    /// </summary>
+    public void Sort()
+    {
+        _params.Sort((a, b) => string.Compare(a.Key, b.Key, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Returns all keys (includes duplicates, preserving iteration order).
     /// </summary>
     public List<string> Keys()
     {
-        var result = new List<string>();
-        foreach (var (key, _) in _params)
-        {
-            if (!result.Contains(key))
-                result.Add(key);
-        }
-        return result;
+        return _params.Select(p => p.Key).ToList();
     }
 
     /// <summary>
@@ -242,4 +278,90 @@ public class SharpTSURLSearchParams
     /// Gets the number of parameters.
     /// </summary>
     public int Size => _params.Count;
+
+    /// <summary>
+    /// Gets a member (method or property) by name for interpreter dispatch.
+    /// </summary>
+    public object? GetMember(string name)
+    {
+        return name switch
+        {
+            "get" => new BuiltInMethod("get", 1, (_, _, args) =>
+            {
+                var key = args[0]?.ToString() ?? "";
+                return (object?)Get(key);
+            }),
+            "getAll" => new BuiltInMethod("getAll", 1, (_, _, args) =>
+            {
+                var key = args[0]?.ToString() ?? "";
+                return new SharpTSArray(GetAll(key).Select(v => (object?)v).ToList());
+            }),
+            "has" => new BuiltInMethod("has", 1, (_, _, args) =>
+            {
+                var key = args[0]?.ToString() ?? "";
+                return (object)Has(key);
+            }),
+            "set" => new BuiltInMethod("set", 2, (_, _, args) =>
+            {
+                var key = args[0]?.ToString() ?? "";
+                var value = args.Count > 1 ? args[1]?.ToString() ?? "" : "";
+                Set(key, value);
+                return SharpTSUndefined.Instance;
+            }),
+            "append" => new BuiltInMethod("append", 2, (_, _, args) =>
+            {
+                var key = args[0]?.ToString() ?? "";
+                var value = args.Count > 1 ? args[1]?.ToString() ?? "" : "";
+                Append(key, value);
+                return SharpTSUndefined.Instance;
+            }),
+            "delete" => new BuiltInMethod("delete", 1, (_, _, args) =>
+            {
+                var key = args[0]?.ToString() ?? "";
+                Delete(key);
+                return SharpTSUndefined.Instance;
+            }),
+            "sort" => new BuiltInMethod("sort", 0, (_, _, _) =>
+            {
+                Sort();
+                return SharpTSUndefined.Instance;
+            }),
+            "toString" => new BuiltInMethod("toString", 0, (_, _, _) => (object)ToString()),
+            "forEach" => new BuiltInMethod("forEach", 1, (interp, _, args) =>
+            {
+                var callback = args[0];
+                foreach (var (key, value) in _params)
+                {
+                    if (callback is ISharpTSCallable callable)
+                    {
+                        callable.Call(interp!, [value, key]);
+                    }
+                }
+                return SharpTSUndefined.Instance;
+            }),
+            "entries" => new BuiltInMethod("entries", 0, (_, _, _) =>
+            {
+                var entries = _params
+                    .Select(p => (object?)new SharpTSArray([(object?)p.Key, p.Value]))
+                    .ToList();
+                return new SharpTSIterator(entries);
+            }),
+            "keys" => new BuiltInMethod("keys", 0, (_, _, _) =>
+            {
+                var keys = _params
+                    .Select(p => (object?)p.Key)
+                    .ToList();
+                return new SharpTSIterator(keys);
+            }),
+            "values" => new BuiltInMethod("values", 0, (_, _, _) =>
+            {
+                var values = _params
+                    .Select(p => (object?)p.Value)
+                    .ToList();
+                return new SharpTSIterator(values);
+            }),
+            "size" => (double)Size,
+            _ => null
+        };
+    }
 }

@@ -187,6 +187,7 @@ public sealed class BuiltInRegistry
         RegisterAbortSignalNamespace(registry);
         RegisterAbortControllerType(registry);
         RegisterAbortSignalType(registry);
+        RegisterUrlTypes(registry);
 
         return registry;
     }
@@ -949,6 +950,14 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterInstanceType(typeof(SharpTSAbortSignal), (instance, name) =>
             AbortSignalBuiltIns.GetMember((SharpTSAbortSignal)instance, name));
+    }
+
+    private static void RegisterUrlTypes(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSURL), (instance, name) =>
+            ((SharpTSURL)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSURLSearchParams), (instance, name) =>
+            ((SharpTSURLSearchParams)instance).GetMember(name));
     }
 
     private static string Stringify(object? obj)
