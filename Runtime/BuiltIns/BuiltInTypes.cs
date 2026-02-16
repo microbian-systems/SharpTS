@@ -913,4 +913,57 @@ public static class BuiltInTypes
             _ => null
         };
     }
+
+    /// <summary>
+    /// Type signatures for instance members on Iterator objects (ES2025 Iterator Helpers).
+    /// </summary>
+    public static TypeInfo? GetIteratorMemberType(string name, TypeInfo elementType)
+    {
+        return name switch
+        {
+            "next" => new TypeInfo.Function([], AnyType),
+            "return" => new TypeInfo.Function([AnyType], AnyType, RequiredParams: 0),
+            "map" => new TypeInfo.Function(
+                [new TypeInfo.Function([elementType, NumberType], AnyType)],
+                new TypeInfo.Iterator(AnyType)),
+            "filter" => new TypeInfo.Function(
+                [new TypeInfo.Function([elementType, NumberType], BooleanType)],
+                new TypeInfo.Iterator(elementType)),
+            "take" => new TypeInfo.Function([NumberType], new TypeInfo.Iterator(elementType)),
+            "drop" => new TypeInfo.Function([NumberType], new TypeInfo.Iterator(elementType)),
+            "flatMap" => new TypeInfo.Function(
+                [new TypeInfo.Function([elementType, NumberType], AnyType)],
+                new TypeInfo.Iterator(AnyType)),
+            "reduce" => new TypeInfo.Function(
+                [new TypeInfo.Function([AnyType, elementType], AnyType), AnyType],
+                AnyType,
+                RequiredParams: 1),
+            "toArray" => new TypeInfo.Function([], new TypeInfo.Array(elementType)),
+            "forEach" => new TypeInfo.Function(
+                [new TypeInfo.Function([elementType, NumberType], VoidType)],
+                VoidType),
+            "some" => new TypeInfo.Function(
+                [new TypeInfo.Function([elementType, NumberType], BooleanType)],
+                BooleanType),
+            "every" => new TypeInfo.Function(
+                [new TypeInfo.Function([elementType, NumberType], BooleanType)],
+                BooleanType),
+            "find" => new TypeInfo.Function(
+                [new TypeInfo.Function([elementType, NumberType], BooleanType)],
+                new TypeInfo.Union([elementType, new TypeInfo.Undefined()])),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Type signatures for static methods on the Iterator namespace.
+    /// </summary>
+    public static TypeInfo? GetIteratorStaticMethodType(string name)
+    {
+        return name switch
+        {
+            "from" => new TypeInfo.Function([AnyType], new TypeInfo.Iterator(AnyType)),
+            _ => null
+        };
+    }
 }

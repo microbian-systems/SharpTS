@@ -207,6 +207,8 @@ public partial class RuntimeEmitter
         EmitIteratorWrapperType(moduleBuilder, runtime);
         // Advanced iterator methods (IterateToList) - needs IteratorWrapperCtor
         EmitIteratorMethodsAdvanced(typeBuilder, runtime);
+        // ES2025 Iterator Helper methods and lazy wrapper types
+        EmitIteratorHelperMethods(typeBuilder, moduleBuilder, runtime);
         // Arrays - must come AFTER iterator methods since ConcatArrays/ExpandCallArgs use IterateToList
         EmitCreateArray(typeBuilder, runtime);
         EmitGetLength(typeBuilder, runtime);

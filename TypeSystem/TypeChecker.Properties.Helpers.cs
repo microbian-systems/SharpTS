@@ -47,6 +47,10 @@ public partial class TypeChecker
                 BuiltInTypes.GetFunctionMemberType(memberName, of.Implementation),
             TypeCategory.AbortController => BuiltInTypes.GetAbortControllerMemberType(memberName),
             TypeCategory.AbortSignal => BuiltInTypes.GetAbortSignalMemberType(memberName),
+            TypeCategory.Iterator when objType is TypeInfo.Iterator iter =>
+                BuiltInTypes.GetIteratorMemberType(memberName, iter.ElementType),
+            TypeCategory.Generator when objType is TypeInfo.Generator gen =>
+                BuiltInTypes.GetIteratorMemberType(memberName, gen.YieldType),
             _ => null
         };
     }

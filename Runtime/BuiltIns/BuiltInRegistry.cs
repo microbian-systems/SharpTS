@@ -141,6 +141,7 @@ public sealed class BuiltInRegistry
         RegisterProxyNamespace(registry);
         RegisterProcessNamespace(registry);
         RegisterGlobalThisNamespace(registry);
+        RegisterIteratorNamespace(registry);
 
         // Register instance types
         RegisterStringType(registry);
@@ -426,11 +427,20 @@ public sealed class BuiltInRegistry
             WeakRefBuiltIns.GetMember((SharpTSWeakRef)instance, name));
     }
 
+    private static void RegisterIteratorNamespace(BuiltInRegistry registry)
+    {
+        registry.RegisterNamespace(new BuiltInNamespace(
+            Name: "Iterator",
+            IsSingleton: false,
+            SingletonFactory: null,
+            GetMethod: name => IteratorStaticBuiltIns.GetStaticMethod(name) as BuiltInMethod
+        ));
+    }
+
     private static void RegisterIteratorType(BuiltInRegistry registry)
     {
-        // Iterator doesn't have instance methods beyond iteration itself
-        // It's consumed by for...of loops directly
-        registry.RegisterInstanceType(typeof(SharpTSIterator), (_, _) => null);
+        registry.RegisterInstanceType(typeof(SharpTSIterator), (instance, name) =>
+            IteratorBuiltIns.GetMember((SharpTSIterator)instance, name));
     }
 
     private static void RegisterGeneratorType(BuiltInRegistry registry)

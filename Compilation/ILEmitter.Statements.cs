@@ -329,7 +329,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Call, _ctx.Runtime!.SetValues);
         }
 
-        // For generators, use enumerator-based iteration (with its own labels)
+        // For generators, use IEnumerable-based iteration
         if (iterableType is TypeInfo.Generator)
         {
             var genStartLabel = builder.DefineLabel("forof_gen_start");
@@ -337,6 +337,17 @@ public partial class ILEmitter
             var genContinueLabel = builder.DefineLabel("forof_gen_continue");
             _ctx.EnterLoop(genEndLabel, genContinueLabel);
             EmitForOfEnumerator(f, genStartLabel, genEndLabel, genContinueLabel);
+            return;
+        }
+
+        // For iterators, normalize to IEnumerator then iterate
+        if (iterableType is TypeInfo.Iterator)
+        {
+            var iterStartLabel = builder.DefineLabel("forof_iter_start");
+            var iterEndLabel = builder.DefineLabel("forof_iter_end");
+            var iterContinueLabel = builder.DefineLabel("forof_iter_continue");
+            _ctx.EnterLoop(iterEndLabel, iterContinueLabel);
+            EmitForOfNormalizedEnumerator(f, iterStartLabel, iterEndLabel, iterContinueLabel);
             return;
         }
 
@@ -503,6 +514,47 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Stloc, loopVar);
 
         // Emit body
+        EmitStatement(f.Body);
+
+        builder.MarkLabel(continueLabel);
+        builder.Emit_Br(startLabel);
+
+        builder.MarkLabel(endLabel);
+        _ctx.Locals.ExitScope();
+        _ctx.ExitLoop();
+    }
+
+    /// <summary>
+    /// Emits for...of using NormalizeToEnumerator for iterator types.
+    /// Unlike EmitForOfEnumerator (which casts to IEnumerable), this handles
+    /// IEnumerator sources (like lazy iterator helpers and array values) correctly.
+    /// </summary>
+    private void EmitForOfNormalizedEnumerator(Stmt.ForOf f, Label startLabel, Label endLabel, Label continueLabel)
+    {
+        var builder = _ctx.ILBuilder;
+        var moveNext = _ctx.Types.GetMethod(_ctx.Types.IEnumerator, "MoveNext");
+        var current = _ctx.Types.IEnumerator.GetProperty("Current")!.GetGetMethod()!;
+
+        // Stack has the iterator source — normalize to IEnumerator<object>
+        EmitBoxIfNeeded(f.Iterable);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.NormalizeToEnumerator);
+
+        var enumLocal = IL.DeclareLocal(_ctx.Types.IEnumerator);
+        IL.Emit(OpCodes.Stloc, enumLocal);
+
+        // Loop variable
+        var loopVar = _ctx.Locals.DeclareLocal(f.Variable.Lexeme, _ctx.Types.Object);
+
+        builder.MarkLabel(startLabel);
+
+        IL.Emit(OpCodes.Ldloc, enumLocal);
+        IL.Emit(OpCodes.Callvirt, moveNext);
+        builder.Emit_Brfalse(endLabel);
+
+        IL.Emit(OpCodes.Ldloc, enumLocal);
+        IL.Emit(OpCodes.Callvirt, current);
+        IL.Emit(OpCodes.Stloc, loopVar);
+
         EmitStatement(f.Body);
 
         builder.MarkLabel(continueLabel);

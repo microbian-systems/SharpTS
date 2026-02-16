@@ -457,8 +457,40 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 
-        // 4. Try IEnumerable fallback (for generators and other .NET enumerables)
+        // 4. Try IEnumerator<object> (from iterator helpers, ArrayValues, etc.)
         il.MarkLabel(tryIEnumerableLabel);
+        {
+            var tryNonGenericEnumerableLabel = il.DefineLabel();
+            var ienumLoopLabel = il.DefineLabel();
+            var ienumDoneLabel = il.DefineLabel();
+            var ienumLocal = il.DeclareLocal(_types.IEnumeratorOfObject);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, _types.IEnumeratorOfObject);
+            il.Emit(OpCodes.Brfalse, tryNonGenericEnumerableLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.IEnumeratorOfObject);
+            il.Emit(OpCodes.Stloc, ienumLocal);
+
+            il.MarkLabel(ienumLoopLabel);
+            il.Emit(OpCodes.Ldloc, ienumLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IEnumerator, "MoveNext"));
+            il.Emit(OpCodes.Brfalse, ienumDoneLabel);
+
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, ienumLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.IEnumeratorOfObject, "Current"));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+            il.Emit(OpCodes.Br, ienumLoopLabel);
+
+            il.MarkLabel(ienumDoneLabel);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ret);
+
+            // 5. Try IEnumerable fallback (for generators and other .NET enumerables)
+            il.MarkLabel(tryNonGenericEnumerableLabel);
+        }
         {
             var enumLoopLabel = il.DefineLabel();
             var enumDoneLabel = il.DefineLabel();

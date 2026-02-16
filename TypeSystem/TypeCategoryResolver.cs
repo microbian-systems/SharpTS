@@ -115,7 +115,6 @@ public static class TypeCategoryResolver
     /// <summary>
     /// Checks if a category represents a built-in type with explicit member validation.
     /// Only returns true for types that have BuiltInTypes.GetXxxMemberType() resolution.
-    /// Types like Promise, Iterator, Generator return false to allow fallback to Any.
     /// </summary>
     public static bool HasBuiltInMemberValidation(TypeCategory category) => category switch
     {
@@ -135,6 +134,8 @@ public static class TypeCategoryResolver
         TypeCategory.Function => true,
         TypeCategory.AbortController => true,
         TypeCategory.AbortSignal => true,
+        TypeCategory.Iterator => true,
+        TypeCategory.Generator => true,
         _ => false
     };
 

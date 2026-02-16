@@ -604,6 +604,9 @@ public partial class ILCompiler
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.DataView>(new DataViewEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.AbortController>(new AbortControllerEmitter());
         _typeEmitterRegistry.Register<TypeSystem.TypeInfo.AbortSignal>(new AbortSignalEmitter());
+        var iteratorEmitter = new IteratorEmitter();
+        _typeEmitterRegistry.Register<TypeSystem.TypeInfo.Iterator>(iteratorEmitter);
+        _typeEmitterRegistry.Register<TypeSystem.TypeInfo.Generator>(iteratorEmitter);
 
         // Static type emitters
         _typeEmitterRegistry.RegisterStatic("Math", new MathStaticEmitter());
@@ -623,6 +626,7 @@ public partial class ILCompiler
         _typeEmitterRegistry.RegisterStatic("Reflect", new ReflectStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("Proxy", new ProxyStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("AbortSignal", new AbortSignalStaticEmitter());
+        _typeEmitterRegistry.RegisterStatic("Iterator", new IteratorStaticEmitter());
 
         // Built-in module emitters
         _builtInModuleEmitterRegistry.Register(new PathModuleEmitter());

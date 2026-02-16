@@ -268,6 +268,7 @@ This document tracks TypeScript language features and their implementation statu
 | Async Generators (`async function*`) | ✅ | `yield`, `yield*`, `.next()`, `.return()`, `.throw()`; `for await...of`; full IL compiler support |
 | Well-known Symbols | ✅ | `Symbol.iterator`, `Symbol.asyncIterator`, `Symbol.toStringTag`, `Symbol.hasInstance`, `Symbol.isConcatSpreadable`, `Symbol.toPrimitive`, `Symbol.species`, `Symbol.unscopables`, `Symbol.dispose`, `Symbol.asyncDispose` |
 | Iterator Protocol | ✅ | Custom iterables via `[Symbol.iterator]()` method (interpreter and compiler) |
+| Iterator Helpers (ES2025) | ✅ | `.map()`, `.filter()`, `.take()`, `.drop()`, `.flatMap()`, `.reduce()`, `.toArray()`, `.forEach()`, `.some()`, `.every()`, `.find()`, `.next()` protocol; lazy evaluation; chaining; works on arrays, generators, Map/Set iterators |
 | Async Iterator Protocol | ✅ | Custom async iterables via `[Symbol.asyncIterator]()` method |
 | `for await...of` | ✅ | Async iteration over async iterators and generators |
 | `Symbol.for`/`Symbol.keyFor` | ✅ | Global symbol registry |
