@@ -729,6 +729,10 @@ public partial class Interpreter
         {
             return instance.Get(new Token(TokenType.IDENTIFIER, instanceKey, null, 0));
         }
+        if (obj is SharpTSHeaders headers && index is string headerKey)
+        {
+            return (object?)headers.Get(headerKey) ?? SharpTSUndefined.Instance;
+        }
         throw new InterpreterException("Index access not supported on this type.");
     }
 

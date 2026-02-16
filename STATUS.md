@@ -234,6 +234,7 @@ This document tracks TypeScript language features and their implementation statu
 | `globalThis` | ✅ | ES2020 global object reference with property access and method calls |
 | `structuredClone` | ✅ | Deep clone of values (objects, arrays, Map, Set, etc.) |
 | `AbortController`/`AbortSignal` | ✅ | `new AbortController()`, `signal.aborted`, `abort(reason?)`, `addEventListener`/`removeEventListener`, `throwIfAborted`, `onabort`, `AbortSignal.abort()`/`timeout()`/`any()`, fetch `signal` option |
+| `fetch()` API | ✅ | `fetch(url, options?)` returns `Promise<Response>`; Response: `status`, `statusText`, `ok`, `url`, `headers`, `bodyUsed`, `json()`, `text()`, `arrayBuffer()`, `clone()`; Headers: `get()`, `set()`, `has()`, `delete()`, `append()`, `forEach()`, `entries()`, `keys()`, `values()`; options: `method`, `headers`, `body`, `signal` |
 
 ---
 

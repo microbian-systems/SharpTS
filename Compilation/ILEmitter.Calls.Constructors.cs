@@ -143,6 +143,13 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new Headers(...) constructor
+        if (isSimpleName && simpleClassName == "Headers")
+        {
+            EmitNewHeaders(n.Arguments);
+            return;
+        }
+
         // Special case: new Promise((resolve, reject) => { ... }) constructor
         if (isSimpleName && simpleClassName == "Promise")
         {
@@ -758,6 +765,27 @@ public partial class ILEmitter
     {
         // new EventEmitter() - no arguments
         IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSEventEmitterCtor);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits code for new Headers(...) construction.
+    /// </summary>
+    private void EmitNewHeaders(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            // new Headers(init) - init is an object
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            // new Headers() - no arguments
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSHeadersCtor);
         SetStackUnknown();
     }
 

@@ -19,6 +19,7 @@ public abstract record IndexTarget
     public sealed record InstanceString(SharpTSInstance Target, string Key) : IndexTarget;
     public sealed record InstanceSymbol(SharpTSInstance Target, SharpTSSymbol Key) : IndexTarget;
     public sealed record GlobalThis(SharpTSGlobalThis Target, string Key) : IndexTarget;
+    public sealed record HeadersString(SharpTSHeaders Target, string Key) : IndexTarget;
 
     // Get-only targets
     public sealed record EnumReverse(SharpTSEnum Target, double Index) : IndexTarget;

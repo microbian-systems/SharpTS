@@ -842,6 +842,31 @@ public static class BuiltInTypes
     }
 
     /// <summary>
+    /// Type signatures for instance members on Headers objects.
+    /// </summary>
+    public static TypeInfo? GetHeadersMemberType(string name)
+    {
+        return name switch
+        {
+            "get" => new TypeInfo.Function([StringType], new TypeInfo.Union([StringType, new TypeInfo.Null()])),
+            "set" => new TypeInfo.Function([StringType, StringType], VoidType),
+            "has" => new TypeInfo.Function([StringType], BooleanType),
+            "delete" => new TypeInfo.Function([StringType], BooleanType),
+            "append" => new TypeInfo.Function([StringType, StringType], VoidType),
+            "forEach" => new TypeInfo.Function(
+                [new TypeInfo.Function([StringType, StringType], VoidType)],
+                VoidType),
+            "entries" => new TypeInfo.Function([],
+                new TypeInfo.Iterator(TypeInfo.Tuple.FromTypes([StringType, StringType], 2))),
+            "keys" => new TypeInfo.Function([],
+                new TypeInfo.Iterator(StringType)),
+            "values" => new TypeInfo.Function([],
+                new TypeInfo.Iterator(StringType)),
+            _ => null
+        };
+    }
+
+    /// <summary>
     /// Type signatures for static methods on the console namespace.
     /// All console methods are variadic and return void.
     /// </summary>

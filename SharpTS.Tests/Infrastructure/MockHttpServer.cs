@@ -136,6 +136,19 @@ public class MockHttpServer : IDisposable
     }
 
     /// <summary>
+    /// Adds a route that delays before responding (for abort/timeout tests).
+    /// </summary>
+    public void AddDelayRoute(string path, int delayMs, string body = "delayed")
+    {
+        _routes[path] = _ =>
+        {
+            Thread.Sleep(delayMs);
+            var bodyBytes = Encoding.UTF8.GetBytes(body);
+            return (200, "text/plain", bodyBytes);
+        };
+    }
+
+    /// <summary>
     /// Adds a route with a specific status code.
     /// </summary>
     public void AddStatusRoute(string path, int statusCode, string body = "")

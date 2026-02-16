@@ -1201,6 +1201,10 @@ public class EmittedRuntime
     public MethodBuilder TSHttpResponseGetMember { get; set; } = null!;
     public MethodBuilder TSHttpResponseSetMember { get; set; } = null!;
 
+    // $Headers type - emitted for standalone Headers support
+    public TypeBuilder TSHeadersType { get; set; } = null!;
+    public ConstructorBuilder TSHeadersCtor { get; set; } = null!;
+
     // $FetchResponse type - emitted for standalone fetch support
     public TypeBuilder TSFetchResponseType { get; set; } = null!;
     public ConstructorBuilder TSFetchResponseCtor { get; set; } = null!;

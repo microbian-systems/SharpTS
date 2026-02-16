@@ -148,31 +148,43 @@ public static class FetchBuiltIns
 
     /// <summary>
     /// Adds headers from the options object to the request.
+    /// Supports both SharpTSObject and SharpTSHeaders as input.
     /// </summary>
     private static void AddHeaders(HttpRequestMessage request, object? headersObj)
     {
-        if (headersObj is SharpTSObject headersDict)
+        IEnumerable<KeyValuePair<string, string>>? headerEntries = null;
+
+        if (headersObj is SharpTSHeaders headersInstance)
         {
-            foreach (var kv in headersDict.Fields)
+            headerEntries = headersInstance.GetEntries();
+        }
+        else if (headersObj is SharpTSObject headersDict)
+        {
+            headerEntries = headersDict.Fields.Select(kv =>
+                new KeyValuePair<string, string>(kv.Key, kv.Value?.ToString() ?? ""));
+        }
+
+        if (headerEntries == null) return;
+
+        foreach (var kv in headerEntries)
+        {
+            var headerName = kv.Key;
+            var headerValue = kv.Value;
+
+            // Content-Type and other content headers go on the content, not the request
+            if (headerName.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
             {
-                var headerName = kv.Key;
-                var headerValue = kv.Value?.ToString() ?? "";
+                // Content-Type will be set when we create the content
+                continue;
+            }
 
-                // Content-Type and other content headers go on the content, not the request
-                if (headerName.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Content-Type will be set when we create the content
-                    continue;
-                }
-
-                try
-                {
-                    request.Headers.TryAddWithoutValidation(headerName, headerValue);
-                }
-                catch
-                {
-                    // Ignore invalid headers
-                }
+            try
+            {
+                request.Headers.TryAddWithoutValidation(headerName, headerValue);
+            }
+            catch
+            {
+                // Ignore invalid headers
             }
         }
     }
@@ -184,15 +196,21 @@ public static class FetchBuiltIns
     {
         // Determine content type from headers
         string? contentType = null;
-        if (options?.Fields.TryGetValue("headers", out var headersObj) == true &&
-            headersObj is SharpTSObject headersDict)
+        if (options?.Fields.TryGetValue("headers", out var headersObj) == true)
         {
-            foreach (var kv in headersDict.Fields)
+            if (headersObj is SharpTSHeaders headersInstance)
             {
-                if (kv.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
+                contentType = headersInstance.Get("Content-Type");
+            }
+            else if (headersObj is SharpTSObject headersDict)
+            {
+                foreach (var kv in headersDict.Fields)
                 {
-                    contentType = kv.Value?.ToString();
-                    break;
+                    if (kv.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
+                    {
+                        contentType = kv.Value?.ToString();
+                        break;
+                    }
                 }
             }
         }

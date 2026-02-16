@@ -679,6 +679,10 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSFetchResponse), (instance, name) =>
             ((SharpTSFetchResponse)instance).GetMember(name));
 
+        // Register Headers member lookup
+        registry.RegisterInstanceType(typeof(SharpTSHeaders), (instance, name) =>
+            HeadersBuiltIns.GetMember((SharpTSHeaders)instance, name));
+
         // Register HTTP server types
         registry.RegisterInstanceType(typeof(SharpTSHttpServer), (instance, name) =>
             ((SharpTSHttpServer)instance).GetMember(name));

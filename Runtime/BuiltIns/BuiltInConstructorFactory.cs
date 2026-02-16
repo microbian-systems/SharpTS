@@ -31,6 +31,7 @@ public static class BuiltInConstructorFactory
         [BuiltInNames.WeakRef] = args => new SharpTSWeakRef(args.Count > 0 ? args[0] : null),
         [BuiltInNames.EventEmitter] = _ => new SharpTSEventEmitter(),
         [BuiltInNames.AbortController] = _ => new SharpTSAbortController(),
+        [BuiltInNames.Headers] = CreateHeaders,
         [BuiltInNames.Proxy] = args =>
         {
             if (args.Count != 2)
@@ -162,6 +163,18 @@ public static class BuiltInConstructorFactory
             return SharpTSSet.FromArray(valuesArray);
 
         return new SharpTSSet();
+    }
+
+    private static object CreateHeaders(IReadOnlyList<object?> args)
+    {
+        if (args.Count == 0)
+            return new SharpTSHeaders();
+
+        // Handle new Headers({ "content-type": "text/html", ... })
+        if (args[0] is SharpTSObject obj)
+            return new SharpTSHeaders(obj);
+
+        return new SharpTSHeaders();
     }
 
     #endregion

@@ -325,6 +325,15 @@ public partial class TypeChecker
             return new TypeInfo.AbortController();
         }
 
+        // Handle new Headers() constructor
+        if (isSimpleName && simpleClassName == "Headers")
+        {
+            // Headers accepts 0 or 1 argument (optional init object)
+            foreach (var arg in newExpr.Arguments)
+                CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
         // Handle new SharedArrayBuffer(byteLength) constructor
         if (isSimpleName && simpleClassName == "SharedArrayBuffer")
         {

@@ -177,28 +177,11 @@ public class SharpTSFetchResponse : ITypeCategorized
     }
 
     /// <summary>
-    /// Gets the headers as a SharpTSObject for easy access.
+    /// Gets the headers as a SharpTSHeaders object with full Headers API.
     /// </summary>
-    private SharpTSObject GetHeadersObject()
+    private SharpTSHeaders GetHeadersObject()
     {
-        var headers = new Dictionary<string, object?>();
-
-        // Add response headers
-        foreach (var header in _response.Headers)
-        {
-            headers[header.Key.ToLowerInvariant()] = string.Join(", ", header.Value);
-        }
-
-        // Add content headers
-        if (_response.Content?.Headers != null)
-        {
-            foreach (var header in _response.Content.Headers)
-            {
-                headers[header.Key.ToLowerInvariant()] = string.Join(", ", header.Value);
-            }
-        }
-
-        return new SharpTSObject(headers);
+        return new SharpTSHeaders(_response);
     }
 
     /// <summary>

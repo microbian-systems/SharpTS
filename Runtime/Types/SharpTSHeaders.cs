@@ -1,0 +1,219 @@
+using SharpTS.Runtime.BuiltIns;
+using SharpTS.TypeSystem;
+
+namespace SharpTS.Runtime.Types;
+
+/// <summary>
+/// Runtime representation of the Web API Headers class.
+/// Provides case-insensitive header storage with multi-value support.
+/// </summary>
+public class SharpTSHeaders : ITypeCategorized
+{
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.Record;
+
+    private readonly Dictionary<string, List<string>> _headers;
+
+    /// <summary>
+    /// Creates an empty Headers object.
+    /// </summary>
+    public SharpTSHeaders()
+    {
+        _headers = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Creates a Headers object from a dictionary (e.g., from response headers).
+    /// Values may be strings or other objects (ToString'd).
+    /// </summary>
+    public SharpTSHeaders(Dictionary<string, object?> init)
+        : this()
+    {
+        foreach (var kv in init)
+        {
+            var value = kv.Value?.ToString() ?? "";
+            _headers[kv.Key] = [value];
+        }
+    }
+
+    /// <summary>
+    /// Creates a Headers object from an HttpResponseMessage's headers.
+    /// </summary>
+    public SharpTSHeaders(System.Net.Http.HttpResponseMessage response)
+        : this()
+    {
+        foreach (var header in response.Headers)
+        {
+            _headers[header.Key] = [string.Join(", ", header.Value)];
+        }
+
+        if (response.Content?.Headers != null)
+        {
+            foreach (var header in response.Content.Headers)
+            {
+                _headers[header.Key] = [string.Join(", ", header.Value)];
+            }
+        }
+    }
+
+    /// <summary>
+    /// Creates a Headers from a SharpTSObject (for interpreter: new Headers({...})).
+    /// </summary>
+    public SharpTSHeaders(SharpTSObject obj)
+        : this()
+    {
+        foreach (var kv in obj.Fields)
+        {
+            var value = kv.Value?.ToString() ?? "";
+            _headers[kv.Key] = [value];
+        }
+    }
+
+    /// <summary>
+    /// Gets the value of a header. Multiple values are joined with ", ".
+    /// Returns null if the header doesn't exist.
+    /// </summary>
+    public string? Get(string name)
+    {
+        if (_headers.TryGetValue(name, out var values))
+        {
+            return string.Join(", ", values);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Sets a header, replacing any existing values.
+    /// </summary>
+    public void Set(string name, string value)
+    {
+        _headers[name] = [value];
+    }
+
+    /// <summary>
+    /// Returns whether a header with the given name exists.
+    /// </summary>
+    public bool Has(string name)
+    {
+        return _headers.ContainsKey(name);
+    }
+
+    /// <summary>
+    /// Deletes a header by name.
+    /// </summary>
+    public bool Delete(string name)
+    {
+        return _headers.Remove(name);
+    }
+
+    /// <summary>
+    /// Appends a value to a header without replacing existing values.
+    /// </summary>
+    public void Append(string name, string value)
+    {
+        if (_headers.TryGetValue(name, out var values))
+        {
+            values.Add(value);
+        }
+        else
+        {
+            _headers[name] = [value];
+        }
+    }
+
+    /// <summary>
+    /// Returns all header entries as key-value pairs (lowercase keys, joined values).
+    /// </summary>
+    public IEnumerable<KeyValuePair<string, string>> GetEntries()
+    {
+        foreach (var kv in _headers.OrderBy(h => h.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            yield return new KeyValuePair<string, string>(
+                kv.Key.ToLowerInvariant(),
+                string.Join(", ", kv.Value));
+        }
+    }
+
+    /// <summary>
+    /// Gets a member (method or property) by name for interpreter dispatch.
+    /// </summary>
+    public object? GetMember(string name)
+    {
+        return name switch
+        {
+            "get" => new BuiltInMethod("get", 1, (_, _, args) =>
+            {
+                var headerName = args[0]?.ToString() ?? "";
+                return (object?)Get(headerName);
+            }),
+            "set" => new BuiltInMethod("set", 2, (_, _, args) =>
+            {
+                var headerName = args[0]?.ToString() ?? "";
+                var headerValue = args.Count > 1 ? args[1]?.ToString() ?? "" : "";
+                Set(headerName, headerValue);
+                return SharpTSUndefined.Instance;
+            }),
+            "has" => new BuiltInMethod("has", 1, (_, _, args) =>
+            {
+                var headerName = args[0]?.ToString() ?? "";
+                return (object)Has(headerName);
+            }),
+            "delete" => new BuiltInMethod("delete", 1, (_, _, args) =>
+            {
+                var headerName = args[0]?.ToString() ?? "";
+                return (object)Delete(headerName);
+            }),
+            "append" => new BuiltInMethod("append", 2, (_, _, args) =>
+            {
+                var headerName = args[0]?.ToString() ?? "";
+                var headerValue = args.Count > 1 ? args[1]?.ToString() ?? "" : "";
+                Append(headerName, headerValue);
+                return SharpTSUndefined.Instance;
+            }),
+            "forEach" => new BuiltInMethod("forEach", 1, (interp, _, args) =>
+            {
+                var callback = args[0];
+                foreach (var entry in GetEntries())
+                {
+                    CallCallback(interp, callback, entry.Value, entry.Key);
+                }
+                return SharpTSUndefined.Instance;
+            }),
+            "entries" => new BuiltInMethod("entries", 0, (_, _, _) =>
+            {
+                var entries = GetEntries()
+                    .Select(e => (object?)new SharpTSArray([e.Key, e.Value]))
+                    .ToList();
+                return new SharpTSIterator(entries);
+            }),
+            "keys" => new BuiltInMethod("keys", 0, (_, _, _) =>
+            {
+                var keys = GetEntries()
+                    .Select(e => (object?)e.Key)
+                    .ToList();
+                return new SharpTSIterator(keys);
+            }),
+            "values" => new BuiltInMethod("values", 0, (_, _, _) =>
+            {
+                var values = GetEntries()
+                    .Select(e => (object?)e.Value)
+                    .ToList();
+                return new SharpTSIterator(values);
+            }),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Calls a callback function (supports ISharpTSCallable, BuiltInMethod, and TSFunction).
+    /// </summary>
+    private static void CallCallback(Execution.Interpreter? interp, object? callback, string value, string key)
+    {
+        if (callback is ISharpTSCallable callable)
+        {
+            callable.Call(interp!, [value, key]);
+        }
+    }
+
+    public override string ToString() => "Headers {}";
+}

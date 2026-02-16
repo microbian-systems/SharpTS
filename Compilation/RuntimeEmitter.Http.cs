@@ -58,8 +58,12 @@ public partial class RuntimeEmitter
         // Emit low-level helpers that use reflection for standalone DLLs (must be first)
         EmitHttpLowLevelHelpers(typeBuilder, runtime);
 
-        // Emit the $FetchResponse class first
-        EmitFetchResponseClass(typeBuilder.Module as ModuleBuilder ?? throw new CompileException("Module is not a ModuleBuilder"), runtime);
+        // Emit the $Headers class first (used by $FetchResponse)
+        var moduleBuilder = typeBuilder.Module as ModuleBuilder ?? throw new CompileException("Module is not a ModuleBuilder");
+        EmitHeadersClass(moduleBuilder, runtime);
+
+        // Emit the $FetchResponse class
+        EmitFetchResponseClass(moduleBuilder, runtime);
 
         // Emit fetch function
         EmitFetch(typeBuilder, runtime);
@@ -305,6 +309,531 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         runtime.RegisterBuiltInModuleMethod("http", "get", method);
+    }
+
+    // $Headers class fields (set during emission)
+    private FieldBuilder _headersDataField = null!;
+
+    /// <summary>
+    /// Emits the $Headers class for compiled Headers support.
+    /// Uses a Dictionary&lt;string, List&lt;string&gt;&gt; for case-insensitive multi-value storage.
+    /// Methods are resolved via reflection by GetProperty's fallback path.
+    /// </summary>
+    private void EmitHeadersClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$Headers",
+            TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.BeforeFieldInit,
+            _types.Object
+        );
+
+        // Internal storage: Dictionary<string, List<string>> with case-insensitive comparer
+        var listOfStringType = typeof(List<string>);
+        var dictType = typeof(Dictionary<string, List<string>>);
+        _headersDataField = typeBuilder.DefineField("_data", dictType, FieldAttributes.Private);
+
+        // Constructor: $Headers(object? init)
+        // If init is Dictionary<string, object?>, populate from it
+        var ctor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.Object]
+        );
+
+        var ctorIL = ctor.GetILGenerator();
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Call, _types.Object.GetConstructor(Type.EmptyTypes)!);
+
+        // _data = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        var ordinalIgnoreCase = typeof(StringComparer).GetProperty("OrdinalIgnoreCase")!.GetGetMethod()!;
+        ctorIL.Emit(OpCodes.Call, ordinalIgnoreCase);
+        var dictCtorWithComparer = dictType.GetConstructor([typeof(IEqualityComparer<string>)])!;
+        ctorIL.Emit(OpCodes.Newobj, dictCtorWithComparer);
+        ctorIL.Emit(OpCodes.Stfld, _headersDataField);
+
+        // if (init is Dictionary<string, object?>) populate
+        var initLocal = ctorIL.DeclareLocal(_types.DictionaryStringObject);
+        var endCtorLabel = ctorIL.DefineLabel();
+        var noInitLabel = ctorIL.DefineLabel();
+
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        ctorIL.Emit(OpCodes.Stloc, initLocal);
+        ctorIL.Emit(OpCodes.Ldloc, initLocal);
+        ctorIL.Emit(OpCodes.Brfalse, noInitLabel);
+
+        // Iterate over init dictionary entries
+        var getEnumeratorMethod = _types.DictionaryStringObject.GetMethod("GetEnumerator", Type.EmptyTypes)!;
+        var enumeratorType = getEnumeratorMethod.ReturnType;
+        var enumeratorLocal = ctorIL.DeclareLocal(enumeratorType);
+
+        ctorIL.Emit(OpCodes.Ldloc, initLocal);
+        ctorIL.Emit(OpCodes.Callvirt, getEnumeratorMethod);
+        ctorIL.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        var loopStart = ctorIL.DefineLabel();
+        var loopEnd = ctorIL.DefineLabel();
+        ctorIL.MarkLabel(loopStart);
+        ctorIL.Emit(OpCodes.Ldloca, enumeratorLocal);
+        ctorIL.Emit(OpCodes.Call, enumeratorType.GetMethod("MoveNext")!);
+        ctorIL.Emit(OpCodes.Brfalse, loopEnd);
+
+        var currentProp = enumeratorType.GetProperty("Current")!;
+        var kvpType = currentProp.PropertyType;
+        var kvpLocal = ctorIL.DeclareLocal(kvpType);
+        ctorIL.Emit(OpCodes.Ldloca, enumeratorLocal);
+        ctorIL.Emit(OpCodes.Call, currentProp.GetGetMethod()!);
+        ctorIL.Emit(OpCodes.Stloc, kvpLocal);
+
+        // Get key
+        var keyProp = kvpType.GetProperty("Key")!;
+        var keyLocal = ctorIL.DeclareLocal(_types.String);
+        ctorIL.Emit(OpCodes.Ldloca, kvpLocal);
+        ctorIL.Emit(OpCodes.Call, keyProp.GetGetMethod()!);
+        ctorIL.Emit(OpCodes.Stloc, keyLocal);
+
+        // Get value as string: value?.ToString() ?? ""
+        var valueProp = kvpType.GetProperty("Value")!;
+        var valueLocal = ctorIL.DeclareLocal(_types.String);
+        var hasValueLabel = ctorIL.DefineLabel();
+        var valueDoneLabel = ctorIL.DefineLabel();
+
+        ctorIL.Emit(OpCodes.Ldloca, kvpLocal);
+        ctorIL.Emit(OpCodes.Call, valueProp.GetGetMethod()!);
+        ctorIL.Emit(OpCodes.Dup);
+        ctorIL.Emit(OpCodes.Brtrue, hasValueLabel);
+        ctorIL.Emit(OpCodes.Pop);
+        ctorIL.Emit(OpCodes.Ldstr, "");
+        ctorIL.Emit(OpCodes.Br, valueDoneLabel);
+        ctorIL.MarkLabel(hasValueLabel);
+        ctorIL.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        ctorIL.Emit(OpCodes.Dup);
+        var notNullLabel = ctorIL.DefineLabel();
+        ctorIL.Emit(OpCodes.Brtrue, notNullLabel);
+        ctorIL.Emit(OpCodes.Pop);
+        ctorIL.Emit(OpCodes.Ldstr, "");
+        ctorIL.MarkLabel(notNullLabel);
+        ctorIL.MarkLabel(valueDoneLabel);
+        ctorIL.Emit(OpCodes.Stloc, valueLocal);
+
+        // _data[key] = new List<string> { value }
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldfld, _headersDataField);
+        ctorIL.Emit(OpCodes.Ldloc, keyLocal);
+        ctorIL.Emit(OpCodes.Newobj, listOfStringType.GetConstructor(Type.EmptyTypes)!);
+        ctorIL.Emit(OpCodes.Dup);
+        ctorIL.Emit(OpCodes.Ldloc, valueLocal);
+        ctorIL.Emit(OpCodes.Callvirt, listOfStringType.GetMethod("Add", [_types.String])!);
+        ctorIL.Emit(OpCodes.Callvirt, dictType.GetMethod("set_Item")!);
+
+        ctorIL.Emit(OpCodes.Br, loopStart);
+        ctorIL.MarkLabel(loopEnd);
+
+        // Dispose enumerator
+        var disposeMethod = enumeratorType.GetMethod("Dispose", Type.EmptyTypes);
+        if (disposeMethod != null)
+        {
+            ctorIL.Emit(OpCodes.Ldloca, enumeratorLocal);
+            ctorIL.Emit(OpCodes.Call, disposeMethod);
+        }
+
+        ctorIL.MarkLabel(noInitLabel);
+        ctorIL.Emit(OpCodes.Ret);
+
+        // Emit instance methods
+        EmitHeadersGetMethod(typeBuilder, listOfStringType, dictType);
+        EmitHeadersSetMethod(typeBuilder, listOfStringType, dictType);
+        EmitHeadersHasMethod(typeBuilder, dictType);
+        EmitHeadersDeleteMethod(typeBuilder, dictType);
+        EmitHeadersAppendMethod(typeBuilder, listOfStringType, dictType);
+        EmitHeadersForEachMethod(typeBuilder, listOfStringType, dictType, runtime);
+        EmitHeadersEntriesMethod(typeBuilder, listOfStringType, dictType, runtime);
+        EmitHeadersKeysMethod(typeBuilder, listOfStringType, dictType, runtime);
+        EmitHeadersValuesMethod(typeBuilder, listOfStringType, dictType, runtime);
+
+        runtime.TSHeadersType = typeBuilder;
+        runtime.TSHeadersCtor = ctor;
+
+        typeBuilder.CreateType();
+    }
+
+    /// <summary>
+    /// Emits: public object get(object name) → string | null
+    /// </summary>
+    private void EmitHeadersGetMethod(TypeBuilder typeBuilder, Type listOfStringType, Type dictType)
+    {
+        var method = typeBuilder.DefineMethod("get", MethodAttributes.Public, _types.Object, [_types.Object]);
+        var il = method.GetILGenerator();
+
+        // string name = arg?.ToString() ?? ""
+        var nameLocal = il.DeclareLocal(_types.String);
+        EmitArgToString(il, 1, nameLocal);
+
+        // if (_data.TryGetValue(name, out var values))
+        var valuesLocal = il.DeclareLocal(listOfStringType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _headersDataField);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldloca, valuesLocal);
+        il.Emit(OpCodes.Callvirt, dictType.GetMethod("TryGetValue")!);
+        var notFoundLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notFoundLabel);
+
+        // return string.Join(", ", values)
+        il.Emit(OpCodes.Ldstr, ", ");
+        il.Emit(OpCodes.Ldloc, valuesLocal);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Join", [_types.String, typeof(IEnumerable<string>)])!);
+        il.Emit(OpCodes.Ret);
+
+        // return null
+        il.MarkLabel(notFoundLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object set(object name, object value) → undefined
+    /// </summary>
+    private void EmitHeadersSetMethod(TypeBuilder typeBuilder, Type listOfStringType, Type dictType)
+    {
+        var method = typeBuilder.DefineMethod("set", MethodAttributes.Public, _types.Object, [_types.Object, _types.Object]);
+        var il = method.GetILGenerator();
+
+        // string name = arg0?.ToString() ?? ""
+        var nameLocal = il.DeclareLocal(_types.String);
+        EmitArgToString(il, 1, nameLocal);
+
+        // string value = arg1?.ToString() ?? ""
+        var valueLocal = il.DeclareLocal(_types.String);
+        EmitArgToString(il, 2, valueLocal);
+
+        // _data[name] = new List<string> { value }
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _headersDataField);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Newobj, listOfStringType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Callvirt, listOfStringType.GetMethod("Add", [_types.String])!);
+        il.Emit(OpCodes.Callvirt, dictType.GetMethod("set_Item")!);
+
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object has(object name) → bool
+    /// </summary>
+    private void EmitHeadersHasMethod(TypeBuilder typeBuilder, Type dictType)
+    {
+        var method = typeBuilder.DefineMethod("has", MethodAttributes.Public, _types.Object, [_types.Object]);
+        var il = method.GetILGenerator();
+
+        var nameLocal = il.DeclareLocal(_types.String);
+        EmitArgToString(il, 1, nameLocal);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _headersDataField);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Callvirt, dictType.GetMethod("ContainsKey")!);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object delete(object name) → bool
+    /// </summary>
+    private void EmitHeadersDeleteMethod(TypeBuilder typeBuilder, Type dictType)
+    {
+        var method = typeBuilder.DefineMethod("delete", MethodAttributes.Public, _types.Object, [_types.Object]);
+        var il = method.GetILGenerator();
+
+        var nameLocal = il.DeclareLocal(_types.String);
+        EmitArgToString(il, 1, nameLocal);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _headersDataField);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Callvirt, dictType.GetMethod("Remove", [_types.String])!);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object append(object name, object value) → undefined
+    /// </summary>
+    private void EmitHeadersAppendMethod(TypeBuilder typeBuilder, Type listOfStringType, Type dictType)
+    {
+        var method = typeBuilder.DefineMethod("append", MethodAttributes.Public, _types.Object, [_types.Object, _types.Object]);
+        var il = method.GetILGenerator();
+
+        var nameLocal = il.DeclareLocal(_types.String);
+        EmitArgToString(il, 1, nameLocal);
+
+        var valueLocal = il.DeclareLocal(_types.String);
+        EmitArgToString(il, 2, valueLocal);
+
+        // if (_data.TryGetValue(name, out var list)) list.Add(value); else _data[name] = new List { value }
+        var listLocal = il.DeclareLocal(listOfStringType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _headersDataField);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldloca, listLocal);
+        il.Emit(OpCodes.Callvirt, dictType.GetMethod("TryGetValue")!);
+        var existsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, existsLabel);
+
+        // Not found - create new list
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _headersDataField);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Newobj, listOfStringType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Callvirt, listOfStringType.GetMethod("Add", [_types.String])!);
+        il.Emit(OpCodes.Callvirt, dictType.GetMethod("set_Item")!);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        // Found - add to existing list
+        il.MarkLabel(existsLabel);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Callvirt, listOfStringType.GetMethod("Add", [_types.String])!);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object forEach(object callback) → undefined
+    /// Iterates entries and calls callback(value, key) for each.
+    /// </summary>
+    private void EmitHeadersForEachMethod(TypeBuilder typeBuilder, Type listOfStringType, Type dictType, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("forEach", MethodAttributes.Public, _types.Object, [_types.Object]);
+        var il = method.GetILGenerator();
+
+        // Get enumerator of _data
+        var getEnumeratorMethod = dictType.GetMethod("GetEnumerator", Type.EmptyTypes)!;
+        var enumeratorType = getEnumeratorMethod.ReturnType;
+        var enumeratorLocal = il.DeclareLocal(enumeratorType);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _headersDataField);
+        il.Emit(OpCodes.Callvirt, getEnumeratorMethod);
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        il.Emit(OpCodes.Call, enumeratorType.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, loopEnd);
+
+        var currentProp = enumeratorType.GetProperty("Current")!;
+        var kvpType = currentProp.PropertyType;
+        var kvpLocal = il.DeclareLocal(kvpType);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        il.Emit(OpCodes.Call, currentProp.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, kvpLocal);
+
+        // string key = kvp.Key.ToLowerInvariant()
+        var keyLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("ToLowerInvariant", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, keyLocal);
+
+        // string value = string.Join(", ", kvp.Value)
+        var valueLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldstr, ", ");
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kvpType.GetProperty("Value")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Join", [_types.String, typeof(IEnumerable<string>)])!);
+        il.Emit(OpCodes.Stloc, valueLocal);
+
+        // InvokeMethodValue(null, callback, [value, key])
+        il.Emit(OpCodes.Ldnull); // receiver
+        il.Emit(OpCodes.Ldarg_1); // callback
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Pop); // Discard result
+
+        il.Emit(OpCodes.Br, loopStart);
+        il.MarkLabel(loopEnd);
+
+        // Dispose
+        var disposeMethod = enumeratorType.GetMethod("Dispose", Type.EmptyTypes);
+        if (disposeMethod != null)
+        {
+            il.Emit(OpCodes.Ldloca, enumeratorLocal);
+            il.Emit(OpCodes.Call, disposeMethod);
+        }
+
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object entries() → array of [key, value] pairs
+    /// </summary>
+    private void EmitHeadersEntriesMethod(TypeBuilder typeBuilder, Type listOfStringType, Type dictType, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("entries", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+        EmitHeadersCollectionMethod(il, dictType, listOfStringType, runtime, collectMode: "entries");
+    }
+
+    /// <summary>
+    /// Emits: public object keys() → array of keys
+    /// </summary>
+    private void EmitHeadersKeysMethod(TypeBuilder typeBuilder, Type listOfStringType, Type dictType, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("keys", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+        EmitHeadersCollectionMethod(il, dictType, listOfStringType, runtime, collectMode: "keys");
+    }
+
+    /// <summary>
+    /// Emits: public object values() → array of values
+    /// </summary>
+    private void EmitHeadersValuesMethod(TypeBuilder typeBuilder, Type listOfStringType, Type dictType, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("values", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+        EmitHeadersCollectionMethod(il, dictType, listOfStringType, runtime, collectMode: "values");
+    }
+
+    /// <summary>
+    /// Shared IL emission for entries/keys/values - builds a List&lt;object&gt; then wraps in array.
+    /// </summary>
+    private void EmitHeadersCollectionMethod(ILGenerator il, Type dictType, Type listOfStringType, EmittedRuntime runtime, string collectMode)
+    {
+        // var result = new List<object>()
+        var listOfObjectType = typeof(List<object?>);
+        var resultLocal = il.DeclareLocal(listOfObjectType);
+        il.Emit(OpCodes.Newobj, listOfObjectType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // Iterate over _data
+        var getEnumeratorMethod = dictType.GetMethod("GetEnumerator", Type.EmptyTypes)!;
+        var enumeratorType = getEnumeratorMethod.ReturnType;
+        var enumeratorLocal = il.DeclareLocal(enumeratorType);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _headersDataField);
+        il.Emit(OpCodes.Callvirt, getEnumeratorMethod);
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        il.Emit(OpCodes.Call, enumeratorType.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, loopEnd);
+
+        var currentProp = enumeratorType.GetProperty("Current")!;
+        var kvpType = currentProp.PropertyType;
+        var kvpLocal = il.DeclareLocal(kvpType);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        il.Emit(OpCodes.Call, currentProp.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, kvpLocal);
+
+        // key = kvp.Key.ToLowerInvariant()
+        var keyLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("ToLowerInvariant", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, keyLocal);
+
+        // value = string.Join(", ", kvp.Value)
+        var valueLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldstr, ", ");
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kvpType.GetProperty("Value")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Join", [_types.String, typeof(IEnumerable<string>)])!);
+        il.Emit(OpCodes.Stloc, valueLocal);
+
+        // Add to result based on mode
+        il.Emit(OpCodes.Ldloc, resultLocal);
+
+        switch (collectMode)
+        {
+            case "keys":
+                il.Emit(OpCodes.Ldloc, keyLocal);
+                break;
+            case "values":
+                il.Emit(OpCodes.Ldloc, valueLocal);
+                break;
+            case "entries":
+                // Create [key, value] array
+                il.Emit(OpCodes.Ldc_I4_2);
+                il.Emit(OpCodes.Newarr, _types.Object);
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Ldloc, keyLocal);
+                il.Emit(OpCodes.Stelem_Ref);
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Ldc_I4_1);
+                il.Emit(OpCodes.Ldloc, valueLocal);
+                il.Emit(OpCodes.Stelem_Ref);
+                il.Emit(OpCodes.Call, runtime.CreateArray);
+                break;
+        }
+
+        il.Emit(OpCodes.Callvirt, listOfObjectType.GetMethod("Add", [typeof(object)])!);
+
+        il.Emit(OpCodes.Br, loopStart);
+        il.MarkLabel(loopEnd);
+
+        // Dispose
+        var disposeMethod = enumeratorType.GetMethod("Dispose", Type.EmptyTypes);
+        if (disposeMethod != null)
+        {
+            il.Emit(OpCodes.Ldloca, enumeratorLocal);
+            il.Emit(OpCodes.Call, disposeMethod);
+        }
+
+        // Convert result list to array and wrap
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Callvirt, listOfObjectType.GetMethod("ToArray")!);
+        il.Emit(OpCodes.Call, runtime.CreateArray);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits IL to convert an argument at the given index to string, storing in the given local.
+    /// </summary>
+    private void EmitArgToString(ILGenerator il, int argIndex, LocalBuilder local)
+    {
+        il.Emit(OpCodes.Ldarg, argIndex);
+        var hasArgLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, hasArgLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Br, doneLabel);
+        il.MarkLabel(hasArgLabel);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Dup);
+        var notNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "");
+        il.MarkLabel(notNullLabel);
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Stloc, local);
     }
 
     /// <summary>
@@ -606,10 +1135,11 @@ public partial class RuntimeEmitter
         fetchIL.Emit(OpCodes.Ldelem_Ref);
         fetchIL.Emit(OpCodes.Castclass, _types.String);
 
-        // headers (object)
+        // headers (object) - wrap in $Headers
         fetchIL.Emit(OpCodes.Ldloc, resultLocal);
         fetchIL.Emit(OpCodes.Ldc_I4_5);
         fetchIL.Emit(OpCodes.Ldelem_Ref);
+        fetchIL.Emit(OpCodes.Newobj, runtime.TSHeadersCtor);
 
         // bodyBytes (byte[])
         fetchIL.Emit(OpCodes.Ldloc, resultLocal);
@@ -815,9 +1345,119 @@ public partial class RuntimeEmitter
         il.MarkLabel(hasValueLabel);
         il.Emit(OpCodes.Stloc, statusTextLocal);
 
-        // headers = new Dictionary<string, object>()
+        // headers = new Dictionary<string, object>() - populated with response headers
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         il.Emit(OpCodes.Stloc, headersLocal);
+
+        // Extract response headers into dictionary
+        // Iterate response.Headers
+        var responseHeadersProperty = _httpResponseMessageType!.GetProperty("Headers")!;
+        var getEnumeratorMethodForHeaders = typeof(IEnumerable<KeyValuePair<string, IEnumerable<string>>>)
+            .GetMethod("GetEnumerator")!;
+        var moveNextMethodForHeaders = typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!;
+
+        // For simplicity, use reflection to iterate:
+        // foreach (var header in response.Headers) { headers[header.Key.ToLower()] = string.Join(", ", header.Value); }
+        // Since HttpResponseHeaders implements IEnumerable<KVP<string, IEnumerable<string>>>,
+        // we just call the enumerator pattern.
+
+        // Get enumerator from response.Headers (which is HttpResponseHeaders : IEnumerable<KVP<string, IEnumerable<string>>>)
+        var respHdrsLocal = il.DeclareLocal(_httpResponseHeadersType!);
+        il.Emit(OpCodes.Ldloc, responseLocal);
+        il.Emit(OpCodes.Callvirt, responseHeadersProperty.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, respHdrsLocal);
+
+        var kvpEnumerableType = typeof(IEnumerable<KeyValuePair<string, IEnumerable<string>>>);
+        var kvpEnumeratorType = typeof(IEnumerator<KeyValuePair<string, IEnumerable<string>>>);
+        var hdrEnumeratorLocal = il.DeclareLocal(kvpEnumeratorType);
+
+        il.Emit(OpCodes.Ldloc, respHdrsLocal);
+        il.Emit(OpCodes.Callvirt, kvpEnumerableType.GetMethod("GetEnumerator")!);
+        il.Emit(OpCodes.Stloc, hdrEnumeratorLocal);
+
+        var hdrLoopStart = il.DefineLabel();
+        var hdrLoopEnd = il.DefineLabel();
+        il.MarkLabel(hdrLoopStart);
+        il.Emit(OpCodes.Ldloc, hdrEnumeratorLocal);
+        il.Emit(OpCodes.Callvirt, moveNextMethodForHeaders);
+        il.Emit(OpCodes.Brfalse, hdrLoopEnd);
+
+        // Get Current
+        var hdrCurrentProp = kvpEnumeratorType.GetProperty("Current")!;
+        var hdrKvpType = typeof(KeyValuePair<string, IEnumerable<string>>);
+        var hdrKvpLocal = il.DeclareLocal(hdrKvpType);
+        il.Emit(OpCodes.Ldloc, hdrEnumeratorLocal);
+        il.Emit(OpCodes.Callvirt, hdrCurrentProp.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, hdrKvpLocal);
+
+        // headers[kvp.Key.ToLowerInvariant()] = string.Join(", ", kvp.Value)
+        il.Emit(OpCodes.Ldloc, headersLocal);
+        il.Emit(OpCodes.Ldloca, hdrKvpLocal);
+        il.Emit(OpCodes.Call, hdrKvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("ToLowerInvariant", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ldstr, ", ");
+        il.Emit(OpCodes.Ldloca, hdrKvpLocal);
+        il.Emit(OpCodes.Call, hdrKvpType.GetProperty("Value")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Join", [_types.String, typeof(IEnumerable<string>)])!);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+
+        il.Emit(OpCodes.Br, hdrLoopStart);
+        il.MarkLabel(hdrLoopEnd);
+
+        // Also extract Content headers
+        var contentPropertyForHeaders = _httpResponseMessageType.GetProperty("Content")!;
+        var contentHeadersProperty = _httpContentType!.GetProperty("Headers")!;
+
+        var contentLocal = il.DeclareLocal(_httpContentType);
+        il.Emit(OpCodes.Ldloc, responseLocal);
+        il.Emit(OpCodes.Callvirt, contentPropertyForHeaders.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, contentLocal);
+
+        var noContentLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, contentLocal);
+        il.Emit(OpCodes.Brfalse, noContentLabel);
+
+        var contentHdrsLocal = il.DeclareLocal(_httpContentHeadersType!);
+        il.Emit(OpCodes.Ldloc, contentLocal);
+        il.Emit(OpCodes.Callvirt, contentHeadersProperty.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, contentHdrsLocal);
+
+        var noContentHdrsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, contentHdrsLocal);
+        il.Emit(OpCodes.Brfalse, noContentHdrsLabel);
+
+        var chdrEnumeratorLocal = il.DeclareLocal(kvpEnumeratorType);
+        il.Emit(OpCodes.Ldloc, contentHdrsLocal);
+        il.Emit(OpCodes.Callvirt, kvpEnumerableType.GetMethod("GetEnumerator")!);
+        il.Emit(OpCodes.Stloc, chdrEnumeratorLocal);
+
+        var chdrLoopStart = il.DefineLabel();
+        var chdrLoopEnd = il.DefineLabel();
+        il.MarkLabel(chdrLoopStart);
+        il.Emit(OpCodes.Ldloc, chdrEnumeratorLocal);
+        il.Emit(OpCodes.Callvirt, moveNextMethodForHeaders);
+        il.Emit(OpCodes.Brfalse, chdrLoopEnd);
+
+        var chdrKvpLocal = il.DeclareLocal(hdrKvpType);
+        il.Emit(OpCodes.Ldloc, chdrEnumeratorLocal);
+        il.Emit(OpCodes.Callvirt, hdrCurrentProp.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, chdrKvpLocal);
+
+        il.Emit(OpCodes.Ldloc, headersLocal);
+        il.Emit(OpCodes.Ldloca, chdrKvpLocal);
+        il.Emit(OpCodes.Call, hdrKvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("ToLowerInvariant", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ldstr, ", ");
+        il.Emit(OpCodes.Ldloca, chdrKvpLocal);
+        il.Emit(OpCodes.Call, hdrKvpType.GetProperty("Value")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Join", [_types.String, typeof(IEnumerable<string>)])!);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+
+        il.Emit(OpCodes.Br, chdrLoopStart);
+        il.MarkLabel(chdrLoopEnd);
+
+        il.MarkLabel(noContentHdrsLabel);
+        il.MarkLabel(noContentLabel);
 
         // Dispose client
         il.Emit(OpCodes.Ldloc, clientLocal);
