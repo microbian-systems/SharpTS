@@ -1476,6 +1476,9 @@ public class EmittedRuntime
     public MethodBuilder CreateIntlDateTimeFormat { get; set; } = null!;
     public MethodBuilder IntlDateTimeFormatFormat { get; set; } = null!;
     public MethodBuilder IntlDateTimeFormatResolvedOptions { get; set; } = null!;
+    public MethodBuilder IntlDateTimeFormatFormatToParts { get; set; } = null!;
+    public MethodBuilder IntlDateTimeFormatFormatRange { get; set; } = null!;
+    public MethodBuilder IntlDateTimeFormatFormatRangeToParts { get; set; } = null!;
 
     // Assert module - emitted $AssertionError type for standalone assemblies
     // NOTE: Must stay in sync with AssertionError in AssertModuleInterpreter.cs

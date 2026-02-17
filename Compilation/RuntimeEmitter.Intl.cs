@@ -18,6 +18,9 @@ public partial class RuntimeEmitter
         EmitCreateIntlDateTimeFormat(typeBuilder, runtime);
         EmitIntlDateTimeFormatFormat(typeBuilder, runtime);
         EmitIntlDateTimeFormatResolvedOptions(typeBuilder, runtime);
+        EmitIntlDateTimeFormatFormatToParts(typeBuilder, runtime);
+        EmitIntlDateTimeFormatFormatRange(typeBuilder, runtime);
+        EmitIntlDateTimeFormatFormatRangeToParts(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -265,6 +268,137 @@ public partial class RuntimeEmitter
 
         var invokeMethod = _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray);
         il.Emit(OpCodes.Callvirt, invokeMethod!);
+
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// IntlDateTimeFormatFormatToParts(object? formatter, object? date) → object?
+    /// Calls formatToParts() via reflection to RuntimeTypes.
+    /// </summary>
+    private void EmitIntlDateTimeFormatFormatToParts(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "IntlDateTimeFormatFormatToParts",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]
+        );
+        runtime.IntlDateTimeFormatFormatToParts = method;
+
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.RuntimeTypes, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+
+        il.Emit(OpCodes.Ldstr, "IntlDateTimeFormatFormatToParts");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+
+        il.Emit(OpCodes.Ldnull);
+
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0); // formatter
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1); // date
+        il.Emit(OpCodes.Stelem_Ref);
+
+        var invokeMethod2 = _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray);
+        il.Emit(OpCodes.Callvirt, invokeMethod2!);
+
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// IntlDateTimeFormatFormatRange(object? formatter, object? start, object? end) → object?
+    /// Calls formatRange() via reflection to RuntimeTypes.
+    /// </summary>
+    private void EmitIntlDateTimeFormatFormatRange(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "IntlDateTimeFormatFormatRange",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]
+        );
+        runtime.IntlDateTimeFormatFormatRange = method;
+
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.RuntimeTypes, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+
+        il.Emit(OpCodes.Ldstr, "IntlDateTimeFormatFormatRange");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+
+        il.Emit(OpCodes.Ldnull);
+
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0); // formatter
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1); // start
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldarg_2); // end
+        il.Emit(OpCodes.Stelem_Ref);
+
+        var invokeMethod2 = _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray);
+        il.Emit(OpCodes.Callvirt, invokeMethod2!);
+
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// IntlDateTimeFormatFormatRangeToParts(object? formatter, object? start, object? end) → object?
+    /// Calls formatRangeToParts() via reflection to RuntimeTypes.
+    /// </summary>
+    private void EmitIntlDateTimeFormatFormatRangeToParts(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "IntlDateTimeFormatFormatRangeToParts",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]
+        );
+        runtime.IntlDateTimeFormatFormatRangeToParts = method;
+
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.RuntimeTypes, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+
+        il.Emit(OpCodes.Ldstr, "IntlDateTimeFormatFormatRangeToParts");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+
+        il.Emit(OpCodes.Ldnull);
+
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0); // formatter
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1); // start
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldarg_2); // end
+        il.Emit(OpCodes.Stelem_Ref);
+
+        var invokeMethod2 = _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray);
+        il.Emit(OpCodes.Callvirt, invokeMethod2!);
 
         il.Emit(OpCodes.Ret);
     }

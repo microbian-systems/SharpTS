@@ -84,5 +84,41 @@ public static partial class RuntimeTypes
         return null;
     }
 
+    /// <summary>
+    /// Calls formatToParts() on an Intl.DateTimeFormat instance.
+    /// </summary>
+    public static object? IntlDateTimeFormatFormatToParts(object? formatter, object? date)
+    {
+        if (formatter is SharpTSIntlDateTimeFormat dtf)
+        {
+            return dtf.formatToParts(date);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Calls formatRange() on an Intl.DateTimeFormat instance.
+    /// </summary>
+    public static object? IntlDateTimeFormatFormatRange(object? formatter, object? start, object? end)
+    {
+        if (formatter is SharpTSIntlDateTimeFormat dtf)
+        {
+            return dtf.formatRange(start, end);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Calls formatRangeToParts() on an Intl.DateTimeFormat instance.
+    /// </summary>
+    public static object? IntlDateTimeFormatFormatRangeToParts(object? formatter, object? start, object? end)
+    {
+        if (formatter is SharpTSIntlDateTimeFormat dtf)
+        {
+            return dtf.formatRangeToParts(start, end);
+        }
+        return null;
+    }
+
     #endregion
 }

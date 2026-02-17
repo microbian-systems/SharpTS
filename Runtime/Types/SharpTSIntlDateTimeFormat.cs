@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
 using SharpTS.Runtime.BuiltIns;
 
 namespace SharpTS.Runtime.Types;
@@ -6,6 +8,8 @@ namespace SharpTS.Runtime.Types;
 /// <summary>
 /// Runtime representation of Intl.DateTimeFormat.
 /// Provides locale-aware date/time formatting using .NET's CultureInfo/DateTimeFormatInfo.
+/// Supports BCP 47 Unicode extensions (-u-ca-, -u-nu-, -u-hc-), calendar systems,
+/// numbering systems, formatToParts, formatRange, and formatRangeToParts.
 /// </summary>
 public class SharpTSIntlDateTimeFormat
 {
@@ -24,22 +28,53 @@ public class SharpTSIntlDateTimeFormat
     private string? _timeZoneName;
     private string? _era;
     private int? _fractionalSecondDigits;
+    private string _calendar;
+    private string _numberingSystem;
+    private string? _hourCycle;
     private readonly CultureInfo _culture;
+    private readonly DateTimeFormatInfo _dtfi;
     private readonly string _formatString;
+    private TimeZoneInfo? _resolvedTimeZone;
 
     private static readonly DateTime UnixEpoch = new(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
+    // Sentinel markers for narrow weekday/month that can't be represented as .NET format specifiers.
+    // These are wrapped in single quotes so DateTime.ToString treats them as literals.
+    // The format string uses: 'NWKD' and 'NMTH' (quoted to prevent interpretation as specifiers).
+    // After formatting, we replace them with the actual narrow values.
+    private const string NarrowWeekdaySentinel = "'NWKD'";
+    private const string NarrowWeekdayOutput = "NWKD";
+    private const string NarrowMonthSentinel = "'NMTH'";
+    private const string NarrowMonthOutput = "NMTH";
+
+    /// <summary>
+    /// Numbering system digit tables: maps system name to Unicode code point of digit '0'.
+    /// </summary>
+    private static readonly Dictionary<string, int> NumberingSystemBaseDigits = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["arab"] = 0x0660,     // ٠١٢٣٤٥٦٧٨٩
+        ["arabext"] = 0x06F0,  // ۰۱۲۳۴۵۶۷۸۹
+        ["thai"] = 0x0E50,     // ๐๑๒๓๔๕๖๗๘๙
+        ["deva"] = 0x0966,     // ०१२३४५६७८९
+        ["beng"] = 0x09E6,     // ০১২৩৪৫৬৭৮৯
+        ["guru"] = 0x0A66,     // ੦੧੨੩੪੫੬੭੮੯
+        ["tibt"] = 0x0F20,     // ༠༡༢༣༤༥༦༧༨༩
+        ["laoo"] = 0x0ED0,     // ໐໑໒໓໔໕໖໗໘໙
+        ["mymr"] = 0x1040,     // ၀၁၂၃၄၅၆၇၈၉
+    };
+
     public SharpTSIntlDateTimeFormat(object? locale, object? options)
     {
-        // Parse locale
+        // Parse locale with BCP 47 extension support
         string localeStr = locale?.ToString() ?? "";
-        _locale = localeStr;
+        var bcp47 = Bcp47Extensions.Parse(localeStr.Replace('_', '-'));
+        string baseLocale = bcp47.BaseLocale;
 
         try
         {
-            _culture = string.IsNullOrEmpty(localeStr)
+            _culture = string.IsNullOrEmpty(baseLocale)
                 ? CultureInfo.CurrentCulture
-                : CultureInfo.GetCultureInfo(localeStr.Replace('_', '-'));
+                : CultureInfo.GetCultureInfo(baseLocale);
         }
         catch
         {
@@ -50,7 +85,15 @@ public class SharpTSIntlDateTimeFormat
         if (string.IsNullOrEmpty(_locale))
             _locale = "en-US";
 
-        // Parse options
+        // Defaults from BCP 47 extensions (options override later)
+        _calendar = bcp47.Calendar ?? "gregory";
+        _numberingSystem = bcp47.NumberingSystem ?? "latn";
+        _hourCycle = bcp47.HourCycle;
+
+        // Clone DateTimeFormatInfo so we can customize calendar
+        _dtfi = (DateTimeFormatInfo)_culture.DateTimeFormat.Clone();
+
+        // Parse options (may override BCP 47 extensions)
         if (options is SharpTSObject obj)
         {
             ParseOptions(obj.Fields);
@@ -58,6 +101,40 @@ public class SharpTSIntlDateTimeFormat
         else if (options is IDictionary<string, object?> dict)
         {
             ParseOptions(dict);
+        }
+
+        // Apply calendar
+        var cal = MapCalendar(_calendar);
+        if (cal != null)
+        {
+            try { _dtfi.Calendar = cal; } catch { /* unsupported calendar for culture */ }
+        }
+
+        // Apply hour cycle to _hour12 if not explicitly set
+        if (_hour12 == null && _hourCycle != null)
+        {
+            _hour12 = _hourCycle is "h11" or "h12";
+        }
+
+        // Resolve timezone
+        if (_timeZone != null)
+        {
+            try
+            {
+                if (_timeZone.Equals("UTC", StringComparison.OrdinalIgnoreCase))
+                {
+                    _resolvedTimeZone = TimeZoneInfo.Utc;
+                }
+                else
+                {
+                    var resolved = IanaTimeZoneAliases.Resolve(_timeZone);
+                    _resolvedTimeZone = TimeZoneInfo.FindSystemTimeZoneById(resolved);
+                }
+            }
+            catch
+            {
+                // Invalid timezone, will use local
+            }
         }
 
         // Build format string from options
@@ -123,11 +200,34 @@ public class SharpTSIntlDateTimeFormat
                 _ => null
             };
         }
+
+        // Options override BCP 47 extensions
+        if (dict.TryGetValue("calendar", out var calOpt) && calOpt is string calStr)
+            _calendar = calStr;
+
+        if (dict.TryGetValue("numberingSystem", out var nuOpt) && nuOpt is string nuStr)
+            _numberingSystem = nuStr;
+
+        if (dict.TryGetValue("hourCycle", out var hcOpt) && hcOpt is string hcStr)
+            _hourCycle = hcStr;
     }
+
+    private static Calendar? MapCalendar(string name) => name switch
+    {
+        "gregory" => new GregorianCalendar(),
+        "japanese" => new JapaneseCalendar(),
+        "buddhist" => new ThaiBuddhistCalendar(),
+        "hebrew" => new HebrewCalendar(),
+        "islamic" => new HijriCalendar(),
+        "islamic-umalqura" => new UmAlQuraCalendar(),
+        "persian" => new PersianCalendar(),
+        "roc" => new TaiwanCalendar(),
+        _ => null
+    };
 
     private string BuildFormatString()
     {
-        // If dateStyle/timeStyle are specified, use standard format strings
+        // If dateStyle/timeStyle are specified, use style-based format
         if (_dateStyle != null || _timeStyle != null)
         {
             return BuildStyleFormat();
@@ -146,37 +246,77 @@ public class SharpTSIntlDateTimeFormat
 
     private string BuildStyleFormat()
     {
-        string? datePart = _dateStyle switch
+        string? datePattern = null;
+        if (_dateStyle != null)
         {
-            "full" => "D",
-            "long" => "D",
-            "medium" => "d",
-            "short" => "d",
-            _ => null
-        };
-
-        string? timePart = _timeStyle switch
-        {
-            "full" => "T",
-            "long" => "T",
-            "medium" => "T",
-            "short" => "t",
-            _ => null
-        };
-
-        if (datePart != null && timePart != null)
-        {
-            // Use culture's full date/time pattern built from separate parts
-            var dtfi = _culture.DateTimeFormat;
-            string datePattern = datePart == "D" ? dtfi.LongDatePattern : dtfi.ShortDatePattern;
-            string timePattern = timePart == "T" ? dtfi.LongTimePattern : dtfi.ShortTimePattern;
-            return datePattern + " " + timePattern;
+            datePattern = _dateStyle switch
+            {
+                "full" => BuildFullDatePattern(),
+                "long" => BuildLongDatePattern(),
+                "medium" => BuildMediumDatePattern(),
+                "short" => _dtfi.ShortDatePattern,
+                _ => null
+            };
         }
 
-        if (datePart != null) return datePart;
-        if (timePart != null) return timePart;
+        string? timePattern = null;
+        if (_timeStyle != null)
+        {
+            timePattern = _timeStyle switch
+            {
+                "full" => _dtfi.LongTimePattern,
+                "long" => _dtfi.LongTimePattern,
+                "medium" => _dtfi.LongTimePattern,
+                "short" => _dtfi.ShortTimePattern,
+                _ => null
+            };
+        }
+
+        if (datePattern != null && timePattern != null)
+            return datePattern + " " + timePattern;
+
+        if (datePattern != null) return datePattern;
+        if (timePattern != null) return timePattern;
 
         return "G";
+    }
+
+    /// <summary>
+    /// Full date: includes weekday. E.g. "Monday, January 15, 2024"
+    /// </summary>
+    private string BuildFullDatePattern()
+    {
+        var longDate = _dtfi.LongDatePattern;
+        // If the long date pattern already contains weekday (dddd), use it
+        if (longDate.Contains("dddd"))
+            return longDate;
+        // Prepend weekday
+        return "dddd, " + longDate;
+    }
+
+    /// <summary>
+    /// Long date: no weekday. E.g. "January 15, 2024"
+    /// </summary>
+    private string BuildLongDatePattern()
+    {
+        var longDate = _dtfi.LongDatePattern;
+        // Remove weekday parts (dddd followed by optional comma/space)
+        longDate = Regex.Replace(longDate, @"dddd,?\s*", "");
+        return longDate.Trim();
+    }
+
+    /// <summary>
+    /// Medium date: abbreviated month. E.g. "Jan 15, 2024"
+    /// </summary>
+    private string BuildMediumDatePattern()
+    {
+        // Build from long date but use abbreviated month
+        var longDate = _dtfi.LongDatePattern;
+        // Remove weekday
+        longDate = Regex.Replace(longDate, @"dddd,?\s*", "");
+        // Replace full month with abbreviated
+        longDate = longDate.Replace("MMMM", "MMM");
+        return longDate.Trim();
     }
 
     private string BuildComponentFormat()
@@ -190,7 +330,7 @@ public class SharpTSIntlDateTimeFormat
             {
                 "long" => "dddd",
                 "short" => "ddd",
-                "narrow" => "ddd".Substring(0, 1), // First letter approximation
+                "narrow" => NarrowWeekdaySentinel,
                 _ => "ddd"
             });
         }
@@ -219,7 +359,7 @@ public class SharpTSIntlDateTimeFormat
                 "2-digit" => "MM",
                 "long" => "MMMM",
                 "short" => "MMM",
-                "narrow" => "MMM".Substring(0, 1),
+                "narrow" => NarrowMonthSentinel,
                 _ => "M" // "numeric"
             });
         }
@@ -303,64 +443,111 @@ public class SharpTSIntlDateTimeFormat
     }
 
     /// <summary>
+    /// Applies timezone conversion to a DateTime.
+    /// </summary>
+    private DateTime ApplyTimeZone(DateTime dateTime)
+    {
+        if (_resolvedTimeZone == null) return dateTime;
+        try
+        {
+            return TimeZoneInfo.ConvertTime(dateTime, _resolvedTimeZone);
+        }
+        catch
+        {
+            return dateTime;
+        }
+    }
+
+    /// <summary>
     /// Formats a DateTime according to the locale and options.
     /// </summary>
     public string FormatDate(DateTime dateTime)
     {
-        // Apply timeZone if specified
-        if (_timeZone != null)
+        dateTime = ApplyTimeZone(dateTime);
+
+        string result = dateTime.ToString(_formatString, _dtfi);
+
+        // Replace narrow sentinels (output form, without quotes)
+        if (result.Contains(NarrowWeekdayOutput))
         {
-            try
-            {
-                if (_timeZone.Equals("UTC", StringComparison.OrdinalIgnoreCase))
-                {
-                    dateTime = dateTime.Kind == DateTimeKind.Utc
-                        ? dateTime
-                        : dateTime.ToUniversalTime();
-                }
-                else
-                {
-                    var tz = TimeZoneInfo.FindSystemTimeZoneById(_timeZone);
-                    dateTime = TimeZoneInfo.ConvertTime(dateTime, tz);
-                }
-            }
-            catch
-            {
-                // Invalid timezone, use as-is
-            }
+            var abbrevDay = _dtfi.GetAbbreviatedDayName(dateTime.DayOfWeek);
+            result = result.Replace(NarrowWeekdayOutput, abbrevDay.Length > 0 ? abbrevDay[..1] : "");
+        }
+        if (result.Contains(NarrowMonthOutput))
+        {
+            var abbrevMonth = _dtfi.GetAbbreviatedMonthName(dateTime.Month);
+            result = result.Replace(NarrowMonthOutput, abbrevMonth.Length > 0 ? abbrevMonth[..1] : "");
         }
 
-        string result = dateTime.ToString(_formatString, _culture);
+        // Apply numbering system digit substitution
+        if (_numberingSystem != "latn" && NumberingSystemBaseDigits.TryGetValue(_numberingSystem, out var baseDigit))
+        {
+            result = SubstituteDigits(result, baseDigit);
+        }
 
         // Append timezone name if requested
         if (_timeZoneName != null)
         {
-            string tzAbbr = GetTimeZoneAbbreviation(dateTime);
-            result += " " + tzAbbr;
+            string tzDisplay = GetTimeZoneDisplay(dateTime);
+            result += " " + tzDisplay;
         }
 
         return result;
     }
 
-    private string GetTimeZoneAbbreviation(DateTime dateTime)
+    private static string SubstituteDigits(string input, int baseCodePoint)
     {
-        if (_timeZone?.Equals("UTC", StringComparison.OrdinalIgnoreCase) == true)
-            return _timeZoneName == "long" ? "Coordinated Universal Time" : "UTC";
-
-        var tz = _timeZone != null
-            ? TimeZoneInfo.FindSystemTimeZoneById(_timeZone)
-            : TimeZoneInfo.Local;
-
-        return _timeZoneName == "long"
-            ? (tz.IsDaylightSavingTime(dateTime) ? tz.DaylightName : tz.StandardName)
-            : GetShortTimeZoneName(tz, dateTime);
+        var sb = new StringBuilder(input.Length);
+        foreach (var ch in input)
+        {
+            if (ch >= '0' && ch <= '9')
+                sb.Append(char.ConvertFromUtf32(baseCodePoint + (ch - '0')));
+            else
+                sb.Append(ch);
+        }
+        return sb.ToString();
     }
 
-    private static string GetShortTimeZoneName(TimeZoneInfo tz, DateTime dateTime)
+    private string GetTimeZoneDisplay(DateTime dateTime)
     {
-        // Extract abbreviation from display name or use offset
+        var tz = _resolvedTimeZone ?? TimeZoneInfo.Local;
+
+        if (tz == TimeZoneInfo.Utc || _timeZone?.Equals("UTC", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return _timeZoneName switch
+            {
+                "long" => "Coordinated Universal Time",
+                "longGeneric" => "Coordinated Universal Time",
+                "longOffset" => "GMT+00:00",
+                "shortOffset" => "GMT",
+                _ => "UTC"
+            };
+        }
+
         var offset = tz.GetUtcOffset(dateTime);
-        return $"GMT{(offset >= TimeSpan.Zero ? "+" : "")}{offset.Hours:D2}:{offset.Minutes:D2}";
+        string gmtOffset = $"GMT{(offset >= TimeSpan.Zero ? "+" : "")}{offset.Hours:D2}:{Math.Abs(offset.Minutes):D2}";
+
+        return _timeZoneName switch
+        {
+            "long" => tz.IsDaylightSavingTime(dateTime) ? tz.DaylightName : tz.StandardName,
+            "longGeneric" =>
+                // Strip offset prefix from DisplayName: "(UTC-05:00) Eastern Time..." → "Eastern Time..."
+                StripOffsetFromDisplayName(tz.DisplayName),
+            "longOffset" => gmtOffset,
+            "short" => gmtOffset,
+            "shortOffset" => gmtOffset,
+            "shortGeneric" => gmtOffset,
+            _ => gmtOffset
+        };
+    }
+
+    private static string StripOffsetFromDisplayName(string displayName)
+    {
+        // DisplayName format: "(UTC-05:00) Eastern Time (US & Canada)"
+        var idx = displayName.IndexOf(')');
+        if (idx >= 0 && idx + 1 < displayName.Length)
+            return displayName[(idx + 1)..].Trim();
+        return displayName;
     }
 
     /// <summary>
@@ -371,10 +558,11 @@ public class SharpTSIntlDateTimeFormat
         var result = new Dictionary<string, object?>
         {
             ["locale"] = _locale,
-            ["numberingSystem"] = "latn",
-            ["calendar"] = "gregory",
+            ["numberingSystem"] = _numberingSystem,
+            ["calendar"] = _calendar,
         };
 
+        if (_hourCycle != null) result["hourCycle"] = _hourCycle;
         if (_dateStyle != null) result["dateStyle"] = _dateStyle;
         if (_timeStyle != null) result["timeStyle"] = _timeStyle;
         if (_year != null) result["year"] = _year;
@@ -397,7 +585,7 @@ public class SharpTSIntlDateTimeFormat
     /// Converts a JS date value to DateTime.
     /// Handles DateTime, double (epoch ms), string, SharpTSDate, and emitted $TSDate (via reflection).
     /// </summary>
-    private static DateTime ToDateTime(object? value)
+    internal static DateTime ToDateTime(object? value)
     {
         if (value == null) return DateTime.Now;
         if (value is DateTime dt) return dt;
@@ -437,6 +625,247 @@ public class SharpTSIntlDateTimeFormat
         return GetResolvedOptions();
     }
 
+    #region formatToParts
+
+    /// <summary>
+    /// Formats a date and returns an array of parts with type and value.
+    /// Internal name differs from JS name to avoid AmbiguousMatchException in GetFieldsProperty.
+    /// </summary>
+    public List<Dictionary<string, object?>> FormatDateToParts(DateTime dateTime)
+    {
+        dateTime = ApplyTimeZone(dateTime);
+        var parts = new List<Dictionary<string, object?>>();
+
+        // Walk the format string and decompose into typed parts
+        var fmt = _formatString;
+        int pos = 0;
+        while (pos < fmt.Length)
+        {
+            // Quoted literal (includes sentinel markers like 'NWKD' and 'NMTH')
+            if (fmt[pos] == '\'')
+            {
+                int end = fmt.IndexOf('\'', pos + 1);
+                if (end < 0) end = fmt.Length;
+                string literal = fmt[(pos + 1)..end];
+
+                // Check for sentinel markers
+                if (literal == NarrowWeekdayOutput)
+                {
+                    var abbrevDay = _dtfi.GetAbbreviatedDayName(dateTime.DayOfWeek);
+                    parts.Add(MakePart("weekday", abbrevDay.Length > 0 ? abbrevDay[..1] : ""));
+                }
+                else if (literal == NarrowMonthOutput)
+                {
+                    var abbrevMonth = _dtfi.GetAbbreviatedMonthName(dateTime.Month);
+                    parts.Add(MakePart("month", abbrevMonth.Length > 0 ? abbrevMonth[..1] : ""));
+                }
+                else if (literal.Length > 0)
+                {
+                    parts.Add(MakePart("literal", literal));
+                }
+
+                pos = end + 1;
+                continue;
+            }
+
+            char c = fmt[pos];
+            if (IsFormatSpecChar(c))
+            {
+                // Consume consecutive same chars
+                int start = pos;
+                while (pos < fmt.Length && fmt[pos] == c) pos++;
+                string spec = fmt[start..pos];
+                string type = ClassifySpecifier(spec);
+                string value = dateTime.ToString(spec, _dtfi);
+                parts.Add(MakePart(type, value));
+            }
+            else
+            {
+                // Literal character(s)
+                int start = pos;
+                while (pos < fmt.Length && !IsFormatSpecChar(fmt[pos]) && fmt[pos] != '\'')
+                    pos++;
+                parts.Add(MakePart("literal", fmt[start..pos]));
+            }
+        }
+
+        // Apply numbering system digit substitution to part values
+        if (_numberingSystem != "latn" && NumberingSystemBaseDigits.TryGetValue(_numberingSystem, out var baseDigit))
+        {
+            foreach (var part in parts)
+            {
+                if (part["value"] is string val)
+                    part["value"] = SubstituteDigits(val, baseDigit);
+            }
+        }
+
+        return parts;
+    }
+
+    private static bool IsFormatSpecChar(char c) =>
+        c is 'y' or 'M' or 'd' or 'H' or 'h' or 'm' or 's' or 'f' or 'F' or 't' or 'g' or 'K' or 'z';
+
+    private static string ClassifySpecifier(string spec) => spec[0] switch
+    {
+        'y' => "year",
+        'M' => "month",
+        'd' when spec.Length >= 3 => "weekday",  // ddd or dddd
+        'd' => "day",
+        'H' or 'h' => "hour",
+        'm' => "minute",
+        's' => "second",
+        'f' or 'F' => "fractionalSecond",
+        't' => "dayPeriod",
+        'g' => "era",
+        'K' or 'z' => "timeZoneName",
+        _ => "literal"
+    };
+
+    private static Dictionary<string, object?> MakePart(string type, string value) =>
+        new() { ["type"] = type, ["value"] = value };
+
+    /// <summary>
+    /// JS-facing formatToParts method for compiled mode reflection dispatch.
+    /// Returns List&lt;object?&gt; containing Dictionary&lt;string,object?&gt; for compiled mode compatibility.
+    /// </summary>
+    public object? formatToParts(object? date)
+    {
+        DateTime dt = ToDateTime(date);
+        var parts = FormatDateToParts(dt);
+        var items = new List<object?>();
+        foreach (var p in parts)
+            items.Add((object?)p);
+        return items;
+    }
+
+    #endregion
+
+    #region formatRange / formatRangeToParts
+
+    /// <summary>
+    /// Formats a date range. Internal name differs to avoid AmbiguousMatchException.
+    /// </summary>
+    public string FormatDateRange(DateTime start, DateTime end)
+    {
+        start = ApplyTimeZone(start);
+        end = ApplyTimeZone(end);
+
+        // If same date/time, return single format
+        if (start == end)
+            return FormatDate(start);
+
+        string startStr = FormatSingle(start);
+        string endStr = FormatSingle(end);
+
+        // Find common prefix/suffix and build range
+        return startStr + " \u2013 " + endStr;
+    }
+
+    /// <summary>
+    /// Formats a date range and returns typed parts with source attribution.
+    /// Internal name differs to avoid AmbiguousMatchException.
+    /// </summary>
+    public List<Dictionary<string, object?>> FormatDateRangeToParts(DateTime start, DateTime end)
+    {
+        start = ApplyTimeZone(start);
+        end = ApplyTimeZone(end);
+
+        var result = new List<Dictionary<string, object?>>();
+
+        if (start == end)
+        {
+            // Same date — all parts are "shared"
+            var parts = FormatDateToParts(start);
+            foreach (var p in parts)
+            {
+                p["source"] = "shared";
+                result.Add(p);
+            }
+            return result;
+        }
+
+        // Get parts for both dates
+        var startParts = FormatDateToParts(start);
+        var endParts = FormatDateToParts(end);
+
+        // Mark start parts
+        foreach (var p in startParts)
+        {
+            p["source"] = "startRange";
+            result.Add(p);
+        }
+
+        // Add range separator
+        result.Add(new Dictionary<string, object?>
+        {
+            ["type"] = "literal",
+            ["value"] = " \u2013 ",
+            ["source"] = "shared"
+        });
+
+        // Mark end parts
+        foreach (var p in endParts)
+        {
+            p["source"] = "endRange";
+            result.Add(p);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Format a single date without timezone name suffix (for range composition).
+    /// </summary>
+    private string FormatSingle(DateTime dateTime)
+    {
+        string result = dateTime.ToString(_formatString, _dtfi);
+
+        if (result.Contains(NarrowWeekdaySentinel))
+        {
+            var abbrevDay = _dtfi.GetAbbreviatedDayName(dateTime.DayOfWeek);
+            result = result.Replace(NarrowWeekdaySentinel, abbrevDay.Length > 0 ? abbrevDay[..1] : "");
+        }
+        if (result.Contains(NarrowMonthSentinel))
+        {
+            var abbrevMonth = _dtfi.GetAbbreviatedMonthName(dateTime.Month);
+            result = result.Replace(NarrowMonthSentinel, abbrevMonth.Length > 0 ? abbrevMonth[..1] : "");
+        }
+
+        if (_numberingSystem != "latn" && NumberingSystemBaseDigits.TryGetValue(_numberingSystem, out var baseDigit))
+        {
+            result = SubstituteDigits(result, baseDigit);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// JS-facing formatRange method for compiled mode reflection dispatch.
+    /// </summary>
+    public object? formatRange(object? start, object? end)
+    {
+        DateTime startDt = ToDateTime(start);
+        DateTime endDt = ToDateTime(end);
+        return FormatDateRange(startDt, endDt);
+    }
+
+    /// <summary>
+    /// JS-facing formatRangeToParts method for compiled mode reflection dispatch.
+    /// Returns List&lt;object?&gt; containing Dictionary&lt;string,object?&gt; for compiled mode compatibility.
+    /// </summary>
+    public object? formatRangeToParts(object? start, object? end)
+    {
+        DateTime startDt = ToDateTime(start);
+        DateTime endDt = ToDateTime(end);
+        var parts = FormatDateRangeToParts(startDt, endDt);
+        var items = new List<object?>();
+        foreach (var p in parts)
+            items.Add((object?)p);
+        return items;
+    }
+
+    #endregion
+
     /// <summary>
     /// Gets a member (method) by name for interpreter dispatch.
     /// </summary>
@@ -452,6 +881,31 @@ public class SharpTSIntlDateTimeFormat
             "resolvedOptions" => new BuiltInMethod("resolvedOptions", 0, (_, _, _) =>
             {
                 return new SharpTSObject(GetResolvedOptions());
+            }),
+            "formatToParts" => new BuiltInMethod("formatToParts", 1, (_, _, args) =>
+            {
+                DateTime dt = ToDateTime(args.Count > 0 ? args[0] : null);
+                var parts = FormatDateToParts(dt);
+                var items = new List<object?>();
+                foreach (var p in parts)
+                    items.Add(new SharpTSObject(p));
+                return new SharpTSArray(items);
+            }),
+            "formatRange" => new BuiltInMethod("formatRange", 2, (_, _, args) =>
+            {
+                DateTime startDt = ToDateTime(args.Count > 0 ? args[0] : null);
+                DateTime endDt = ToDateTime(args.Count > 1 ? args[1] : null);
+                return FormatDateRange(startDt, endDt);
+            }),
+            "formatRangeToParts" => new BuiltInMethod("formatRangeToParts", 2, (_, _, args) =>
+            {
+                DateTime startDt = ToDateTime(args.Count > 0 ? args[0] : null);
+                DateTime endDt = ToDateTime(args.Count > 1 ? args[1] : null);
+                var parts = FormatDateRangeToParts(startDt, endDt);
+                var items = new List<object?>();
+                foreach (var p in parts)
+                    items.Add(new SharpTSObject(p));
+                return new SharpTSArray(items);
             }),
             _ => null
         };
