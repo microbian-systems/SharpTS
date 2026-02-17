@@ -191,6 +191,7 @@ public sealed class BuiltInRegistry
         RegisterUrlTypes(registry);
         RegisterIntlNamespace(registry);
         RegisterIntlNumberFormatType(registry);
+        RegisterIntlDateTimeFormatType(registry);
 
         return registry;
     }
@@ -986,6 +987,12 @@ public sealed class BuiltInRegistry
                     var options = args.Count > 1 ? args[1] : null;
                     return new SharpTSIntlNumberFormat(locale, options);
                 }),
+                "DateTimeFormat" => new BuiltInMethod("DateTimeFormat", 0, 2, (_, _, args) =>
+                {
+                    var locale = args.Count > 0 ? args[0] : null;
+                    var options = args.Count > 1 ? args[1] : null;
+                    return new SharpTSIntlDateTimeFormat(locale, options);
+                }),
                 _ => null
             }
         ));
@@ -995,6 +1002,12 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterInstanceType(typeof(SharpTSIntlNumberFormat), (instance, name) =>
             ((SharpTSIntlNumberFormat)instance).GetMember(name));
+    }
+
+    private static void RegisterIntlDateTimeFormatType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSIntlDateTimeFormat), (instance, name) =>
+            ((SharpTSIntlDateTimeFormat)instance).GetMember(name));
     }
 
     private static string Stringify(object? obj)

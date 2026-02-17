@@ -279,6 +279,13 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new Intl.DateTimeFormat(locale?, options?) constructor
+        if (namespaceParts is ["Intl"] && className == "DateTimeFormat")
+        {
+            EmitNewIntlDateTimeFormat(n.Arguments);
+            return;
+        }
+
         // Special case: new util.TextEncoder() or new util.TextDecoder() (module-qualified)
         if (namespaceParts.Count == 1 && className == "TextEncoder")
         {
@@ -1285,6 +1292,34 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateIntlNumberFormat);
+        SetStackUnknown();
+    }
+
+    private void EmitNewIntlDateTimeFormat(List<Expr> arguments)
+    {
+        // Emit locale argument (or null)
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        // Emit options argument (or null)
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateIntlDateTimeFormat);
         SetStackUnknown();
     }
 

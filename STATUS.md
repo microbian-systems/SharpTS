@@ -239,6 +239,7 @@ This document tracks TypeScript language features and their implementation statu
 | `TextEncoder`/`TextDecoder` | ✅ | `TextEncoder.encode(string)` → `Uint8Array`; `TextDecoder.decode(buffer)` → `string`; UTF-8 encoding/decoding |
 | `console` methods | ✅ | `log`, `error`, `warn`, `info`, `debug`, `clear`, `time`/`timeEnd`/`timeLog`, `assert`, `count`/`countReset`, `table`, `dir`, `group`/`groupCollapsed`/`groupEnd`, `trace` |
 | `Intl.NumberFormat` | ✅ | Locale-aware number/currency/percent formatting; `format()`, `resolvedOptions()`; options: style, currency, minimumFractionDigits, maximumFractionDigits, minimumIntegerDigits, useGrouping |
+| `Intl.DateTimeFormat` | ✅ | Locale-aware date/time formatting; `format()`, `resolvedOptions()`; options: dateStyle, timeStyle, year, month, day, weekday, hour, minute, second, hour12, timeZone, timeZoneName, era, fractionalSecondDigits |
 
 ---
 
@@ -327,6 +328,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | `WeakRef` | ✅ | `new WeakRef(target)`, `.deref()` |
 | `FinalizationRegistry` | ❌ | No GC finalization callbacks |
 | `Intl.NumberFormat` | ✅ | See Section 10 |
+| `Intl.DateTimeFormat` | ✅ | See Section 10 |
 
 ### Global Functions
 

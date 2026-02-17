@@ -48,4 +48,41 @@ public static partial class RuntimeTypes
     }
 
     #endregion
+
+    #region Intl.DateTimeFormat Support
+
+    /// <summary>
+    /// Creates a new Intl.DateTimeFormat instance from locale and options arguments.
+    /// Called from compiled code via reflection for standalone DLL compatibility.
+    /// </summary>
+    public static object CreateIntlDateTimeFormat(object? locale, object? options)
+    {
+        return new SharpTSIntlDateTimeFormat(locale, options);
+    }
+
+    /// <summary>
+    /// Calls format() on an Intl.DateTimeFormat instance.
+    /// </summary>
+    public static object? IntlDateTimeFormatFormat(object? formatter, object? date)
+    {
+        if (formatter is SharpTSIntlDateTimeFormat dtf)
+        {
+            return dtf.format(date);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Calls resolvedOptions() on an Intl.DateTimeFormat instance.
+    /// </summary>
+    public static object? IntlDateTimeFormatResolvedOptions(object? formatter)
+    {
+        if (formatter is SharpTSIntlDateTimeFormat dtf)
+        {
+            return new SharpTSObject(dtf.GetResolvedOptions());
+        }
+        return null;
+    }
+
+    #endregion
 }

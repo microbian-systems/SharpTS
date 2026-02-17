@@ -1678,6 +1678,13 @@ public partial class AsyncGeneratorMoveNextEmitter
             return;
         }
 
+        // Special case: new Intl.DateTimeFormat(locale?, options?) constructor
+        if (namespaceParts is ["Intl"] && className == "DateTimeFormat")
+        {
+            EmitNewIntlDateTimeFormat(n.Arguments);
+            return;
+        }
+
         // Resolve class name (may be qualified for namespace classes or multi-module compilation)
         string resolvedClassName;
         if (namespaceParts.Count > 0)
@@ -1764,6 +1771,32 @@ public partial class AsyncGeneratorMoveNextEmitter
         }
 
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateIntlNumberFormat);
+        SetStackUnknown();
+    }
+
+    private void EmitNewIntlDateTimeFormat(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EnsureBoxed();
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldnull);
+        }
+
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EnsureBoxed();
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldnull);
+        }
+
+        _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateIntlDateTimeFormat);
         SetStackUnknown();
     }
 
