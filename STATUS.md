@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-22 (Added `Intl.Collator`, `Intl.PluralRules`, `Intl.RelativeTimeFormat`, `Intl.ListFormat` with full interpreter and compiler support)
+**Last Updated:** 2026-02-22 (Added `Intl.Segmenter`, `Intl.DisplayNames` with full interpreter and compiler support)
 
 ## Legend
 - ✅ Implemented
@@ -244,6 +244,8 @@ This document tracks TypeScript language features and their implementation statu
 | `Intl.PluralRules` | ✅ | Plural category selection (CLDR rules); `select()`, `resolvedOptions()`; options: type (cardinal/ordinal); categories: zero, one, two, few, many, other |
 | `Intl.RelativeTimeFormat` | ✅ | Locale-aware relative time formatting; `format()`, `formatToParts()`, `resolvedOptions()`; options: style (long/short/narrow), numeric (always/auto); units: year, quarter, month, week, day, hour, minute, second |
 | `Intl.ListFormat` | ✅ | Locale-aware list formatting; `format()`, `formatToParts()`, `resolvedOptions()`; options: style (long/short/narrow), type (conjunction/disjunction/unit) |
+| `Intl.Segmenter` | ✅ | Unicode text segmentation; `segment()` returns iterable Segments with `containing()`; options: granularity (grapheme/word/sentence); segment data: segment, index, input, isWordLike |
+| `Intl.DisplayNames` | ✅ | Locale-aware display names; `of()`, `resolvedOptions()`; types: language, region, script, currency, calendar, dateTimeField; options: style, fallback (code/none), languageDisplay |
 
 ---
 
@@ -337,6 +339,8 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | `Intl.PluralRules` | ✅ | See Section 10 |
 | `Intl.RelativeTimeFormat` | ✅ | See Section 10 |
 | `Intl.ListFormat` | ✅ | See Section 10 |
+| `Intl.Segmenter` | ✅ | See Section 10 |
+| `Intl.DisplayNames` | ✅ | See Section 10 |
 
 ### Global Functions
 

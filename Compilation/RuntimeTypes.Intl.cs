@@ -246,4 +246,58 @@ public static partial class RuntimeTypes
     }
 
     #endregion
+
+    #region Intl.DisplayNames Support
+
+    public static object CreateIntlDisplayNames(object? locale, object? options)
+    {
+        return new SharpTSIntlDisplayNames(locale, options);
+    }
+
+    public static object? IntlDisplayNamesOf(object? instance, object? code)
+    {
+        if (instance is SharpTSIntlDisplayNames dn)
+        {
+            return dn.of(code);
+        }
+        return null;
+    }
+
+    public static object? IntlDisplayNamesResolvedOptions(object? instance)
+    {
+        if (instance is SharpTSIntlDisplayNames dn)
+        {
+            return new SharpTSObject(dn.GetResolvedOptions());
+        }
+        return null;
+    }
+
+    #endregion
+
+    #region Intl.Segmenter Support
+
+    public static object CreateIntlSegmenter(object? locale, object? options)
+    {
+        return new SharpTSIntlSegmenter(locale, options);
+    }
+
+    public static object? IntlSegmenterSegment(object? instance, object? input)
+    {
+        if (instance is SharpTSIntlSegmenter seg)
+        {
+            return seg.segment(input);
+        }
+        return null;
+    }
+
+    public static object? IntlSegmenterResolvedOptions(object? instance)
+    {
+        if (instance is SharpTSIntlSegmenter seg)
+        {
+            return new SharpTSObject(seg.GetResolvedOptions());
+        }
+        return null;
+    }
+
+    #endregion
 }

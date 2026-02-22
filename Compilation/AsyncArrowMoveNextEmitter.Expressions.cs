@@ -599,6 +599,42 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
+        if (namespaceParts is ["Intl"] && className == "Collator")
+        {
+            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlCollator);
+            return;
+        }
+
+        if (namespaceParts is ["Intl"] && className == "PluralRules")
+        {
+            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlPluralRules);
+            return;
+        }
+
+        if (namespaceParts is ["Intl"] && className == "RelativeTimeFormat")
+        {
+            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlRelativeTimeFormat);
+            return;
+        }
+
+        if (namespaceParts is ["Intl"] && className == "ListFormat")
+        {
+            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlListFormat);
+            return;
+        }
+
+        if (namespaceParts is ["Intl"] && className == "Segmenter")
+        {
+            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlSegmenter);
+            return;
+        }
+
+        if (namespaceParts is ["Intl"] && className == "DisplayNames")
+        {
+            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlDisplayNames);
+            return;
+        }
+
         // Resolve class name
         string resolvedClassName;
         if (namespaceParts.Count > 0)
@@ -700,6 +736,32 @@ public partial class AsyncArrowMoveNextEmitter
         }
 
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateIntlDateTimeFormat);
+        SetStackUnknown();
+    }
+
+    private void EmitNewIntlConstructor(List<Expr> arguments, System.Reflection.Emit.MethodBuilder createMethod)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EnsureBoxed();
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldnull);
+        }
+
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EnsureBoxed();
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldnull);
+        }
+
+        _il.Emit(OpCodes.Call, createMethod);
         SetStackUnknown();
     }
 

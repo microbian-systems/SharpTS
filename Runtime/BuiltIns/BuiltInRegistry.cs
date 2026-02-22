@@ -196,6 +196,8 @@ public sealed class BuiltInRegistry
         RegisterIntlPluralRulesType(registry);
         RegisterIntlRelativeTimeFormatType(registry);
         RegisterIntlListFormatType(registry);
+        RegisterIntlSegmenterType(registry);
+        RegisterIntlDisplayNamesType(registry);
 
         return registry;
     }
@@ -1021,6 +1023,18 @@ public sealed class BuiltInRegistry
                     var options = args.Count > 1 ? args[1] : null;
                     return new SharpTSIntlListFormat(locale, options);
                 }),
+                "Segmenter" => new BuiltInMethod("Segmenter", 0, 2, (_, _, args) =>
+                {
+                    var locale = args.Count > 0 ? args[0] : null;
+                    var options = args.Count > 1 ? args[1] : null;
+                    return new SharpTSIntlSegmenter(locale, options);
+                }),
+                "DisplayNames" => new BuiltInMethod("DisplayNames", 0, 2, (_, _, args) =>
+                {
+                    var locale = args.Count > 0 ? args[0] : null;
+                    var options = args.Count > 1 ? args[1] : null;
+                    return new SharpTSIntlDisplayNames(locale, options);
+                }),
                 _ => null
             }
         ));
@@ -1060,6 +1074,20 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterInstanceType(typeof(SharpTSIntlListFormat), (instance, name) =>
             ((SharpTSIntlListFormat)instance).GetMember(name));
+    }
+
+    private static void RegisterIntlSegmenterType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSIntlSegmenter), (instance, name) =>
+            ((SharpTSIntlSegmenter)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSIntlSegments), (instance, name) =>
+            ((SharpTSIntlSegments)instance).GetMember(name));
+    }
+
+    private static void RegisterIntlDisplayNamesType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSIntlDisplayNames), (instance, name) =>
+            ((SharpTSIntlDisplayNames)instance).GetMember(name));
     }
 
     private static string Stringify(object? obj)

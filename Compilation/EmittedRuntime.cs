@@ -1501,6 +1501,16 @@ public class EmittedRuntime
     public MethodBuilder IntlListFormatFormatToParts { get; set; } = null!;
     public MethodBuilder IntlListFormatResolvedOptions { get; set; } = null!;
 
+    // Intl.DisplayNames support
+    public MethodBuilder CreateIntlDisplayNames { get; set; } = null!;
+    public MethodBuilder IntlDisplayNamesOf { get; set; } = null!;
+    public MethodBuilder IntlDisplayNamesResolvedOptions { get; set; } = null!;
+
+    // Intl.Segmenter support
+    public MethodBuilder CreateIntlSegmenter { get; set; } = null!;
+    public MethodBuilder IntlSegmenterSegment { get; set; } = null!;
+    public MethodBuilder IntlSegmenterResolvedOptions { get; set; } = null!;
+
     // Assert module - emitted $AssertionError type for standalone assemblies
     // NOTE: Must stay in sync with AssertionError in AssertModuleInterpreter.cs
     public TypeBuilder TSAssertionErrorType { get; set; } = null!;

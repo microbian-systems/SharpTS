@@ -674,6 +674,8 @@ public partial class Interpreter
             SharpTSIterator iter => iter.Elements,
             SharpTSGenerator gen => gen,                   // generators implement IEnumerable<object?>
             string s => s.Select(c => (object?)c.ToString()),
+            List<object?> list => list,                    // plain List<object?>
+            IEnumerable<object?> enumerable => enumerable, // IEnumerable<object?> (e.g., SharpTSIntlSegments)
             _ => throw new InterpreterException("for...of requires an iterable (array, Map, Set, or iterator).")
         };
 
@@ -874,6 +876,8 @@ public partial class Interpreter
             SharpTSIterator iter => iter.Elements,
             SharpTSGenerator gen => gen,                   // generators implement IEnumerable<object?>
             string s => s.Select(c => (object?)c.ToString()),
+            List<object?> list => list,                    // plain List<object?>
+            IEnumerable<object?> enumerable => enumerable, // IEnumerable<object?> (e.g., SharpTSIntlSegments)
             null => throw new InterpreterException("Cannot spread null or undefined."),
             _ => throw new InterpreterException($"Value of type '{value.GetType().Name}' is not iterable. Expected an array, string, Map, Set, generator, or object with [Symbol.iterator].")
         };

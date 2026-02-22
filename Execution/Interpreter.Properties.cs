@@ -369,6 +369,12 @@ public partial class Interpreter
     /// </summary>
     private object? EvaluateGetOnFallback(object? obj, string memberName)
     {
+        // Handle plain Dictionary<string, object?> objects (e.g., segment items from Intl.Segments)
+        if (obj is IDictionary<string, object?> dict)
+        {
+            return dict.TryGetValue(memberName, out var val) ? val : SharpTSUndefined.Instance;
+        }
+
         // Handle objects that implement ISharpTSPropertyAccessor (e.g., SharpTSTemplateStringsArray)
         // Only return if the accessor has this property, otherwise fall through to built-ins
         if (obj is ISharpTSPropertyAccessor accessor && accessor.HasProperty(memberName))

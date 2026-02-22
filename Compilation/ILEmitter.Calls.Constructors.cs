@@ -314,6 +314,20 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new Intl.Segmenter(locale?, options?) constructor
+        if (namespaceParts is ["Intl"] && className == "Segmenter")
+        {
+            EmitNewIntlSegmenter(n.Arguments);
+            return;
+        }
+
+        // Special case: new Intl.DisplayNames(locale?, options?) constructor
+        if (namespaceParts is ["Intl"] && className == "DisplayNames")
+        {
+            EmitNewIntlDisplayNames(n.Arguments);
+            return;
+        }
+
         // Special case: new util.TextEncoder() or new util.TextDecoder() (module-qualified)
         if (namespaceParts.Count == 1 && className == "TextEncoder")
         {
@@ -1452,6 +1466,58 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateIntlListFormat);
+        SetStackUnknown();
+    }
+
+    private void EmitNewIntlSegmenter(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateIntlSegmenter);
+        SetStackUnknown();
+    }
+
+    private void EmitNewIntlDisplayNames(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateIntlDisplayNames);
         SetStackUnknown();
     }
 

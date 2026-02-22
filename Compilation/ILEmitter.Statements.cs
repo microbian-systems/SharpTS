@@ -432,6 +432,15 @@ public partial class ILEmitter
         // ===== Index-based fallback (for arrays, strings, etc.) =====
         builder.MarkLabel(indexBasedLabel);
         {
+            // Normalize iterable to List<object> via IterateToList so IEnumerable types
+            // (e.g. Intl.Segments) are properly materialized before index-based iteration
+            IL.Emit(OpCodes.Ldloc, iterableLocal);
+            IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.SymbolIterator);
+            IL.Emit(OpCodes.Ldtoken, _ctx.Runtime!.RuntimeType);
+            IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Type, "GetTypeFromHandle"));
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.IterateToList);
+            IL.Emit(OpCodes.Stloc, iterableLocal);
+
             var startLabel = builder.DefineLabel("forof_idx_start");
             var endLabel = builder.DefineLabel("forof_idx_end");
             var continueLabel = builder.DefineLabel("forof_idx_continue");

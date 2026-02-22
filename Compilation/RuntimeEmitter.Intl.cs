@@ -38,6 +38,14 @@ public partial class RuntimeEmitter
         EmitIntlListFormatFormat(typeBuilder, runtime);
         EmitIntlListFormatFormatToParts(typeBuilder, runtime);
         EmitIntlListFormatResolvedOptions(typeBuilder, runtime);
+
+        EmitCreateIntlDisplayNames(typeBuilder, runtime);
+        EmitIntlDisplayNamesOf(typeBuilder, runtime);
+        EmitIntlDisplayNamesResolvedOptions(typeBuilder, runtime);
+
+        EmitCreateIntlSegmenter(typeBuilder, runtime);
+        EmitIntlSegmenterSegment(typeBuilder, runtime);
+        EmitIntlSegmenterResolvedOptions(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -491,6 +499,40 @@ public partial class RuntimeEmitter
     private void EmitIntlListFormatResolvedOptions(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         runtime.IntlListFormatResolvedOptions = EmitReflectionHelper(typeBuilder, "IntlListFormatResolvedOptions", 1);
+    }
+
+    // ========== Intl.DisplayNames ==========
+
+    private void EmitCreateIntlDisplayNames(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.CreateIntlDisplayNames = EmitReflectionHelper(typeBuilder, "CreateIntlDisplayNames", 2);
+    }
+
+    private void EmitIntlDisplayNamesOf(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlDisplayNamesOf = EmitReflectionHelper(typeBuilder, "IntlDisplayNamesOf", 2);
+    }
+
+    private void EmitIntlDisplayNamesResolvedOptions(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlDisplayNamesResolvedOptions = EmitReflectionHelper(typeBuilder, "IntlDisplayNamesResolvedOptions", 1);
+    }
+
+    // ========== Intl.Segmenter ==========
+
+    private void EmitCreateIntlSegmenter(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.CreateIntlSegmenter = EmitReflectionHelper(typeBuilder, "CreateIntlSegmenter", 2);
+    }
+
+    private void EmitIntlSegmenterSegment(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlSegmenterSegment = EmitReflectionHelper(typeBuilder, "IntlSegmenterSegment", 2);
+    }
+
+    private void EmitIntlSegmenterResolvedOptions(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlSegmenterResolvedOptions = EmitReflectionHelper(typeBuilder, "IntlSegmenterResolvedOptions", 1);
     }
 
     // ========== Helper ==========
