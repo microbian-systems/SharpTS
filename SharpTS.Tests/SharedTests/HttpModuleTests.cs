@@ -6,8 +6,21 @@ namespace SharpTS.Tests.SharedTests;
 /// <summary>
 /// Tests for HTTP module and fetch API.
 /// </summary>
-public class HttpModuleTests
+public class HttpModuleTests : IDisposable
 {
+    private readonly MockHttpServer _server;
+
+    public HttpModuleTests()
+    {
+        _server = new MockHttpServer();
+        _server.AddStatusRoute("/status/200", 200, "OK");
+        _server.AddJsonRoute("/json", new { message = "Hello", count = 42 });
+        _server.AddTextRoute("/text", "Some text content");
+        _server.AddEchoRoute("/post");
+        _server.Start();
+    }
+
+    public void Dispose() => _server.Dispose();
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void FetchIsGlobal(ExecutionMode mode)
@@ -144,19 +157,12 @@ public class HttpModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void FetchResponseProperties(ExecutionMode mode)
     {
-        // Test Response properties - use a mock/local test
-        // Note: This test requires network access
-        var source = """
+        // Test Response properties
+        var source = $$"""
             async function test(): Promise<void> {
-                try {
-                    const res = await fetch('https://httpbin.org/status/200');
-                    console.log(res.ok);
-                    console.log(res.status);
-                } catch (e) {
-                    // Skip if network unavailable
-                    console.log(true);
-                    console.log(200);
-                }
+                const res = await fetch('{{_server.BaseUrl}}status/200');
+                console.log(res.ok);
+                console.log(res.status);
             }
             test();
             """;
@@ -169,16 +175,11 @@ public class HttpModuleTests
     public void FetchJsonMethod(ExecutionMode mode)
     {
         // Test Response.json() method
-        var source = """
+        var source = $$"""
             async function test(): Promise<void> {
-                try {
-                    const res = await fetch('https://httpbin.org/json');
-                    const data = await res.json();
-                    console.log(typeof data);
-                } catch (e) {
-                    // Skip if network unavailable
-                    console.log('object');
-                }
+                const res = await fetch('{{_server.BaseUrl}}json');
+                const data = await res.json();
+                console.log(typeof data);
             }
             test();
             """;
@@ -191,16 +192,11 @@ public class HttpModuleTests
     public void FetchTextMethod(ExecutionMode mode)
     {
         // Test Response.text() method
-        var source = """
+        var source = $$"""
             async function test(): Promise<void> {
-                try {
-                    const res = await fetch('https://httpbin.org/robots.txt');
-                    const text = await res.text();
-                    console.log(typeof text);
-                } catch (e) {
-                    // Skip if network unavailable
-                    console.log('string');
-                }
+                const res = await fetch('{{_server.BaseUrl}}text');
+                const text = await res.text();
+                console.log(typeof text);
             }
             test();
             """;
@@ -213,25 +209,22 @@ public class HttpModuleTests
     public void FetchWithPost(ExecutionMode mode)
     {
         // Test POST request with body
-        var source = """
+        var source = $$"""
             async function test(): Promise<void> {
-                try {
-                    const res = await fetch('https://httpbin.org/post', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ test: 123 })
-                    });
-                    const data = await res.json();
-                    console.log(data.json.test);
-                } catch (e) {
-                    // Skip if network unavailable
-                    console.log(123);
-                }
+                const res = await fetch('{{_server.BaseUrl}}post', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ test: 123 })
+                });
+                const data = await res.json();
+                console.log(data.method);
+                const parsed = JSON.parse(data.body);
+                console.log(parsed.test);
             }
             test();
             """;
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("123\n", output);
+        Assert.Equal("POST\n123\n", output);
     }
 
     [Theory]
