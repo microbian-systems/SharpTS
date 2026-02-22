@@ -350,6 +350,7 @@ public partial class RuntimeEmitter
         var tryIteratorLabel = il.DefineLabel();
         var collectLoopLabel = il.DefineLabel();
         var collectDoneLabel = il.DefineLabel();
+        var tryBufferLabel = il.DefineLabel();
         var throwLabel = il.DefineLabel();
 
         // Create result list
@@ -499,7 +500,7 @@ public partial class RuntimeEmitter
             // Check if obj is IEnumerable
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Isinst, _types.IEnumerable);
-            il.Emit(OpCodes.Brfalse, throwLabel);
+            il.Emit(OpCodes.Brfalse, tryBufferLabel);
 
             // Get enumerator: enumerator = ((IEnumerable)obj).GetEnumerator()
             il.Emit(OpCodes.Ldarg_0);
@@ -520,6 +521,55 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Br, enumLoopLabel);
 
             il.MarkLabel(enumDoneLabel);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // 6. Check for $Buffer — iterate bytes as doubles (matches interpreter's SharpTSBuffer handling)
+        il.MarkLabel(tryBufferLabel);
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSBufferType);
+            il.Emit(OpCodes.Brfalse, throwLabel);
+
+            // byte[] data = (($Buffer)obj).GetData()
+            var bufDataLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TSBufferType);
+            il.Emit(OpCodes.Callvirt, runtime.TSBufferGetData);
+            il.Emit(OpCodes.Stloc, bufDataLocal);
+
+            // for (int i = 0; i < data.Length; i++) result.Add((double)data[i])
+            var bufIdxLocal = il.DeclareLocal(_types.Int32);
+            var bufLoopStart = il.DefineLabel();
+            var bufLoopEnd = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, bufIdxLocal);
+
+            il.MarkLabel(bufLoopStart);
+            il.Emit(OpCodes.Ldloc, bufIdxLocal);
+            il.Emit(OpCodes.Ldloc, bufDataLocal);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Bge, bufLoopEnd);
+
+            // result.Add((object)(double)data[i])
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, bufDataLocal);
+            il.Emit(OpCodes.Ldloc, bufIdxLocal);
+            il.Emit(OpCodes.Ldelem_U1);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+            il.Emit(OpCodes.Ldloc, bufIdxLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, bufIdxLocal);
+            il.Emit(OpCodes.Br, bufLoopStart);
+
+            il.MarkLabel(bufLoopEnd);
             il.Emit(OpCodes.Ldloc, resultLocal);
             il.Emit(OpCodes.Ret);
         }
