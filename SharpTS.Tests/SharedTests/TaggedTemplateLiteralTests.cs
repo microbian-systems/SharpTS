@@ -1,31 +1,19 @@
 using SharpTS.Tests.Infrastructure;
 using Xunit;
 
-namespace SharpTS.Tests;
+namespace SharpTS.Tests.SharedTests;
 
 /// <summary>
 /// Tests for tagged template literal support (ES2018).
+/// Runs against both interpreter and compiler.
 /// </summary>
 public class TaggedTemplateLiteralTests
 {
-    private static void AssertOutput(string source, params string[] expectedLines)
-    {
-        var expected = string.Join("\n", expectedLines);
-        var actual = TestHarness.RunInterpreted(source).Trim();
-        Assert.Equal(expected, actual);
-    }
-
-    private static void AssertCompiledOutput(string source, params string[] expectedLines)
-    {
-        var expected = string.Join("\n", expectedLines);
-        var actual = TestHarness.RunCompiled(source).Trim();
-        Assert.Equal(expected, actual);
-    }
-
     #region Basic Tagged Templates
 
-    [Fact]
-    public void Basic_TaggedTemplate_CallsTagFunction()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Basic_TaggedTemplate_CallsTagFunction(ExecutionMode mode)
     {
         var code = """
             let received: any[] = [];
@@ -38,11 +26,13 @@ public class TaggedTemplateLiteralTests
             console.log(received[0].length);
             console.log(received[0][0]);
             """;
-        AssertOutput(code, "tagged", "1", "hello");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("tagged\n1\nhello", output);
     }
 
-    [Fact]
-    public void Basic_TaggedTemplate_WithInterpolation()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Basic_TaggedTemplate_WithInterpolation(ExecutionMode mode)
     {
         var code = """
             function tag(strings: any, ...values: any[]): string {
@@ -52,11 +42,13 @@ public class TaggedTemplateLiteralTests
             const result = tag`hello ${name}!`;
             console.log(result);
             """;
-        AssertOutput(code, "hello _!:world");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("hello _!:world", output);
     }
 
-    [Fact]
-    public void Basic_TaggedTemplate_MultipleInterpolations()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Basic_TaggedTemplate_MultipleInterpolations(ExecutionMode mode)
     {
         var code = """
             function tag(strings: any, ...values: any[]): string {
@@ -75,15 +67,17 @@ public class TaggedTemplateLiteralTests
             const result = tag`a=${a}, b=${b}, c=${c}`;
             console.log(result);
             """;
-        AssertOutput(code, "a=[1], b=[2], c=[3]");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("a=[1], b=[2], c=[3]", output);
     }
 
     #endregion
 
     #region Raw Strings
 
-    [Fact]
-    public void Raw_Property_PreservesBackslashes()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Raw_Property_PreservesBackslashes(ExecutionMode mode)
     {
         var code = """
             function tag(strings: any, ...values: any[]): string {
@@ -92,11 +86,13 @@ public class TaggedTemplateLiteralTests
             const result = tag`hello\nworld`;
             console.log(result);
             """;
-        AssertOutput(code, "hello\\nworld");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("hello\\nworld", output);
     }
 
-    [Fact]
-    public void Cooked_Vs_Raw_Difference()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Cooked_Vs_Raw_Difference(ExecutionMode mode)
     {
         var code = """
             function tag(strings: any, ...values: any[]): string {
@@ -107,11 +103,13 @@ public class TaggedTemplateLiteralTests
             const result = tag`hello\nworld`;
             console.log(result);
             """;
-        AssertOutput(code, "different");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("different", output);
     }
 
-    [Fact]
-    public void Raw_Property_WithMultipleParts()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Raw_Property_WithMultipleParts(ExecutionMode mode)
     {
         var code = """
             function tag(strings: any, ...values: any[]): string {
@@ -121,36 +119,42 @@ public class TaggedTemplateLiteralTests
             const result = tag`a\nb${x}c\td`;
             console.log(result);
             """;
-        AssertOutput(code, "a\\nb|c\\td");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("a\\nb|c\\td", output);
     }
 
     #endregion
 
     #region String.raw
 
-    [Fact]
-    public void StringRaw_PreservesRawStrings()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StringRaw_PreservesRawStrings(ExecutionMode mode)
     {
         var code = """
             const result = String.raw`hello\nworld`;
             console.log(result);
             """;
-        AssertOutput(code, "hello\\nworld");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("hello\\nworld", output);
     }
 
-    [Fact]
-    public void StringRaw_WithInterpolation()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StringRaw_WithInterpolation(ExecutionMode mode)
     {
         var code = """
             const name = "test";
             const result = String.raw`C:\Users\${name}\path`;
             console.log(result);
             """;
-        AssertOutput(code, "C:\\Users\\test\\path");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("C:\\Users\\test\\path", output);
     }
 
-    [Fact]
-    public void StringRaw_MultipleInterpolations()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StringRaw_MultipleInterpolations(ExecutionMode mode)
     {
         var code = """
             const a = "A";
@@ -158,15 +162,17 @@ public class TaggedTemplateLiteralTests
             const result = String.raw`${a}\n${b}`;
             console.log(result);
             """;
-        AssertOutput(code, "A\\nB");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("A\\nB", output);
     }
 
     #endregion
 
     #region Tag Function Return Types
 
-    [Fact]
-    public void Tag_ReturnsNumber()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Tag_ReturnsNumber(ExecutionMode mode)
     {
         var code = """
             function countParts(strings: any, ...values: any[]): number {
@@ -176,11 +182,13 @@ public class TaggedTemplateLiteralTests
             const result = countParts`hello ${a} world`;
             console.log(result);
             """;
-        AssertOutput(code, "3");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("3", output);
     }
 
-    [Fact]
-    public void Tag_ReturnsArray()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Tag_ReturnsArray(ExecutionMode mode)
     {
         var code = """
             function collectParts(strings: any, ...values: any[]): any[] {
@@ -190,11 +198,13 @@ public class TaggedTemplateLiteralTests
             const result = collectParts`hello ${a} world`;
             console.log(result.length);
             """;
-        AssertOutput(code, "3");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("3", output);
     }
 
-    [Fact]
-    public void Tag_ReturnsObject()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Tag_ReturnsObject(ExecutionMode mode)
     {
         var code = """
             function createObject(strings: any, ...values: any[]): any {
@@ -203,26 +213,30 @@ public class TaggedTemplateLiteralTests
             const result = createObject`hello ${"world"}!`;
             console.log(result.values[0]);
             """;
-        AssertOutput(code, "world");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("world", output);
     }
 
     #endregion
 
     #region Arrow Functions as Tags
 
-    [Fact]
-    public void ArrowFunction_AsTag()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ArrowFunction_AsTag(ExecutionMode mode)
     {
         var code = """
             const tag = (strings: any, ...values: any[]) => strings.join("-");
             const result = tag`a${1}b${2}c`;
             console.log(result);
             """;
-        AssertOutput(code, "a-b-c");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("a-b-c", output);
     }
 
-    [Fact]
-    public void ArrowFunction_ReturnsString()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ArrowFunction_ReturnsString(ExecutionMode mode)
     {
         var code = """
             const upper = (strings: any, ...values: any[]) => {
@@ -236,18 +250,19 @@ public class TaggedTemplateLiteralTests
             const result = upper`hello ${name}!`;
             console.log(result);
             """;
-        AssertOutput(code, "hello WORLD!");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("hello WORLD!", output);
     }
 
     #endregion
 
     #region Method as Tag
 
-    [Fact]
-    public void ObjectMethod_AsTag()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void ObjectMethod_AsTag(ExecutionMode mode)
     {
-        // Note: Using intermediate variables to work around a type checker issue
-        // with `this.prefix + strings.join("")` in object method shorthand
+        // Compiled mode: `this` binding not yet supported for object method tag functions
         var code = """
             const obj = {
                 prefix: ">>",
@@ -260,15 +275,17 @@ public class TaggedTemplateLiteralTests
             const result = obj.tag`hello world`;
             console.log(result);
             """;
-        AssertOutput(code, ">>hello world");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal(">>hello world", output);
     }
 
     #endregion
 
     #region Edge Cases
 
-    [Fact]
-    public void NoInterpolations_EmptyTag()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NoInterpolations_EmptyTag(ExecutionMode mode)
     {
         var code = """
             function tag(strings: any, ...values: any[]): string {
@@ -277,11 +294,13 @@ public class TaggedTemplateLiteralTests
             const result = tag`simple`;
             console.log(result);
             """;
-        AssertOutput(code, "1:0");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("1:0", output);
     }
 
-    [Fact]
-    public void AllInterpolations_NoLiteralText()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AllInterpolations_NoLiteralText(ExecutionMode mode)
     {
         var code = """
             function tag(strings: any, ...values: any[]): string {
@@ -290,11 +309,13 @@ public class TaggedTemplateLiteralTests
             const result = tag`${1}${2}${3}`;
             console.log(result);
             """;
-        AssertOutput(code, "|||:1,2,3");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("|||:1,2,3", output);
     }
 
-    [Fact]
-    public void NestedTemplates()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedTemplates(ExecutionMode mode)
     {
         var code = """
             function outer(strings: any, ...values: any[]): string {
@@ -306,11 +327,13 @@ public class TaggedTemplateLiteralTests
             const result = outer`${inner`hello`}`;
             console.log(result);
             """;
-        AssertOutput(code, "outer:inner:hello");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("outer:inner:hello", output);
     }
 
-    [Fact]
-    public void ExpressionAsValue()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExpressionAsValue(ExecutionMode mode)
     {
         var code = """
             function tag(strings: any, ...values: any[]): string {
@@ -319,12 +342,15 @@ public class TaggedTemplateLiteralTests
             const result = tag`${1 + 2}${true}${"str"}${[1,2]}`;
             console.log(result);
             """;
-        AssertOutput(code, "number,boolean,string,object");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("number,boolean,string,object", output);
     }
 
-    [Fact]
-    public void ArraysFrozen()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void ArraysFrozen(ExecutionMode mode)
     {
+        // Compiled mode: template strings array is not yet frozen/immutable
         var code = """
             let captured: any;
             function tag(strings: any, ...values: any[]): string {
@@ -340,48 +366,8 @@ public class TaggedTemplateLiteralTests
             }
             console.log(captured[0]);
             """;
-        AssertOutput(code, "hello");
-    }
-
-    #endregion
-
-    #region Compiled Mode Tests
-
-    [Fact]
-    public void Compiled_Basic_TaggedTemplate()
-    {
-        var code = """
-            function tag(strings: any, ...values: any[]): string {
-                return strings.join("_") + ":" + values.join(",");
-            }
-            const x = 42;
-            const result = tag`value is ${x}!`;
-            console.log(result);
-            """;
-        AssertCompiledOutput(code, "value is _!:42");
-    }
-
-    [Fact]
-    public void Compiled_StringRaw()
-    {
-        var code = """
-            const path = String.raw`C:\Users\name\Documents`;
-            console.log(path);
-            """;
-        AssertCompiledOutput(code, "C:\\Users\\name\\Documents");
-    }
-
-    [Fact]
-    public void Compiled_RawProperty()
-    {
-        var code = """
-            function showRaw(strings: any): string {
-                return strings.raw[0];
-            }
-            const result = showRaw`line1\nline2`;
-            console.log(result);
-            """;
-        AssertCompiledOutput(code, "line1\\nline2");
+        var output = TestHarness.Run(code, mode).Trim();
+        Assert.Equal("hello", output);
     }
 
     #endregion
