@@ -203,15 +203,19 @@ public class ManualBundler : IBundler
         return -1;
     }
 
-    private static string GenerateRuntimeConfigJson(Version sdkVersion)
+    private static string GenerateRuntimeConfigJson(Version _)
     {
+        // Use the actual running runtime version, not the SDK version from the apphost template.
+        // The apphost template is version-agnostic (just a PE stub), but the runtimeconfig.json
+        // must reference a runtime version that is actually installed on the target machine.
+        var rv = Environment.Version;
         return $$"""
             {
               "runtimeOptions": {
-                "tfm": "net{{sdkVersion.Major}}.{{sdkVersion.Minor}}",
+                "tfm": "net{{rv.Major}}.{{rv.Minor}}",
                 "framework": {
                   "name": "Microsoft.NETCore.App",
-                  "version": "{{sdkVersion.Major}}.{{sdkVersion.Minor}}.{{sdkVersion.Build}}"
+                  "version": "{{rv.Major}}.{{rv.Minor}}.{{rv.Build}}"
                 }
               }
             }

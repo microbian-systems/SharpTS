@@ -1480,6 +1480,27 @@ public class EmittedRuntime
     public MethodBuilder IntlDateTimeFormatFormatRange { get; set; } = null!;
     public MethodBuilder IntlDateTimeFormatFormatRangeToParts { get; set; } = null!;
 
+    // Intl.Collator support
+    public MethodBuilder CreateIntlCollator { get; set; } = null!;
+    public MethodBuilder IntlCollatorCompare { get; set; } = null!;
+    public MethodBuilder IntlCollatorResolvedOptions { get; set; } = null!;
+
+    // Intl.PluralRules support
+    public MethodBuilder CreateIntlPluralRules { get; set; } = null!;
+    public MethodBuilder IntlPluralRulesSelect { get; set; } = null!;
+    public MethodBuilder IntlPluralRulesResolvedOptions { get; set; } = null!;
+
+    // Intl.RelativeTimeFormat support
+    public MethodBuilder CreateIntlRelativeTimeFormat { get; set; } = null!;
+    public MethodBuilder IntlRelativeTimeFormatFormat { get; set; } = null!;
+    public MethodBuilder IntlRelativeTimeFormatResolvedOptions { get; set; } = null!;
+
+    // Intl.ListFormat support
+    public MethodBuilder CreateIntlListFormat { get; set; } = null!;
+    public MethodBuilder IntlListFormatFormat { get; set; } = null!;
+    public MethodBuilder IntlListFormatFormatToParts { get; set; } = null!;
+    public MethodBuilder IntlListFormatResolvedOptions { get; set; } = null!;
+
     // Assert module - emitted $AssertionError type for standalone assemblies
     // NOTE: Must stay in sync with AssertionError in AssertModuleInterpreter.cs
     public TypeBuilder TSAssertionErrorType { get; set; } = null!;

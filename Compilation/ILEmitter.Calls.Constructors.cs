@@ -286,6 +286,34 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new Intl.Collator(locale?, options?) constructor
+        if (namespaceParts is ["Intl"] && className == "Collator")
+        {
+            EmitNewIntlCollator(n.Arguments);
+            return;
+        }
+
+        // Special case: new Intl.PluralRules(locale?, options?) constructor
+        if (namespaceParts is ["Intl"] && className == "PluralRules")
+        {
+            EmitNewIntlPluralRules(n.Arguments);
+            return;
+        }
+
+        // Special case: new Intl.RelativeTimeFormat(locale?, options?) constructor
+        if (namespaceParts is ["Intl"] && className == "RelativeTimeFormat")
+        {
+            EmitNewIntlRelativeTimeFormat(n.Arguments);
+            return;
+        }
+
+        // Special case: new Intl.ListFormat(locale?, options?) constructor
+        if (namespaceParts is ["Intl"] && className == "ListFormat")
+        {
+            EmitNewIntlListFormat(n.Arguments);
+            return;
+        }
+
         // Special case: new util.TextEncoder() or new util.TextDecoder() (module-qualified)
         if (namespaceParts.Count == 1 && className == "TextEncoder")
         {
@@ -1320,6 +1348,110 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateIntlDateTimeFormat);
+        SetStackUnknown();
+    }
+
+    private void EmitNewIntlCollator(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateIntlCollator);
+        SetStackUnknown();
+    }
+
+    private void EmitNewIntlPluralRules(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateIntlPluralRules);
+        SetStackUnknown();
+    }
+
+    private void EmitNewIntlRelativeTimeFormat(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateIntlRelativeTimeFormat);
+        SetStackUnknown();
+    }
+
+    private void EmitNewIntlListFormat(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateIntlListFormat);
         SetStackUnknown();
     }
 

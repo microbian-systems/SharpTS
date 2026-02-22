@@ -192,6 +192,10 @@ public sealed class BuiltInRegistry
         RegisterIntlNamespace(registry);
         RegisterIntlNumberFormatType(registry);
         RegisterIntlDateTimeFormatType(registry);
+        RegisterIntlCollatorType(registry);
+        RegisterIntlPluralRulesType(registry);
+        RegisterIntlRelativeTimeFormatType(registry);
+        RegisterIntlListFormatType(registry);
 
         return registry;
     }
@@ -993,6 +997,30 @@ public sealed class BuiltInRegistry
                     var options = args.Count > 1 ? args[1] : null;
                     return new SharpTSIntlDateTimeFormat(locale, options);
                 }),
+                "Collator" => new BuiltInMethod("Collator", 0, 2, (_, _, args) =>
+                {
+                    var locale = args.Count > 0 ? args[0] : null;
+                    var options = args.Count > 1 ? args[1] : null;
+                    return new SharpTSIntlCollator(locale, options);
+                }),
+                "PluralRules" => new BuiltInMethod("PluralRules", 0, 2, (_, _, args) =>
+                {
+                    var locale = args.Count > 0 ? args[0] : null;
+                    var options = args.Count > 1 ? args[1] : null;
+                    return new SharpTSIntlPluralRules(locale, options);
+                }),
+                "RelativeTimeFormat" => new BuiltInMethod("RelativeTimeFormat", 0, 2, (_, _, args) =>
+                {
+                    var locale = args.Count > 0 ? args[0] : null;
+                    var options = args.Count > 1 ? args[1] : null;
+                    return new SharpTSIntlRelativeTimeFormat(locale, options);
+                }),
+                "ListFormat" => new BuiltInMethod("ListFormat", 0, 2, (_, _, args) =>
+                {
+                    var locale = args.Count > 0 ? args[0] : null;
+                    var options = args.Count > 1 ? args[1] : null;
+                    return new SharpTSIntlListFormat(locale, options);
+                }),
                 _ => null
             }
         ));
@@ -1008,6 +1036,30 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterInstanceType(typeof(SharpTSIntlDateTimeFormat), (instance, name) =>
             ((SharpTSIntlDateTimeFormat)instance).GetMember(name));
+    }
+
+    private static void RegisterIntlCollatorType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSIntlCollator), (instance, name) =>
+            ((SharpTSIntlCollator)instance).GetMember(name));
+    }
+
+    private static void RegisterIntlPluralRulesType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSIntlPluralRules), (instance, name) =>
+            ((SharpTSIntlPluralRules)instance).GetMember(name));
+    }
+
+    private static void RegisterIntlRelativeTimeFormatType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSIntlRelativeTimeFormat), (instance, name) =>
+            ((SharpTSIntlRelativeTimeFormat)instance).GetMember(name));
+    }
+
+    private static void RegisterIntlListFormatType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSIntlListFormat), (instance, name) =>
+            ((SharpTSIntlListFormat)instance).GetMember(name));
     }
 
     private static string Stringify(object? obj)

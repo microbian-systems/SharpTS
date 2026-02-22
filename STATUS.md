@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-16 (Added `Intl.NumberFormat` with locale-aware number/currency/percent formatting; Added missing STATUS entries for URL/URLSearchParams, TextEncoder/TextDecoder, console methods, Uint8ClampedArray, String.raw; Added Node.js built-in modules section)
+**Last Updated:** 2026-02-22 (Added `Intl.Collator`, `Intl.PluralRules`, `Intl.RelativeTimeFormat`, `Intl.ListFormat` with full interpreter and compiler support)
 
 ## Legend
 - ✅ Implemented
@@ -240,6 +240,10 @@ This document tracks TypeScript language features and their implementation statu
 | `console` methods | ✅ | `log`, `error`, `warn`, `info`, `debug`, `clear`, `time`/`timeEnd`/`timeLog`, `assert`, `count`/`countReset`, `table`, `dir`, `group`/`groupCollapsed`/`groupEnd`, `trace` |
 | `Intl.NumberFormat` | ✅ | Locale-aware number/currency/percent formatting; `format()`, `resolvedOptions()`; options: style, currency, minimumFractionDigits, maximumFractionDigits, minimumIntegerDigits, useGrouping |
 | `Intl.DateTimeFormat` | ✅ | Locale-aware date/time formatting; `format()`, `resolvedOptions()`; options: dateStyle, timeStyle, year, month, day, weekday, hour, minute, second, hour12, timeZone, timeZoneName, era, fractionalSecondDigits |
+| `Intl.Collator` | ✅ | Locale-aware string comparison; `compare()`, `resolvedOptions()`; options: usage, sensitivity (base/accent/case/variant), ignorePunctuation, numeric, caseFirst |
+| `Intl.PluralRules` | ✅ | Plural category selection (CLDR rules); `select()`, `resolvedOptions()`; options: type (cardinal/ordinal); categories: zero, one, two, few, many, other |
+| `Intl.RelativeTimeFormat` | ✅ | Locale-aware relative time formatting; `format()`, `formatToParts()`, `resolvedOptions()`; options: style (long/short/narrow), numeric (always/auto); units: year, quarter, month, week, day, hour, minute, second |
+| `Intl.ListFormat` | ✅ | Locale-aware list formatting; `format()`, `formatToParts()`, `resolvedOptions()`; options: style (long/short/narrow), type (conjunction/disjunction/unit) |
 
 ---
 
@@ -329,6 +333,10 @@ This section documents JavaScript/TypeScript features that are **not currently i
 | `FinalizationRegistry` | ❌ | No GC finalization callbacks |
 | `Intl.NumberFormat` | ✅ | See Section 10 |
 | `Intl.DateTimeFormat` | ✅ | See Section 10 |
+| `Intl.Collator` | ✅ | See Section 10 |
+| `Intl.PluralRules` | ✅ | See Section 10 |
+| `Intl.RelativeTimeFormat` | ✅ | See Section 10 |
+| `Intl.ListFormat` | ✅ | See Section 10 |
 
 ### Global Functions
 

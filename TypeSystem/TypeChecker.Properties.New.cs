@@ -593,6 +593,38 @@ public partial class TypeChecker
             return new TypeInfo.Any();
         }
 
+        // Handle new Intl.Collator() constructor
+        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "Collator" })
+        {
+            foreach (var arg in newExpr.Arguments)
+                CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
+        // Handle new Intl.PluralRules() constructor
+        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "PluralRules" })
+        {
+            foreach (var arg in newExpr.Arguments)
+                CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
+        // Handle new Intl.RelativeTimeFormat() constructor
+        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "RelativeTimeFormat" })
+        {
+            foreach (var arg in newExpr.Arguments)
+                CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
+        // Handle new Intl.ListFormat() constructor
+        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "ListFormat" })
+        {
+            foreach (var arg in newExpr.Arguments)
+                CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
         // Evaluate the callee expression type
         string qualifiedName = GetCalleeClassName(newExpr.Callee);
         TypeInfo calleeType = CheckExpr(newExpr.Callee);

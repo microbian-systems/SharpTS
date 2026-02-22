@@ -1,4 +1,5 @@
 using SharpTS.Compilation.Bundling;
+using SharpTS.Diagnostics.Exceptions;
 using Xunit;
 
 namespace SharpTS.Tests.Compilation;
@@ -65,7 +66,7 @@ public class BundlerFactoryTests
         }
         else
         {
-            Assert.Throws<InvalidOperationException>(() =>
+            Assert.Throws<CompileException>(() =>
                 BundlerFactory.GetBundler(BundleTechnique.SdkBundler));
         }
     }

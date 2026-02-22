@@ -121,4 +121,129 @@ public static partial class RuntimeTypes
     }
 
     #endregion
+
+    #region Intl.Collator Support
+
+    public static object CreateIntlCollator(object? locale, object? options)
+    {
+        return new SharpTSIntlCollator(locale, options);
+    }
+
+    public static object? IntlCollatorCompare(object? collator, object? x, object? y)
+    {
+        if (collator is SharpTSIntlCollator c)
+        {
+            return c.CompareStrings(x?.ToString() ?? "", y?.ToString() ?? "");
+        }
+        return 0.0;
+    }
+
+    public static object? IntlCollatorResolvedOptions(object? collator)
+    {
+        if (collator is SharpTSIntlCollator c)
+        {
+            return new SharpTSObject(c.GetResolvedOptions());
+        }
+        return null;
+    }
+
+    #endregion
+
+    #region Intl.PluralRules Support
+
+    public static object CreateIntlPluralRules(object? locale, object? options)
+    {
+        return new SharpTSIntlPluralRules(locale, options);
+    }
+
+    public static object? IntlPluralRulesSelect(object? rules, object? number)
+    {
+        if (rules is SharpTSIntlPluralRules pr)
+        {
+            double num = number switch
+            {
+                double d => d,
+                int i => i,
+                long l => l,
+                float f => f,
+                _ => 0.0
+            };
+            return pr.SelectCategory(num);
+        }
+        return "other";
+    }
+
+    public static object? IntlPluralRulesResolvedOptions(object? rules)
+    {
+        if (rules is SharpTSIntlPluralRules pr)
+        {
+            return new SharpTSObject(pr.GetResolvedOptions());
+        }
+        return null;
+    }
+
+    #endregion
+
+    #region Intl.RelativeTimeFormat Support
+
+    public static object CreateIntlRelativeTimeFormat(object? locale, object? options)
+    {
+        return new SharpTSIntlRelativeTimeFormat(locale, options);
+    }
+
+    public static object? IntlRelativeTimeFormatFormat(object? formatter, object? value, object? unit)
+    {
+        if (formatter is SharpTSIntlRelativeTimeFormat rtf)
+        {
+            return rtf.format(value, unit);
+        }
+        return null;
+    }
+
+    public static object? IntlRelativeTimeFormatResolvedOptions(object? formatter)
+    {
+        if (formatter is SharpTSIntlRelativeTimeFormat rtf)
+        {
+            return new SharpTSObject(rtf.GetResolvedOptions());
+        }
+        return null;
+    }
+
+    #endregion
+
+    #region Intl.ListFormat Support
+
+    public static object CreateIntlListFormat(object? locale, object? options)
+    {
+        return new SharpTSIntlListFormat(locale, options);
+    }
+
+    public static object? IntlListFormatFormat(object? formatter, object? items)
+    {
+        if (formatter is SharpTSIntlListFormat lf)
+        {
+            return lf.format(items);
+        }
+        return null;
+    }
+
+    public static object? IntlListFormatFormatToParts(object? formatter, object? items)
+    {
+        if (formatter is SharpTSIntlListFormat lf)
+        {
+            return lf.formatToParts(items);
+        }
+        return null;
+    }
+
+    public static object? IntlListFormatResolvedOptions(object? formatter)
+    {
+        if (formatter is SharpTSIntlListFormat lf)
+        {
+            return new SharpTSObject(lf.GetResolvedOptions());
+        }
+        return null;
+    }
+
+    #endregion
 }

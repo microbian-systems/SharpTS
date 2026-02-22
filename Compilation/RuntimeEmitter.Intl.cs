@@ -21,6 +21,23 @@ public partial class RuntimeEmitter
         EmitIntlDateTimeFormatFormatToParts(typeBuilder, runtime);
         EmitIntlDateTimeFormatFormatRange(typeBuilder, runtime);
         EmitIntlDateTimeFormatFormatRangeToParts(typeBuilder, runtime);
+
+        EmitCreateIntlCollator(typeBuilder, runtime);
+        EmitIntlCollatorCompare(typeBuilder, runtime);
+        EmitIntlCollatorResolvedOptions(typeBuilder, runtime);
+
+        EmitCreateIntlPluralRules(typeBuilder, runtime);
+        EmitIntlPluralRulesSelect(typeBuilder, runtime);
+        EmitIntlPluralRulesResolvedOptions(typeBuilder, runtime);
+
+        EmitCreateIntlRelativeTimeFormat(typeBuilder, runtime);
+        EmitIntlRelativeTimeFormatFormat(typeBuilder, runtime);
+        EmitIntlRelativeTimeFormatResolvedOptions(typeBuilder, runtime);
+
+        EmitCreateIntlListFormat(typeBuilder, runtime);
+        EmitIntlListFormatFormat(typeBuilder, runtime);
+        EmitIntlListFormatFormatToParts(typeBuilder, runtime);
+        EmitIntlListFormatResolvedOptions(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -401,5 +418,130 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, invokeMethod2!);
 
         il.Emit(OpCodes.Ret);
+    }
+
+    // ========== Intl.Collator ==========
+
+    private void EmitCreateIntlCollator(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.CreateIntlCollator = EmitReflectionHelper(typeBuilder, "CreateIntlCollator", 2);
+    }
+
+    private void EmitIntlCollatorCompare(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlCollatorCompare = EmitReflectionHelper(typeBuilder, "IntlCollatorCompare", 3);
+    }
+
+    private void EmitIntlCollatorResolvedOptions(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlCollatorResolvedOptions = EmitReflectionHelper(typeBuilder, "IntlCollatorResolvedOptions", 1);
+    }
+
+    // ========== Intl.PluralRules ==========
+
+    private void EmitCreateIntlPluralRules(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.CreateIntlPluralRules = EmitReflectionHelper(typeBuilder, "CreateIntlPluralRules", 2);
+    }
+
+    private void EmitIntlPluralRulesSelect(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlPluralRulesSelect = EmitReflectionHelper(typeBuilder, "IntlPluralRulesSelect", 2);
+    }
+
+    private void EmitIntlPluralRulesResolvedOptions(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlPluralRulesResolvedOptions = EmitReflectionHelper(typeBuilder, "IntlPluralRulesResolvedOptions", 1);
+    }
+
+    // ========== Intl.RelativeTimeFormat ==========
+
+    private void EmitCreateIntlRelativeTimeFormat(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.CreateIntlRelativeTimeFormat = EmitReflectionHelper(typeBuilder, "CreateIntlRelativeTimeFormat", 2);
+    }
+
+    private void EmitIntlRelativeTimeFormatFormat(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlRelativeTimeFormatFormat = EmitReflectionHelper(typeBuilder, "IntlRelativeTimeFormatFormat", 3);
+    }
+
+    private void EmitIntlRelativeTimeFormatResolvedOptions(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlRelativeTimeFormatResolvedOptions = EmitReflectionHelper(typeBuilder, "IntlRelativeTimeFormatResolvedOptions", 1);
+    }
+
+    // ========== Intl.ListFormat ==========
+
+    private void EmitCreateIntlListFormat(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.CreateIntlListFormat = EmitReflectionHelper(typeBuilder, "CreateIntlListFormat", 2);
+    }
+
+    private void EmitIntlListFormatFormat(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlListFormatFormat = EmitReflectionHelper(typeBuilder, "IntlListFormatFormat", 2);
+    }
+
+    private void EmitIntlListFormatFormatToParts(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlListFormatFormatToParts = EmitReflectionHelper(typeBuilder, "IntlListFormatFormatToParts", 2);
+    }
+
+    private void EmitIntlListFormatResolvedOptions(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.IntlListFormatResolvedOptions = EmitReflectionHelper(typeBuilder, "IntlListFormatResolvedOptions", 1);
+    }
+
+    // ========== Helper ==========
+
+    /// <summary>
+    /// Emits a reflection-based helper method that calls RuntimeTypes.{methodName} via reflection.
+    /// All arguments are object? and passed as an object[] to MethodInfo.Invoke.
+    /// </summary>
+    private MethodBuilder EmitReflectionHelper(TypeBuilder typeBuilder, string methodName, int argCount)
+    {
+        var paramTypes = new Type[argCount];
+        Array.Fill(paramTypes, _types.Object);
+
+        var method = typeBuilder.DefineMethod(
+            methodName,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            paramTypes
+        );
+
+        var il = method.GetILGenerator();
+
+        // Type.GetType("SharpTS.Compilation.RuntimeTypes, SharpTS")
+        il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.RuntimeTypes, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+
+        // .GetMethod("methodName")
+        il.Emit(OpCodes.Ldstr, methodName);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+
+        // null target for static method
+        il.Emit(OpCodes.Ldnull);
+
+        // new object[argCount] { arg0, arg1, ... }
+        il.Emit(OpCodes.Ldc_I4, argCount);
+        il.Emit(OpCodes.Newarr, _types.Object);
+
+        for (int i = 0; i < argCount; i++)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4, i);
+            il.Emit(OpCodes.Ldarg, i);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+
+        // methodInfo.Invoke(null, args)
+        var invokeMethod = _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray);
+        il.Emit(OpCodes.Callvirt, invokeMethod!);
+
+        il.Emit(OpCodes.Ret);
+
+        return method;
     }
 }
