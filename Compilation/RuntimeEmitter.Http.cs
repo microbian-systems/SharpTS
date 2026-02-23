@@ -333,7 +333,7 @@ public partial class RuntimeEmitter
         // Internal storage: Dictionary<string, List<string>> with case-insensitive comparer
         var listOfStringType = typeof(List<string>);
         var dictType = typeof(Dictionary<string, List<string>>);
-        _headersDataField = typeBuilder.DefineField("_data", dictType, FieldAttributes.Private);
+        _headersDataField = typeBuilder.DefineField("_data", dictType, FieldAttributes.Assembly);
 
         // Constructor: $Headers(object? init)
         // If init is Dictionary<string, object?>, populate from it
@@ -915,6 +915,9 @@ public partial class RuntimeEmitter
         // Method: arrayBuffer() - returns Promise wrapping a Buffer
         EmitFetchResponseArrayBufferMethod(typeBuilder, runtime);
 
+        // Method: clone() - creates a copy sharing body bytes
+        EmitFetchResponseCloneMethod(typeBuilder, runtime, ctor);
+
         // Store the type reference
         runtime.TSFetchResponseType = typeBuilder;
         runtime.TSFetchResponseCtor = ctor;
@@ -1046,6 +1049,52 @@ public partial class RuntimeEmitter
         // Wrap in a resolved Promise
         il.Emit(OpCodes.Call, runtime.TSPromiseResolve);
 
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object clone()
+    /// Creates a new $FetchResponse with the same fields (shared body bytes).
+    /// </summary>
+    private void EmitFetchResponseCloneMethod(TypeBuilder typeBuilder, EmittedRuntime runtime, ConstructorBuilder ctor)
+    {
+        var method = typeBuilder.DefineMethod(
+            "clone",
+            MethodAttributes.Public,
+            _types.Object,
+            Type.EmptyTypes
+        );
+
+        var il = method.GetILGenerator();
+
+        // Load all fields from this instance and create a new $FetchResponse
+        // Constructor params: (double status, string statusText, bool ok, string url, object headers, byte[] body)
+
+        // status
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _fetchResponseStatusField);
+
+        // statusText
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _fetchResponseStatusTextField);
+
+        // ok
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _fetchResponseOkField);
+
+        // url
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _fetchResponseUrlField);
+
+        // headers
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _fetchResponseHeadersField);
+
+        // bodyBytes
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _fetchResponseBodyBytesField);
+
+        il.Emit(OpCodes.Newobj, ctor);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1197,6 +1246,30 @@ public partial class RuntimeEmitter
         // try block
         il.BeginExceptionBlock();
 
+        // Validate URL: if arg0 is null or undefined, throw TypeError
+        var urlValidLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, urlValidLabel);
+        // arg0 is null - throw
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "TypeError: fetch requires a URL argument");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(urlValidLabel);
+        // Check for Undefined
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        var notUndefinedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notUndefinedLabel);
+        // arg0 is undefined - throw
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "TypeError: fetch requires a URL argument");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notUndefinedLabel);
+        il.Emit(OpCodes.Pop); // pop the duplicated arg0
+
         // string url = arg0?.ToString() ?? ""
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.Stringify);
@@ -1300,6 +1373,55 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
 
         il.MarkLabel(bodyDoneLabel);
+
+        // Check abort signal: if options?.signal?.aborted, throw
+        var signalCheckDoneLabel = il.DefineLabel();
+        var noSignalLabel1 = il.DefineLabel();
+        var noSignalLabel2 = il.DefineLabel();
+        var noSignalLabel3 = il.DefineLabel();
+
+        // if (options == null) skip
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, signalCheckDoneLabel);
+
+        // Get "signal" property from options
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "signal");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        var signalLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, signalLocal);
+
+        // if (signal == null || signal is Undefined) skip
+        il.Emit(OpCodes.Ldloc, signalLocal);
+        il.Emit(OpCodes.Brfalse, signalCheckDoneLabel);
+        il.Emit(OpCodes.Ldloc, signalLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, signalCheckDoneLabel);
+
+        // Check if signal is aborted: AbortSignalGetAborted(signal)
+        il.Emit(OpCodes.Ldloc, signalLocal);
+        il.Emit(OpCodes.Call, runtime.AbortSignalGetAborted);
+        il.Emit(OpCodes.Brfalse, signalCheckDoneLabel);
+
+        // Signal is aborted - throw AbortError
+        il.Emit(OpCodes.Ldloc, signalLocal);
+        il.Emit(OpCodes.Call, runtime.AbortSignalGetReason);
+        var abortReasonLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, abortReasonLocal);
+        il.Emit(OpCodes.Ldloc, abortReasonLocal);
+        var hasAbortReasonLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, hasAbortReasonLabel);
+        il.Emit(OpCodes.Ldstr, "AbortError: The operation was aborted");
+        var throwAbortLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, throwAbortLabel);
+        il.MarkLabel(hasAbortReasonLabel);
+        il.Emit(OpCodes.Ldloc, abortReasonLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
+        il.MarkLabel(throwAbortLabel);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(signalCheckDoneLabel);
 
         // var response = client.SendAsync(request).Result
         var sendAsyncMethod = _httpClientType.GetMethod("SendAsync", [_httpRequestMessageType])!;
@@ -1592,13 +1714,104 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, headersObjLocal);
         il.Emit(OpCodes.Brfalse, endLabel);
 
-        // Check if it's a Dictionary<string, object?>
+        // Check if it's a Dictionary<string, object?> (plain object literal)
+        var isDictLabel = il.DefineLabel();
+        var checkHeadersTypeLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, headersObjLocal);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         var headersLocal = il.DeclareLocal(_types.DictionaryStringObject);
         il.Emit(OpCodes.Stloc, headersLocal);
         il.Emit(OpCodes.Ldloc, headersLocal);
+        il.Emit(OpCodes.Brtrue, isDictLabel);
+
+        // Not a dict - check if it's a $Headers instance
+        il.Emit(OpCodes.Ldloc, headersObjLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSHeadersType);
         il.Emit(OpCodes.Brfalse, endLabel);
+
+        // It's a $Headers - get its _data field and iterate
+        // _data is Dictionary<string, List<string>>
+        var listOfStringType = typeof(List<string>);
+        var dictOfListType = typeof(Dictionary<string, List<string>>);
+        var headersDataLocal = il.DeclareLocal(dictOfListType);
+        il.Emit(OpCodes.Ldloc, headersObjLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSHeadersType);
+        il.Emit(OpCodes.Ldfld, _headersDataField);
+        il.Emit(OpCodes.Stloc, headersDataLocal);
+
+        // Iterate _data entries
+        var hGetEnumMethod = dictOfListType.GetMethod("GetEnumerator", Type.EmptyTypes)!;
+        var hEnumType = hGetEnumMethod.ReturnType;
+        var hEnumLocal = il.DeclareLocal(hEnumType);
+        il.Emit(OpCodes.Ldloc, headersDataLocal);
+        il.Emit(OpCodes.Callvirt, hGetEnumMethod);
+        il.Emit(OpCodes.Stloc, hEnumLocal);
+
+        var hLoopStart = il.DefineLabel();
+        var hLoopEnd = il.DefineLabel();
+        il.MarkLabel(hLoopStart);
+        il.Emit(OpCodes.Ldloca, hEnumLocal);
+        il.Emit(OpCodes.Call, hEnumType.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, hLoopEnd);
+
+        var hCurrentProp = hEnumType.GetProperty("Current")!;
+        var hKvpType = hCurrentProp.PropertyType;
+        var hKvpLocal = il.DeclareLocal(hKvpType);
+        il.Emit(OpCodes.Ldloca, hEnumLocal);
+        il.Emit(OpCodes.Call, hCurrentProp.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, hKvpLocal);
+
+        // string key = kvp.Key
+        var hKeyLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloca, hKvpLocal);
+        il.Emit(OpCodes.Call, hKvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, hKeyLocal);
+
+        // Skip Content-Type
+        var hNotCtLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, hKeyLocal);
+        il.Emit(OpCodes.Ldstr, "Content-Type");
+        var stringEqualsMethod = _types.String.GetMethod("Equals", [_types.String, _types.String, typeof(StringComparison)])!;
+        il.Emit(OpCodes.Ldc_I4, (int)StringComparison.OrdinalIgnoreCase);
+        il.Emit(OpCodes.Call, stringEqualsMethod);
+        il.Emit(OpCodes.Brfalse, hNotCtLabel);
+        il.Emit(OpCodes.Br, hLoopStart);
+
+        il.MarkLabel(hNotCtLabel);
+
+        // string value = string.Join(", ", kvp.Value)
+        var hValueLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldstr, ", ");
+        il.Emit(OpCodes.Ldloca, hKvpLocal);
+        il.Emit(OpCodes.Call, hKvpType.GetProperty("Value")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Join", [_types.String, typeof(IEnumerable<string>)])!);
+        il.Emit(OpCodes.Stloc, hValueLocal);
+
+        // request.Headers.TryAddWithoutValidation(key, value)
+        var headersProperty = _httpRequestMessageType!.GetProperty("Headers")!;
+        var tryAddMethod = _httpRequestHeadersType!.GetMethod("TryAddWithoutValidation", [_types.String, _types.String])!;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, headersProperty.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, hKeyLocal);
+        il.Emit(OpCodes.Ldloc, hValueLocal);
+        il.Emit(OpCodes.Callvirt, tryAddMethod);
+        il.Emit(OpCodes.Pop);
+
+        il.Emit(OpCodes.Br, hLoopStart);
+        il.MarkLabel(hLoopEnd);
+
+        // Dispose enumerator
+        var hDisposeMethod = hEnumType.GetMethod("Dispose", Type.EmptyTypes);
+        if (hDisposeMethod != null)
+        {
+            il.Emit(OpCodes.Ldloca, hEnumLocal);
+            il.Emit(OpCodes.Call, hDisposeMethod);
+        }
+
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Dictionary path (plain object literal headers)
+        il.MarkLabel(isDictLabel);
 
         // Get enumerator: var enumerator = headers.GetEnumerator()
         var getEnumeratorMethod = _types.DictionaryStringObject.GetMethod("GetEnumerator", Type.EmptyTypes)!;
@@ -1656,14 +1869,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, valueLocal);
 
         // request.Headers.TryAddWithoutValidation(key, value)
-        var headersProperty = _httpRequestMessageType!.GetProperty("Headers")!;
-        var tryAddMethod = _httpRequestHeadersType!.GetMethod("TryAddWithoutValidation", [_types.String, _types.String])!;
+        var dictHeadersProperty = _httpRequestMessageType!.GetProperty("Headers")!;
+        var dictTryAddMethod = _httpRequestHeadersType!.GetMethod("TryAddWithoutValidation", [_types.String, _types.String])!;
 
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, headersProperty.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, dictHeadersProperty.GetGetMethod()!);
         il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Callvirt, tryAddMethod);
+        il.Emit(OpCodes.Callvirt, dictTryAddMethod);
         il.Emit(OpCodes.Pop); // Discard bool result
 
         il.Emit(OpCodes.Br, loopStartLabel);

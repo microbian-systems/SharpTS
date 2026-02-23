@@ -52,6 +52,31 @@ public partial class AsyncMoveNextEmitter
             return;
         }
 
+        // Special case: new AbortController() constructor
+        if (isSimpleName && className == "AbortController")
+        {
+            _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateAbortController);
+            SetStackUnknown();
+            return;
+        }
+
+        // Special case: new Headers(...) constructor
+        if (isSimpleName && className == "Headers")
+        {
+            if (n.Arguments.Count > 0)
+            {
+                EmitExpression(n.Arguments[0]);
+                EnsureBoxed();
+            }
+            else
+            {
+                _il.Emit(OpCodes.Ldnull);
+            }
+            _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSHeadersCtor);
+            SetStackUnknown();
+            return;
+        }
+
         // Special case: new Intl.NumberFormat(locale?, options?) constructor
         if (namespaceParts is ["Intl"] && className == "NumberFormat")
         {

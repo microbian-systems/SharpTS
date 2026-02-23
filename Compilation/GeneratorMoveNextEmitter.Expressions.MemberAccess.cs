@@ -887,6 +887,23 @@ public partial class GeneratorMoveNextEmitter
             case "Map":
                 EmitNewMap(arguments);
                 return true;
+            case "AbortController":
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateAbortController);
+                SetStackUnknown();
+                return true;
+            case "Headers":
+                if (arguments.Count > 0)
+                {
+                    EmitExpression(arguments[0]);
+                    EnsureBoxed();
+                }
+                else
+                {
+                    _il.Emit(OpCodes.Ldnull);
+                }
+                _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSHeadersCtor);
+                SetStackUnknown();
+                return true;
             default:
                 return false;
         }

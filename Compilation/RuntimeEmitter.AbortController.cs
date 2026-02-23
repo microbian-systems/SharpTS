@@ -148,19 +148,37 @@ public partial class RuntimeEmitter
 
         var doneLabel = il.DefineLabel();
 
-        // var dict = (Dictionary<string,object?>)controller
+        // if (controller == null) goto done
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, doneLabel);
+
+        // var dict = controller as Dictionary<string,object?>
         var dictLocal = il.DeclareLocal(dictType);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, dictType);
+        il.Emit(OpCodes.Isinst, dictType);
         il.Emit(OpCodes.Stloc, dictLocal);
 
-        // var cts = (CancellationTokenSource)dict["_cts"]
+        // if (dict == null) goto done
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, doneLabel);
+
+        // Check if dict has "_cts" key
         var ctsLocal = il.DeclareLocal(ctsType);
+        var hasCtsLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ldstr, "_cts");
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "get_Item", _types.String));
-        il.Emit(OpCodes.Castclass, ctsType);
+        il.Emit(OpCodes.Ldloca, hasCtsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "TryGetValue", _types.String, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, doneLabel);
+
+        // var cts = (CancellationTokenSource)dict["_cts"]
+        il.Emit(OpCodes.Ldloc, hasCtsLocal);
+        il.Emit(OpCodes.Isinst, ctsType);
         il.Emit(OpCodes.Stloc, ctsLocal);
+
+        // if (cts == null) goto done
+        il.Emit(OpCodes.Ldloc, ctsLocal);
+        il.Emit(OpCodes.Brfalse, doneLabel);
 
         // if (cts.IsCancellationRequested) goto done
         il.Emit(OpCodes.Ldloc, ctsLocal);

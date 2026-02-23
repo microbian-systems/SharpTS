@@ -318,7 +318,16 @@ public partial class AsyncMoveNextEmitter
         }
 
         // Handle fetch() - global async HTTP function
-        if (c.Callee is Expr.Variable fetchVar && fetchVar.Name.Lexeme == "fetch")
+        // Unwrap TypeAssertion/Grouping (e.g., (fetch as any)()) to get the underlying callee
+        Expr fetchCallee = c.Callee;
+        bool unwrapped = true;
+        while (unwrapped)
+        {
+            unwrapped = false;
+            if (fetchCallee is Expr.TypeAssertion ta2) { fetchCallee = ta2.Expression; unwrapped = true; }
+            if (fetchCallee is Expr.Grouping g2) { fetchCallee = g2.Expression; unwrapped = true; }
+        }
+        if (fetchCallee is Expr.Variable fetchVar && fetchVar.Name.Lexeme == "fetch")
         {
             EmitFetchCall(c.Arguments);
             return;
@@ -501,7 +510,9 @@ public partial class AsyncMoveNextEmitter
                 }
 
                 // Array-only methods
-                if (methodName is "pop" or "shift" or "unshift" or "map" or "filter" or "forEach"
+                // Note: forEach is NOT in this list because it exists on multiple types
+                // (Array, Map, Set, Headers). Array forEach is handled by type-first dispatch.
+                if (methodName is "pop" or "shift" or "unshift" or "map" or "filter"
                     or "push" or "find" or "findIndex" or "some" or "every" or "reduce" or "join"
                     or "reverse" or "fill")
                 {
@@ -621,6 +632,24 @@ public partial class AsyncMoveNextEmitter
             }
         }
         return false;
+    }
+
+    protected override void EmitGet(Expr.Get g)
+    {
+        // Type-first dispatch: Use TypeEmitterRegistry for property getters (AbortController.signal, etc.)
+        var objType = _ctx?.TypeMap?.Get(g.Object);
+        if (objType != null && _ctx?.TypeEmitterRegistry != null)
+        {
+            var strategy = _ctx.TypeEmitterRegistry.GetStrategy(objType);
+            if (strategy != null && strategy.TryEmitPropertyGet(this, g.Object, g.Name.Lexeme))
+            {
+                SetStackUnknown();
+                return;
+            }
+        }
+
+        // Fall through to base implementation (dynamic property access)
+        base.EmitGet(g);
     }
 
     protected override void EmitCompoundAssign(Expr.CompoundAssign ca)

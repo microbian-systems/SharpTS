@@ -226,16 +226,16 @@ public class FetchTests : IDisposable
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void FetchResponse_Headers_ForEach(ExecutionMode mode)
     {
+        // Use an array to collect results instead of mutating a captured primitive,
+        // because async state machine closure capture doesn't support primitive mutation.
         var source = $$"""
             async function test(): Promise<void> {
                 const res = await fetch('{{_server.BaseUrl}}text');
-                let found = false;
+                const keys: string[] = [];
                 res.headers.forEach((value: string, key: string) => {
-                    if (key === "content-type") {
-                        found = true;
-                    }
+                    keys.push(key);
                 });
-                console.log(found);
+                console.log(keys.indexOf("content-type") >= 0);
             }
             test();
             """;
