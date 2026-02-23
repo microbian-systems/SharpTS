@@ -461,7 +461,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.FuncObjectArrayToObject, "Invoke", _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
+        // Proxy apply trap check: if function is a proxy, call TrapApply
+        // TrapApply expects List<object?> so convert the object[] args
         il.MarkLabel(notFuncLabel);
+        var notProxyLabel2 = il.DefineLabel();
+        EmitProxyInvokeCheck(il, () => il.Emit(OpCodes.Ldarg_1), () =>
+        {
+            il.Emit(OpCodes.Ldarg_2); // object[] args
+            il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor([typeof(IEnumerable<object>)])!);
+        }, notProxyLabel2);
+
+        il.MarkLabel(notProxyLabel2);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
     }

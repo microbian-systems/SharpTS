@@ -199,7 +199,7 @@ public class AbortControllerTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AbortSignal_Any_AbortsWhenAnyAborts(ExecutionMode mode)
     {
         var source = @"
@@ -215,7 +215,7 @@ public class AbortControllerTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AbortSignal_Any_AlreadyAborted(ExecutionMode mode)
     {
         var source = @"

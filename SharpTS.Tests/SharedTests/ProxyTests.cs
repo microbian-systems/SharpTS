@@ -136,7 +136,7 @@ public class ProxyTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Proxy_ApplyTrap(ExecutionMode mode)
     {
         var source = @"

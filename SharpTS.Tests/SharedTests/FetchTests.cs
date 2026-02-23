@@ -223,7 +223,7 @@ public class FetchTests : IDisposable
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void FetchResponse_Headers_ForEach(ExecutionMode mode)
     {
         var source = $$"""
@@ -246,7 +246,7 @@ public class FetchTests : IDisposable
     // ========== AbortSignal integration tests ==========
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fetch_AbortSignal_AbortBeforeFetch(ExecutionMode mode)
     {
         var source = $$"""
@@ -272,7 +272,7 @@ public class FetchTests : IDisposable
     // ========== Error handling tests ==========
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fetch_NoArguments_Throws(ExecutionMode mode)
     {
         var source = @"
@@ -341,7 +341,7 @@ public class FetchTests : IDisposable
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void FetchResponse_Clone_Works(ExecutionMode mode)
     {
         var source = $$"""
@@ -422,7 +422,7 @@ public class FetchTests : IDisposable
     // ========== Headers with fetch options ==========
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fetch_WithHeadersObject(ExecutionMode mode)
     {
         var source = $$"""

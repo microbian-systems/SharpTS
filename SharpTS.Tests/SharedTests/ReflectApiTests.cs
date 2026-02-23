@@ -40,7 +40,7 @@ public class ReflectApiTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Reflect_Has_InheritedProperty(ExecutionMode mode)
     {
         var source = """
@@ -329,8 +329,9 @@ public class ReflectApiTests
         Assert.Equal("7\n", output);
     }
 
-    [Fact]
-    public void Reflect_Construct_CreatesInstance_Interpreted()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Reflect_Construct_CreatesInstance(ExecutionMode mode)
     {
         var source = """
             class Point {
@@ -346,7 +347,7 @@ public class ReflectApiTests
             console.log(p.y);
             """;
 
-        var output = TestHarness.Run(source, ExecutionMode.Interpreted);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("10\n20\n", output);
     }
 }
