@@ -2003,8 +2003,56 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brtrue, listLabel);
 
-        // Other types - return false
+        // Other types (e.g., emitted class instances) — check via $IHasFields + reflection
+        var classKeyStrLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Stloc, classKeyStrLocal);
+
+        var classTrueLabel = il.DefineLabel();
+
+        // Check $IHasFields interface: call HasProperty(key) for typed backing fields + _fields dict
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
+        var notHasFieldsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notHasFieldsLabel);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Ldloc, classKeyStrLocal);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsHasProperty);
+        il.Emit(OpCodes.Brtrue, classTrueLabel);
+
+        il.MarkLabel(notHasFieldsLabel);
+
+        // Also check for methods via reflection (e.g., inherited methods)
+        // Convert camelCase key to PascalCase for .NET method lookup
+        var classPascalNameLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, classKeyStrLocal);
+        il.Emit(OpCodes.Call, runtime.ToPascalCase);
+        il.Emit(OpCodes.Stloc, classPascalNameLocal);
+
+        // obj.GetType().GetProperty(pascalName, Instance | Public | IgnoreCase)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldloc, classPascalNameLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.IgnoreCase));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Brtrue, classTrueLabel);
+
+        // obj.GetType().GetMethod(pascalName, Instance | Public | IgnoreCase)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldloc, classPascalNameLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.IgnoreCase));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Brtrue, classTrueLabel);
+
         il.Emit(OpCodes.Br, falseLabel);
+
+        il.MarkLabel(classTrueLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
 
         // Dictionary - use ContainsKey
         il.MarkLabel(dictLabel);
@@ -2018,16 +2066,16 @@ public partial class RuntimeEmitter
         // List (array) - check "length" property or numeric index
         il.MarkLabel(listLabel);
         var indexLocal = il.DeclareLocal(_types.Int32);
-        var keyStrLocal = il.DeclareLocal(_types.String);
+        var listKeyStrLocal = il.DeclareLocal(_types.String);
 
         // Convert key to string
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-        il.Emit(OpCodes.Stloc, keyStrLocal);
+        il.Emit(OpCodes.Stloc, listKeyStrLocal);
 
         // Check if key == "length" → return true
         var notLengthLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, keyStrLocal);
+        il.Emit(OpCodes.Ldloc, listKeyStrLocal);
         il.Emit(OpCodes.Ldstr, "length");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, notLengthLabel);
@@ -2036,7 +2084,7 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notLengthLabel);
         // Try int.TryParse(key, out index) → if fails, return false
-        il.Emit(OpCodes.Ldloc, keyStrLocal);
+        il.Emit(OpCodes.Ldloc, listKeyStrLocal);
         il.Emit(OpCodes.Ldloca, indexLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
         il.Emit(OpCodes.Brfalse, falseLabel);

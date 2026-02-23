@@ -181,11 +181,21 @@ public class SharpTSProxy : ISharpTSCallable
         {
             if (_target is ISharpTSCallable callable)
                 return callable.Call(interp!, args);
+
+            // Compiled mode: target is a TSFunction, not ISharpTSCallable
+            if (interp == null)
+            {
+                var invokeMethod = _target.GetType().GetMethod("Invoke");
+                if (invokeMethod != null)
+                    return invokeMethod.Invoke(_target, [args.ToArray()]);
+            }
+
             throw new Exception("Runtime Error: Proxy target is not callable.");
         }
 
-        var argsArray = new SharpTSArray(args);
-        return InvokeTrap(trap, interp, [_target, thisArg, argsArray]);
+        // Compiled mode uses List<object?> for arrays; interpreter uses SharpTSArray
+        object argsArg = interp != null ? new SharpTSArray(args) : (object)args;
+        return InvokeTrap(trap, interp, [_target, thisArg, argsArg]);
     }
 
     public object? TrapConstruct(List<object?> args, Interpreter? interp)

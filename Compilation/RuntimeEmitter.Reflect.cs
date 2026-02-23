@@ -413,10 +413,26 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(gotArgsLabel);
 
-        // Just use InvokeValue which handles TSFunction, BoundTSFunction, etc.
+        // Check if target is a System.Type (compiled class reference)
+        var isTypeLabel = il.DefineLabel();
+        var notTypeLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, isTypeLabel);
+
+        // Not a Type - use InvokeValue which handles TSFunction, BoundTSFunction, etc.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Call, runtime.InvokeValue);
+        il.Emit(OpCodes.Ret);
+
+        // Is a Type - use Activator.CreateInstance(type, args)
+        il.MarkLabel(isTypeLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.Type);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(typeof(Activator), "CreateInstance", _types.Type, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
     }
 }

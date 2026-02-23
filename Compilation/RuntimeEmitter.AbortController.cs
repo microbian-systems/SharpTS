@@ -688,7 +688,8 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// AbortSignalAny(object signals) → object (signal dict)
-    /// Stub: returns a composite signal without CancellationToken linking.
+    /// Delegates to RuntimeTypes.AbortSignalAnyCompiled via reflection for proper
+    /// CancellationToken linking between input signals and composite signal.
     /// </summary>
     private void EmitAbortSignalStaticAny(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -701,62 +702,28 @@ public partial class RuntimeEmitter
         runtime.AbortSignalAny = method;
 
         var il = method.GetILGenerator();
-        var ctsType = _types.CancellationTokenSource;
-        var ctType = _types.CancellationToken;
-        var dictType = _types.DictionaryStringObject;
-        var listType = _types.ListOfObject;
 
-        // var cts = new CancellationTokenSource()
-        var ctsLocal = il.DeclareLocal(ctsType);
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(ctsType));
-        il.Emit(OpCodes.Stloc, ctsLocal);
+        // Type.GetType("SharpTS.Compilation.RuntimeTypes, SharpTS")
+        il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.RuntimeTypes, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
 
-        // Create composite signal dict
-        var signalLocal = il.DeclareLocal(dictType);
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(dictType));
-        il.Emit(OpCodes.Stloc, signalLocal);
+        // .GetMethod("AbortSignalAnyCompiled")
+        il.Emit(OpCodes.Ldstr, "AbortSignalAnyCompiled");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
 
-        // signal["_token"] = cts.Token
-        il.Emit(OpCodes.Ldloc, signalLocal);
-        il.Emit(OpCodes.Ldstr, "_token");
-        il.Emit(OpCodes.Ldloc, ctsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(ctsType, "Token").GetGetMethod()!);
-        il.Emit(OpCodes.Box, ctType);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
+        // .Invoke(null, new object[] { signals })
+        il.Emit(OpCodes.Ldnull); // null target for static method
 
-        // signal["_cts"] = cts
-        il.Emit(OpCodes.Ldloc, signalLocal);
-        il.Emit(OpCodes.Ldstr, "_cts");
-        il.Emit(OpCodes.Ldloc, ctsLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
-
-        // signal["_reason"] = null
-        il.Emit(OpCodes.Ldloc, signalLocal);
-        il.Emit(OpCodes.Ldstr, "_reason");
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
-
-        // signal["_reasonSet"] = false
-        il.Emit(OpCodes.Ldloc, signalLocal);
-        il.Emit(OpCodes.Ldstr, "_reasonSet");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Box, _types.Boolean);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
+        il.Emit(OpCodes.Ldarg_0); // signals
+        il.Emit(OpCodes.Stelem_Ref);
 
-        // signal["_listeners"] = new List<object>()
-        il.Emit(OpCodes.Ldloc, signalLocal);
-        il.Emit(OpCodes.Ldstr, "_listeners");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(listType));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
+        var invokeMethod = _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray);
+        il.Emit(OpCodes.Callvirt, invokeMethod!);
 
-        // signal["_onabort"] = null
-        il.Emit(OpCodes.Ldloc, signalLocal);
-        il.Emit(OpCodes.Ldstr, "_onabort");
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
-
-        // Stub: return the signal without CancellationToken linking
-        il.Emit(OpCodes.Ldloc, signalLocal);
         il.Emit(OpCodes.Ret);
     }
 
