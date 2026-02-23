@@ -181,7 +181,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_3);
+        // Wrap the callback in $WriteCallbackWrapper so the user's write handler
+        // always receives a callable "done" function (matching Node.js behavior)
+        il.Emit(OpCodes.Ldarg_3); // callback (may be null)
+        il.Emit(OpCodes.Newobj, _tsWriteCallbackWrapperCtor);
         il.Emit(OpCodes.Stelem_Ref);
 
         // Call InvokeWithThis(this, args)

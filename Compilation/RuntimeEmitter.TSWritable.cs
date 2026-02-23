@@ -9,6 +9,11 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class RuntimeEmitter
 {
+    // $WriteCallbackWrapper fields
+    private TypeBuilder _tsWriteCallbackWrapperType = null!;
+    private ConstructorBuilder _tsWriteCallbackWrapperCtor = null!;
+    private FieldBuilder _tsWriteCallbackWrapperUserCallbackField = null!;
+
     // $Writable fields
     private FieldBuilder _tsWritableWritableField = null!;
     private FieldBuilder _tsWritableEndedField = null!;
@@ -19,8 +24,87 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsWritableWriteCallbackField = null!;
     private FieldBuilder _tsWritableFinalCallbackField = null!;
 
+    /// <summary>
+    /// Emits the $WriteCallbackWrapper helper class.
+    /// This wraps the user-provided callback (or null) so that stream write handlers
+    /// always receive a callable "done" callback as their third argument.
+    /// Matches the interpreter's WriteCallbackWrapper behavior.
+    /// </summary>
+    private void EmitTSWriteCallbackWrapperClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$WriteCallbackWrapper",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.Object
+        );
+        _tsWriteCallbackWrapperType = typeBuilder;
+        runtime.WriteCallbackWrapperType = typeBuilder;
+
+        // Field: _userCallback (object, may be null)
+        _tsWriteCallbackWrapperUserCallbackField = typeBuilder.DefineField(
+            "_userCallback", _types.Object, FieldAttributes.Private);
+
+        // Constructor: public $WriteCallbackWrapper(object userCallback)
+        var ctorBuilder = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.Object]
+        );
+        _tsWriteCallbackWrapperCtor = ctorBuilder;
+        runtime.WriteCallbackWrapperCtor = ctorBuilder;
+
+        var ctorIL = ctorBuilder.GetILGenerator();
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Stfld, _tsWriteCallbackWrapperUserCallbackField);
+        ctorIL.Emit(OpCodes.Ret);
+
+        // Invoke method: public object Invoke(object[] args)
+        // Called when user code does callback() or callback(error).
+        // Calls the original user callback with no args (matching Node.js behavior).
+        var invokeBuilder = typeBuilder.DefineMethod(
+            "Invoke",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.ObjectArray]
+        );
+        runtime.WriteCallbackWrapperInvoke = invokeBuilder;
+
+        var invokeIL = invokeBuilder.GetILGenerator();
+        var noCallbackLabel = invokeIL.DefineLabel();
+
+        // if (_userCallback != null && _userCallback is $TSFunction)
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperUserCallbackField);
+        invokeIL.Emit(OpCodes.Brfalse, noCallbackLabel);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperUserCallbackField);
+        invokeIL.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        invokeIL.Emit(OpCodes.Brfalse, noCallbackLabel);
+
+        // _userCallback.Invoke([])
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperUserCallbackField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        invokeIL.Emit(OpCodes.Ldc_I4_0);
+        invokeIL.Emit(OpCodes.Newarr, _types.Object);
+        invokeIL.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        invokeIL.Emit(OpCodes.Pop);
+
+        invokeIL.MarkLabel(noCallbackLabel);
+        invokeIL.Emit(OpCodes.Ldnull);
+        invokeIL.Emit(OpCodes.Ret);
+
+        typeBuilder.CreateType();
+    }
+
     private void EmitTSWritableClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
+        // Emit the helper callback wrapper class first
+        EmitTSWriteCallbackWrapperClass(moduleBuilder, runtime);
+
         // Define class: public class $Writable : $EventEmitter
         var typeBuilder = moduleBuilder.DefineType(
             "$Writable",
@@ -175,7 +259,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_2);
+        // Wrap the callback in $WriteCallbackWrapper so the user's write handler
+        // always receives a callable "done" function (matching Node.js behavior)
         il.Emit(OpCodes.Ldarg_3); // callback (may be null)
+        il.Emit(OpCodes.Newobj, _tsWriteCallbackWrapperCtor);
         il.Emit(OpCodes.Stelem_Ref);
 
         // Call InvokeWithThis(this, args) instead of Invoke(args)

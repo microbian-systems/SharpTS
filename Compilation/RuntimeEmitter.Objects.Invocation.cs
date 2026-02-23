@@ -132,6 +132,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TransformDoneCallbackType);
         il.Emit(OpCodes.Brtrue, transformCbLabel);
 
+        var writeCallbackWrapperLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.WriteCallbackWrapperType);
+        il.Emit(OpCodes.Brtrue, writeCallbackWrapperLabel);
+
         var resolveCallbackLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.PromiseResolveCallbackType);
@@ -227,6 +232,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, runtime.TransformDoneCallbackType);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, runtime.TransformDoneCallbackInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(writeCallbackWrapperLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.WriteCallbackWrapperType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.WriteCallbackWrapperInvoke);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(resolveCallbackLabel);
@@ -397,7 +409,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TransformDoneCallbackInvoke);
         il.Emit(OpCodes.Ret);
 
+        // Check $WriteCallbackWrapper
         il.MarkLabel(notTransformCbLabel);
+        var notWriteCallbackWrapperLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.WriteCallbackWrapperType);
+        il.Emit(OpCodes.Brfalse, notWriteCallbackWrapperLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.WriteCallbackWrapperType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.WriteCallbackWrapperInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notWriteCallbackWrapperLabel);
 
         // Check $PromiseResolveCallback
         var notResolveCallbackLabel = il.DefineLabel();

@@ -1605,6 +1605,9 @@ public class EmittedRuntime
     public ConstructorBuilder TSTransformCtor { get; set; } = null!;
     public Type TransformDoneCallbackType { get; set; } = null!;
     public MethodBuilder TransformDoneCallbackInvoke { get; set; } = null!;
+    public Type WriteCallbackWrapperType { get; set; } = null!;
+    public ConstructorBuilder WriteCallbackWrapperCtor { get; set; } = null!;
+    public MethodBuilder WriteCallbackWrapperInvoke { get; set; } = null!;
 
     // $PassThrough type - emitted for standalone stream support
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSPassThrough
