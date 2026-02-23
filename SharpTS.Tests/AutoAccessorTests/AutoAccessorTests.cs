@@ -10,8 +10,9 @@ public class AutoAccessorTests
 {
     #region Basic Auto-Accessor Tests
 
-    [Fact]
-    public void AutoAccessor_BasicGetSet()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_BasicGetSet(ExecutionMode mode)
     {
         var code = @"
             class Point {
@@ -21,12 +22,13 @@ public class AutoAccessorTests
             p.x = 10;
             console.log(p.x);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("10\n", result);
     }
 
-    [Fact]
-    public void AutoAccessor_MultipleProperties()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_MultipleProperties(ExecutionMode mode)
     {
         var code = @"
             class Point {
@@ -38,12 +40,13 @@ public class AutoAccessorTests
             p.y = 10;
             console.log(p.x + p.y);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("15\n", result);
     }
 
-    [Fact]
-    public void AutoAccessor_WithStringType()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_WithStringType(ExecutionMode mode)
     {
         var code = @"
             class Person {
@@ -53,12 +56,13 @@ public class AutoAccessorTests
             p.name = ""Alice"";
             console.log(p.name);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("Alice\n", result);
     }
 
-    [Fact]
-    public void AutoAccessor_WithInitializer()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_WithInitializer(ExecutionMode mode)
     {
         var code = @"
             class Counter {
@@ -67,12 +71,13 @@ public class AutoAccessorTests
             let c = new Counter();
             console.log(c.value);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("42\n", result);
     }
 
-    [Fact]
-    public void AutoAccessor_WithoutInitializer()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_WithoutInitializer(ExecutionMode mode)
     {
         var code = @"
             class Container {
@@ -81,7 +86,7 @@ public class AutoAccessorTests
             let c = new Container();
             console.log(c.data === null || c.data === undefined);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("true\n", result);
     }
 
@@ -89,8 +94,9 @@ public class AutoAccessorTests
 
     #region Static Auto-Accessor Tests
 
-    [Fact]
-    public void AutoAccessor_Static_BasicGetSet()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_Static_BasicGetSet(ExecutionMode mode)
     {
         var code = @"
             class Counter {
@@ -99,12 +105,13 @@ public class AutoAccessorTests
             Counter.count = 5;
             console.log(Counter.count);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("5\n", result);
     }
 
-    [Fact]
-    public void AutoAccessor_Static_SharedAcrossInstances()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_Static_SharedAcrossInstances(ExecutionMode mode)
     {
         var code = @"
             class Counter {
@@ -118,12 +125,13 @@ public class AutoAccessorTests
             new Counter();
             console.log(Counter.total);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("3\n", result);
     }
 
-    [Fact]
-    public void AutoAccessor_Static_WithInitializer()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_Static_WithInitializer(ExecutionMode mode)
     {
         var code = @"
             class Config {
@@ -131,7 +139,7 @@ public class AutoAccessorTests
             }
             console.log(Config.version);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("1.0.0\n", result);
     }
 
@@ -139,8 +147,9 @@ public class AutoAccessorTests
 
     #region Readonly Auto-Accessor Tests
 
-    [Fact]
-    public void AutoAccessor_Readonly_CanRead()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_Readonly_CanRead(ExecutionMode mode)
     {
         var code = @"
             class Immutable {
@@ -149,12 +158,13 @@ public class AutoAccessorTests
             let i = new Immutable();
             console.log(i.id);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("abc123\n", result);
     }
 
-    [Fact]
-    public void AutoAccessor_Readonly_ThrowsOnSet()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_Readonly_ThrowsOnSet(ExecutionMode mode)
     {
         var code = @"
             class Immutable {
@@ -164,7 +174,7 @@ public class AutoAccessorTests
             i.id = ""new"";
         ";
         // Type checker catches this and reports "Cannot assign to 'id' because it has no setter"
-        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(code));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(code, mode));
         Assert.Contains("Cannot assign", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -172,8 +182,9 @@ public class AutoAccessorTests
 
     #region Inheritance Tests
 
-    [Fact]
-    public void AutoAccessor_Inheritance_InheritedFromParent()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_Inheritance_InheritedFromParent(ExecutionMode mode)
     {
         var code = @"
             class Animal {
@@ -185,12 +196,13 @@ public class AutoAccessorTests
             d.name = ""Rex"";
             console.log(d.name);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("Rex\n", result);
     }
 
-    [Fact]
-    public void AutoAccessor_Inheritance_Override()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_Inheritance_Override(ExecutionMode mode)
     {
         var code = @"
             class Base {
@@ -202,7 +214,7 @@ public class AutoAccessorTests
             let d = new Derived();
             console.log(d.value);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("20\n", result);
     }
 
@@ -210,8 +222,9 @@ public class AutoAccessorTests
 
     #region Multiple Instances Tests
 
-    [Fact]
-    public void AutoAccessor_MultipleInstances_IsolatedStorage()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_MultipleInstances_IsolatedStorage(ExecutionMode mode)
     {
         var code = @"
             class Counter {
@@ -223,7 +236,7 @@ public class AutoAccessorTests
             b.count = 10;
             console.log(a.count + b.count);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("15\n", result);
     }
 
@@ -231,8 +244,9 @@ public class AutoAccessorTests
 
     #region Type Inference Tests
 
-    [Fact]
-    public void AutoAccessor_TypeInference_FromInitializer()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_TypeInference_FromInitializer(ExecutionMode mode)
     {
         // When no explicit type annotation is provided, the type is inferred from initializer.
         // Note: TypeScript infers literal types, so we use a number type here.
@@ -244,7 +258,7 @@ public class AutoAccessorTests
             c.value = 100;
             console.log(c.value);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("100\n", result);
     }
 
@@ -252,8 +266,9 @@ public class AutoAccessorTests
 
     #region Mixed Member Tests
 
-    [Fact]
-    public void AutoAccessor_WithRegularFields()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_WithRegularFields(ExecutionMode mode)
     {
         var code = @"
             class Mixed {
@@ -263,12 +278,13 @@ public class AutoAccessorTests
             let m = new Mixed();
             console.log(m.regularField + m.autoAccessor);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("3\n", result);
     }
 
-    [Fact]
-    public void AutoAccessor_WithMethods()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_WithMethods(ExecutionMode mode)
     {
         var code = @"
             class Counter {
@@ -283,12 +299,13 @@ public class AutoAccessorTests
             c.increment();
             console.log(c.value);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("2\n", result);
     }
 
-    [Fact]
-    public void AutoAccessor_WithManualAccessor()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_WithManualAccessor(ExecutionMode mode)
     {
         var code = @"
             class Container {
@@ -301,77 +318,17 @@ public class AutoAccessorTests
             let c = new Container();
             console.log(c.auto + c.manual);
         ";
-        var result = TestHarness.RunInterpreted(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("30\n", result);
     }
 
     #endregion
 
-    #region Compiled Auto-Accessor Tests
+    #region Mixed Static and Instance Tests
 
-    [Fact]
-    public void AutoAccessor_Compiled_BasicGetSet()
-    {
-        var code = @"
-            class Point {
-                accessor x: number = 0;
-            }
-            let p = new Point();
-            p.x = 10;
-            console.log(p.x);
-        ";
-        var result = TestHarness.RunCompiled(code);
-        Assert.Equal("10\n", result);
-    }
-
-    [Fact]
-    public void AutoAccessor_Compiled_Static_BasicGetSet()
-    {
-        var code = @"
-            class Counter {
-                static accessor count: number = 0;
-            }
-            Counter.count = 5;
-            console.log(Counter.count);
-        ";
-        var result = TestHarness.RunCompiled(code);
-        Assert.Equal("5\n", result);
-    }
-
-    [Fact]
-    public void AutoAccessor_Compiled_Static_SharedAcrossInstances()
-    {
-        var code = @"
-            class Counter {
-                static accessor total: number = 0;
-                constructor() {
-                    Counter.total = Counter.total + 1;
-                }
-            }
-            new Counter();
-            new Counter();
-            new Counter();
-            console.log(Counter.total);
-        ";
-        var result = TestHarness.RunCompiled(code);
-        Assert.Equal("3\n", result);
-    }
-
-    [Fact]
-    public void AutoAccessor_Compiled_Static_WithInitializer()
-    {
-        var code = @"
-            class Config {
-                static accessor version: string = ""1.0.0"";
-            }
-            console.log(Config.version);
-        ";
-        var result = TestHarness.RunCompiled(code);
-        Assert.Equal("1.0.0\n", result);
-    }
-
-    [Fact]
-    public void AutoAccessor_Compiled_MixedStaticAndInstance()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AutoAccessor_MixedStaticAndInstance(ExecutionMode mode)
     {
         var code = @"
             class Counter {
@@ -389,7 +346,7 @@ public class AutoAccessorTests
             console.log(b.value);
             console.log(Counter.total);
         ";
-        var result = TestHarness.RunCompiled(code);
+        var result = TestHarness.Run(code, mode);
         Assert.Equal("1\n2\n2\n", result);
     }
 
