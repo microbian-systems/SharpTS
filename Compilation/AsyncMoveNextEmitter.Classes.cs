@@ -60,6 +60,39 @@ public partial class AsyncMoveNextEmitter
             return;
         }
 
+        // Special case: new Date(...) constructor
+        if (isSimpleName && className == "Date")
+        {
+            switch (n.Arguments.Count)
+            {
+                case 0:
+                    _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateDateNoArgs);
+                    break;
+                case 1:
+                    EmitExpression(n.Arguments[0]);
+                    EnsureBoxed();
+                    _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateDateFromValue);
+                    break;
+                default:
+                    // new Date(year, month, day?, hours?, minutes?, seconds?, ms?)
+                    for (int i = 0; i < 7; i++)
+                    {
+                        if (i < n.Arguments.Count)
+                        {
+                            EmitExpressionAsDouble(n.Arguments[i]);
+                        }
+                        else
+                        {
+                            _il.Emit(OpCodes.Ldc_R8, i == 2 ? 1.0 : 0.0);
+                        }
+                    }
+                    _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateDateFromComponents);
+                    break;
+            }
+            SetStackUnknown();
+            return;
+        }
+
         // Special case: new Headers(...) constructor
         if (isSimpleName && className == "Headers")
         {

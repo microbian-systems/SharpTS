@@ -343,6 +343,10 @@ public partial class ILEmitter
             {
                 IL.Emit(OpCodes.Stsfld, topLevelField);
             }
+            else
+            {
+                _resolver.TryStoreVariable(ca.Name.Lexeme);
+            }
             SetStackType(StackType.String);
             return;
         }
@@ -370,6 +374,10 @@ public partial class ILEmitter
             else if (topLevelField != null)
             {
                 IL.Emit(OpCodes.Stsfld, topLevelField);
+            }
+            else
+            {
+                _resolver.TryStoreVariable(ca.Name.Lexeme);
             }
             SetStackUnknown();
             return;
@@ -419,6 +427,10 @@ public partial class ILEmitter
         else if (topLevelField != null)
         {
             IL.Emit(OpCodes.Stsfld, topLevelField);
+        }
+        else
+        {
+            _resolver.TryStoreVariable(ca.Name.Lexeme);
         }
         SetStackUnknown();
     }
@@ -481,6 +493,10 @@ public partial class ILEmitter
         else if (topLevelField != null)
         {
             IL.Emit(OpCodes.Stsfld, topLevelField);
+        }
+        else
+        {
+            _resolver.TryStoreVariable(la.Name.Lexeme);
         }
 
         builder.MarkLabel(endLabel);

@@ -576,12 +576,33 @@ public partial class AsyncMoveNextEmitter
                 directArgTemps.Add(temp);
             }
 
-            // Now load all args from temps and call
-            foreach (var temp in directArgTemps)
+            // Now load all args from temps and call, unboxing value-type params
+            for (int i = 0; i < directArgTemps.Count; i++)
             {
-                _il.Emit(OpCodes.Ldloc, temp);
+                _il.Emit(OpCodes.Ldloc, directArgTemps[i]);
+                if (i < parameters.Length)
+                {
+                    var targetType = parameters[i].ParameterType;
+                    if (targetType.IsValueType && targetType != typeof(object))
+                    {
+                        _il.Emit(OpCodes.Unbox_Any, targetType);
+                    }
+                }
             }
             _il.Emit(OpCodes.Call, funcMethod);
+
+            // Box value-type return values (e.g., double, bool) so the async
+            // state machine can treat the result as object
+            var returnType = funcMethod.ReturnType;
+            if (returnType.IsValueType && returnType != typeof(void))
+            {
+                _il.Emit(OpCodes.Box, returnType);
+            }
+            else if (returnType == typeof(void))
+            {
+                // Void methods leave nothing on the stack — push null
+                _il.Emit(OpCodes.Ldnull);
+            }
             SetStackUnknown();
             return;
         }
@@ -643,6 +664,17 @@ public partial class AsyncMoveNextEmitter
 
     protected override void EmitGet(Expr.Get g)
     {
+        // Static type property dispatch via registry (Math.PI, Number.MAX_VALUE, Symbol.iterator, etc.)
+        if (g.Object is Expr.Variable staticVar && _ctx?.TypeEmitterRegistry != null)
+        {
+            var staticStrategy = _ctx.TypeEmitterRegistry.GetStaticStrategy(staticVar.Name.Lexeme);
+            if (staticStrategy != null && staticStrategy.TryEmitStaticPropertyGet(this, g.Name.Lexeme))
+            {
+                SetStackUnknown();
+                return;
+            }
+        }
+
         // Type-first dispatch: Use TypeEmitterRegistry for property getters (AbortController.signal, etc.)
         var objType = _ctx?.TypeMap?.Get(g.Object);
         if (objType != null && _ctx?.TypeEmitterRegistry != null)
@@ -725,6 +757,20 @@ public partial class AsyncMoveNextEmitter
         {
             _il.Emit(OpCodes.Stloc, local);
         }
+        else if (_ctx.CapturedTopLevelVars?.Contains(name) == true &&
+                 _ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
+                 _ctx.EntryPointDisplayClassStaticField != null)
+        {
+            var temp = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Stloc, temp);
+            _il.Emit(OpCodes.Ldsfld, _ctx.EntryPointDisplayClassStaticField);
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, entryPointField);
+        }
+        else if (_ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+        {
+            _il.Emit(OpCodes.Stsfld, topLevelField);
+        }
 
         SetStackUnknown();
     }
@@ -785,6 +831,20 @@ public partial class AsyncMoveNextEmitter
         else if (_ctx!.Locals.TryGetLocal(name, out var local))
         {
             _il.Emit(OpCodes.Stloc, local);
+        }
+        else if (_ctx.CapturedTopLevelVars?.Contains(name) == true &&
+                 _ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
+                 _ctx.EntryPointDisplayClassStaticField != null)
+        {
+            var temp = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Stloc, temp);
+            _il.Emit(OpCodes.Ldsfld, _ctx.EntryPointDisplayClassStaticField);
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, entryPointField);
+        }
+        else if (_ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+        {
+            _il.Emit(OpCodes.Stsfld, topLevelField);
         }
 
         _il.MarkLabel(endLabel);

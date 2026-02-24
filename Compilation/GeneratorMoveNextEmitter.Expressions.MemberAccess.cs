@@ -1262,6 +1262,20 @@ public partial class GeneratorMoveNextEmitter
         {
             _il.Emit(OpCodes.Stloc, local);
         }
+        else if (_ctx.CapturedTopLevelVars?.Contains(name) == true &&
+                 _ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
+                 _ctx.EntryPointDisplayClassStaticField != null)
+        {
+            var temp = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Stloc, temp);
+            _il.Emit(OpCodes.Ldsfld, _ctx.EntryPointDisplayClassStaticField);
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, entryPointField);
+        }
+        else if (_ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+        {
+            _il.Emit(OpCodes.Stsfld, topLevelField);
+        }
 
         SetStackUnknown();
     }
@@ -1318,6 +1332,20 @@ public partial class GeneratorMoveNextEmitter
         else if (_ctx!.Locals.TryGetLocal(name, out var local))
         {
             _il.Emit(OpCodes.Stloc, local);
+        }
+        else if (_ctx.CapturedTopLevelVars?.Contains(name) == true &&
+                 _ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
+                 _ctx.EntryPointDisplayClassStaticField != null)
+        {
+            var temp = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Stloc, temp);
+            _il.Emit(OpCodes.Ldsfld, _ctx.EntryPointDisplayClassStaticField);
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, entryPointField);
+        }
+        else if (_ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+        {
+            _il.Emit(OpCodes.Stsfld, topLevelField);
         }
 
         _il.MarkLabel(endLabel);
