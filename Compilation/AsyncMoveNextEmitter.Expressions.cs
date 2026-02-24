@@ -317,6 +317,13 @@ public partial class AsyncMoveNextEmitter
             return;
         }
 
+        // Special case: super.method() call — emit non-virtual Call to base method
+        if (c.Callee is Expr.Super superMethodExpr && superMethodExpr.Method != null && superMethodExpr.Method.Lexeme != "constructor")
+        {
+            if (TryEmitSuperMethodCall(superMethodExpr.Method.Lexeme, c.Arguments))
+                return;
+        }
+
         // Handle fetch() - global async HTTP function
         // Unwrap TypeAssertion/Grouping (e.g., (fetch as any)()) to get the underlying callee
         Expr fetchCallee = c.Callee;

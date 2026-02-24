@@ -1059,8 +1059,7 @@ public class SyncAsyncEquivalenceTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    // Compiled: hangs (infinite loop) — super.method() dispatches to derived instead of base
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void SuperCall_SyncPath(ExecutionMode mode)
     {
         var source = """
@@ -1084,8 +1083,7 @@ public class SyncAsyncEquivalenceTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    // Compiled: hangs (infinite loop) when super.method() called inside async function
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void SuperCall_AsyncPath(ExecutionMode mode)
     {
         var source = """

@@ -261,6 +261,75 @@ public partial class ILEmitter
     }
 
     /// <summary>
+    /// Emits a non-virtual call to a base class method for super.method() expressions.
+    /// Uses OpCodes.Call instead of Callvirt to bypass virtual dispatch and invoke the
+    /// base class implementation directly, preventing infinite recursion.
+    /// </summary>
+    private bool TryEmitSuperMethodCall(string methodName, List<Expr> arguments)
+    {
+        // Resolve the superclass name - try multiple sources:
+        // 1. CurrentSuperclassName (set in constructor context)
+        // 2. ClassRegistry superclass lookup (works in method body context)
+        // 3. Class expression superclass mapping
+        string? superclassName = _ctx.CurrentSuperclassName;
+
+        if (superclassName == null && _ctx.CurrentClassName != null)
+        {
+            // Try qualified name first (includes namespace), then simple name
+            superclassName = _ctx.ClassRegistry?.GetSuperclass(
+                _ctx.CurrentClassBuilder?.FullName ?? _ctx.CurrentClassName)
+                ?? _ctx.ClassRegistry?.GetSuperclass(_ctx.CurrentClassName);
+        }
+
+        if (superclassName == null && _ctx.CurrentClassExpr != null)
+        {
+            _ctx.ClassExprSuperclass?.TryGetValue(_ctx.CurrentClassExpr, out superclassName);
+        }
+
+        if (superclassName == null)
+            return false;
+
+        // superclassName from ClassRegistry is already qualified; from CurrentSuperclassName it's simple.
+        // ResolveClassName is idempotent for already-qualified names, so always safe to call.
+        string resolvedSuperName = _ctx.ResolveClassName(superclassName);
+
+        // Look up the method directly on the superclass (not walking up — that's what
+        // ResolveInstanceMethod does, but we specifically want the super's version)
+        var methodBuilder = _ctx.ResolveInstanceMethod(resolvedSuperName, methodName);
+        if (methodBuilder == null)
+            return false;
+
+        var methodParams = methodBuilder.GetParameters();
+
+        // Emit: this.Base::method(args) via non-virtual Call
+        IL.Emit(OpCodes.Ldarg_0);  // load 'this'
+
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            EmitExpression(arguments[i]);
+            if (i < methodParams.Length)
+            {
+                EmitConversionForParameter(arguments[i], methodParams[i].ParameterType);
+            }
+            else
+            {
+                EmitBoxIfNeeded(arguments[i]);
+            }
+        }
+
+        // Pad missing optional arguments
+        for (int i = arguments.Count; i < methodParams.Length; i++)
+        {
+            EmitDefaultForType(methodParams[i].ParameterType);
+        }
+
+        // Use Call (NOT Callvirt) to bypass virtual dispatch
+        IL.Emit(OpCodes.Call, methodBuilder);
+        SetStackUnknown();
+        return true;
+    }
+
+    /// <summary>
     /// Emits a super() constructor call with proper argument handling and generic type support.
     /// </summary>
     /// <param name="parentCtor">The parent class constructor to call.</param>

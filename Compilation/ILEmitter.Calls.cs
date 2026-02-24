@@ -69,6 +69,15 @@ public partial class ILEmitter
             }
         }
 
+        // Special case: super.method() call in derived class (non-constructor)
+        // Must use OpCodes.Call (non-virtual) to bypass virtual dispatch and call the base method directly.
+        // Using Callvirt or MethodInfo.Invoke would dispatch to the derived override, causing infinite recursion.
+        if (c.Callee is Expr.Super superMethodExpr && superMethodExpr.Method != null && superMethodExpr.Method.Lexeme != "constructor")
+        {
+            if (TryEmitSuperMethodCall(superMethodExpr.Method.Lexeme, c.Arguments))
+                return;
+        }
+
         // Special case: console methods (log, error, warn, info, debug, clear, time, timeEnd, timeLog)
         if (_helpers.TryEmitConsoleMethod(c,
             arg => { EmitExpression(arg); EmitBoxIfNeeded(arg); },

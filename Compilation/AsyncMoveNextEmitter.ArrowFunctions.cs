@@ -257,6 +257,85 @@ public partial class AsyncMoveNextEmitter
     }
 
     /// <summary>
+    /// Emits a non-virtual call to a base class method for super.method() in async context.
+    /// Loads 'this' from the state machine's hoisted ThisField.
+    /// </summary>
+    private bool TryEmitSuperMethodCall(string methodName, List<Expr> arguments)
+    {
+        string? superclassName = _ctx?.CurrentSuperclassName;
+
+        if (superclassName == null && _ctx?.CurrentClassName != null)
+        {
+            superclassName = _ctx.ClassRegistry?.GetSuperclass(
+                _ctx.CurrentClassBuilder?.FullName ?? _ctx.CurrentClassName)
+                ?? _ctx.ClassRegistry?.GetSuperclass(_ctx.CurrentClassName);
+        }
+
+        if (superclassName == null && _ctx?.CurrentClassExpr != null)
+        {
+            _ctx.ClassExprSuperclass?.TryGetValue(_ctx.CurrentClassExpr, out superclassName);
+        }
+
+        if (superclassName == null)
+            return false;
+
+        string resolvedSuperName = _ctx!.ResolveClassName(superclassName);
+
+        var methodBuilder = _ctx.ResolveInstanceMethod(resolvedSuperName, methodName);
+        if (methodBuilder == null)
+            return false;
+
+        var methodParams = methodBuilder.GetParameters();
+
+        // In async context, emit all arguments first and store to temps (await may occur in args)
+        List<LocalBuilder> argTemps = [];
+        foreach (var arg in arguments)
+        {
+            EmitExpression(arg);
+            EnsureBoxed();
+            var temp = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Stloc, temp);
+            argTemps.Add(temp);
+        }
+
+        // Load hoisted 'this' from state machine
+        if (_builder.ThisField != null)
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.ThisField);
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldnull);
+        }
+
+        // Load arguments back from temps with proper type conversions
+        for (int i = 0; i < argTemps.Count; i++)
+        {
+            _il.Emit(OpCodes.Ldloc, argTemps[i]);
+            if (i < methodParams.Length)
+            {
+                var targetType = methodParams[i].ParameterType;
+                if (targetType.IsValueType && targetType != typeof(object))
+                {
+                    _il.Emit(OpCodes.Unbox_Any, targetType);
+                }
+            }
+        }
+
+        // Pad missing optional arguments
+        for (int i = arguments.Count; i < methodParams.Length; i++)
+        {
+            EmitDefaultForType(methodParams[i].ParameterType);
+        }
+
+        // Use Call (NOT Callvirt) to bypass virtual dispatch
+        _il.Emit(OpCodes.Call, methodBuilder);
+        SetStackUnknown();
+        return true;
+    }
+
+    /// <summary>
     /// Emits a default value for the given type.
     /// </summary>
     private void EmitDefaultForType(Type type)
