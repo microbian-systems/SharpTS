@@ -1,10 +1,10 @@
 using SharpTS.Tests.Infrastructure;
 using Xunit;
 
-namespace SharpTS.Tests.CompilerTests;
+namespace SharpTS.Tests.SharedTests;
 
 /// <summary>
-/// Tests for custom iterator protocol support in IL compilation.
+/// Tests for custom iterator protocol support.
 /// Verifies that objects with [Symbol.iterator] work in for...of loops
 /// and objects with [Symbol.asyncIterator] work in for await...of loops.
 ///
@@ -16,8 +16,9 @@ public class IteratorProtocolTests
 {
     #region Sync Iterator Protocol (Symbol.iterator)
 
-    [Fact]
-    public void CustomIterator_BasicObject_IteratesValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CustomIterator_BasicObject_IteratesValues(ExecutionMode mode)
     {
         var source = """
             const iterable: any = {
@@ -46,12 +47,13 @@ public class IteratorProtocolTests
             console.log(sum);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("60\n", output);
     }
 
-    [Fact]
-    public void CustomIterator_EmptyIterator_NoIterations()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CustomIterator_EmptyIterator_NoIterations(ExecutionMode mode)
     {
         var source = """
             const iterable: any = {
@@ -72,12 +74,13 @@ public class IteratorProtocolTests
             console.log("count: " + count);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("count: 0\n", output);
     }
 
-    [Fact]
-    public void CustomIterator_SingleValue_IteratesOnce()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CustomIterator_SingleValue_IteratesOnce(ExecutionMode mode)
     {
         var source = """
             const iterable: any = {
@@ -101,12 +104,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("42\n", output);
     }
 
-    [Fact]
-    public void CustomIterator_WithBreak_StopsEarly()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CustomIterator_WithBreak_StopsEarly(ExecutionMode mode)
     {
         var source = """
             const iterable: any = {
@@ -132,12 +136,13 @@ public class IteratorProtocolTests
             console.log("done");
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n3\ndone\n", output);
     }
 
-    [Fact]
-    public void CustomIterator_WithContinue_SkipsValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CustomIterator_WithContinue_SkipsValues(ExecutionMode mode)
     {
         var source = """
             const iterable: any = {
@@ -162,12 +167,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n3\n5\n", output);
     }
 
-    [Fact]
-    public void CustomIterator_YieldingNull_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CustomIterator_YieldingNull_Works(ExecutionMode mode)
     {
         var source = """
             const iterable: any = {
@@ -191,12 +197,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("null\n42\nnull\n", output);
     }
 
-    [Fact]
-    public void CustomIterator_MultipleIterations_WorksCorrectly()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CustomIterator_MultipleIterations_WorksCorrectly(ExecutionMode mode)
     {
         var source = """
             const iterable: any = {
@@ -226,7 +233,7 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("first:\n1\n2\n3\nsecond:\n1\n2\n3\n", output);
     }
 
@@ -234,8 +241,9 @@ public class IteratorProtocolTests
 
     #region Async Iterator Protocol (Symbol.asyncIterator)
 
-    [Fact]
-    public void CustomAsyncIterator_BasicObject_IteratesValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CustomAsyncIterator_BasicObject_IteratesValues(ExecutionMode mode)
     {
         var source = """
             const asyncIterable: any = {
@@ -268,12 +276,13 @@ public class IteratorProtocolTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("600\n", output);
     }
 
-    [Fact]
-    public void CustomAsyncIterator_EmptyIterator_NoIterations()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CustomAsyncIterator_EmptyIterator_NoIterations(ExecutionMode mode)
     {
         var source = """
             const asyncIterable: any = {
@@ -298,12 +307,13 @@ public class IteratorProtocolTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("count: 0\n", output);
     }
 
-    [Fact]
-    public void CustomAsyncIterator_WithBreak_StopsEarly()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CustomAsyncIterator_WithBreak_StopsEarly(ExecutionMode mode)
     {
         var source = """
             const asyncIterable: any = {
@@ -333,12 +343,13 @@ public class IteratorProtocolTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n3\ndone\n", output);
     }
 
-    [Fact]
-    public void CustomAsyncIterator_WithContinue_SkipsValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CustomAsyncIterator_WithContinue_SkipsValues(ExecutionMode mode)
     {
         var source = """
             const asyncIterable: any = {
@@ -367,7 +378,7 @@ public class IteratorProtocolTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n3\n5\n", output);
     }
 
@@ -375,8 +386,9 @@ public class IteratorProtocolTests
 
     #region Fallback to Built-in Iteration
 
-    [Fact]
-    public void ArrayWithoutSymbolIterator_StillIterates()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ArrayWithoutSymbolIterator_StillIterates(ExecutionMode mode)
     {
         var source = """
             const arr = [1, 2, 3];
@@ -387,12 +399,13 @@ public class IteratorProtocolTests
             console.log(sum);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("6\n", output);
     }
 
-    [Fact]
-    public void PlainObject_UsesIndexBasedIteration()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PlainObject_UsesIndexBasedIteration(ExecutionMode mode)
     {
         var source = """
             const obj = { a: 1, b: 2, c: 3 };
@@ -401,94 +414,17 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("a\nb\nc\n", output);
-    }
-
-    #endregion
-
-    #region Interpreter vs Compiler Parity
-
-    [Fact]
-    public void CustomIterator_InterpreterCompilerParity()
-    {
-        var source = """
-            const iterable: any = {
-                data: [1, 2, 3, 4, 5],
-                [Symbol.iterator]() {
-                    const iter: any = {
-                        i: 0,
-                        data: this.data,
-                        next() {
-                            if (this.i < this.data.length) {
-                                const val = this.data[this.i];
-                                this.i = this.i + 1;
-                                return { value: val, done: false };
-                            }
-                            return { value: null, done: true };
-                        }
-                    };
-                    return iter;
-                }
-            };
-
-            let result = "";
-            for (const x of iterable) {
-                result = result + x + ",";
-            }
-            console.log(result);
-            """;
-
-        var interpretedOutput = TestHarness.RunInterpreted(source);
-        var compiledOutput = TestHarness.RunCompiled(source);
-        Assert.Equal(interpretedOutput, compiledOutput);
-    }
-
-    [Fact]
-    public void CustomAsyncIterator_InterpreterCompilerParity()
-    {
-        var source = """
-            const asyncIterable: any = {
-                data: [10, 20, 30],
-                [Symbol.asyncIterator]() {
-                    const iter: any = {
-                        i: 0,
-                        data: this.data,
-                        next() {
-                            if (this.i < this.data.length) {
-                                const val = this.data[this.i];
-                                this.i = this.i + 1;
-                                return Promise.resolve({ value: val, done: false });
-                            }
-                            return Promise.resolve({ value: null, done: true });
-                        }
-                    };
-                    return iter;
-                }
-            };
-
-            async function main() {
-                let result = "";
-                for await (const x of asyncIterable) {
-                    result = result + x + ",";
-                }
-                console.log(result);
-            }
-
-            main();
-            """;
-
-        var interpretedOutput = TestHarness.RunInterpreted(source);
-        var compiledOutput = TestHarness.RunCompiled(source);
-        Assert.Equal(interpretedOutput, compiledOutput);
     }
 
     #endregion
 
     #region Spread with Custom Iterator
 
-    [Fact]
-    public void SpreadCustomIterator_InArrayLiteral_CollectsAllValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SpreadCustomIterator_InArrayLiteral_CollectsAllValues(ExecutionMode mode)
     {
         var source = """
             const iterable: any = {
@@ -519,44 +455,13 @@ public class IteratorProtocolTests
             console.log(arr[4]);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("5\n1\n10\n20\n30\n100\n", output);
     }
 
-    [Fact]
-    public void SpreadCustomIterator_InArrayLiteral_InterpreterParity()
-    {
-        var source = """
-            const iterable: any = {
-                data: [10, 20, 30],
-                [Symbol.iterator]() {
-                    const iter: any = {
-                        i: 0,
-                        data: this.data,
-                        next() {
-                            if (this.i < this.data.length) {
-                                const val = this.data[this.i];
-                                this.i = this.i + 1;
-                                return { value: val, done: false };
-                            }
-                            return { value: null, done: true };
-                        }
-                    };
-                    return iter;
-                }
-            };
-
-            const arr = [1, ...iterable, 100];
-            console.log(arr.join(","));
-            """;
-
-        var interpretedOutput = TestHarness.RunInterpreted(source);
-        var compiledOutput = TestHarness.RunCompiled(source);
-        Assert.Equal(interpretedOutput, compiledOutput);
-    }
-
-    [Fact]
-    public void SpreadEmptyIterator_InArrayLiteral_AddsNothing()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SpreadEmptyIterator_InArrayLiteral_AddsNothing(ExecutionMode mode)
     {
         var source = """
             const empty: any = {
@@ -576,12 +481,13 @@ public class IteratorProtocolTests
             console.log(arr[1]);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("2\n1\n2\n", output);
     }
 
-    [Fact]
-    public void SpreadCustomIterator_InFunctionCall_ExpandsArguments()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SpreadCustomIterator_InFunctionCall_ExpandsArguments(ExecutionMode mode)
     {
         var source = """
             function sum(...args: number[]): number {
@@ -614,51 +520,13 @@ public class IteratorProtocolTests
             console.log(sum(1, ...iterable, 100));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("161\n", output);
     }
 
-    [Fact]
-    public void SpreadCustomIterator_InFunctionCall_InterpreterParity()
-    {
-        var source = """
-            function sum(...args: number[]): number {
-                let total = 0;
-                for (const x of args) {
-                    total = total + x;
-                }
-                return total;
-            }
-
-            const iterable: any = {
-                data: [10, 20, 30],
-                [Symbol.iterator]() {
-                    const iter: any = {
-                        i: 0,
-                        data: this.data,
-                        next() {
-                            if (this.i < this.data.length) {
-                                const val = this.data[this.i];
-                                this.i = this.i + 1;
-                                return { value: val, done: false };
-                            }
-                            return { value: null, done: true };
-                        }
-                    };
-                    return iter;
-                }
-            };
-
-            console.log(sum(1, ...iterable, 100));
-            """;
-
-        var interpretedOutput = TestHarness.RunInterpreted(source);
-        var compiledOutput = TestHarness.RunCompiled(source);
-        Assert.Equal(interpretedOutput, compiledOutput);
-    }
-
-    [Fact]
-    public void SpreadGenerator_InArrayLiteral_CollectsAllValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SpreadGenerator_InArrayLiteral_CollectsAllValues(ExecutionMode mode)
     {
         var source = """
             function* nums(): Generator<number> {
@@ -675,38 +543,18 @@ public class IteratorProtocolTests
             console.log(arr[2]);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("3\n1\n2\n3\n", output);
-    }
-
-    [Fact]
-    public void SpreadGenerator_InArrayLiteral_InterpreterParity()
-    {
-        var source = """
-            function* nums(): Generator<number> {
-                yield 1;
-                yield 2;
-                yield 3;
-            }
-
-            const gen: any = nums();
-            const arr = [...gen];
-            console.log(arr.join(","));
-            """;
-
-        var interpretedOutput = TestHarness.RunInterpreted(source);
-        var compiledOutput = TestHarness.RunCompiled(source);
-        Assert.Equal(interpretedOutput, compiledOutput);
     }
 
     #endregion
 
     #region Yield* with Custom Iterator
 
-    [Fact]
-    public void YieldStar_CustomIterator_DelegatesAllValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_CustomIterator_DelegatesAllValues(ExecutionMode mode)
     {
-        // Tests yield* with captured custom iterable (Symbol.iterator protocol)
         var source = """
             const iterable: any = {
                 data: [10, 20, 30],
@@ -738,56 +586,14 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n10\n20\n30\n100\n", output);
     }
 
-    [Fact]
-    public void YieldStar_CustomIterator_InterpreterParity()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_EmptyIterator_YieldsNothing(ExecutionMode mode)
     {
-        // Tests yield* with captured custom iterable - interpreter vs compiled parity
-        var source = """
-            const iterable: any = {
-                data: [10, 20, 30],
-                [Symbol.iterator]() {
-                    const iter: any = {
-                        i: 0,
-                        data: this.data,
-                        next() {
-                            if (this.i < this.data.length) {
-                                const val = this.data[this.i];
-                                this.i = this.i + 1;
-                                return { value: val, done: false };
-                            }
-                            return { value: null, done: true };
-                        }
-                    };
-                    return iter;
-                }
-            };
-
-            function* gen(): Generator<number> {
-                yield 1;
-                yield* iterable;
-                yield 100;
-            }
-
-            let result = "";
-            for (const x of gen()) {
-                result = result + x + ",";
-            }
-            console.log(result);
-            """;
-
-        var interpretedOutput = TestHarness.RunInterpreted(source);
-        var compiledOutput = TestHarness.RunCompiled(source);
-        Assert.Equal(interpretedOutput, compiledOutput);
-    }
-
-    [Fact]
-    public void YieldStar_EmptyIterator_YieldsNothing()
-    {
-        // Tests yield* with captured empty custom iterator
         var source = """
             const empty: any = {
                 [Symbol.iterator]() {
@@ -811,12 +617,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n", output);
     }
 
-    [Fact]
-    public void YieldStar_Generator_DelegatesAllValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Generator_DelegatesAllValues(ExecutionMode mode)
     {
         var source = """
             function* inner(): Generator<number> {
@@ -836,7 +643,7 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n10\n20\n30\n100\n", output);
     }
 
@@ -844,8 +651,9 @@ public class IteratorProtocolTests
 
     #region Generator Variable Capture
 
-    [Fact]
-    public void Generator_CapturesOuterVariable_ReadsCorrectly()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_CapturesOuterVariable_ReadsCorrectly(ExecutionMode mode)
     {
         var source = """
             const x = 42;
@@ -858,12 +666,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("42\n", output);
     }
 
-    [Fact]
-    public void Generator_CapturesOuterObject_AccessesProperty()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_CapturesOuterObject_AccessesProperty(ExecutionMode mode)
     {
         var source = """
             const obj: any = { value: 100 };
@@ -876,12 +685,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("100\n", output);
     }
 
-    [Fact]
-    public void Generator_CapturesMultipleVariables_AllAccessible()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_CapturesMultipleVariables_AllAccessible(ExecutionMode mode)
     {
         var source = """
             const a = 10;
@@ -900,12 +710,13 @@ public class IteratorProtocolTests
             console.log(sum);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("60\n", output);
     }
 
-    [Fact]
-    public void Generator_CapturesVariable_UsedMultipleTimes()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_CapturesVariable_UsedMultipleTimes(ExecutionMode mode)
     {
         var source = """
             const multiplier = 10;
@@ -920,34 +731,14 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("10\n20\n30\n", output);
     }
 
-    [Fact]
-    public void Generator_CapturesVariable_InterpreterParity()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_CapturesArrayFromOuter_AccessesCorrectly(ExecutionMode mode)
     {
-        var source = """
-            const prefix = "value: ";
-            function* gen(): Generator<string> {
-                yield prefix + "one";
-                yield prefix + "two";
-            }
-
-            for (const v of gen()) {
-                console.log(v);
-            }
-            """;
-
-        var interpretedOutput = TestHarness.RunInterpreted(source);
-        var compiledOutput = TestHarness.RunCompiled(source);
-        Assert.Equal(interpretedOutput, compiledOutput);
-    }
-
-    [Fact]
-    public void Generator_CapturesArrayFromOuter_AccessesCorrectly()
-    {
-        // Test both index-based access and for...of iteration with captured array
         var source = """
             const data = [5, 10, 15];
             function* gen(): Generator<number> {
@@ -962,91 +753,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("3\n10\n20\n30\n", output);
     }
 
-    [Fact]
-    public void Generator_CapturesCustomIterable_YieldStarWorks()
-    {
-        var source = """
-            const iterable: any = {
-                data: [10, 20, 30],
-                [Symbol.iterator]() {
-                    const iter: any = {
-                        i: 0,
-                        data: this.data,
-                        next() {
-                            if (this.i < this.data.length) {
-                                const val = this.data[this.i];
-                                this.i = this.i + 1;
-                                return { value: val, done: false };
-                            }
-                            return { value: null, done: true };
-                        }
-                    };
-                    return iter;
-                }
-            };
-
-            function* gen(): Generator<number> {
-                yield 1;
-                yield* iterable;
-                yield 100;
-            }
-
-            for (const x of gen()) {
-                console.log(x);
-            }
-            """;
-
-        var output = TestHarness.RunCompiled(source);
-        Assert.Equal("1\n10\n20\n30\n100\n", output);
-    }
-
-    [Fact]
-    public void Generator_CapturesCustomIterable_InterpreterParity()
-    {
-        var source = """
-            const iterable: any = {
-                data: [10, 20, 30],
-                [Symbol.iterator]() {
-                    const iter: any = {
-                        i: 0,
-                        data: this.data,
-                        next() {
-                            if (this.i < this.data.length) {
-                                const val = this.data[this.i];
-                                this.i = this.i + 1;
-                                return { value: val, done: false };
-                            }
-                            return { value: null, done: true };
-                        }
-                    };
-                    return iter;
-                }
-            };
-
-            function* gen(): Generator<number> {
-                yield 1;
-                yield* iterable;
-                yield 100;
-            }
-
-            let result = "";
-            for (const x of gen()) {
-                result = result + x + ",";
-            }
-            console.log(result);
-            """;
-
-        var interpretedOutput = TestHarness.RunInterpreted(source);
-        var compiledOutput = TestHarness.RunCompiled(source);
-        Assert.Equal(interpretedOutput, compiledOutput);
-    }
-
-    [Fact]
-    public void Generator_CapturesAndUsesParameter_BothWork()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_CapturesAndUsesParameter_BothWork(ExecutionMode mode)
     {
         var source = """
             const outer = 100;
@@ -1061,7 +774,7 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("100\n5\n105\n", output);
     }
 
@@ -1069,8 +782,9 @@ public class IteratorProtocolTests
 
     #region For...Of with Yield Inside Generators
 
-    [Fact]
-    public void ForOfWithYield_BasicLoop_IteratesAllValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOfWithYield_BasicLoop_IteratesAllValues(ExecutionMode mode)
     {
         var source = """
             function* gen(): Generator<number> {
@@ -1084,12 +798,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("2\n4\n6\n", output);
     }
 
-    [Fact]
-    public void ForOfWithYield_ParameterArray_IteratesAllValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOfWithYield_ParameterArray_IteratesAllValues(ExecutionMode mode)
     {
         var source = """
             function* gen(data: number[]): Generator<number> {
@@ -1103,12 +818,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("10\n20\n30\n", output);
     }
 
-    [Fact]
-    public void ForOfWithYield_CapturedArray_IteratesAllValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOfWithYield_CapturedArray_IteratesAllValues(ExecutionMode mode)
     {
         var source = """
             const data = [5, 10, 15];
@@ -1123,12 +839,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("5\n10\n15\n", output);
     }
 
-    [Fact]
-    public void ForOfWithYield_NestedLoops_IteratesAllCombinations()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOfWithYield_NestedLoops_IteratesAllCombinations(ExecutionMode mode)
     {
         var source = """
             function* gen(): Generator<number> {
@@ -1144,12 +861,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("11\n21\n12\n22\n", output);
     }
 
-    [Fact]
-    public void ForOfWithYield_MultipleLoops_IteratesAllSequentially()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOfWithYield_MultipleLoops_IteratesAllSequentially(ExecutionMode mode)
     {
         var source = """
             function* gen(): Generator<number> {
@@ -1166,12 +884,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n10\n20\n", output);
     }
 
-    [Fact]
-    public void ForOfWithYield_WithBreak_StopsEarly()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOfWithYield_WithBreak_StopsEarly(ExecutionMode mode)
     {
         var source = """
             function* gen(): Generator<number> {
@@ -1187,12 +906,13 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n3\n100\n", output);
     }
 
-    [Fact]
-    public void ForOfWithYield_WithContinue_SkipsValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForOfWithYield_WithContinue_SkipsValues(ExecutionMode mode)
     {
         var source = """
             function* gen(): Generator<number> {
@@ -1207,56 +927,8 @@ public class IteratorProtocolTests
             }
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n3\n5\n", output);
-    }
-
-    [Fact]
-    public void ForOfWithYield_InterpreterParity()
-    {
-        var source = """
-            function* gen(): Generator<number> {
-                for (const x of [1, 2, 3]) {
-                    yield x * 10;
-                }
-            }
-
-            let result = "";
-            for (const v of gen()) {
-                result = result + v + ",";
-            }
-            console.log(result);
-            """;
-
-        var interpretedOutput = TestHarness.RunInterpreted(source);
-        var compiledOutput = TestHarness.RunCompiled(source);
-        Assert.Equal("10,20,30,\n", interpretedOutput);
-        Assert.Equal(interpretedOutput, compiledOutput);
-    }
-
-    [Fact]
-    public void ForOfWithYield_NestedLoops_InterpreterParity()
-    {
-        var source = """
-            function* gen(): Generator<number> {
-                for (const x of [1, 2]) {
-                    for (const y of [10, 20]) {
-                        yield x * y;
-                    }
-                }
-            }
-
-            let result = "";
-            for (const v of gen()) {
-                result = result + v + ",";
-            }
-            console.log(result);
-            """;
-
-        var interpretedOutput = TestHarness.RunInterpreted(source);
-        var compiledOutput = TestHarness.RunCompiled(source);
-        Assert.Equal("10,20,20,40,\n", interpretedOutput);
-        Assert.Equal(interpretedOutput, compiledOutput);
     }
 
     #endregion

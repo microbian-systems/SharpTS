@@ -1,30 +1,32 @@
 using SharpTS.Tests.Infrastructure;
 using Xunit;
 
-namespace SharpTS.Tests.CompilerTests;
+namespace SharpTS.Tests.SharedTests;
 
 /// <summary>
-/// Tests for Buffer type compilation - verifies that Buffer instance methods
-/// and properties are correctly emitted to IL.
+/// Tests for Buffer type - verifies that Buffer instance methods
+/// and properties work correctly in both interpreter and compiler modes.
 /// </summary>
 public class BufferTests
 {
     #region Type Annotation and Basic Operations
 
-    [Fact]
-    public void Buffer_TypeAnnotation_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_TypeAnnotation_Works(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("hello");
             console.log(buf.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("hello\n", output);
     }
 
-    [Fact]
-    public void Buffer_TypeInference_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_TypeInference_Works(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.from("test");
@@ -32,31 +34,33 @@ public class BufferTests
             console.log(buf.length);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("test\n4\n", output);
     }
 
-    [Fact]
-    public void Buffer_Alloc_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Alloc_Works(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.alloc(5);
             console.log(buf.length);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("5\n", output);
     }
 
-    [Fact]
-    public void Buffer_Length_Property()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Length_Property(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("hello world");
             console.log(buf.length);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("11\n", output);
     }
 
@@ -64,27 +68,29 @@ public class BufferTests
 
     #region toString Method
 
-    [Fact]
-    public void Buffer_ToString_Default()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ToString_Default(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("hello");
             console.log(buf.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("hello\n", output);
     }
 
-    [Fact]
-    public void Buffer_ToString_WithEncoding()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ToString_WithEncoding(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("hello");
             console.log(buf.toString("utf8"));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("hello\n", output);
     }
 
@@ -92,8 +98,9 @@ public class BufferTests
 
     #region slice Method
 
-    [Fact]
-    public void Buffer_Slice_WithBothArgs()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Slice_WithBothArgs(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("hello world");
@@ -101,12 +108,13 @@ public class BufferTests
             console.log(sliced.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("hello\n", output);
     }
 
-    [Fact]
-    public void Buffer_Slice_StartOnly()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Slice_StartOnly(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("hello world");
@@ -114,12 +122,13 @@ public class BufferTests
             console.log(sliced.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("world\n", output);
     }
 
-    [Fact]
-    public void Buffer_Slice_NoArgs()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Slice_NoArgs(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("test");
@@ -127,12 +136,13 @@ public class BufferTests
             console.log(sliced.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("test\n", output);
     }
 
-    [Fact]
-    public void Buffer_Slice_NegativeStart()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Slice_NegativeStart(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("hello");
@@ -140,7 +150,7 @@ public class BufferTests
             console.log(sliced.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("lo\n", output);
     }
 
@@ -148,8 +158,9 @@ public class BufferTests
 
     #region copy Method
 
-    [Fact]
-    public void Buffer_Copy_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Copy_Basic(ExecutionMode mode)
     {
         var source = """
             const src: Buffer = Buffer.from("hello");
@@ -159,12 +170,13 @@ public class BufferTests
             console.log(dest.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("5\nhello\n", output);
     }
 
-    [Fact]
-    public void Buffer_Copy_WithOffsets()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Copy_WithOffsets(ExecutionMode mode)
     {
         var source = """
             const src: Buffer = Buffer.from("hello world");
@@ -174,12 +186,13 @@ public class BufferTests
             console.log(dest.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("5\nworld\n", output);
     }
 
-    [Fact]
-    public void Buffer_Copy_Partial()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Copy_Partial(ExecutionMode mode)
     {
         var source = """
             const src: Buffer = Buffer.from("hello");
@@ -189,7 +202,7 @@ public class BufferTests
             console.log(dest.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("3\nhel\n", output);
     }
 
@@ -197,8 +210,9 @@ public class BufferTests
 
     #region compare Method
 
-    [Fact]
-    public void Buffer_Compare_Less()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Compare_Less(ExecutionMode mode)
     {
         var source = """
             const a: Buffer = Buffer.from("abc");
@@ -206,12 +220,13 @@ public class BufferTests
             console.log(a.compare(b));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("-1\n", output);
     }
 
-    [Fact]
-    public void Buffer_Compare_Equal()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Compare_Equal(ExecutionMode mode)
     {
         var source = """
             const a: Buffer = Buffer.from("abc");
@@ -219,12 +234,13 @@ public class BufferTests
             console.log(a.compare(b));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("0\n", output);
     }
 
-    [Fact]
-    public void Buffer_Compare_Greater()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Compare_Greater(ExecutionMode mode)
     {
         var source = """
             const a: Buffer = Buffer.from("abd");
@@ -232,12 +248,13 @@ public class BufferTests
             console.log(a.compare(b));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n", output);
     }
 
-    [Fact]
-    public void Buffer_Compare_DifferentLengths()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Compare_DifferentLengths(ExecutionMode mode)
     {
         var source = """
             const short: Buffer = Buffer.from("ab");
@@ -246,7 +263,7 @@ public class BufferTests
             console.log(long.compare(short));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("-1\n1\n", output);
     }
 
@@ -254,8 +271,9 @@ public class BufferTests
 
     #region equals Method
 
-    [Fact]
-    public void Buffer_Equals_True()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Equals_True(ExecutionMode mode)
     {
         var source = """
             const a: Buffer = Buffer.from("hello");
@@ -263,12 +281,13 @@ public class BufferTests
             console.log(a.equals(b));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("true\n", output);
     }
 
-    [Fact]
-    public void Buffer_Equals_False_DifferentContent()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Equals_False_DifferentContent(ExecutionMode mode)
     {
         var source = """
             const a: Buffer = Buffer.from("hello");
@@ -276,12 +295,13 @@ public class BufferTests
             console.log(a.equals(b));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("false\n", output);
     }
 
-    [Fact]
-    public void Buffer_Equals_False_DifferentLength()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Equals_False_DifferentLength(ExecutionMode mode)
     {
         var source = """
             const a: Buffer = Buffer.from("hello");
@@ -289,7 +309,7 @@ public class BufferTests
             console.log(a.equals(b));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("false\n", output);
     }
 
@@ -297,8 +317,9 @@ public class BufferTests
 
     #region fill Method
 
-    [Fact]
-    public void Buffer_Fill_WithNumber()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Fill_WithNumber(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.alloc(5);
@@ -306,12 +327,13 @@ public class BufferTests
             console.log(buf.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("AAAAA\n", output);
     }
 
-    [Fact]
-    public void Buffer_Fill_WithString()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Fill_WithString(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.alloc(6);
@@ -319,12 +341,13 @@ public class BufferTests
             console.log(buf.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("XYXYXY\n", output);
     }
 
-    [Fact]
-    public void Buffer_Fill_WithRange()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Fill_WithRange(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.alloc(5);
@@ -334,19 +357,20 @@ public class BufferTests
             console.log(buf.readUInt8(4));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("0\n88\n0\n", output);
     }
 
-    [Fact]
-    public void Buffer_Fill_ReturnsThis()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Fill_ReturnsThis(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.alloc(3).fill(66);
             console.log(buf.toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("BBB\n", output);
     }
 
@@ -354,8 +378,9 @@ public class BufferTests
 
     #region write Method
 
-    [Fact]
-    public void Buffer_Write_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Write_Basic(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.alloc(10);
@@ -364,12 +389,13 @@ public class BufferTests
             console.log(buf.slice(0, 5).toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("5\nhello\n", output);
     }
 
-    [Fact]
-    public void Buffer_Write_WithOffset()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Write_WithOffset(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.alloc(10);
@@ -379,7 +405,7 @@ public class BufferTests
             console.log(buf.slice(5, 7).toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("XX\nYY\n", output);
     }
 
@@ -387,8 +413,9 @@ public class BufferTests
 
     #region readUInt8 Method
 
-    [Fact]
-    public void Buffer_ReadUInt8_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadUInt8_Basic(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("AB");
@@ -396,24 +423,26 @@ public class BufferTests
             console.log(buf.readUInt8(1));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("65\n66\n", output);
     }
 
-    [Fact]
-    public void Buffer_ReadUInt8_DefaultOffset()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadUInt8_DefaultOffset(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("X");
             console.log(buf.readUInt8());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("88\n", output);
     }
 
-    [Fact]
-    public void Buffer_ReadUInt8_InExpression()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadUInt8_InExpression(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("AB");
@@ -421,7 +450,7 @@ public class BufferTests
             console.log(sum);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("131\n", output);
     }
 
@@ -429,8 +458,9 @@ public class BufferTests
 
     #region writeUInt8 Method
 
-    [Fact]
-    public void Buffer_WriteUInt8_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_WriteUInt8_Basic(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.alloc(2);
@@ -442,12 +472,13 @@ public class BufferTests
             console.log(buf.readUInt8(1));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n255\n128\n", output);
     }
 
-    [Fact]
-    public void Buffer_WriteUInt8_DefaultOffset()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_WriteUInt8_DefaultOffset(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.alloc(1);
@@ -455,7 +486,7 @@ public class BufferTests
             console.log(buf.readUInt8(0));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("42\n", output);
     }
 
@@ -463,8 +494,9 @@ public class BufferTests
 
     #region toJSON Method
 
-    [Fact]
-    public void Buffer_ToJSON_Structure()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ToJSON_Structure(ExecutionMode mode)
     {
         var source = """
             const buf: Buffer = Buffer.from("hi");
@@ -475,7 +507,7 @@ public class BufferTests
             console.log(json.data[1]);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("Buffer\n2\n104\n105\n", output);
     }
 
@@ -483,8 +515,9 @@ public class BufferTests
 
     #region Complex Scenarios
 
-    [Fact]
-    public void Buffer_MethodChaining()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_MethodChaining(ExecutionMode mode)
     {
         var source = """
             const result = Buffer.alloc(4).fill(68).slice(1, 3);
@@ -492,12 +525,13 @@ public class BufferTests
             console.log(result.length);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("DD\n2\n", output);
     }
 
-    [Fact]
-    public void Buffer_AsFunctionParameter()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_AsFunctionParameter(ExecutionMode mode)
     {
         var source = """
             function getLength(buf: Buffer): number {
@@ -506,12 +540,13 @@ public class BufferTests
             console.log(getLength(Buffer.from("test")));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("4\n", output);
     }
 
-    [Fact]
-    public void Buffer_AsFunctionReturnType()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_AsFunctionReturnType(ExecutionMode mode)
     {
         var source = """
             function createBuffer(): Buffer {
@@ -520,12 +555,13 @@ public class BufferTests
             console.log(createBuffer().toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("CCC\n", output);
     }
 
-    [Fact]
-    public void Buffer_InArray()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_InArray(ExecutionMode mode)
     {
         var source = """
             const buffers: Buffer[] = [
@@ -536,12 +572,13 @@ public class BufferTests
             console.log(buffers[1].toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("one\ntwo\n", output);
     }
 
-    [Fact]
-    public void Buffer_InConditional()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_InConditional(ExecutionMode mode)
     {
         var source = """
             function getBuffer(useA: boolean): Buffer {
@@ -554,12 +591,13 @@ public class BufferTests
             console.log(getBuffer(false).toString());
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("AAA\nBBB\n", output);
     }
 
-    [Fact]
-    public void Buffer_CompareResultInExpression()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_CompareResultInExpression(ExecutionMode mode)
     {
         var source = """
             const a: Buffer = Buffer.from("a");
@@ -568,7 +606,7 @@ public class BufferTests
             console.log(isLess);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("true\n", output);
     }
 
@@ -576,8 +614,9 @@ public class BufferTests
 
     #region Multi-byte Read Tests
 
-    [Fact]
-    public void Buffer_ReadInt8_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadInt8_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.from([127, 128, 255, 0]);
@@ -587,26 +626,13 @@ public class BufferTests
             console.log(buf.readInt8(3));   // 0
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("127\n-128\n-1\n0\n", output);
     }
 
-    [Fact]
-    public void Buffer_ReadInt8_Parity()
-    {
-        var source = """
-            const buf = Buffer.from([127, 128, 255, 0]);
-            console.log(buf.readInt8(0));
-            console.log(buf.readInt8(1));
-            """;
-
-        var interpreted = TestHarness.RunInterpreted(source);
-        var compiled = TestHarness.RunCompiled(source);
-        Assert.Equal(interpreted, compiled);
-    }
-
-    [Fact]
-    public void Buffer_ReadUInt16LE_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadUInt16LE_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(4);
@@ -618,12 +644,13 @@ public class BufferTests
             console.log(buf.readUInt16LE(2));  // 4660
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("22136\n4660\n", output);
     }
 
-    [Fact]
-    public void Buffer_ReadUInt16BE_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadUInt16BE_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(4);
@@ -635,26 +662,13 @@ public class BufferTests
             console.log(buf.readUInt16BE(2));  // 22136
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("4660\n22136\n", output);
     }
 
-    [Fact]
-    public void Buffer_ReadUInt16_Parity()
-    {
-        var source = """
-            const buf = Buffer.from([18, 52, 86, 120]);
-            console.log(buf.readUInt16LE(0));
-            console.log(buf.readUInt16BE(0));
-            """;
-
-        var interpreted = TestHarness.RunInterpreted(source);
-        var compiled = TestHarness.RunCompiled(source);
-        Assert.Equal(interpreted, compiled);
-    }
-
-    [Fact]
-    public void Buffer_ReadUInt32LE_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadUInt32LE_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(4);
@@ -665,12 +679,13 @@ public class BufferTests
             console.log(buf.readUInt32LE(0));  // 305419896
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("305419896\n", output);
     }
 
-    [Fact]
-    public void Buffer_ReadUInt32BE_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadUInt32BE_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(4);
@@ -681,12 +696,13 @@ public class BufferTests
             console.log(buf.readUInt32BE(0));  // 305419896
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("305419896\n", output);
     }
 
-    [Fact]
-    public void Buffer_ReadInt16LE_Signed()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadInt16LE_Signed(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(2);
@@ -695,12 +711,13 @@ public class BufferTests
             console.log(buf.readInt16LE(0));  // -1
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("-1\n", output);
     }
 
-    [Fact]
-    public void Buffer_ReadInt32LE_Signed()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadInt32LE_Signed(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(4);
@@ -711,12 +728,13 @@ public class BufferTests
             console.log(buf.readInt32LE(0));  // -1
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("-1\n", output);
     }
 
-    [Fact]
-    public void Buffer_ReadFloat_Parity()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadFloatLE_RoundTrip(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(8);
@@ -725,13 +743,13 @@ public class BufferTests
             console.log(Math.abs(val - 3.14) < 0.001);
             """;
 
-        var interpreted = TestHarness.RunInterpreted(source);
-        var compiled = TestHarness.RunCompiled(source);
-        Assert.Equal(interpreted, compiled);
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
     }
 
-    [Fact]
-    public void Buffer_ReadDouble_Parity()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadDoubleLE_RoundTrip(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(8);
@@ -740,17 +758,17 @@ public class BufferTests
             console.log(Math.abs(val - 3.141592653589793) < 0.0000001);
             """;
 
-        var interpreted = TestHarness.RunInterpreted(source);
-        var compiled = TestHarness.RunCompiled(source);
-        Assert.Equal(interpreted, compiled);
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
     }
 
     #endregion
 
     #region Multi-byte Write Tests
 
-    [Fact]
-    public void Buffer_WriteInt8_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_WriteInt8_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(2);
@@ -760,12 +778,13 @@ public class BufferTests
             console.log(buf.readUInt8(1));  // 127
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("255\n127\n", output);
     }
 
-    [Fact]
-    public void Buffer_WriteUInt16LE_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_WriteUInt16LE_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(4);
@@ -777,12 +796,13 @@ public class BufferTests
             console.log(buf.readUInt8(3));  // 86
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("52\n18\n120\n86\n", output);
     }
 
-    [Fact]
-    public void Buffer_WriteUInt16BE_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_WriteUInt16BE_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(4);
@@ -794,12 +814,13 @@ public class BufferTests
             console.log(buf.readUInt8(3));  // 120
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("18\n52\n86\n120\n", output);
     }
 
-    [Fact]
-    public void Buffer_WriteUInt32_RoundTrip()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_WriteUInt32_RoundTrip(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(8);
@@ -809,12 +830,13 @@ public class BufferTests
             console.log(buf.readUInt32BE(4));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("305419896\n305419896\n", output);
     }
 
-    [Fact]
-    public void Buffer_WriteInt16_RoundTrip()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_WriteInt16_RoundTrip(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(4);
@@ -824,12 +846,13 @@ public class BufferTests
             console.log(buf.readInt16BE(2));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("-1000\n-1000\n", output);
     }
 
-    [Fact]
-    public void Buffer_WriteInt32_RoundTrip()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_WriteInt32_RoundTrip(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(8);
@@ -839,12 +862,13 @@ public class BufferTests
             console.log(buf.readInt32BE(4));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("-100000\n-100000\n", output);
     }
 
-    [Fact]
-    public void Buffer_WriteFloat_RoundTrip()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_WriteFloat_RoundTrip(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(8);
@@ -856,12 +880,13 @@ public class BufferTests
             console.log(Math.abs(val2 - 2.71) < 0.001);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("true\ntrue\n", output);
     }
 
-    [Fact]
-    public void Buffer_WriteDouble_RoundTrip()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_WriteDouble_RoundTrip(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(16);
@@ -871,12 +896,13 @@ public class BufferTests
             console.log(buf.readDoubleBE(8) === Math.E);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("true\ntrue\n", output);
     }
 
-    [Fact]
-    public void Buffer_Write_ReturnsNextOffset()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Write_ReturnsNextOffset(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(10);
@@ -887,7 +913,7 @@ public class BufferTests
             console.log(offset);  // 1 + 2 + 4 = 7
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("7\n", output);
     }
 
@@ -895,8 +921,9 @@ public class BufferTests
 
     #region Search Method Tests
 
-    [Fact]
-    public void Buffer_IndexOf_ByteValue()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_IndexOf_ByteValue(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.from([1, 2, 3, 4, 5, 3, 6]);
@@ -905,26 +932,13 @@ public class BufferTests
             console.log(buf.indexOf(99));    // -1
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("2\n5\n-1\n", output);
     }
 
-    [Fact]
-    public void Buffer_IndexOf_Parity()
-    {
-        var source = """
-            const buf = Buffer.from([65, 66, 67, 68, 69]);
-            console.log(buf.indexOf(67));
-            console.log(buf.indexOf(70));
-            """;
-
-        var interpreted = TestHarness.RunInterpreted(source);
-        var compiled = TestHarness.RunCompiled(source);
-        Assert.Equal(interpreted, compiled);
-    }
-
-    [Fact]
-    public void Buffer_Includes_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Includes_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.from([1, 2, 3, 4, 5]);
@@ -933,30 +947,17 @@ public class BufferTests
             console.log(buf.includes(1, 1)); // false (starts after 1)
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("true\nfalse\nfalse\n", output);
-    }
-
-    [Fact]
-    public void Buffer_Includes_Parity()
-    {
-        var source = """
-            const buf = Buffer.from([10, 20, 30]);
-            console.log(buf.includes(20));
-            console.log(buf.includes(40));
-            """;
-
-        var interpreted = TestHarness.RunInterpreted(source);
-        var compiled = TestHarness.RunCompiled(source);
-        Assert.Equal(interpreted, compiled);
     }
 
     #endregion
 
     #region Swap Method Tests
 
-    [Fact]
-    public void Buffer_Swap16_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Swap16_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.from([1, 2, 3, 4]);
@@ -967,12 +968,13 @@ public class BufferTests
             console.log(buf.readUInt8(3));  // 3
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("2\n1\n4\n3\n", output);
     }
 
-    [Fact]
-    public void Buffer_Swap32_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Swap32_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]);
@@ -985,12 +987,13 @@ public class BufferTests
             console.log(buf.readUInt8(5));  // 7
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("4\n3\n2\n1\n8\n7\n", output);
     }
 
-    [Fact]
-    public void Buffer_Swap64_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Swap64_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]);
@@ -1001,12 +1004,13 @@ public class BufferTests
             console.log(buf.readUInt8(7));  // 1
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("8\n7\n2\n1\n", output);
     }
 
-    [Fact]
-    public void Buffer_Swap_Chaining()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Swap_Chaining(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.from([1, 2, 3, 4]).swap16().swap16();
@@ -1014,31 +1018,17 @@ public class BufferTests
             console.log(buf.readUInt8(1));  // 2
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n", output);
-    }
-
-    [Fact]
-    public void Buffer_Swap_Parity()
-    {
-        var source = """
-            const buf = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]);
-            buf.swap16();
-            console.log(buf.readUInt8(0));
-            console.log(buf.readUInt8(1));
-            """;
-
-        var interpreted = TestHarness.RunInterpreted(source);
-        var compiled = TestHarness.RunCompiled(source);
-        Assert.Equal(interpreted, compiled);
     }
 
     #endregion
 
     #region Endianness Tests
 
-    [Fact]
-    public void Buffer_Endianness_Conversion()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Endianness_Conversion(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(4);
@@ -1046,12 +1036,13 @@ public class BufferTests
             console.log(buf.readUInt32BE(0).toString(16));  // 78563412
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("78563412\n", output);
     }
 
-    [Fact]
-    public void Buffer_Mixed_Endianness_Parity()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Mixed_Endianness(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(8);
@@ -1063,17 +1054,17 @@ public class BufferTests
             console.log(buf.readUInt32BE(4).toString(16));
             """;
 
-        var interpreted = TestHarness.RunInterpreted(source);
-        var compiled = TestHarness.RunCompiled(source);
-        Assert.Equal(interpreted, compiled);
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("12345678\n78563412\n44332211\n11223344\n", output);
     }
 
     #endregion
 
     #region BigInt Tests
 
-    [Fact]
-    public void Buffer_ReadBigInt64LE_Basic()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Buffer_ReadBigInt64LE_Basic(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(8);
@@ -1088,12 +1079,13 @@ public class BufferTests
             console.log(buf.readBigInt64LE(0));  // 1n
             """;
 
-        var output = TestHarness.RunCompiled(source);
-        Assert.Equal("1n\n", output);  // BigInt outputs with 'n' suffix
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1n\n", output);
     }
 
-    [Fact]
-    public void Buffer_WriteBigInt64LE_RoundTrip()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Buffer_WriteBigInt64LE_RoundTrip(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(8);
@@ -1102,12 +1094,13 @@ public class BufferTests
             console.log(val === 12345n);
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("true\n", output);
     }
 
-    [Fact]
-    public void Buffer_BigInt_Parity()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Buffer_BigInt_RoundTrip(ExecutionMode mode)
     {
         var source = """
             const buf = Buffer.alloc(16);
@@ -1117,7 +1110,7 @@ public class BufferTests
             console.log(buf.readBigInt64BE(8));
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("12345n\n67890n\n", output);
     }
 
