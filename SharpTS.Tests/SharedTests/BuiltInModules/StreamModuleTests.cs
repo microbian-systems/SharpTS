@@ -48,7 +48,6 @@ public class StreamModuleTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Stream_NamedImport_All(ExecutionMode mode)
     {
-        // Compiled mode returns 'string' for typeof on these classes
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -300,7 +299,6 @@ public class StreamModuleTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Writable_Cork_Uncork(ExecutionMode mode)
     {
-        // Cork/uncork behavior differs in compiled mode
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -331,7 +329,6 @@ public class StreamModuleTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Writable_End_WithChunk(ExecutionMode mode)
     {
-        // Compiled mode doesn't handle the chunk parameter to end()
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -360,7 +357,6 @@ public class StreamModuleTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Writable_Final_Callback(ExecutionMode mode)
     {
-        // Final callback not invoked in compiled mode
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """

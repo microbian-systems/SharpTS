@@ -275,10 +275,6 @@ public class PrivateFieldAsyncTests
 
     #region Async Arrow Functions (in class methods)
 
-    // NOTE: Async arrow functions inside regular (non-async) class methods have a pre-existing
-    // compilation issue where the promise callback is not invoked. These tests are marked as
-    // InterpretedOnly until that issue is resolved.
-
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void AsyncArrow_CanReadPrivateField(ExecutionMode mode)

@@ -45,6 +45,9 @@ public class EmittedRuntime
     public TypeBuilder ReferenceEqualityComparerType { get; set; } = null!;
     public FieldBuilder ReferenceEqualityComparerInstance { get; set; } = null!;
 
+    // Sentinel object for null/undefined Map keys (Dictionary<object,object?> can't use null keys)
+    public FieldBuilder MapNullSentinel { get; set; } = null!;
+
     // The emitted runtime helper class
     public TypeBuilder RuntimeType { get; set; } = null!;
 
@@ -283,6 +286,7 @@ public class EmittedRuntime
     public MethodBuilder GetEnumMemberName { get; set; } = null!;
     public MethodBuilder ConcatTemplate { get; set; } = null!;
     public MethodBuilder InvokeTaggedTemplate { get; set; } = null!;
+    public MethodBuilder InvokeTaggedTemplateWithThis { get; set; } = null!;
     public MethodBuilder StringRaw { get; set; } = null!;
     public MethodBuilder ObjectRest { get; set; } = null!;
 
@@ -443,6 +447,8 @@ public class EmittedRuntime
     public MethodBuilder GetValidFloatPart { get; set; } = null!;
 
     // Map support
+    public MethodBuilder NormalizeMapKey { get; set; } = null!;
+    public MethodBuilder DenormalizeMapKey { get; set; } = null!;
     public MethodBuilder CreateMap { get; set; } = null!;
     public MethodBuilder CreateMapFromEntries { get; set; } = null!;
     public MethodBuilder MapSize { get; set; } = null!;

@@ -40,7 +40,7 @@ public class ObjectPrototypeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void PreventExtensions_AllowsDeleting(ExecutionMode mode)
     {
         // Delete operator support varies by mode
@@ -433,7 +433,7 @@ public class ObjectPrototypeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ClassInstance_GetOwnPropertySymbols(ExecutionMode mode)
     {
         var source = """

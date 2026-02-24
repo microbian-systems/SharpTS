@@ -17,7 +17,6 @@ public class AsyncIteratorEdgeCaseTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void AsyncIterator_RejectedPromiseInNext_PropagatesError(ExecutionMode mode)
     {
-        // Compiler does not yet handle rejected promises in async iterator next()
         var source = """
             const iterable: any = {
                 callCount: 0,
@@ -92,8 +91,6 @@ public class AsyncIteratorEdgeCaseTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_TryFinally_CleanupRuns(ExecutionMode mode)
     {
-        // Compiler does not yet support yield inside try blocks due to IL limitations.
-        // The interpreter runs the generator eagerly so finally blocks always execute.
         var source = """
             let cleanupRan = false;
 

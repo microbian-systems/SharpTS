@@ -88,6 +88,14 @@ public partial class RuntimeEmitter
         );
         runtime.PrototypeStoreField = prototypeStoreField;
 
+        // Static sentinel field for null/undefined Map keys
+        var mapNullSentinelField = typeBuilder.DefineField(
+            "_mapNullSentinel",
+            _types.Object,
+            FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly
+        );
+        runtime.MapNullSentinel = mapNullSentinelField;
+
         // Static field for console group indentation level (needed early for ConsoleLog)
         var consoleGroupLevelField = typeBuilder.DefineField(
             "_consoleGroupLevel",
@@ -127,6 +135,10 @@ public partial class RuntimeEmitter
         // Initialize _prototypeStore = new ConditionalWeakTable<object, object>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ConditionalWeakTable));
         cctorIL.Emit(OpCodes.Stsfld, prototypeStoreField);
+
+        // Initialize _mapNullSentinel = new object()
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.Object));
+        cctorIL.Emit(OpCodes.Stsfld, mapNullSentinelField);
 
         // Initialize perf_hooks timing fields (must be called after fields are defined)
         // Note: Fields will be defined by EmitPerfHooksMethods, so we defer this initialization
@@ -317,6 +329,7 @@ public partial class RuntimeEmitter
         EmitGetEnumMemberName(typeBuilder, runtime);
         EmitConcatTemplate(typeBuilder, runtime);
         EmitInvokeTaggedTemplate(typeBuilder, runtime);
+        EmitInvokeTaggedTemplateWithThis(typeBuilder, runtime);
         EmitObjectRest(typeBuilder, runtime);
         // JSON methods
         EmitJsonParse(typeBuilder, runtime);

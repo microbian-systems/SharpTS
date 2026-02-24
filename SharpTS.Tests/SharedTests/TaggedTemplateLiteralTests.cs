@@ -259,10 +259,9 @@ public class TaggedTemplateLiteralTests
     #region Method as Tag
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ObjectMethod_AsTag(ExecutionMode mode)
     {
-        // Compiled mode: `this` binding not yet supported for object method tag functions
         var code = """
             const obj = {
                 prefix: ">>",
@@ -347,10 +346,9 @@ public class TaggedTemplateLiteralTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ArraysFrozen(ExecutionMode mode)
     {
-        // Compiled mode: template strings array is not yet frozen/immutable
         var code = """
             let captured: any;
             function tag(strings: any, ...values: any[]): string {

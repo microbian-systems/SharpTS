@@ -188,7 +188,7 @@ public class CryptoCipherTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Crypto_CreateCipheriv_Cbc_BufferOutput(ExecutionMode mode)
     {
         // Test with Buffer output (default)
@@ -340,7 +340,7 @@ public class CryptoCipherTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Crypto_CreateCipheriv_Gcm_GetAuthTagReturnsBuffer(ExecutionMode mode)
     {
         // getAuthTag should return a Buffer

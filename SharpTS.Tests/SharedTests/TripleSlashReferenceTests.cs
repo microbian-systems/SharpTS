@@ -250,7 +250,7 @@ public class TripleSlashReferenceTests
     #region Error Cases (Interpreter only - error messages differ)
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void PathReference_NotFoundFile_ThrowsError(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -267,7 +267,7 @@ public class TripleSlashReferenceTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void PathReference_InModuleFile_ThrowsError(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -287,7 +287,7 @@ public class TripleSlashReferenceTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void PathReference_ToModuleFile_ThrowsError(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -307,7 +307,7 @@ public class TripleSlashReferenceTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void PathReference_Circular_ThrowsError(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -349,7 +349,7 @@ public class TripleSlashReferenceTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ScriptDetection_FileWithImport_IsModule(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

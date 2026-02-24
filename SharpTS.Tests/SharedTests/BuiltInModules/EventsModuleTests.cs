@@ -363,7 +363,7 @@ public class EventsModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void EventEmitter_Listeners_ReturnsArray(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -414,7 +414,7 @@ public class EventsModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void EventEmitter_PrependOnceListener_Interpreted(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -551,7 +551,7 @@ public class EventsModuleTests
     #region Edge Cases
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void EventEmitter_RemoveDuringEmit_Interpreted(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -621,7 +621,7 @@ public class EventsModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void EventEmitter_AddDuringEmit_Interpreted(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

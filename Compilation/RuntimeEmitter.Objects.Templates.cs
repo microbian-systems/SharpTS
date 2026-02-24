@@ -229,6 +229,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, runtime.TemplateStringsListCtor);
         il.Emit(OpCodes.Stloc, stringsLocal);
 
+        // Freeze the template strings array and its raw property (JS spec: frozen/immutable)
+        il.Emit(OpCodes.Ldloc, stringsLocal);
+        il.Emit(OpCodes.Call, runtime.ObjectFreeze);
+        il.Emit(OpCodes.Pop); // ObjectFreeze returns the object, discard
+        il.Emit(OpCodes.Ldloc, stringsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TemplateStringsListRawGetter);
+        il.Emit(OpCodes.Call, runtime.ObjectFreeze);
+        il.Emit(OpCodes.Pop); // discard
+
         // Build args array: new object[1 + expressions.Length]
         var argsLocal = il.DeclareLocal(_types.ObjectArray);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -288,6 +297,104 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Call, runtime.InvokeValue);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(errorLabel);
+        il.Emit(OpCodes.Ldstr, "TypeError: Tagged template tag must be a function.");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+    }
+
+    /// <summary>
+    /// Emits InvokeTaggedTemplateWithThis - like InvokeTaggedTemplate but passes a this binding.
+    /// Signature: object? InvokeTaggedTemplateWithThis(tag, thisArg, cooked, raw, expressions)
+    /// </summary>
+    private void EmitInvokeTaggedTemplateWithThis(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "InvokeTaggedTemplateWithThis",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.ObjectArray, _types.StringArray, _types.ObjectArray]
+        );
+        runtime.InvokeTaggedTemplateWithThis = method;
+
+        var il = method.GetILGenerator();
+
+        // Create strings array: new $TemplateStringsList(cooked, raw)
+        var stringsLocal = il.DeclareLocal(runtime.TemplateStringsListType);
+        il.Emit(OpCodes.Ldarg_2); // cooked
+        il.Emit(OpCodes.Ldarg_3); // raw
+        il.Emit(OpCodes.Newobj, runtime.TemplateStringsListCtor);
+        il.Emit(OpCodes.Stloc, stringsLocal);
+
+        // Freeze the template strings array and its raw property (JS spec)
+        il.Emit(OpCodes.Ldloc, stringsLocal);
+        il.Emit(OpCodes.Call, runtime.ObjectFreeze);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, stringsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TemplateStringsListRawGetter);
+        il.Emit(OpCodes.Call, runtime.ObjectFreeze);
+        il.Emit(OpCodes.Pop);
+
+        // Build args array: new object[1 + expressions.Length]
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg, 4); // expressions (arg index 4)
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // args[0] = stringsArray
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, stringsLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        // Copy expressions to args[1..]
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var copyLoopStart = il.DefineLabel();
+        var copyLoopEnd = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(copyLoopStart);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldarg, 4); // expressions
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, copyLoopEnd);
+
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldarg, 4);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, copyLoopStart);
+
+        il.MarkLabel(copyLoopEnd);
+
+        // tag must be non-null and callable
+        var errorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, errorLabel);
+
+        // return InvokeMethodValue(thisArg, tag, args)
+        il.Emit(OpCodes.Ldarg_1); // thisArg (receiver)
+        il.Emit(OpCodes.Ldarg_0); // tag (function)
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(errorLabel);

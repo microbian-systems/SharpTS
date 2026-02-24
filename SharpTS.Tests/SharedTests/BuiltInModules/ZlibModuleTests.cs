@@ -377,7 +377,7 @@ public class ZlibModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_Constants_Brotli_Extended(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

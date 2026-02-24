@@ -116,7 +116,7 @@ public class TimerTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void SetTimeout_Unref_AllowsExit_Interpreted(ExecutionMode mode)
     {
         // unref() should allow the program to exit without running the timer

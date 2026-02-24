@@ -5,6 +5,15 @@ public static partial class RuntimeTypes
     #region Maps
 
     /// <summary>
+    /// Sentinel object used as a dictionary key to represent null/undefined Map keys.
+    /// JavaScript Maps support null and undefined as keys; .NET dictionaries don't allow null keys.
+    /// </summary>
+    private static readonly object MapNullSentinel = new();
+
+    private static object NormalizeMapKey(object? key) => key ?? MapNullSentinel;
+    private static object? DenormalizeMapKey(object key) => ReferenceEquals(key, MapNullSentinel) ? null : key;
+
+    /// <summary>
     /// Creates a new empty Map.
     /// Uses System.Collections.Generic.ReferenceEqualityComparer for JavaScript-style reference equality.
     /// </summary>
@@ -47,10 +56,7 @@ public static partial class RuntimeTypes
                 {
                     var key = pair[0];
                     var value = pair[1];
-                    if (key != null)
-                    {
-                        map[key] = value;
-                    }
+                    map[NormalizeMapKey(key)] = value;
                 }
             }
         }
@@ -72,9 +78,9 @@ public static partial class RuntimeTypes
     /// </summary>
     public static object? MapGet(object? map, object? key)
     {
-        if (map is Dictionary<object, object?> dict && key != null)
+        if (map is Dictionary<object, object?> dict)
         {
-            return dict.TryGetValue(key, out var value) ? value : null;
+            return dict.TryGetValue(NormalizeMapKey(key), out var value) ? value : null;
         }
         return null;
     }
@@ -84,9 +90,9 @@ public static partial class RuntimeTypes
     /// </summary>
     public static object MapSet(object? map, object? key, object? value)
     {
-        if (map is Dictionary<object, object?> dict && key != null)
+        if (map is Dictionary<object, object?> dict)
         {
-            dict[key] = value;
+            dict[NormalizeMapKey(key)] = value;
         }
         return map!;
     }
@@ -96,9 +102,9 @@ public static partial class RuntimeTypes
     /// </summary>
     public static bool MapHas(object? map, object? key)
     {
-        if (map is Dictionary<object, object?> dict && key != null)
+        if (map is Dictionary<object, object?> dict)
         {
-            return dict.ContainsKey(key);
+            return dict.ContainsKey(NormalizeMapKey(key));
         }
         return false;
     }
@@ -108,9 +114,9 @@ public static partial class RuntimeTypes
     /// </summary>
     public static bool MapDelete(object? map, object? key)
     {
-        if (map is Dictionary<object, object?> dict && key != null)
+        if (map is Dictionary<object, object?> dict)
         {
-            return dict.Remove(key);
+            return dict.Remove(NormalizeMapKey(key));
         }
         return false;
     }
@@ -133,7 +139,7 @@ public static partial class RuntimeTypes
     {
         if (map is Dictionary<object, object?> dict)
         {
-            return dict.Keys.Select(k => (object?)k).ToList();
+            return dict.Keys.Select(k => DenormalizeMapKey(k)).ToList();
         }
         return [];
     }
@@ -157,7 +163,7 @@ public static partial class RuntimeTypes
     {
         if (map is Dictionary<object, object?> dict)
         {
-            return dict.Select(kvp => (object?)new List<object?> { kvp.Key, kvp.Value }).ToList();
+            return dict.Select(kvp => (object?)new List<object?> { DenormalizeMapKey(kvp.Key), kvp.Value }).ToList();
         }
         return [];
     }
@@ -171,7 +177,7 @@ public static partial class RuntimeTypes
         {
             foreach (var kvp in dict)
             {
-                InvokeValue(callback, [kvp.Value, kvp.Key, map]);
+                InvokeValue(callback, [kvp.Value, DenormalizeMapKey(kvp.Key), map]);
             }
         }
     }

@@ -234,14 +234,15 @@ public class TypeMapper
     {
         var types = union.FlattenedTypes;
 
-        // Special case: T | null for value types → Nullable<T>
+        // Special case: T | null or T | undefined for value types → Nullable<T>
+        // For reference types, they're already nullable (can hold $Undefined.Instance)
         if (types.Count == 2)
         {
-            var nullType = types.FirstOrDefault(t => t is TypeInfo.Null);
-            if (nullType != null)
+            var nullishType = types.FirstOrDefault(t => t is TypeInfo.Null or TypeInfo.Undefined);
+            if (nullishType != null)
             {
-                var nonNullType = types.First(t => t is not TypeInfo.Null);
-                var mapped = MapTypeInfoStrict(nonNullType);
+                var nonNullishType = types.First(t => t is not TypeInfo.Null and not TypeInfo.Undefined);
+                var mapped = MapTypeInfoStrict(nonNullishType);
                 if (mapped.IsValueType && !_types.IsVoid(mapped))
                     return _types.MakeNullable(mapped);
                 // Reference types are already nullable

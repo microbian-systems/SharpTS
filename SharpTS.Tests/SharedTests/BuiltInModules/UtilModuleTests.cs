@@ -300,7 +300,6 @@ public class UtilModuleTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Types_IsUndefined_False(ExecutionMode mode)
     {
-        // Compiled mode has different null/undefined semantics
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -402,7 +401,6 @@ public class UtilModuleTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Types_IsMap_False(ExecutionMode mode)
     {
-        // Compiled mode's Set is detected as Map due to underlying type similarity
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -720,7 +718,6 @@ public class UtilModuleTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Callbackify_CallsCallbackWithErrorOnThrow(ExecutionMode mode)
     {
-        // Compiled mode doesn't catch errors in callbackify
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -847,7 +844,6 @@ public class UtilModuleTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Inherits_SetsSuperProperty(ExecutionMode mode)
     {
-        // Compiled mode doesn't set super_ property correctly
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -1424,7 +1420,7 @@ public class UtilModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TextDecoder_SupportsLatin1(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1444,7 +1440,7 @@ public class UtilModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TextDecoder_SupportsUtf16le(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1461,7 +1457,7 @@ public class UtilModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ParseArgs_OptionTerminator(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

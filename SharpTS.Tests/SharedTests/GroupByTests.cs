@@ -113,7 +113,7 @@ public class GroupByTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void MapGroupBy_NullUndefinedKeys(ExecutionMode mode)
     {
         var source = """

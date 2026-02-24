@@ -7,6 +7,8 @@ public partial class RuntimeEmitter
 {
     private void EmitMapMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        EmitNormalizeMapKey(typeBuilder, runtime);
+        EmitDenormalizeMapKey(typeBuilder, runtime);
         EmitCreateMap(typeBuilder, runtime);
         EmitCreateMapFromEntries(typeBuilder, runtime);
         EmitMapSize(typeBuilder, runtime);
@@ -19,6 +21,73 @@ public partial class RuntimeEmitter
         EmitMapValues(typeBuilder, runtime);
         EmitMapEntries(typeBuilder, runtime);
         EmitMapForEach(typeBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Emits NormalizeMapKey(key): converts null and $Undefined.Instance to _mapNullSentinel.
+    /// </summary>
+    private void EmitNormalizeMapKey(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "NormalizeMapKey",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.NormalizeMapKey = method;
+
+        var il = method.GetILGenerator();
+        var returnSentinelLabel = il.DefineLabel();
+        var returnKeyLabel = il.DefineLabel();
+
+        // if (key == null) return _mapNullSentinel;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, returnSentinelLabel);
+
+        // if (key is $Undefined) return _mapNullSentinel;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, returnSentinelLabel);
+
+        // return key;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+
+        // return _mapNullSentinel;
+        il.MarkLabel(returnSentinelLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.MapNullSentinel);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DenormalizeMapKey(key): converts _mapNullSentinel back to null.
+    /// </summary>
+    private void EmitDenormalizeMapKey(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DenormalizeMapKey",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.DenormalizeMapKey = method;
+
+        var il = method.GetILGenerator();
+        var returnNullLabel = il.DefineLabel();
+
+        // if (key == _mapNullSentinel) return null;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MapNullSentinel);
+        il.Emit(OpCodes.Beq, returnNullLabel);
+
+        // return key;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+
+        // return null;
+        il.MarkLabel(returnNullLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
     }
 
     private void EmitCreateMap(TypeBuilder typeBuilder, EmittedRuntime runtime)
@@ -112,15 +181,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_2);
         il.Emit(OpCodes.Blt, continueLabel);
 
-        // var key = pair[0];
+        // var key = NormalizeMapKey(pair[0]);
         il.Emit(OpCodes.Ldloc, pairLocal);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.NormalizeMapKey);
         il.Emit(OpCodes.Stloc, keyLocal);
-
-        // if (key == null) continue;
-        il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Brfalse, continueLabel);
 
         // map[key] = pair[1];
         il.Emit(OpCodes.Ldloc, mapLocal);
@@ -194,21 +260,17 @@ public partial class RuntimeEmitter
         var valueLocal = il.DeclareLocal(_types.Object);
 
         var returnNullLabel = il.DefineLabel();
-        var tryGetLabel = il.DefineLabel();
 
         // if (map is not Dictionary<object, object?> dict) return null;
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, dictType);
         il.Emit(OpCodes.Brfalse, returnNullLabel);
 
-        // if (key == null) return null;
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, returnNullLabel);
-
-        // if (dict.TryGetValue(key, out var value)) return value;
+        // if (dict.TryGetValue(NormalizeMapKey(key), out var value)) return value;
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, dictType);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.NormalizeMapKey);
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Callvirt, dictType.GetMethod("TryGetValue")!);
         il.Emit(OpCodes.Brfalse, returnNullLabel);
@@ -242,14 +304,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, dictType);
         il.Emit(OpCodes.Brfalse, returnMapLabel);
 
-        // if (key == null) return map;
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, returnMapLabel);
-
-        // dict[key] = value;
+        // dict[NormalizeMapKey(key)] = value;
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, dictType);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.NormalizeMapKey);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(dictType, "Item").GetSetMethod()!);
 
@@ -279,14 +338,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, dictType);
         il.Emit(OpCodes.Brfalse, returnFalseLabel);
 
-        // if (key == null) return false;
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, returnFalseLabel);
-
-        // return dict.ContainsKey(key);
+        // return dict.ContainsKey(NormalizeMapKey(key));
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, dictType);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.NormalizeMapKey);
         il.Emit(OpCodes.Callvirt, dictType.GetMethod("ContainsKey")!);
         il.Emit(OpCodes.Ret);
 
@@ -316,14 +372,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, dictType);
         il.Emit(OpCodes.Brfalse, returnFalseLabel);
 
-        // if (key == null) return false;
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, returnFalseLabel);
-
-        // return dict.Remove(key);
+        // return dict.Remove(NormalizeMapKey(key));
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, dictType);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.NormalizeMapKey);
         il.Emit(OpCodes.Callvirt, dictType.GetMethod("Remove", [_types.Object])!);
         il.Emit(OpCodes.Ret);
 
@@ -413,10 +466,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, enumeratorType.GetProperty("Current")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, currentLocal);
 
-        // result.Add(current.Key);
+        // result.Add(DenormalizeMapKey(current.Key));
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloca, currentLocal);
         il.Emit(OpCodes.Call, kvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.DenormalizeMapKey);
         il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
 
         il.Emit(OpCodes.Br, loopStartLabel);
@@ -566,9 +620,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, pairLocal);
 
+        // pair.Add(DenormalizeMapKey(current.Key))
         il.Emit(OpCodes.Ldloc, pairLocal);
         il.Emit(OpCodes.Ldloca, currentLocal);
         il.Emit(OpCodes.Call, kvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.DenormalizeMapKey);
         il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
 
         il.Emit(OpCodes.Ldloc, pairLocal);
@@ -661,11 +717,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, kvpType.GetProperty("Value")!.GetGetMethod()!);
         il.Emit(OpCodes.Stelem_Ref);
 
-        // args[1] = current.Key
+        // args[1] = DenormalizeMapKey(current.Key)
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldloca, currentLocal);
         il.Emit(OpCodes.Call, kvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.DenormalizeMapKey);
         il.Emit(OpCodes.Stelem_Ref);
 
         // args[2] = map

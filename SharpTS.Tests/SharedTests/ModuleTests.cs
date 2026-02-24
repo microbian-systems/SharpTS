@@ -452,7 +452,7 @@ public class ModuleTests
     #region Circular Dependency Detection
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void CircularDependency_ThrowsError(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -478,7 +478,7 @@ public class ModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void CircularDependency_IndirectCycle(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

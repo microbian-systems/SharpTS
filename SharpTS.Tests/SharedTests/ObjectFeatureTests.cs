@@ -1540,7 +1540,6 @@ public class ObjectFeatureTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Object_DefineProperty_OnArray(ExecutionMode mode)
     {
-        // Compiled mode arrays (IList) don't support named properties
         var source = """
             let arr: any = [1, 2, 3];
             Object.defineProperty(arr, "customProp", { value: "hello", writable: true, enumerable: true, configurable: true });
@@ -1640,7 +1639,6 @@ public class ObjectFeatureTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Object_GetOwnPropertyDescriptor_ClassInstance(ExecutionMode mode)
     {
-        // Compiled mode class instances require reflection-based descriptor lookup
         var source = """
             class Point {
                 x: number;
@@ -1900,7 +1898,7 @@ public class ObjectFeatureTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Object_GetOwnPropertyNames_DoesNotIncludeMethods(ExecutionMode mode)
     {
         // Methods defined on the class should NOT appear in getOwnPropertyNames

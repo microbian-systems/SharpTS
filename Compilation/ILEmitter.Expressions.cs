@@ -488,9 +488,31 @@ public partial class ILEmitter
             return;
         }
 
-        // 1. Emit the tag function reference
-        EmitExpression(ttl.Tag);
-        EmitBoxIfNeeded(ttl.Tag);
+        // Detect property access tag (obj.method`...`) for this binding
+        bool hasThisBinding = ttl.Tag is Expr.Get;
+        LocalBuilder? receiverLocal = null;
+
+        // 1. Emit the tag function reference (and receiver for property access tags)
+        if (hasThisBinding)
+        {
+            var g = (Expr.Get)ttl.Tag;
+            // Emit and save the receiver object
+            EmitExpression(g.Object);
+            EnsureBoxed();
+            receiverLocal = _ctx.ILBuilder.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, receiverLocal);
+            // Get the method: GetProperty(obj, name) — handles all object types including dictionaries
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+            IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
+            // Push thisArg (receiver) for WithThis call
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+        }
+        else
+        {
+            EmitExpression(ttl.Tag);
+            EmitBoxIfNeeded(ttl.Tag);
+        }
 
         // 2. Create cooked strings array (object?[] to allow null for invalid escapes)
         IL.Emit(OpCodes.Ldc_I4, ttl.CookedStrings.Count);
@@ -533,8 +555,17 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Stelem_Ref);
         }
 
-        // 5. Call runtime helper: InvokeTaggedTemplate(tag, cooked, raw, exprs)
-        IL.Emit(OpCodes.Call, _ctx.Runtime!.InvokeTaggedTemplate);
+        // 5. Call appropriate runtime helper
+        if (hasThisBinding)
+        {
+            // Stack: tag, thisArg, cooked, raw, exprs
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.InvokeTaggedTemplateWithThis);
+        }
+        else
+        {
+            // Stack: tag, cooked, raw, exprs
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.InvokeTaggedTemplate);
+        }
         SetStackUnknown();
     }
 
