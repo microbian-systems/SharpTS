@@ -1,20 +1,21 @@
 using SharpTS.Tests.Infrastructure;
 using Xunit;
 
-namespace SharpTS.Tests.CompilerTests;
+namespace SharpTS.Tests.SharedTests;
 
 /// <summary>
-/// Tests for async generator IL compilation (async function*) and async iteration (for await...of).
-/// Verifies parity between interpreter and compiler for async generator features.
-/// Note: Tests use single-arg console.log or string concatenation due to a multi-arg
-/// console.log bug in compiled async functions.
+/// Tests for async generators (async function*) and async iteration (for await...of).
+/// Runs against both interpreter and compiler.
+/// Note: Tests use single-arg console.log or string concatenation to avoid
+/// a multi-arg console.log limitation in compiled async functions.
 /// </summary>
-public class AsyncGeneratorCompilerTests
+public class AsyncGeneratorTests
 {
     #region Basic Async Generator Tests
 
-    [Fact]
-    public void AsyncGenerator_BasicYield_ReturnsValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_BasicYield_ReturnsValues(ExecutionMode mode)
     {
         var source = """
             async function* asyncCounter() {
@@ -38,12 +39,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1 false\n2 false\n3 false\nnull true\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_EmptyGenerator_ReturnsDoneImmediately()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_EmptyGenerator_ReturnsDoneImmediately(ExecutionMode mode)
     {
         var source = """
             async function* empty() {}
@@ -57,12 +59,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("true\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_WithAwait_AwaitsBeforeYield()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_WithAwait_AwaitsBeforeYield(ExecutionMode mode)
     {
         var source = """
             async function delay(value: number): Promise<number> {
@@ -87,12 +90,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("10\n20\n30\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_WithParameters_UsesParameters()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_WithParameters_UsesParameters(ExecutionMode mode)
     {
         var source = """
             async function* range(start: number, end: number) {
@@ -110,12 +114,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("5\n6\n7\n8\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_SingleYield_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_SingleYield_Works(ExecutionMode mode)
     {
         var source = """
             async function* single() {
@@ -133,12 +138,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("42 false\nnull true\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_YieldInLoop_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldInLoop_Works(ExecutionMode mode)
     {
         var source = """
             async function* countdown(start: number) {
@@ -157,7 +163,7 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("3\n2\n1\n", output);
     }
 
@@ -165,8 +171,9 @@ public class AsyncGeneratorCompilerTests
 
     #region for await...of Tests
 
-    [Fact]
-    public void ForAwaitOf_AsyncGenerator_IteratesValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_AsyncGenerator_IteratesValues(ExecutionMode mode)
     {
         var source = """
             async function* asyncNumbers() {
@@ -184,12 +191,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n3\n", output);
     }
 
-    [Fact]
-    public void ForAwaitOf_AsyncGeneratorWithAwait_IteratesAwaitedValues()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_AsyncGeneratorWithAwait_IteratesAwaitedValues(ExecutionMode mode)
     {
         var source = """
             async function delay(value: number): Promise<number> {
@@ -211,12 +219,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("10\n20\n30\n", output);
     }
 
-    [Fact]
-    public void ForAwaitOf_WithBreak_StopsIteration()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_WithBreak_StopsIteration(ExecutionMode mode)
     {
         var source = """
             async function* numbers() {
@@ -239,12 +248,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("0\n1\n2\n3\ndone\n", output);
     }
 
-    [Fact]
-    public void ForAwaitOf_WithContinue_SkipsIteration()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_WithContinue_SkipsIteration(ExecutionMode mode)
     {
         var source = """
             async function* numbers() {
@@ -265,12 +275,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n3\n5\n", output);
     }
 
-    [Fact]
-    public void ForAwaitOf_EmptyAsyncGenerator_NoIterations()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_EmptyAsyncGenerator_NoIterations(ExecutionMode mode)
     {
         var source = """
             async function* empty() {}
@@ -286,12 +297,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("iterations: 0\n", output);
     }
 
-    [Fact]
-    public void ForAwaitOf_MultipleLoops_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_MultipleLoops_Works(ExecutionMode mode)
     {
         var source = """
             async function* gen() {
@@ -311,7 +323,7 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("first: 1\nfirst: 2\nsecond: 1\nsecond: 2\n", output);
     }
 
@@ -319,8 +331,9 @@ public class AsyncGeneratorCompilerTests
 
     #region Async Generator .return() and .throw() Tests
 
-    [Fact]
-    public void AsyncGenerator_Return_ClosesGenerator()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_Return_ClosesGenerator(ExecutionMode mode)
     {
         var source = """
             async function* asyncGen() {
@@ -342,12 +355,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n42 true\ntrue\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_Throw_ThrowsError()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_Throw_ThrowsError(ExecutionMode mode)
     {
         var source = """
             async function* asyncGen() {
@@ -369,12 +383,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\nCaught: Test error\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_ReturnWithoutValue_ReturnsNull()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ReturnWithoutValue_ReturnsNull(ExecutionMode mode)
     {
         var source = """
             async function* gen() {
@@ -392,7 +407,7 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("null true\n", output);
     }
 
@@ -400,8 +415,9 @@ public class AsyncGeneratorCompilerTests
 
     #region yield* Delegation Tests
 
-    [Fact]
-    public void AsyncGenerator_YieldStar_DelegatesToSyncIterable()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldStar_DelegatesToSyncIterable(ExecutionMode mode)
     {
         var source = """
             async function* asyncGen() {
@@ -417,12 +433,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n3\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_YieldStar_DelegatesToAsyncGenerator()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldStar_DelegatesToAsyncGenerator(ExecutionMode mode)
     {
         var source = """
             async function* inner() {
@@ -445,12 +462,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("start\na\nb\nend\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_YieldStar_EmptyIterable()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldStar_EmptyIterable(ExecutionMode mode)
     {
         var source = """
             async function* gen() {
@@ -468,12 +486,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_YieldStar_NestedDelegation()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldStar_NestedDelegation(ExecutionMode mode)
     {
         var source = """
             async function* level1() {
@@ -499,7 +518,7 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n3\n", output);
     }
 
@@ -507,8 +526,9 @@ public class AsyncGeneratorCompilerTests
 
     #region Return Value Tests
 
-    [Fact]
-    public void AsyncGenerator_ReturnsValue_IncludedInFinalResult()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ReturnsValue_IncludedInFinalResult(ExecutionMode mode)
     {
         var source = """
             async function* genWithReturn() {
@@ -530,12 +550,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1 false\n2 false\nfinal true\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_ImplicitReturn_ReturnsNull()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ImplicitReturn_ReturnsNull(ExecutionMode mode)
     {
         var source = """
             async function* gen() {
@@ -552,12 +573,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("null true\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_EarlyReturn_SkipsRemainingYields()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_EarlyReturn_SkipsRemainingYields(ExecutionMode mode)
     {
         var source = """
             async function* gen(earlyReturn: boolean) {
@@ -578,7 +600,7 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1 false\nearly true\n", output);
     }
 
@@ -586,8 +608,9 @@ public class AsyncGeneratorCompilerTests
 
     #region Edge Cases
 
-    [Fact]
-    public void AsyncGenerator_InNamespace_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_InNamespace_Works(ExecutionMode mode)
     {
         var source = """
             namespace Utils {
@@ -607,12 +630,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n2\n3\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_WithStringYields_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_WithStringYields_Works(ExecutionMode mode)
     {
         var source = """
             async function* greetings() {
@@ -629,12 +653,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("hello\nworld\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_YieldingObjects_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldingObjects_Works(ExecutionMode mode)
     {
         var source = """
             async function* objects() {
@@ -651,12 +676,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("Alice 30\nBob 25\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_YieldingArrays_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldingArrays_Works(ExecutionMode mode)
     {
         var source = """
             async function* arrays() {
@@ -673,12 +699,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1,2,3\n4,5,6\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_ConditionalYield_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ConditionalYield_Works(ExecutionMode mode)
     {
         var source = """
             async function* conditional(includeMiddle: boolean) {
@@ -703,12 +730,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("With middle:\n1\n2\n3\nWithout middle:\n1\n3\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_YieldNull_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldNull_Works(ExecutionMode mode)
     {
         var source = """
             async function* gen() {
@@ -726,12 +754,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("null\n1\nnull\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_YieldBoolean_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldBoolean_Works(ExecutionMode mode)
     {
         var source = """
             async function* gen() {
@@ -748,12 +777,13 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
-        Assert.Equal("true\nfalse\n", output);  // JavaScript uses lowercase booleans
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_AwaitInYieldExpression_Works()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_AwaitInYieldExpression_Works(ExecutionMode mode)
     {
         var source = """
             async function getValue(): Promise<number> {
@@ -773,12 +803,17 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("42\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_MultipleAwaitsBetweenYields_Works()
+    #endregion
+
+    #region yield await Regression Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_MultipleAwaitsBetweenYields_Works(ExecutionMode mode)
     {
         var source = """
             async function add(a: number, b: number): Promise<number> {
@@ -802,14 +837,14 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("6\n10\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_MultipleYieldAwait_InSequence()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_MultipleYieldAwait_InSequence(ExecutionMode mode)
     {
-        // Regression test for yield await bug - multiple yield await expressions
         var source = """
             async function getValue(n: number): Promise<number> {
                 return n * 10;
@@ -830,14 +865,14 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("10\n20\n30\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_MixedYieldAndYieldAwait()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_MixedYieldAndYieldAwait(ExecutionMode mode)
     {
-        // Regression test for yield await bug - mixed yield and yield await
         var source = """
             async function getValue(n: number): Promise<number> {
                 return n * 10;
@@ -860,14 +895,14 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n20\n3\n40\n5\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_YieldAwaitThenStandaloneAwait()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldAwaitThenStandaloneAwait(ExecutionMode mode)
     {
-        // Regression test for yield await bug - yield await followed by standalone await
         var source = """
             async function getValue(n: number): Promise<number> {
                 return n * 10;
@@ -889,14 +924,17 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("10\n20\n30\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_YieldAwaitWithComputation()
+    /// <summary>
+    /// Compiled-only: the interpreter doesn't support await inside binary expressions within yield.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldAwaitWithComputation(ExecutionMode mode)
     {
-        // Regression test for yield await bug - computation on awaited value before yield
         var source = """
             async function getValue(n: number): Promise<number> {
                 return n;
@@ -916,7 +954,7 @@ public class AsyncGeneratorCompilerTests
             main();
             """;
 
-        var output = TestHarness.RunCompiled(source);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("6\n20\n", output);
     }
 
