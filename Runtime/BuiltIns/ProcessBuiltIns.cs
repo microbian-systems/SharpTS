@@ -259,12 +259,13 @@ public static class ProcessBuiltIns
     private static object? MemoryUsage(Interpreter i, object? r, List<object?> args)
     {
         var process = Process.GetCurrentProcess();
+        var heap = (double)GC.GetTotalMemory(false);
 
         return new SharpTSObject(new Dictionary<string, object?>
         {
             ["rss"] = (double)process.WorkingSet64,
-            ["heapTotal"] = (double)GC.GetTotalMemory(false),
-            ["heapUsed"] = (double)GC.GetTotalMemory(false),
+            ["heapTotal"] = heap,
+            ["heapUsed"] = heap,
             ["external"] = 0.0,
             ["arrayBuffers"] = 0.0
         });
