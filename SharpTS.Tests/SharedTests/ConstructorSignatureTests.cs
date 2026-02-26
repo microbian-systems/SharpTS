@@ -9,11 +9,8 @@ namespace SharpTS.Tests.SharedTests;
 /// </summary>
 public class ConstructorSignatureTests
 {
-    /// <summary>
-    /// Compiled mode: `new ctor(x, y)` where ctor is a function parameter doesn't dispatch correctly.
-    /// </summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ConstructorSignature_BasicInterface(ExecutionMode mode)
     {
         var code = """
@@ -48,11 +45,8 @@ public class ConstructorSignatureTests
         Assert.Equal("10\n20\n", result);
     }
 
-    /// <summary>
-    /// Compiled mode: `new C(42)` where C is a variable holding a class reference doesn't dispatch correctly.
-    /// </summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NewOnVariable_SimpleClass(ExecutionMode mode)
     {
         var code = """
@@ -96,11 +90,8 @@ public class ConstructorSignatureTests
         Assert.Equal("test\n", result);
     }
 
-    /// <summary>
-    /// Compiled mode: `new ctor("custom")` where ctor is a function parameter doesn't dispatch correctly.
-    /// </summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ConstructorSignature_WithOptionalParam(ExecutionMode mode)
     {
         var code = """

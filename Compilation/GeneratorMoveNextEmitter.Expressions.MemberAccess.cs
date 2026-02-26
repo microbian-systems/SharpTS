@@ -868,8 +868,32 @@ public partial class GeneratorMoveNextEmitter
         }
         else
         {
-            _il.Emit(OpCodes.Ldnull);
-            SetStackType(StackType.Null);
+            // Fallback: try to load via resolver (handles parameters, hoisted variables, etc.)
+            var stackType = _resolver?.TryLoadVariable(className);
+            if (stackType != null)
+            {
+                // Variable loaded - build args array for Activator.CreateInstance
+                _il.Emit(OpCodes.Ldc_I4, n.Arguments.Count);
+                _il.Emit(OpCodes.Newarr, _ctx!.Types.Object);
+
+                for (int i = 0; i < n.Arguments.Count; i++)
+                {
+                    _il.Emit(OpCodes.Dup);
+                    _il.Emit(OpCodes.Ldc_I4, i);
+                    EmitExpression(n.Arguments[i]);
+                    EnsureBoxed();
+                    _il.Emit(OpCodes.Stelem_Ref);
+                }
+
+                var createInstanceMethod = _ctx.Types.GetMethod(_ctx.Types.Activator, "CreateInstance", _ctx.Types.Type, _ctx.Types.ObjectArray);
+                _il.Emit(OpCodes.Call, createInstanceMethod!);
+                SetStackUnknown();
+            }
+            else
+            {
+                _il.Emit(OpCodes.Ldnull);
+                SetStackType(StackType.Null);
+            }
         }
     }
 

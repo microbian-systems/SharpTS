@@ -485,36 +485,38 @@ public partial class ILEmitter
             }
             else
             {
-                // Fallback: try to instantiate via local variable (imported class as Type)
+                // Fallback: try to instantiate via local variable or resolver (parameter, captured var)
                 var local = _ctx.Locals.GetLocal(className);
                 if (local != null)
                 {
-                    // The local contains a Type object - use Activator.CreateInstance
-                    // Load the Type first
+                    // The local contains a Type object - load it
                     IL.Emit(OpCodes.Ldloc, local);
-
-                    // Create an object array for the arguments
-                    IL.Emit(OpCodes.Ldc_I4, n.Arguments.Count);
-                    IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
-
-                    for (int i = 0; i < n.Arguments.Count; i++)
-                    {
-                        IL.Emit(OpCodes.Dup);
-                        IL.Emit(OpCodes.Ldc_I4, i);
-                        EmitExpression(n.Arguments[i]);
-                        EmitBoxIfNeeded(n.Arguments[i]);
-                        IL.Emit(OpCodes.Stelem_Ref);
-                    }
-
-                    // Call Activator.CreateInstance(Type, object[])
-                    // Stack: Type, object[]
-                    var createInstanceMethod = _ctx.Types.GetMethod(_ctx.Types.Activator, "CreateInstance", _ctx.Types.Type, _ctx.Types.ObjectArray);
-                    IL.Emit(OpCodes.Call, createInstanceMethod!);
+                }
+                else if (_resolver.TryLoadVariable(className) != null)
+                {
+                    // Variable loaded onto stack by the resolver (parameter, captured var, etc.)
                 }
                 else
                 {
                     IL.Emit(OpCodes.Ldnull);
+                    return;
                 }
+
+                // Type reference is on the stack - use Activator.CreateInstance(Type, object[])
+                IL.Emit(OpCodes.Ldc_I4, n.Arguments.Count);
+                IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+
+                for (int i = 0; i < n.Arguments.Count; i++)
+                {
+                    IL.Emit(OpCodes.Dup);
+                    IL.Emit(OpCodes.Ldc_I4, i);
+                    EmitExpression(n.Arguments[i]);
+                    EmitBoxIfNeeded(n.Arguments[i]);
+                    IL.Emit(OpCodes.Stelem_Ref);
+                }
+
+                var createInstanceMethod = _ctx.Types.GetMethod(_ctx.Types.Activator, "CreateInstance", _ctx.Types.Type, _ctx.Types.ObjectArray);
+                IL.Emit(OpCodes.Call, createInstanceMethod!);
             }
         }
     }
