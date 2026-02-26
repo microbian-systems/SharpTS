@@ -79,6 +79,11 @@ public partial class RuntimeEmitter
         EmitTSEventEmitterSetMaxListeners(typeBuilder, runtime);
         EmitTSEventEmitterGetMaxListeners(typeBuilder, runtime);
 
+        // Aliases for Node.js compatibility (used by runtime dispatch when type is not EventEmitter)
+        EmitTSEventEmitterAddListener(typeBuilder, runtime);
+        EmitTSEventEmitterRemoveListener(typeBuilder, runtime);
+        EmitTSEventEmitterRawListeners(typeBuilder, runtime);
+
         // Set static constructor to initialize DefaultMaxListeners
         EmitTSEventEmitterStaticCtor(typeBuilder, defaultMaxListenersField);
 
@@ -351,6 +356,17 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var falseLabel = il.DefineLabel();
         var trueLabel = il.DefineLabel();
+
+        // Null-coalesce args: if (args == null) args = Array.Empty<object>()
+        // This handles the case where Emit is called via runtime dispatch (e.g., on $HttpServer)
+        // and AdjustArgs pads the missing object[] parameter with null.
+        var argsNotNull = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brtrue, argsNotNull);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Starg_S, (byte)2);
+        il.MarkLabel(argsNotNull);
 
         // if (!_events.TryGetValue(eventName, out var listeners)) return false;
         var listenersLocal = il.DeclareLocal(listType);
@@ -828,6 +844,68 @@ public partial class RuntimeEmitter
         var addItemMethod = GetListMethod(listType, _listAdd);
         il.Emit(OpCodes.Callvirt, addItemMethod);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits AddListener as an alias for On (Node.js compatibility).
+    /// Used by runtime dispatch when the type is not recognized as EventEmitter by TypeEmitterRegistry.
+    /// </summary>
+    private void EmitTSEventEmitterAddListener(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "AddListener",
+            MethodAttributes.Public,
+            typeBuilder,
+            [_types.String, _types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOn);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits RemoveListener as an alias for Off (Node.js compatibility).
+    /// </summary>
+    private void EmitTSEventEmitterRemoveListener(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "RemoveListener",
+            MethodAttributes.Public,
+            typeBuilder,
+            [_types.String, _types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOff);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits RawListeners as an alias for Listeners (Node.js compatibility).
+    /// In Node.js, rawListeners returns unwrapped listeners; our Listeners method
+    /// already returns the raw function references, so they are equivalent.
+    /// </summary>
+    private void EmitTSEventEmitterRawListeners(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "RawListeners",
+            MethodAttributes.Public,
+            runtime.TSArrayType,
+            [_types.String]
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterListeners);
         il.Emit(OpCodes.Ret);
     }
 }

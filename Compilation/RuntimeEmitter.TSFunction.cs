@@ -636,14 +636,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("ParameterType")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, lastParamTypeLocal);
 
-        // if (lastParamType != typeof(List<object>)) goto notRestParam
+        // Check if lastParamType == typeof(List<object>) (TypeScript rest parameter)
+        var notListRestParam = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, lastParamTypeLocal);
         il.Emit(OpCodes.Ldtoken, _types.ListOfObject);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Inequality", [_types.Type, _types.Type])!);
-        il.Emit(OpCodes.Brtrue, notRestParam);
+        il.Emit(OpCodes.Brtrue, notListRestParam);
 
-        // === REST PARAMETER HANDLING ===
+        // === REST PARAMETER HANDLING (List<object>) ===
         // result = new object[paramCount]
         il.Emit(OpCodes.Ldloc, paramCountLocal);
         il.Emit(OpCodes.Newarr, _types.Object);
@@ -712,6 +713,86 @@ public partial class RuntimeEmitter
 
         // return result
         il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        // === REST PARAMETER HANDLING (object[]) ===
+        // Handles methods like $EventEmitter.Emit(string, object[]) called via runtime dispatch
+        il.MarkLabel(notListRestParam);
+        il.Emit(OpCodes.Ldloc, lastParamTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.ObjectArray);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Inequality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Brtrue, notRestParam);
+
+        // Collect trailing args into object[] for the last parameter
+        // result = new object[paramCount]
+        var arrayRestResult = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldloc, paramCountLocal);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, arrayRestResult);
+
+        // Copy regular params: Array.Copy(args, result, min(argsLength, paramCount - 1))
+        var regularCount = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, paramCountLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, regularCount);
+
+        var skipRegularCopy = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, regularCount);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, skipRegularCopy);
+        il.Emit(OpCodes.Ldloc, argsLengthLocal);
+        il.Emit(OpCodes.Ldloc, regularCount);
+        il.Emit(OpCodes.Call, _types.Math.GetMethod("Min", [_types.Int32, _types.Int32])!);
+        il.Emit(OpCodes.Stloc, copyCountLocal);
+        il.Emit(OpCodes.Ldloc, copyCountLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, skipRegularCopy);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, arrayRestResult);
+        il.Emit(OpCodes.Ldloc, copyCountLocal);
+        il.Emit(OpCodes.Call, _types.ArrayType.GetMethod("Copy", [_types.ArrayType, _types.ArrayType, _types.Int32])!);
+        il.MarkLabel(skipRegularCopy);
+
+        // restCount = max(0, argsLength - regularCount)
+        var restCountLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, argsLengthLocal);
+        il.Emit(OpCodes.Ldloc, regularCount);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, _types.Math.GetMethod("Max", [_types.Int32, _types.Int32])!);
+        il.Emit(OpCodes.Stloc, restCountLocal);
+
+        // restArray = new object[restCount]
+        var restArrayLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldloc, restCountLocal);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, restArrayLocal);
+
+        // if (restCount > 0) Array.Copy(args, regularCount, restArray, 0, restCount)
+        var skipRestCopy = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, restCountLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, skipRestCopy);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, regularCount);
+        il.Emit(OpCodes.Ldloc, restArrayLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, restCountLocal);
+        il.Emit(OpCodes.Call, _types.ArrayType.GetMethod("Copy", [_types.ArrayType, _types.Int32, _types.ArrayType, _types.Int32, _types.Int32])!);
+        il.MarkLabel(skipRestCopy);
+
+        // result[paramCount - 1] = restArray
+        il.Emit(OpCodes.Ldloc, arrayRestResult);
+        il.Emit(OpCodes.Ldloc, paramCountLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Ldloc, restArrayLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        // return result
+        il.Emit(OpCodes.Ldloc, arrayRestResult);
         il.Emit(OpCodes.Ret);
 
         // === NOT A REST PARAMETER - STANDARD PADDING/TRIMMING ===

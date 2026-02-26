@@ -8,12 +8,6 @@ namespace SharpTS.Tests.SharedTests;
 /// Verifies that SharpTSHttpServer properly inherits from SharpTSEventEmitter
 /// and supports full Node.js-compatible event handling in both interpreter and compiled modes.
 /// Migrated from InterpreterTests/HttpServerEventTests.cs.
-///
-/// Note: 9 tests that invoke server.emit() and expect callbacks to fire are currently
-/// InterpretedOnly due to a compiler bug: NullReferenceException in $TSFunction.AdjustArgs
-/// when $EventEmitter.Emit invokes stored callbacks. Tests that only register/inspect
-/// listeners (on, off, listenerCount, eventNames, etc.) pass in both modes.
-/// When the compiler bug is fixed, switch these tests back to ExecutionModes.All.
 /// </summary>
 public class HttpServerEventTests
 {
@@ -41,9 +35,8 @@ public class HttpServerEventTests
         Assert.Equal("1\n", output);
     }
 
-    // TODO: Compiled mode fails — NullReferenceException in $TSFunction.AdjustArgs via $EventEmitter.Emit
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Server_Once_FiresOnlyOnce(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -186,9 +179,8 @@ public class HttpServerEventTests
         Assert.Equal("3\n", output);
     }
 
-    // TODO: Compiled mode fails — NullReferenceException in $TSFunction.AdjustArgs via $EventEmitter.Emit
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Server_MultipleListeners_ReceiveSameEvent(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -221,9 +213,8 @@ public class HttpServerEventTests
         Assert.Equal("1,2,3\n", output);
     }
 
-    // TODO: Compiled mode fails — NullReferenceException in $TSFunction.AdjustArgs via $EventEmitter.Emit
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Server_Emit_CustomEvent_Works(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -300,9 +291,8 @@ public class HttpServerEventTests
         Assert.Equal("20\n", output);
     }
 
-    // TODO: Compiled mode fails — NullReferenceException in $TSFunction.AdjustArgs via $EventEmitter.Emit
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Server_PrependListener_AddsToFront(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -330,9 +320,8 @@ public class HttpServerEventTests
         Assert.Equal("0,1,2\n", output);
     }
 
-    // TODO: Compiled mode fails — NullReferenceException in $TSFunction.AdjustArgs via $EventEmitter.Emit
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Server_AddListener_IsAliasForOn(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -358,9 +347,8 @@ public class HttpServerEventTests
         Assert.Equal("true\n", output);
     }
 
-    // TODO: Compiled mode fails — NullReferenceException in $TSFunction.AdjustArgs via $EventEmitter.Emit
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Server_RemoveListener_IsAliasForOff(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -447,9 +435,8 @@ public class HttpServerEventTests
         Assert.Equal("type check passed\n", output);
     }
 
-    // TODO: Compiled mode fails — NullReferenceException in $TSFunction.AdjustArgs via $EventEmitter.Emit
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Server_Emit_ReturnsBoolean(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -476,9 +463,8 @@ public class HttpServerEventTests
         Assert.Equal("false\ntrue\n", output);
     }
 
-    // TODO: Compiled mode fails — NullReferenceException in $TSFunction.AdjustArgs via $EventEmitter.Emit
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Server_RawListeners_ReturnsListenerArray(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -502,9 +488,8 @@ public class HttpServerEventTests
         Assert.Equal("2\n", output);
     }
 
-    // TODO: Compiled mode fails — NullReferenceException in $TSFunction.AdjustArgs via $EventEmitter.Emit
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Server_PrependOnceListener_AddsOnceListenerToFront(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
