@@ -130,7 +130,7 @@ public class IntlListFormatTests
     // ========== Format To Parts ==========
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void IntlListFormat_FormatToParts(ExecutionMode mode)
     {
         var source = @"

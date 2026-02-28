@@ -170,4 +170,8 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
     }
 
     #endregion
+
+    public bool HasStaticProperty(string memberName) => memberName is
+        "MAX_VALUE" or "MIN_VALUE" or "NaN" or "POSITIVE_INFINITY" or
+        "NEGATIVE_INFINITY" or "MAX_SAFE_INTEGER" or "MIN_SAFE_INTEGER" or "EPSILON";
 }

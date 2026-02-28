@@ -228,7 +228,7 @@ public class HttpModuleTests : IDisposable
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void GlobalThisHasFetch(ExecutionMode mode)
     {
         // Test that fetch is accessible via globalThis and is the same reference

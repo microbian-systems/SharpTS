@@ -46,7 +46,7 @@ public partial class AsyncArrowMoveNextEmitter
         // Load 'this' from outer state machine if captured
         if (_builder.Captures.Contains("this"))
         {
-            // Get outer state machine's ThisField
+            // Get outer state machine's ThisField (non-standalone path)
             if (_ctx?.AsyncArrowOuterBuilders?.TryGetValue(_builder.Arrow, out var outerBuilder) == true &&
                 outerBuilder.ThisField != null)
             {
@@ -54,6 +54,15 @@ public partial class AsyncArrowMoveNextEmitter
                 _il.Emit(OpCodes.Ldfld, _builder.OuterStateMachineField!);
                 _il.Emit(OpCodes.Unbox, _builder.OuterStateMachineType!);
                 _il.Emit(OpCodes.Ldfld, outerBuilder.ThisField);
+                SetStackUnknown();
+                return;
+            }
+
+            // Standalone async arrow: 'this' captured as a standalone field in this state machine
+            if (_builder.IsStandalone && _builder.StandaloneCaptureFields.TryGetValue("this", out var thisField))
+            {
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldfld, thisField);
                 SetStackUnknown();
                 return;
             }

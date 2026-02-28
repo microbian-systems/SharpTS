@@ -211,6 +211,7 @@ public partial class RuntimeEmitter
         // Emit util module types for standalone execution
         // Must come after $Buffer (TextEncoder returns $Buffer)
         EmitTSDeprecatedFunctionClass(moduleBuilder, runtime);
+        EmitTSCallbackifiedFunctionClass(moduleBuilder, runtime);
         EmitPromisifyCallbackClass(moduleBuilder, runtime);  // Must come before PromisifiedFunction
         EmitTSPromisifiedFunctionClass(moduleBuilder, runtime);
         EmitTSTextEncoderClass(moduleBuilder, runtime);

@@ -138,6 +138,86 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(noCwdLabel);
 
+        // Extract env from options if provided
+        var noEnvLabel = il.DefineLabel();
+        var envDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var envEnumeratorLocal = il.DeclareLocal(typeof(Dictionary<string, object?>.Enumerator));
+        var envKvpLocal = il.DeclareLocal(typeof(KeyValuePair<string, object?>));
+
+        // if dict is already loaded and dict.TryGetValue("env", out envObj) && envObj is Dictionary<string,object?>
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, noEnvLabel);
+
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "env");
+        il.Emit(OpCodes.Ldloca, tempObjLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue", [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, noEnvLabel);
+        il.Emit(OpCodes.Ldloc, tempObjLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, noEnvLabel);
+
+        // envDict = (Dictionary<string,object?>)tempObj
+        il.Emit(OpCodes.Ldloc, tempObjLocal);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, envDictLocal);
+
+        // startInfo.Environment.Clear() - to replace inherited env (Node.js behavior)
+        var envProp = _types.ProcessStartInfo.GetProperty("Environment")!.GetGetMethod()!;
+        var iDictStringString = typeof(IDictionary<string, string?>);
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Callvirt, envProp);
+        il.Emit(OpCodes.Callvirt, typeof(ICollection<KeyValuePair<string, string?>>).GetMethod("Clear")!);
+
+        // foreach (var kvp in envDict) { startInfo.Environment[kvp.Key] = kvp.Value?.ToString() ?? ""; }
+        il.Emit(OpCodes.Ldloc, envDictLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("GetEnumerator")!);
+        il.Emit(OpCodes.Stloc, envEnumeratorLocal);
+
+        var envLoopStart = il.DefineLabel();
+        var envLoopEnd = il.DefineLabel();
+        il.Emit(OpCodes.Br, envLoopEnd);
+
+        il.MarkLabel(envLoopStart);
+        // kvp = enumerator.Current
+        il.Emit(OpCodes.Ldloca, envEnumeratorLocal);
+        il.Emit(OpCodes.Call, typeof(Dictionary<string, object?>.Enumerator).GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, envKvpLocal);
+
+        // startInfo.Environment[kvp.Key] = kvp.Value?.ToString() ?? ""
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Callvirt, envProp);
+
+        // key
+        il.Emit(OpCodes.Ldloca, envKvpLocal);
+        il.Emit(OpCodes.Call, typeof(KeyValuePair<string, object?>).GetProperty("Key")!.GetGetMethod()!);
+
+        // value?.ToString() ?? ""
+        il.Emit(OpCodes.Ldloca, envKvpLocal);
+        il.Emit(OpCodes.Call, typeof(KeyValuePair<string, object?>).GetProperty("Value")!.GetGetMethod()!);
+        var envValNullLabel = il.DefineLabel();
+        var envValDoneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Stloc, tempObjLocal);
+        il.Emit(OpCodes.Ldloc, tempObjLocal);
+        il.Emit(OpCodes.Brfalse, envValNullLabel);
+        il.Emit(OpCodes.Ldloc, tempObjLocal);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
+        il.Emit(OpCodes.Br, envValDoneLabel);
+        il.MarkLabel(envValNullLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.MarkLabel(envValDoneLabel);
+
+        // call IDictionary<string,string?>.set_Item(key, value)
+        il.Emit(OpCodes.Callvirt, iDictStringString.GetMethod("set_Item", [_types.String, _types.String])!);
+
+        il.MarkLabel(envLoopEnd);
+        // if (enumerator.MoveNext()) goto loopStart
+        il.Emit(OpCodes.Ldloca, envEnumeratorLocal);
+        il.Emit(OpCodes.Call, typeof(Dictionary<string, object?>.Enumerator).GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brtrue, envLoopStart);
+
+        il.MarkLabel(noEnvLabel);
+
         // using var process = new Process { StartInfo = startInfo };
         // We'll handle the using/try-finally pattern manually
         var afterTryLabel = il.DefineLabel();

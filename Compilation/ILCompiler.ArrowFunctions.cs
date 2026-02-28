@@ -13,6 +13,7 @@ public partial class ILCompiler
     private readonly Dictionary<Expr.ArrowFunction, Expr.ArrowFunction?> _arrowParent = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrowFunction> _arrowsNeedingFunctionDC = new(ReferenceEqualityComparer.Instance);
     private Expr.ArrowFunction? _currentParentArrow;
+    private string? _currentCollectClassName;
 
     private void CollectAndDefineArrowFunctions(List<Stmt> statements)
     {
@@ -279,12 +280,15 @@ public partial class ILCompiler
                         CollectArrowsFromExpr(p.DefaultValue);
                 break;
             case Stmt.Class c:
+                var previousClassName = _currentCollectClassName;
+                _currentCollectClassName = c.Name.Lexeme;
                 foreach (var method in c.Methods)
                 {
                     // Skip overload signatures (no body)
                     if (method.Body != null)
                         CollectArrowsFromStmt(method);
                 }
+                _currentCollectClassName = previousClassName;
                 break;
             case Stmt.If i:
                 CollectArrowsFromExpr(i.Condition);
@@ -363,6 +367,12 @@ public partial class ILCompiler
             case Expr.ArrowFunction af:
                 var captures = _closures.Analyzer.GetCaptures(af);
                 _collectedArrows.Add((af, captures));
+
+                // Track enclosing class name for async arrows that need private field access
+                if (af.IsAsync && _currentCollectClassName != null)
+                {
+                    _async.ArrowEnclosingClassNames[af] = _currentCollectClassName;
+                }
 
                 // Track parent arrow for function DC propagation
                 _arrowParent[af] = _currentParentArrow;

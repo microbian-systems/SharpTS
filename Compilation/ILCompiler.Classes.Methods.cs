@@ -848,6 +848,10 @@ public partial class ILCompiler
             TypeMap = _typeMap,
             DeadCode = _deadCodeInfo,
             AsyncMethods = null,
+            // Async arrow support (for async arrows inside non-async methods)
+            AsyncArrowBuilders = _async.ArrowBuilders.Count > 0 ? _async.ArrowBuilders : null,
+            AsyncArrowOuterBuilders = _async.ArrowOuterBuilders,
+            AsyncArrowParentBuilders = _async.ArrowParentBuilders,
             // Module support for multi-module compilation
             CurrentModulePath = _modules.CurrentPath,
             ClassToModule = _modules.ClassToModule,

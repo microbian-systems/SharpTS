@@ -35,4 +35,10 @@ public interface IBuiltInModuleEmitter
     /// Used when creating namespace import objects.
     /// </summary>
     IReadOnlyList<string> GetExportedMembers();
+
+    /// <summary>
+    /// Checks whether the given member name is an exported property (not a method).
+    /// Used by typeof to distinguish properties from methods without emitting IL.
+    /// </summary>
+    bool IsExportedProperty(string memberName) => false;
 }

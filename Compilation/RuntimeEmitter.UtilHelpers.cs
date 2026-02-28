@@ -198,9 +198,9 @@ public partial class RuntimeEmitter
         var trueLabel = il.DefineLabel();
         var falseLabel = il.DefineLabel();
 
-        // Check for null
+        // Check for null first — null is NOT undefined in JS
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, trueLabel);
+        il.Emit(OpCodes.Brfalse, falseLabel);
 
         // Check for $Undefined
         il.Emit(OpCodes.Ldarg_0);
@@ -355,12 +355,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, falseLabel);
 
-        // Check for Dictionary<object, object?> (direct check)
+        // Check for Dictionary<object, object?> (direct check — the compiled Map representation)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryObjectObject);
         il.Emit(OpCodes.Brtrue, trueLabel);
 
-        // Check for generic Dictionary<,> via reflection
+        // Check for generic Dictionary<,> via reflection, but EXCLUDE Dictionary<string,object?>
+        // which is used for object literals, not Maps
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
         var typeLocal = il.DeclareLocal(_types.Type);
@@ -375,7 +376,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldtoken, typeof(Dictionary<,>));
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "op_Equality", _types.Type, _types.Type));
-        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+
+        // It's a generic Dictionary — but exclude Dictionary<string,...> (object literals)
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetGenericArguments"));
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "op_Equality", _types.Type, _types.Type));
+        il.Emit(OpCodes.Brtrue, falseLabel); // string-keyed = object literal, not a Map
 
         il.MarkLabel(falseLabel);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -611,6 +622,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "Name").GetGetMethod()!);
         il.Emit(OpCodes.Ldstr, "WeakSet");
         il.Emit(OpCodes.Call, _types.String.GetMethod("Contains", [typeof(string)])!);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+
+        // Check for ConditionalWeakTable (compiled WeakSet uses ConditionalWeakTable<object, object>)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
+        var wsTypeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Stloc, wsTypeLocal);
+
+        il.Emit(OpCodes.Ldloc, wsTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsGenericType").GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+
+        il.Emit(OpCodes.Ldloc, wsTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetGenericTypeDefinition"));
+        il.Emit(OpCodes.Ldtoken, typeof(System.Runtime.CompilerServices.ConditionalWeakTable<,>));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "op_Equality", _types.Type, _types.Type));
         il.Emit(OpCodes.Brtrue, trueLabel);
 
         il.MarkLabel(falseLabel);
@@ -874,7 +902,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object UtilCallbackify(object fn)
-    /// For now, returns the function as-is (callbackify is rarely used in compiled mode).
+    /// Returns a $CallbackifiedFunction that wraps fn and invokes a callback with (err, result).
     /// </summary>
     private void EmitUtilCallbackify(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -886,9 +914,9 @@ public partial class RuntimeEmitter
         runtime.UtilCallbackify = method;
 
         var il = method.GetILGenerator();
-        // For simplicity, just return the function as-is
-        // Full callbackify implementation would require significant IL
+        // return new $CallbackifiedFunction(fn)
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Newobj, runtime.TSCallbackifiedFunctionCtor);
         il.Emit(OpCodes.Ret);
     }
 
@@ -926,8 +954,9 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var endLabel = il.DefineLabel();
         var notDictLabel = il.DefineLabel();
+        var checkFieldsLabel = il.DefineLabel();
 
-        // if (ctor is IDictionary<string, object?> dict) dict["super_"] = superCtor
+        // if (ctor is Dictionary<string, object?> dict) dict["super_"] = superCtor
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Dup);
@@ -940,6 +969,34 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notDictLabel);
         il.Emit(OpCodes.Pop);
+
+        // if (ctor is $IHasFields hasFields) hasFields.SetProperty("super_", superCtor)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Brfalse, checkFieldsLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Ldstr, "super_");
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsSetProperty);
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(checkFieldsLabel);
+
+        // Fallback for any object type (System.Type for class constructors, TSFunction, etc.)
+        // Use PropertyDescriptorStore to attach the property
+        var descLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+        il.Emit(OpCodes.Stloc, descLocal);
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "super_");
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+        il.Emit(OpCodes.Pop);  // Discard bool result
 
         il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);

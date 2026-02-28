@@ -10,6 +10,12 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitGlobalThisMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Static field to cache the fetch TSFunction for reference equality
+        runtime.CachedFetchFunction = typeBuilder.DefineField(
+            "_cachedFetchFunction",
+            _types.Object,
+            FieldAttributes.Private | FieldAttributes.Static);
+
         EmitGlobalThisGetProperty(typeBuilder, runtime);
         EmitGlobalThisSetProperty(typeBuilder, runtime);
     }
@@ -100,13 +106,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // fetch property - return fetch function wrapped as TSFunction
+        // fetch property - return cached fetch TSFunction for reference equality
         il.MarkLabel(fetchLabel);
+        var fetchCachedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, runtime.CachedFetchFunction);
+        il.Emit(OpCodes.Brtrue, fetchCachedLabel);
+        // Create and cache the fetch TSFunction
         il.Emit(OpCodes.Ldnull); // target (static method)
         il.Emit(OpCodes.Ldtoken, runtime.Fetch);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle", _types.RuntimeMethodHandle));
         il.Emit(OpCodes.Castclass, _types.MethodInfo);
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Stsfld, runtime.CachedFetchFunction);
+        il.MarkLabel(fetchCachedLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.CachedFetchFunction);
         il.Emit(OpCodes.Br, returnLabel);
 
         il.MarkLabel(returnLabel);

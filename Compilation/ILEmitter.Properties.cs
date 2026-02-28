@@ -49,6 +49,19 @@ public partial class ILEmitter
             }
         }
 
+        // EventEmitter.defaultMaxListeners static property
+        if (g.Object is Expr.Variable eeVar && g.Name.Lexeme == "defaultMaxListeners" &&
+            _ctx.BuiltInModuleMethodBindings?.TryGetValue(eeVar.Name.Lexeme, out var eeBinding) == true &&
+            eeBinding.ModuleName == "events" && eeBinding.MethodName == "EventEmitter" &&
+            _ctx.Runtime?.TSEventEmitterDefaultMaxListeners != null)
+        {
+            IL.Emit(OpCodes.Ldsfld, _ctx.Runtime.TSEventEmitterDefaultMaxListeners);
+            IL.Emit(OpCodes.Conv_R8);
+            IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            SetStackUnknown();
+            return;
+        }
+
         // Enum forward mapping: Direction.Up -> 0 or Status.Success -> "SUCCESS"
         if (g.Object is Expr.Variable enumVar &&
             _ctx.EnumMembers?.TryGetValue(_ctx.ResolveEnumName(enumVar.Name.Lexeme), out var members) == true &&

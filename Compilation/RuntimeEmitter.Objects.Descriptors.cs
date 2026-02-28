@@ -388,9 +388,10 @@ public partial class RuntimeEmitter
         il.MarkLabel(notTSArrayLabel);
 
         // No descriptor - check if property exists on the object directly (Dictionary case)
+        var notDictLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Brfalse, returnNullLabel);
+        il.Emit(OpCodes.Brfalse, notDictLabel);
 
         // Check if dictionary contains the key
         var dictContainsKeyLabel = il.DefineLabel();
@@ -412,6 +413,67 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, valueLocal);
 
         // Set value property
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+
+        // Set writable = true
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "writable");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+
+        // Set enumerable = true
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "enumerable");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+
+        // Set configurable = true
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "configurable");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Not a dictionary - check if it implements $IHasFields (class instances)
+        il.MarkLabel(notDictLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+
+        // Get the fields dictionary from the class instance
+        var fieldsLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsFieldsGetter);
+        il.Emit(OpCodes.Stloc, fieldsLocal);
+
+        // Check if the fields dictionary contains the key
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+
+        // Build data descriptor from the class field value
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, resultDictLocal);
+
+        // Get the value from the fields dictionary
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "get_Item", _types.String));
+        il.Emit(OpCodes.Stloc, valueLocal);
+
+        // Set value
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "value");
         il.Emit(OpCodes.Ldloc, valueLocal);

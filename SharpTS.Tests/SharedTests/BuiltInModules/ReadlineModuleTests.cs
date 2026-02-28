@@ -31,11 +31,9 @@ public class ReadlineModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Module_HasQuestionSync(ExecutionMode mode)
     {
-        // readline module should export questionSync as a function
-        // Interpreter-only: compiled mode doesn't support typeof checks on module namespace exports
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -49,11 +47,9 @@ public class ReadlineModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Module_HasCreateInterface(ExecutionMode mode)
     {
-        // readline module should export createInterface as a function
-        // Interpreter-only: compiled mode doesn't support typeof checks on module namespace exports
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """

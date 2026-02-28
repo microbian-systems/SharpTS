@@ -152,6 +152,8 @@ public partial class ILCompiler
         public Dictionary<Expr.ArrowFunction, AsyncArrowStateMachineBuilder> ArrowBuilders { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<Expr.ArrowFunction, AsyncStateMachineBuilder> ArrowOuterBuilders { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<Expr.ArrowFunction, AsyncArrowStateMachineBuilder> ArrowParentBuilders { get; } = new(ReferenceEqualityComparer.Instance);
+        // Tracks which class (if any) each async arrow is enclosed in (for private field access)
+        public Dictionary<Expr.ArrowFunction, string> ArrowEnclosingClassNames { get; } = new(ReferenceEqualityComparer.Instance);
 
         // Pooled HashSets for async arrow analysis
         public HashSet<string> DeclaredVars { get; } = [];

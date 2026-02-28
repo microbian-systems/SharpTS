@@ -64,9 +64,29 @@ public sealed class UtilModuleEmitter : IBuiltInModuleEmitter
         {
             "TextEncoder" => EmitPlaceholder(il, "[TextEncoder]"),
             "TextDecoder" => EmitPlaceholder(il, "[TextDecoder]"),
+            // Method-as-value: wrap the runtime static method in a $TSFunction
+            "format" => EmitMethodAsValue(ctx, il, ctx.Runtime!.UtilFormat),
+            "inspect" => EmitMethodAsValue(ctx, il, ctx.Runtime!.UtilInspect),
+            "deprecate" => EmitMethodAsValue(ctx, il, ctx.Runtime!.UtilDeprecate),
+            "callbackify" => EmitMethodAsValue(ctx, il, ctx.Runtime!.UtilCallbackify),
+            "promisify" => EmitMethodAsValue(ctx, il, ctx.Runtime!.UtilPromisify),
+            "inherits" => EmitMethodAsValue(ctx, il, ctx.Runtime!.UtilInherits),
+            "parseArgs" => EmitMethodAsValue(ctx, il, ctx.Runtime!.UtilParseArgs),
             // util.types is a nested object - handled via nested call pattern in BuiltInModuleHandler
             _ => false
         };
+    }
+
+    private static bool EmitMethodAsValue(CompilationContext ctx, ILGenerator il, MethodBuilder method)
+    {
+        // Create a $TSFunction wrapping the static runtime method
+        il.Emit(OpCodes.Ldnull); // target (null for static methods)
+        il.Emit(OpCodes.Ldtoken, method);
+        il.Emit(OpCodes.Call, typeof(System.Reflection.MethodBase)
+            .GetMethod("GetMethodFromHandle", [typeof(RuntimeMethodHandle)])!);
+        il.Emit(OpCodes.Castclass, typeof(System.Reflection.MethodInfo));
+        il.Emit(OpCodes.Newobj, ctx.Runtime!.TSFunctionCtor);
+        return true;
     }
 
     private static bool EmitPlaceholder(ILGenerator il, string marker)

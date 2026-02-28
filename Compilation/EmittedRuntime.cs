@@ -1018,6 +1018,7 @@ public class EmittedRuntime
     // globalThis methods (ES2020)
     public MethodBuilder GlobalThisGetProperty { get; set; } = null!;
     public MethodBuilder GlobalThisSetProperty { get; set; } = null!;
+    public FieldBuilder CachedFetchFunction { get; set; } = null!;
 
     // Crypto module methods
     public MethodBuilder CryptoCreateHash { get; set; } = null!;
@@ -1356,6 +1357,9 @@ public class EmittedRuntime
 
     // util.callbackify support
     public MethodBuilder UtilCallbackify { get; set; } = null!;
+    public TypeBuilder TSCallbackifiedFunctionType { get; set; } = null!;
+    public ConstructorBuilder TSCallbackifiedFunctionCtor { get; set; } = null!;
+    public MethodBuilder TSCallbackifiedFunctionInvoke { get; set; } = null!;
 
     // util.promisify support
     public MethodBuilder UtilPromisify { get; set; } = null!;

@@ -502,7 +502,7 @@ public class EventsModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void EventEmitter_DefaultMaxListeners_StaticProperty(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

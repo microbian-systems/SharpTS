@@ -60,4 +60,10 @@ public interface IStaticTypeEmitterStrategy
     /// <param name="propertyName">The name of the static property being accessed.</param>
     /// <returns>True if this strategy handled the property access; false to try the next strategy.</returns>
     bool TryEmitStaticPropertyGet(IEmitterContext emitter, string propertyName);
+
+    /// <summary>
+    /// Checks whether the given member name is a static property (not a method).
+    /// Used by typeof to distinguish properties from methods without emitting IL.
+    /// </summary>
+    bool HasStaticProperty(string memberName) => false;
 }

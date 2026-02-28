@@ -173,4 +173,7 @@ public sealed class HttpModuleEmitter : IBuiltInModuleEmitter
         emitter.SetStackUnknown();
         return true;
     }
+
+    public bool IsExportedProperty(string memberName) => memberName is
+        "METHODS" or "STATUS_CODES" or "globalAgent";
 }

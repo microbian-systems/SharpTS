@@ -790,6 +790,218 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits $CallbackifiedFunction type for util.callbackify support.
+    /// Wraps a function so that it accepts a callback as the last argument.
+    /// On success: callback(null, result). On error: callback(error, null).
+    /// </summary>
+    internal void EmitTSCallbackifiedFunctionClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$CallbackifiedFunction",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.Object
+        );
+        runtime.TSCallbackifiedFunctionType = typeBuilder;
+
+        // Fields
+        var wrappedField = typeBuilder.DefineField("_wrapped", _types.Object, FieldAttributes.Private);
+
+        // Constructor(wrapped)
+        var ctor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.Object]
+        );
+        runtime.TSCallbackifiedFunctionCtor = ctor;
+
+        var ctorIL = ctor.GetILGenerator();
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Stfld, wrappedField);
+        ctorIL.Emit(OpCodes.Ret);
+
+        // Private static helper: CallFn(object callable, object[] args) -> object
+        // Dispatches to TSFunction or BoundTSFunction
+        var callFnMethod = typeBuilder.DefineMethod(
+            "CallFn",
+            MethodAttributes.Private | MethodAttributes.Static | MethodAttributes.HideBySig,
+            _types.Object,
+            [_types.Object, _types.ObjectArray]
+        );
+
+        var callFnIL = callFnMethod.GetILGenerator();
+        var cfNotTSFunctionLabel = callFnIL.DefineLabel();
+        var cfNotBoundLabel = callFnIL.DefineLabel();
+
+        // if (callable is $TSFunction) return ((TSFunction)callable).Invoke(args)
+        callFnIL.Emit(OpCodes.Ldarg_0);
+        callFnIL.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        callFnIL.Emit(OpCodes.Brfalse, cfNotTSFunctionLabel);
+        callFnIL.Emit(OpCodes.Ldarg_0);
+        callFnIL.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        callFnIL.Emit(OpCodes.Ldarg_1);
+        callFnIL.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        callFnIL.Emit(OpCodes.Ret);
+
+        // if (callable is $BoundTSFunction) return ((BoundTSFunction)callable).Invoke(args)
+        callFnIL.MarkLabel(cfNotTSFunctionLabel);
+        callFnIL.Emit(OpCodes.Ldarg_0);
+        callFnIL.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        callFnIL.Emit(OpCodes.Brfalse, cfNotBoundLabel);
+        callFnIL.Emit(OpCodes.Ldarg_0);
+        callFnIL.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
+        callFnIL.Emit(OpCodes.Ldarg_1);
+        callFnIL.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvoke);
+        callFnIL.Emit(OpCodes.Ret);
+
+        // Fallback: throw
+        callFnIL.MarkLabel(cfNotBoundLabel);
+        callFnIL.Emit(OpCodes.Ldstr, "Cannot invoke callbackified function: value is not callable.");
+        callFnIL.Emit(OpCodes.Newobj, _types.InvalidOperationExceptionCtorString);
+        callFnIL.Emit(OpCodes.Throw);
+
+        // Method: Invoke(params object[] args) -> object
+        var invokeMethod = typeBuilder.DefineMethod(
+            "Invoke",
+            MethodAttributes.Public | MethodAttributes.HideBySig,
+            _types.Object,
+            [_types.ObjectArray]
+        );
+        runtime.TSCallbackifiedFunctionInvoke = invokeMethod;
+
+        var invokeIL = invokeMethod.GetILGenerator();
+        var resultLocal = invokeIL.DeclareLocal(_types.Object);
+        var callbackLocal = invokeIL.DeclareLocal(_types.Object);
+        var innerArgsLocal = invokeIL.DeclareLocal(_types.ObjectArray);
+        var callbackArgsLocal = invokeIL.DeclareLocal(_types.ObjectArray);
+        var exLocal = invokeIL.DeclareLocal(typeof(Exception));
+
+        // callback = args[args.Length - 1]
+        invokeIL.Emit(OpCodes.Ldarg_1);
+        invokeIL.Emit(OpCodes.Ldarg_1);
+        invokeIL.Emit(OpCodes.Ldlen);
+        invokeIL.Emit(OpCodes.Conv_I4);
+        invokeIL.Emit(OpCodes.Ldc_I4_1);
+        invokeIL.Emit(OpCodes.Sub);
+        invokeIL.Emit(OpCodes.Ldelem_Ref);
+        invokeIL.Emit(OpCodes.Stloc, callbackLocal);
+
+        // innerArgs = new object[args.Length - 1]
+        invokeIL.Emit(OpCodes.Ldarg_1);
+        invokeIL.Emit(OpCodes.Ldlen);
+        invokeIL.Emit(OpCodes.Conv_I4);
+        invokeIL.Emit(OpCodes.Ldc_I4_1);
+        invokeIL.Emit(OpCodes.Sub);
+        invokeIL.Emit(OpCodes.Newarr, _types.Object);
+        invokeIL.Emit(OpCodes.Stloc, innerArgsLocal);
+
+        // if (innerArgs.Length > 0) Array.Copy(args, innerArgs, innerArgs.Length)
+        var skipCopyLabel = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Ldloc, innerArgsLocal);
+        invokeIL.Emit(OpCodes.Ldlen);
+        invokeIL.Emit(OpCodes.Brfalse, skipCopyLabel);
+        invokeIL.Emit(OpCodes.Ldarg_1);
+        invokeIL.Emit(OpCodes.Ldloc, innerArgsLocal);
+        invokeIL.Emit(OpCodes.Ldloc, innerArgsLocal);
+        invokeIL.Emit(OpCodes.Ldlen);
+        invokeIL.Emit(OpCodes.Conv_I4);
+        var arrayCopyMethod = typeof(Array).GetMethod("Copy", [typeof(Array), typeof(Array), typeof(int)])!;
+        invokeIL.Emit(OpCodes.Call, arrayCopyMethod);
+        invokeIL.MarkLabel(skipCopyLabel);
+
+        // try { result = CallFn(_wrapped, innerArgs); callback(null, result); }
+        var endLabel = invokeIL.DefineLabel();
+        invokeIL.BeginExceptionBlock();
+
+        // result = CallFn(_wrapped, innerArgs)
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, wrappedField);
+        invokeIL.Emit(OpCodes.Ldloc, innerArgsLocal);
+        invokeIL.Emit(OpCodes.Call, callFnMethod);
+        invokeIL.Emit(OpCodes.Stloc, resultLocal);
+
+        // callbackArgs = new object[] { null, result }
+        invokeIL.Emit(OpCodes.Ldc_I4_2);
+        invokeIL.Emit(OpCodes.Newarr, _types.Object);
+        invokeIL.Emit(OpCodes.Stloc, callbackArgsLocal);
+        invokeIL.Emit(OpCodes.Ldloc, callbackArgsLocal);
+        invokeIL.Emit(OpCodes.Ldc_I4_0);
+        invokeIL.Emit(OpCodes.Ldnull);
+        invokeIL.Emit(OpCodes.Stelem_Ref);
+        invokeIL.Emit(OpCodes.Ldloc, callbackArgsLocal);
+        invokeIL.Emit(OpCodes.Ldc_I4_1);
+        invokeIL.Emit(OpCodes.Ldloc, resultLocal);
+        invokeIL.Emit(OpCodes.Stelem_Ref);
+
+        // CallFn(callback, callbackArgs)
+        invokeIL.Emit(OpCodes.Ldloc, callbackLocal);
+        invokeIL.Emit(OpCodes.Ldloc, callbackArgsLocal);
+        invokeIL.Emit(OpCodes.Call, callFnMethod);
+        invokeIL.Emit(OpCodes.Pop);
+
+        invokeIL.Emit(OpCodes.Leave, endLabel);
+
+        // catch (Exception ex)
+        invokeIL.BeginCatchBlock(typeof(Exception));
+        invokeIL.Emit(OpCodes.Stloc, exLocal);
+
+        // callbackArgs = new object[] { errorMessage, null }
+        invokeIL.Emit(OpCodes.Ldc_I4_2);
+        invokeIL.Emit(OpCodes.Newarr, _types.Object);
+        invokeIL.Emit(OpCodes.Stloc, callbackArgsLocal);
+        invokeIL.Emit(OpCodes.Ldloc, callbackArgsLocal);
+        invokeIL.Emit(OpCodes.Ldc_I4_0);
+        // Use InnerException?.Message ?? Message (TargetInvocationException wrapping)
+        invokeIL.Emit(OpCodes.Ldloc, exLocal);
+        invokeIL.Emit(OpCodes.Callvirt, typeof(Exception).GetProperty("InnerException")!.GetGetMethod()!);
+        var noInnerLabel = invokeIL.DefineLabel();
+        var errorMsgDoneLabel = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Dup);
+        invokeIL.Emit(OpCodes.Brfalse, noInnerLabel);
+        invokeIL.Emit(OpCodes.Callvirt, typeof(Exception).GetProperty("Message")!.GetGetMethod()!);
+        invokeIL.Emit(OpCodes.Br, errorMsgDoneLabel);
+        invokeIL.MarkLabel(noInnerLabel);
+        invokeIL.Emit(OpCodes.Pop);
+        invokeIL.Emit(OpCodes.Ldloc, exLocal);
+        invokeIL.Emit(OpCodes.Callvirt, typeof(Exception).GetProperty("Message")!.GetGetMethod()!);
+        invokeIL.MarkLabel(errorMsgDoneLabel);
+        invokeIL.Emit(OpCodes.Stelem_Ref);
+        invokeIL.Emit(OpCodes.Ldloc, callbackArgsLocal);
+        invokeIL.Emit(OpCodes.Ldc_I4_1);
+        invokeIL.Emit(OpCodes.Ldnull);
+        invokeIL.Emit(OpCodes.Stelem_Ref);
+
+        // CallFn(callback, callbackArgs)
+        invokeIL.Emit(OpCodes.Ldloc, callbackLocal);
+        invokeIL.Emit(OpCodes.Ldloc, callbackArgsLocal);
+        invokeIL.Emit(OpCodes.Call, callFnMethod);
+        invokeIL.Emit(OpCodes.Pop);
+
+        invokeIL.Emit(OpCodes.Leave, endLabel);
+
+        invokeIL.EndExceptionBlock();
+
+        invokeIL.MarkLabel(endLabel);
+        invokeIL.Emit(OpCodes.Ldnull);
+        invokeIL.Emit(OpCodes.Ret);
+
+        // Override ToString
+        var toStringMethod = typeBuilder.DefineMethod(
+            "ToString",
+            MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig,
+            _types.String,
+            Type.EmptyTypes
+        );
+        var toStringIL = toStringMethod.GetILGenerator();
+        toStringIL.Emit(OpCodes.Ldstr, "[Function: callbackified]");
+        toStringIL.Emit(OpCodes.Ret);
+
+        typeBuilder.CreateType();
+    }
+
+    /// <summary>
     /// Emits $TextDecoderDecodeMethod wrapper for compiled mode decode calls.
     /// </summary>
     internal void EmitTSTextDecoderDecodeMethodClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)

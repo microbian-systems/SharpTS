@@ -301,4 +301,8 @@ public sealed class ProcessStaticEmitter : IStaticTypeEmitterStrategy
             il.Emit(OpCodes.Newarr, ctx.Types.Object);
         }
     }
+
+    public bool HasStaticProperty(string memberName) => memberName is
+        "platform" or "arch" or "pid" or "version" or "env" or "argv" or
+        "exitCode" or "stdin" or "stdout" or "stderr";
 }

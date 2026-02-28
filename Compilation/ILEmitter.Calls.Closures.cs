@@ -48,12 +48,60 @@ public partial class ILEmitter
 
     private void EmitAsyncArrowFunction(Expr.ArrowFunction af, AsyncArrowStateMachineBuilder arrowBuilder)
     {
-        // For standalone async arrows, create a TSFunction that wraps the stub method
-        // The stub method takes just the parameters (no outer SM for standalone arrows)
         var stubMethod = arrowBuilder.StubMethod;
 
-        // Non-capturing async arrow: new TSFunction(null, stubMethod)
-        IL.Emit(OpCodes.Ldnull);
+        // For standalone async arrows with captures, TSFunction's "static method with target"
+        // mechanism prepends the target to the args, so captures get passed as leading args.
+        if (arrowBuilder.IsStandalone && arrowBuilder.StandaloneCaptureFields.Count > 0)
+        {
+            var captureOrder = arrowBuilder.StandaloneCaptureFields.Keys.OrderBy(k => k).ToList();
+
+            if (captureOrder.Count == 1)
+            {
+                // Single capture: use TSFunction target prepend mechanism.
+                // TSFunction.Invoke detects static method + non-null target and prepends target as arg0.
+                var captureName = captureOrder[0];
+                if (captureName == "this")
+                {
+                    // Load 'this' (arg0 in instance methods)
+                    IL.Emit(OpCodes.Ldarg_0);
+                }
+                else
+                {
+                    // Load the captured variable
+                    EmitVariable(new Expr.Variable(new Parsing.Token(Parsing.TokenType.IDENTIFIER, captureName, null, 0)));
+                    EnsureBoxed();
+                }
+            }
+            else
+            {
+                // Multiple captures: pack into an object[] and use as target.
+                // The stub's paramOffset handles unpacking from arg0.
+                IL.Emit(OpCodes.Ldc_I4, captureOrder.Count);
+                IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+                for (int i = 0; i < captureOrder.Count; i++)
+                {
+                    IL.Emit(OpCodes.Dup);
+                    IL.Emit(OpCodes.Ldc_I4, i);
+                    var captureName = captureOrder[i];
+                    if (captureName == "this")
+                    {
+                        IL.Emit(OpCodes.Ldarg_0);
+                    }
+                    else
+                    {
+                        EmitVariable(new Expr.Variable(new Parsing.Token(Parsing.TokenType.IDENTIFIER, captureName, null, 0)));
+                        EnsureBoxed();
+                    }
+                    IL.Emit(OpCodes.Stelem_Ref);
+                }
+            }
+        }
+        else
+        {
+            // No captures: new TSFunction(null, stubMethod)
+            IL.Emit(OpCodes.Ldnull);
+        }
 
         // Load method info for the stub method
         IL.Emit(OpCodes.Ldtoken, stubMethod);

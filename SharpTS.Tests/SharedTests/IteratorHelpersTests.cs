@@ -357,7 +357,7 @@ public class IteratorHelpersTests
     #region Iterator.from
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Iterator_From_Array(ExecutionMode mode)
     {
         var source = @"

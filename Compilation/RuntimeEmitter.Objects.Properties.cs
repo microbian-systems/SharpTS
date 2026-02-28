@@ -771,8 +771,22 @@ public partial class RuntimeEmitter
             il.MarkLabel(skipLabel);
         }
 
-        // No match - return null
+        // No known array method match — check PropertyDescriptorStore for custom defined properties
         il.MarkLabel(returnNullLabel);
+        var reallyNullLabel = il.DefineLabel();
+        var pdsDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0); // list (as object)
+        il.Emit(OpCodes.Ldarg_1); // name
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, pdsDescLocal);
+        il.Emit(OpCodes.Ldloc, pdsDescLocal);
+        il.Emit(OpCodes.Brfalse, reallyNullLabel);
+        // Return descriptor.Value
+        il.Emit(OpCodes.Ldloc, pdsDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(reallyNullLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 

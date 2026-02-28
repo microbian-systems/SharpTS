@@ -949,6 +949,20 @@ public partial class ILCompiler
                 []     // No nested async arrows handled in this pass
             );
 
+            // Determine if this arrow is inside a class (for private field access)
+            string? enclosingClassName = null;
+            TypeBuilder? enclosingClassBuilder = null;
+            if (_async.ArrowEnclosingClassNames.TryGetValue(arrow, out var className))
+            {
+                // Resolve qualified class name (same as EmitMethod uses)
+                enclosingClassName = _modules.CurrentDotNetNamespace != null
+                    ? $"{_modules.CurrentDotNetNamespace}.{className}"
+                    : _modules.ClassToModule.TryGetValue(className, out var modulePath)
+                        ? $"$M_{System.IO.Path.GetFileNameWithoutExtension(modulePath)}_{className}"
+                        : className;
+                _classes.Builders.TryGetValue(enclosingClassName, out enclosingClassBuilder);
+            }
+
             // Create context for MoveNext emission
             var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
             {
@@ -983,6 +997,9 @@ public partial class ILCompiler
                 BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
                 ClassExprBuilders = _classExprs.Builders,
                 IsStrictMode = _isStrictMode,
+                // ES2022 Private Class Elements support
+                CurrentClassName = enclosingClassName,
+                CurrentClassBuilder = enclosingClassBuilder,
                 ClassRegistry = GetClassRegistry(),
                 EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
                 CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,

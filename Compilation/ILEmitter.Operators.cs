@@ -277,6 +277,11 @@ public partial class ILEmitter
                 {
                     IL.Emit(OpCodes.Ldstr, "undefined");
                 }
+                else if (IsTypeofOnBuiltInMethod(u.Right))
+                {
+                    // Built-in module methods and static type methods are functions
+                    IL.Emit(OpCodes.Ldstr, "function");
+                }
                 else
                 {
                     EmitExpression(u.Right);
@@ -1432,5 +1437,49 @@ public partial class ILEmitter
         // Call String.Concat(string[])
         var concatMethod = _ctx.Types.String.GetMethod("Concat", [_ctx.Types.StringArray]);
         IL.Emit(OpCodes.Call, concatMethod!);
+    }
+
+    /// <summary>
+    /// Checks if an expression is a built-in module method or static type method access
+    /// that should return "function" for typeof.
+    /// </summary>
+    private bool IsTypeofOnBuiltInMethod(Expr expr)
+    {
+        if (expr is not Expr.Get g || g.Object is not Expr.Variable v)
+            return false;
+
+        // If the type checker resolved this expression as a function type, it's a method
+        if (_ctx.TypeMap != null)
+        {
+            var memberType = _ctx.TypeMap.Get(expr);
+            if (memberType is TypeSystem.TypeInfo.Function)
+                return true;
+        }
+
+        var varName = v.Name.Lexeme;
+        var memberName = g.Name.Lexeme;
+
+        // Check module namespace methods (util.format, readline.questionSync, etc.)
+        // Exclude non-method exports (e.g., http.globalAgent, perf.performance)
+        if (_ctx.BuiltInModuleNamespaces != null &&
+            _ctx.BuiltInModuleNamespaces.TryGetValue(varName, out var moduleName) &&
+            _ctx.BuiltInModuleEmitterRegistry?.GetEmitter(moduleName) is { } moduleEmitter)
+        {
+            var members = moduleEmitter.GetExportedMembers();
+            if (members.Contains(memberName) && !moduleEmitter.IsExportedProperty(memberName))
+                return true;
+        }
+
+        // Check static type methods (Math.floor, JSON.parse, etc.)
+        // Exclude known static properties (Math.PI, Symbol.iterator, Number.MAX_VALUE, etc.)
+        // which are not functions.
+        if (_ctx.TypeEmitterRegistry != null)
+        {
+            var staticStrategy = _ctx.TypeEmitterRegistry.GetStaticStrategy(varName);
+            if (staticStrategy != null && !staticStrategy.HasStaticProperty(memberName))
+                return true;
+        }
+
+        return false;
     }
 }

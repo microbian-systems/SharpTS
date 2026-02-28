@@ -237,6 +237,19 @@ public partial class TypeChecker
             }
         }
 
+        // Handle Iterator.from()
+        if (call.Callee is Expr.Get iterGet &&
+            iterGet.Object is Expr.Variable iterVar &&
+            iterVar.Name.Lexeme == "Iterator")
+        {
+            var methodType = BuiltInTypes.GetIteratorStaticMethodType(iterGet.Name.Lexeme);
+            if (methodType is TypeInfo.Function iterMethodType)
+            {
+                foreach (var arg in call.Arguments) CheckExpr(arg);
+                return iterMethodType.ReturnType;
+            }
+        }
+
         // Handle global parseInt()
         if (call.Callee is Expr.Variable parseIntVar && parseIntVar.Name.Lexeme == "parseInt")
         {

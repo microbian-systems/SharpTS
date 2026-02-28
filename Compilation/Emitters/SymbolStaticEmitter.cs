@@ -114,4 +114,9 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
                 return false;
         }
     }
+
+    public bool HasStaticProperty(string memberName) => memberName is
+        "iterator" or "asyncIterator" or "toStringTag" or "hasInstance" or
+        "isConcatSpreadable" or "toPrimitive" or "species" or "unscopables" or
+        "dispose" or "asyncDispose";
 }

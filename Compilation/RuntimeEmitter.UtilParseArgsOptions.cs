@@ -393,13 +393,12 @@ public partial class RuntimeEmitter
         // Multiple: add to list
         // if (!values.TryGetValue(name, out existing) || existing is not IList<object?>)
         var hasExistingList = il.DefineLabel();
+        var createNewList = il.DefineLabel();
         il.Emit(OpCodes.Ldarg, 4); // values
         il.Emit(OpCodes.Ldloc, nameLocal);
         il.Emit(OpCodes.Ldloca, existingLocal);
         il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue")!);
-        il.Emit(OpCodes.Brfalse_S, (byte)0);
-        var createNewList = il.DefineLabel();
-        il.Emit(OpCodes.Br, createNewList);
+        il.Emit(OpCodes.Brfalse, createNewList);
 
         // Check if existing is list
         il.Emit(OpCodes.Ldloc, existingLocal);

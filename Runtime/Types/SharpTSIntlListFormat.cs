@@ -260,10 +260,21 @@ public class SharpTSIntlListFormat
 
     /// <summary>
     /// JS-facing formatToParts method for compiled mode reflection dispatch.
+    /// Returns List&lt;object?&gt; of Dictionary&lt;string,object?&gt; for compiled mode iteration.
     /// </summary>
     public object? formatToParts(object? items)
     {
-        return GetFormattedParts(ToStringList(items));
+        var arr = GetFormattedParts(ToStringList(items));
+        // Convert to compiled-mode representation: List<object?> of Dictionary<string,object?>
+        var list = new List<object?>();
+        foreach (var elem in arr.Elements)
+        {
+            if (elem is SharpTSObject obj)
+                list.Add(new Dictionary<string, object?>(obj.Fields));
+            else
+                list.Add(elem);
+        }
+        return list;
     }
 
     /// <summary>

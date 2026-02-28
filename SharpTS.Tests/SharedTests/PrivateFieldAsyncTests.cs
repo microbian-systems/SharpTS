@@ -276,7 +276,7 @@ public class PrivateFieldAsyncTests
     #region Async Arrow Functions (in class methods)
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncArrow_CanReadPrivateField(ExecutionMode mode)
     {
         var source = """
@@ -301,7 +301,7 @@ public class PrivateFieldAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncArrow_CanWritePrivateField(ExecutionMode mode)
     {
         var source = """
@@ -334,7 +334,7 @@ public class PrivateFieldAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncArrow_CanCallPrivateMethod(ExecutionMode mode)
     {
         var source = """

@@ -127,4 +127,6 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
                 return false;
         }
     }
+
+    public bool HasStaticProperty(string memberName) => memberName is "PI" or "E";
 }

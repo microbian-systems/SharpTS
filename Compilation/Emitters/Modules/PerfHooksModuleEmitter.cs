@@ -38,4 +38,6 @@ public sealed class PerfHooksModuleEmitter : IBuiltInModuleEmitter
 
         return false;
     }
+
+    public bool IsExportedProperty(string memberName) => memberName is "performance";
 }

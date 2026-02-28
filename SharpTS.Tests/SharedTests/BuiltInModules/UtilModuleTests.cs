@@ -297,7 +297,7 @@ public class UtilModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Types_IsUndefined_False(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -398,7 +398,7 @@ public class UtilModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Types_IsMap_False(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -693,10 +693,9 @@ public class UtilModuleTests
     #region Callbackify Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Callbackify_CallsCallbackWithResult(ExecutionMode mode)
     {
-        // Callbackify behavior differs in compiled mode
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -715,7 +714,7 @@ public class UtilModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Callbackify_CallsCallbackWithErrorOnThrow(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -841,7 +840,7 @@ public class UtilModuleTests
     #region Inherits Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Inherits_SetsSuperProperty(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1364,7 +1363,7 @@ public class UtilModuleTests
     #region Interpreted-Only Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Typeof_BuiltInMethod_ReturnsFunction(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1382,7 +1381,7 @@ public class UtilModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Types_IsFunction_AllTypes(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1404,7 +1403,7 @@ public class UtilModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Types_IsWeakSet_True(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1481,7 +1480,7 @@ public class UtilModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ParseArgs_MultipleValues(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

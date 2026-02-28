@@ -127,6 +127,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSTextDecoderDecodeMethodType);
         il.Emit(OpCodes.Brtrue, textDecoderDecodeLabel);
 
+        var callbackifiedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSCallbackifiedFunctionType);
+        il.Emit(OpCodes.Brtrue, callbackifiedLabel);
+
         var transformCbLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TransformDoneCallbackType);
@@ -225,6 +230,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, runtime.TSTextDecoderDecodeMethodType);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, runtime.TSTextDecoderDecodeMethodInvoke);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(callbackifiedLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSCallbackifiedFunctionType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.TSCallbackifiedFunctionInvoke);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(transformCbLabel);
@@ -385,8 +397,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSPromisifiedFunctionInvoke);
         il.Emit(OpCodes.Ret);
 
-        // Check $TextDecoderDecodeMethod
+        // Check $CallbackifiedFunction
         il.MarkLabel(notPromisifiedLabel);
+        var notCallbackifiedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSCallbackifiedFunctionType);
+        il.Emit(OpCodes.Brfalse, notCallbackifiedLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TSCallbackifiedFunctionType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.TSCallbackifiedFunctionInvoke);
+        il.Emit(OpCodes.Ret);
+
+        // Check $TextDecoderDecodeMethod
+        il.MarkLabel(notCallbackifiedLabel);
         var notTextDecoderDecodeLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.TSTextDecoderDecodeMethodType);

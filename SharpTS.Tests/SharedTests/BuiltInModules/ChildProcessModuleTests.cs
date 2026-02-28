@@ -35,11 +35,10 @@ public class ChildProcessModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ExecSync_WithEnvironment_PassesEnvVars(ExecutionMode mode)
     {
         // Test that environment variables are passed through
-        // Interpreter-only: compiled mode doesn't extract env from options
         var envVarEcho = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? "echo %TEST_VAR%"
             : "echo $TEST_VAR";

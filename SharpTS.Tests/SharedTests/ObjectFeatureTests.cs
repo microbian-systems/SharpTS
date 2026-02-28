@@ -1537,7 +1537,7 @@ public class ObjectFeatureTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Object_DefineProperty_OnArray(ExecutionMode mode)
     {
         var source = """
@@ -1636,7 +1636,7 @@ public class ObjectFeatureTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Object_GetOwnPropertyDescriptor_ClassInstance(ExecutionMode mode)
     {
         var source = """
