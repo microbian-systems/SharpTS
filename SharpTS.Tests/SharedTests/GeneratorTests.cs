@@ -177,6 +177,116 @@ public class GeneratorTests
 
     #endregion
 
+    #region Iterator Protocol (.next())
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_BasicYield_ReturnsValues(ExecutionMode mode)
+    {
+        var source = """
+            function* counter() {
+                yield 1;
+                yield 2;
+                yield 3;
+            }
+
+            let gen = counter();
+            console.log(gen.next().value);
+            console.log(gen.next().value);
+            console.log(gen.next().value);
+            console.log(gen.next().done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n2\n3\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_EmptyGenerator_ReturnsDoneImmediately(ExecutionMode mode)
+    {
+        var source = """
+            function* empty() {}
+
+            let gen = empty();
+            let result = gen.next();
+            console.log(result.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_IteratorResult_HasCorrectStructure(ExecutionMode mode)
+    {
+        var source = """
+            function* single() {
+                yield 42;
+            }
+
+            let gen = single();
+            let first = gen.next();
+            let second = gen.next();
+
+            console.log("First value:", first.value);
+            console.log("First done:", first.done);
+            console.log("Second done:", second.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("First value: 42\nFirst done: false\nSecond done: true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_MultipleInstances_IndependentState(ExecutionMode mode)
+    {
+        var source = """
+            function* counter() {
+                yield 1;
+                yield 2;
+                yield 3;
+            }
+
+            let gen1 = counter();
+            let gen2 = counter();
+
+            console.log(gen1.next().value);
+            console.log(gen2.next().value);
+            console.log(gen1.next().value);
+            console.log(gen2.next().value);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n1\n2\n2\n", output);
+    }
+
+    #endregion
+
+    #region Yield* with String
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_YieldStarString_DelegatesCharacters(ExecutionMode mode)
+    {
+        var source = """
+            function* chars() {
+                yield* "hi";
+            }
+
+            for (let c of chars()) {
+                console.log(c);
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("h\ni\n", output);
+    }
+
+    #endregion
+
     #region Yield* with Map and Set
 
     [Theory]
