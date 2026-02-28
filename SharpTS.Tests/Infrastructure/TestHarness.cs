@@ -4,6 +4,7 @@ using SharpTS.Compilation;
 using SharpTS.Execution;
 using SharpTS.Modules;
 using SharpTS.Parsing;
+using SharpTS.Runtime.BuiltIns;
 using SharpTS.TypeSystem;
 
 namespace SharpTS.Tests.Infrastructure;
@@ -235,7 +236,7 @@ public static class TestHarness
     /// <param name="timeout">Maximum execution time before throwing TimeoutException</param>
     /// <returns>Captured console output from the compiled executable</returns>
     /// <exception cref="TimeoutException">Thrown if execution exceeds the timeout (likely an infinite loop bug)</exception>
-    public static string RunCompiled(string source, DecoratorMode decoratorMode, TimeSpan timeout)
+    public static string RunCompiled(string source, DecoratorMode decoratorMode, TimeSpan timeout, string[]? scriptArgs = null)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempDir);
@@ -284,13 +285,19 @@ public static class TestHarness
                 """);
 
             // Execute and capture output
-            var psi = new ProcessStartInfo("dotnet", dllPath)
+            var psi = new ProcessStartInfo("dotnet")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 WorkingDirectory = tempDir
             };
+            psi.ArgumentList.Add(dllPath);
+            if (scriptArgs != null)
+            {
+                foreach (var arg in scriptArgs)
+                    psi.ArgumentList.Add(arg);
+            }
 
             using var process = Process.Start(psi)!;
             var output = process.StandardOutput.ReadToEnd();
@@ -323,6 +330,34 @@ public static class TestHarness
             {
                 // Ignore cleanup errors
             }
+        }
+    }
+
+    /// <summary>
+    /// Runs TypeScript source with command-line arguments available via process.argv.slice(2).
+    /// In interpreted mode, uses ProcessBuiltIns.SetScriptArguments.
+    /// In compiled mode, passes arguments to the spawned dotnet process.
+    /// </summary>
+    public static string RunWithArgs(string source, ExecutionMode mode, string[] scriptArgs)
+    {
+        return mode switch
+        {
+            ExecutionMode.Interpreted => RunInterpretedWithArgs(source, scriptArgs),
+            ExecutionMode.Compiled => RunCompiled(source, DecoratorMode.None, DefaultTimeout, scriptArgs),
+            _ => throw new ArgumentOutOfRangeException(nameof(mode))
+        };
+    }
+
+    private static string RunInterpretedWithArgs(string source, string[] scriptArgs)
+    {
+        ProcessBuiltIns.SetScriptArguments("script.ts", scriptArgs);
+        try
+        {
+            return RunInterpreted(source);
+        }
+        finally
+        {
+            ProcessBuiltIns.ClearScriptArguments();
         }
     }
 
