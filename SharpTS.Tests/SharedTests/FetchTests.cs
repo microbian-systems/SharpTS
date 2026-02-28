@@ -442,4 +442,150 @@ public class FetchTests : IDisposable
         var output = TestHarness.Run(source, mode);
         Assert.Equal("hello\n", output);
     }
+
+    // ========== Fetch integration tests (migrated from CompilerTests/FetchIntegrationTests.cs) ==========
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FetchJson_ParsesResponse(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test(): Promise<void> {
+                const res = await fetch('{{_server.BaseUrl}}json');
+                const data = await res.json();
+                console.log(data.message);
+                console.log(data.count);
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Hello\n42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FetchText_ReturnsBody(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test(): Promise<void> {
+                const res = await fetch('{{_server.BaseUrl}}text');
+                const text = await res.text();
+                console.log(text);
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Hello, World!\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FetchPost_SendsBody(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test(): Promise<void> {
+                const res = await fetch('{{_server.BaseUrl}}echo', {
+                    method: 'POST',
+                    body: 'test body'
+                });
+                const data = await res.json();
+                console.log(data.method);
+                console.log(data.body);
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("POST\ntest body\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FetchWithCustomHeaders_SendsHeaders(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test(): Promise<void> {
+                const res = await fetch('{{_server.BaseUrl}}echo', {
+                    method: 'GET',
+                    headers: {
+                        'X-Custom-Header': 'CustomValue',
+                        'Accept': 'application/json'
+                    }
+                });
+                const data = await res.json();
+                console.log(data.headers['X-Custom-Header']);
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("CustomValue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FetchArrayBuffer_ReturnsBinary(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test(): Promise<void> {
+                const res = await fetch('{{_server.BaseUrl}}binary');
+                const buffer = await res.arrayBuffer();
+                console.log(buffer.length);
+                console.log(buffer.toString('utf8'));
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("5\nHello\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FetchResponseHeaders_TypeofIsObject(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test(): Promise<void> {
+                const res = await fetch('{{_server.BaseUrl}}json');
+                console.log(typeof res.headers);
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("object\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FetchPutMethod_SendsCorrectMethod(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test(): Promise<void> {
+                const res = await fetch('{{_server.BaseUrl}}echo', {
+                    method: 'PUT',
+                    body: 'update data'
+                });
+                const data = await res.json();
+                console.log(data.method);
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("PUT\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FetchDeleteMethod_SendsCorrectMethod(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test(): Promise<void> {
+                const res = await fetch('{{_server.BaseUrl}}echo', {
+                    method: 'DELETE'
+                });
+                const data = await res.json();
+                console.log(data.method);
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("DELETE\n", output);
+    }
 }
