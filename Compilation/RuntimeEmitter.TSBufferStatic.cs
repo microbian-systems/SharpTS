@@ -152,6 +152,50 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits: public static $Buffer FromBuffer($Buffer source)
+    /// Copies the source buffer's data into a new buffer.
+    /// </summary>
+    private void EmitTSBufferFromBuffer(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "FromBuffer",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeBuilder,
+            [typeBuilder]
+        );
+        runtime.TSBufferFromBuffer = method;
+
+        var il = method.GetILGenerator();
+
+        var bytesLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+
+        // var bytes = new byte[source._data.Length]
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsBufferDataField);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Newarr, _types.Byte);
+        il.Emit(OpCodes.Stloc, bytesLocal);
+
+        // Array.Copy(source._data, 0, bytes, 0, source._data.Length)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsBufferDataField);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, bytesLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsBufferDataField);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Call, _types.ArrayCopy5);
+
+        // return new $Buffer(bytes)
+        il.Emit(OpCodes.Ldloc, bytesLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits: public static $Buffer Alloc(int size)
     /// </summary>
     private void EmitTSBufferAlloc(TypeBuilder typeBuilder, EmittedRuntime runtime)

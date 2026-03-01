@@ -36,6 +36,7 @@ public partial class RuntimeEmitter
         // Static methods
         EmitTSBufferFromString(typeBuilder, runtime);
         EmitTSBufferFromArray(typeBuilder, runtime);
+        EmitTSBufferFromBuffer(typeBuilder, runtime);
         EmitTSBufferAlloc(typeBuilder, runtime);
         EmitTSBufferAllocUnsafe(typeBuilder, runtime);
         EmitTSBufferConcat(typeBuilder, runtime);

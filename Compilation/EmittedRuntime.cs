@@ -1255,6 +1255,7 @@ public class EmittedRuntime
     public MethodBuilder TSBufferLengthGetter { get; set; } = null!;
     public MethodBuilder TSBufferFromString { get; set; } = null!;
     public MethodBuilder TSBufferFromArray { get; set; } = null!;
+    public MethodBuilder TSBufferFromBuffer { get; set; } = null!;
     public MethodBuilder TSBufferAlloc { get; set; } = null!;
     public MethodBuilder TSBufferAllocUnsafe { get; set; } = null!;
     public MethodBuilder TSBufferConcat { get; set; } = null!;

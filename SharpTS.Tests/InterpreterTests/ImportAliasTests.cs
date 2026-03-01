@@ -15,57 +15,17 @@
 // - Multiple aliases
 // - Aliasing nested namespaces
 // - Generic class aliases
-//
-// All 12 tests pass in both interpreter and compiler modes.
-//
-// Error case tests remain in this file for interpreter-only execution:
 // - Error_InvalidNamespace
 // - Error_InvalidMember
 // - Error_IntermediateNotNamespace
 //
+// All 15 tests pass in both interpreter and compiler modes.
+//
 // See: SharpTS.Tests/SharedTests/ImportAliasTests.cs
 // =============================================================================
-
-using SharpTS.Tests.Infrastructure;
-using Xunit;
 
 namespace SharpTS.Tests.InterpreterTests;
 
 public class ImportAliasTests
 {
-    [Fact]
-    public void Error_InvalidNamespace()
-    {
-        var code = @"
-            import X = NonExistent.Member;
-        ";
-        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(code));
-        Assert.Contains("Namespace 'NonExistent' is not defined", ex.Message);
-    }
-
-    [Fact]
-    public void Error_InvalidMember()
-    {
-        var code = @"
-            namespace NS {
-                export const x: number = 1;
-            }
-            import y = NS.nonexistent;
-        ";
-        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(code));
-        Assert.Contains("does not exist in namespace", ex.Message);
-    }
-
-    [Fact]
-    public void Error_IntermediateNotNamespace()
-    {
-        var code = @"
-            namespace NS {
-                export const x: number = 1;
-            }
-            import y = NS.x.z;
-        ";
-        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(code));
-        Assert.Contains("not a namespace", ex.Message);
-    }
 }

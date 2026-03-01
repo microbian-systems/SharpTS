@@ -215,4 +215,47 @@ public class ImportAliasTests
         ";
         Assert.Equal("42\nhello\n", TestHarness.Run(code, mode));
     }
+
+    #region Error Cases
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_InvalidNamespace(ExecutionMode mode)
+    {
+        var code = @"
+            import X = NonExistent.Member;
+        ";
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(code, mode));
+        Assert.Contains("Namespace 'NonExistent' is not defined", ex.Message);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_InvalidMember(ExecutionMode mode)
+    {
+        var code = @"
+            namespace NS {
+                export const x: number = 1;
+            }
+            import y = NS.nonexistent;
+        ";
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(code, mode));
+        Assert.Contains("does not exist in namespace", ex.Message);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_IntermediateNotNamespace(ExecutionMode mode)
+    {
+        var code = @"
+            namespace NS {
+                export const x: number = 1;
+            }
+            import y = NS.x.z;
+        ";
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(code, mode));
+        Assert.Contains("not a namespace", ex.Message);
+    }
+
+    #endregion
 }

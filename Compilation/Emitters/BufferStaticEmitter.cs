@@ -74,8 +74,22 @@ public sealed class BufferStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Runtime!.TSBufferFromString);
                 il.Emit(OpCodes.Br, endLabel);
 
-                // Non-string path: handle array-like values
+                // Non-string path: check for buffer, then array-like values
                 il.MarkLabel(notStringLabel);
+
+                // Check if it's a $Buffer - copy it
+                var notBufferLabel2 = il.DefineLabel();
+
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Isinst, ctx.Runtime!.TSBufferType);
+                il.Emit(OpCodes.Brfalse, notBufferLabel2);
+
+                // Buffer path: cast and call FromBuffer
+                il.Emit(OpCodes.Castclass, ctx.Runtime!.TSBufferType);
+                il.Emit(OpCodes.Call, ctx.Runtime!.TSBufferFromBuffer);
+                il.Emit(OpCodes.Br, endLabel);
+
+                il.MarkLabel(notBufferLabel2);
 
                 // Check if it's already a List<object?> (array literal)
                 var isListLabel = il.DefineLabel();

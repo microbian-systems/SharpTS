@@ -230,9 +230,7 @@ public class CryptoTimingSafeEqualTests
     // ============ LARGE BUFFER TESTS ============
 
     [Theory]
-    // InterpretedOnly: In compiled mode, Buffer.from(otherBuffer) produces a 0-length
-    // buffer instead of copying the source buffer's contents.
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TimingSafeEqual_LargeBuffers_Equal(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
