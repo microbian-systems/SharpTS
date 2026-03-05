@@ -1063,7 +1063,7 @@ public class BufferTests
     #region BigInt Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Buffer_ReadBigInt64LE_Basic(ExecutionMode mode)
     {
         var source = """
@@ -1084,7 +1084,7 @@ public class BufferTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Buffer_WriteBigInt64LE_RoundTrip(ExecutionMode mode)
     {
         var source = """
@@ -1099,7 +1099,7 @@ public class BufferTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Buffer_BigInt_RoundTrip(ExecutionMode mode)
     {
         var source = """

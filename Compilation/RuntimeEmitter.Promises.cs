@@ -195,11 +195,9 @@ public partial class RuntimeEmitter
         runtime.PromiseReject = reject;
         {
             var il = reject.GetILGenerator();
-            // Create Exception from reason
+            // Create $PromiseRejectedException from reason (preserves original value in Reason property)
             il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-            var exceptionCtor = _types.GetConstructor(_types.Exception, [_types.String]);
-            il.Emit(OpCodes.Newobj, exceptionCtor);
+            il.Emit(OpCodes.Newobj, runtime.TSPromiseRejectedExceptionCtor);
             // Call Task.FromException<object?>(exception) - keep typeof() for arity-based generic lookup
             var fromException = typeof(Task).GetMethod("FromException", 1, [typeof(Exception)])!.MakeGenericMethod(_types.Object);
             il.Emit(OpCodes.Call, fromException);

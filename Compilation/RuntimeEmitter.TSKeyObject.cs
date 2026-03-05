@@ -376,6 +376,61 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Conv_R8);  // Convert to double for JS number semantics
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Callvirt, _types.DictionaryStringObjectSetItem);
+
+        // RSA: Get publicExponent from ExportParameters(false).Exponent
+        // Exponent is big-endian byte[]; convert to double via loop: result = result * 256 + byte[i]
+        var rsaParamsLocal = il.DeclareLocal(typeof(RSAParameters));
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, rsaKeyField);
+        il.Emit(OpCodes.Ldc_I4_0); // includePrivateParameters = false
+        il.Emit(OpCodes.Callvirt, typeof(RSA).GetMethod("ExportParameters", [typeof(bool)])!);
+        il.Emit(OpCodes.Stloc, rsaParamsLocal);
+
+        var exponentLocal = il.DeclareLocal(typeof(byte[]));
+        il.Emit(OpCodes.Ldloca, rsaParamsLocal);
+        il.Emit(OpCodes.Ldfld, typeof(RSAParameters).GetField("Exponent")!);
+        il.Emit(OpCodes.Stloc, exponentLocal);
+
+        var expResultLocal = il.DeclareLocal(typeof(double));
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stloc, expResultLocal);
+
+        var expIdxLocal = il.DeclareLocal(typeof(int));
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, expIdxLocal);
+
+        var expLoopBody = il.DefineLabel();
+        var expLoopCheck = il.DefineLabel();
+        il.Emit(OpCodes.Br, expLoopCheck);
+
+        il.MarkLabel(expLoopBody);
+        il.Emit(OpCodes.Ldloc, expResultLocal);
+        il.Emit(OpCodes.Ldc_R8, 256.0);
+        il.Emit(OpCodes.Mul);
+        il.Emit(OpCodes.Ldloc, exponentLocal);
+        il.Emit(OpCodes.Ldloc, expIdxLocal);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, expResultLocal);
+        il.Emit(OpCodes.Ldloc, expIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, expIdxLocal);
+
+        il.MarkLabel(expLoopCheck);
+        il.Emit(OpCodes.Ldloc, expIdxLocal);
+        il.Emit(OpCodes.Ldloc, exponentLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Blt, expLoopBody);
+
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "publicExponent");
+        il.Emit(OpCodes.Ldloc, expResultLocal);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObjectSetItem);
+
         il.Emit(OpCodes.Br, createObjectLabel);
 
         il.MarkLabel(ecCheckLabel);

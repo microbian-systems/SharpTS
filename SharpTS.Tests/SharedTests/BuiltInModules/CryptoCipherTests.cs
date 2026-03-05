@@ -591,7 +591,7 @@ public class CryptoCipherTests
     #region Buffer Input Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Crypto_CreateCipheriv_BufferInput(ExecutionMode mode)
     {
         // Using Buffer as input with hex encoding for simpler output handling

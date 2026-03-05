@@ -529,12 +529,8 @@ public class FsModuleTests
         Assert.Equal("true\n", output);
     }
 
-    /// <summary>
-    /// Compiled-only: the interpreter returns Dirent objects with isFile()/isDirectory()
-    /// as methods, while the compiled mode exposes them as boolean properties.
-    /// </summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_ReaddirSync_WithFileTypes_ReturnsDirentObjects(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

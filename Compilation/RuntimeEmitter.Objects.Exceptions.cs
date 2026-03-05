@@ -90,8 +90,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "get_Item", _types.Object));
         il.Emit(OpCodes.Ret);
 
-        // Check for __nodeError marker in Data (Node.js-style fs errors)
+        // Check for $PromiseRejectedException - return the Reason property
         il.MarkLabel(fallbackLabel);
+        var checkNodeErrorLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseRejectedExceptionType);
+        il.Emit(OpCodes.Brfalse, checkNodeErrorLabel);
+
+        // It's a $PromiseRejectedException - return its Reason property
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSPromiseRejectedExceptionType);
+        il.Emit(OpCodes.Call, runtime.TSPromiseRejectedExceptionReasonGetter);
+        il.Emit(OpCodes.Ret);
+
+        // Check for __nodeError marker in Data (Node.js-style fs errors)
+        il.MarkLabel(checkNodeErrorLabel);
         var standardFallbackLabel = il.DefineLabel();
 
         // if (ex.Data.Contains("__nodeError"))

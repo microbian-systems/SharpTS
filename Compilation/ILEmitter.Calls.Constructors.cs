@@ -1016,44 +1016,57 @@ public partial class ILEmitter
         // new Writable(options?)
         IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSWritableCtor);
 
-        // If options provided with write callback, set it
+        // If options provided, extract write and final callbacks
         if (arguments.Count > 0)
         {
-            var optionsLabel = IL.DefineLabel();
+            var optionsNullLabel = IL.DefineLabel();
             var endLabel = IL.DefineLabel();
 
             // Store instance
             var instanceLocal = IL.DeclareLocal(_ctx.Runtime!.TSWritableType);
             IL.Emit(OpCodes.Stloc, instanceLocal);
 
-            // Emit options and check for write callback
+            // Emit options expression
             EmitExpression(arguments[0]);
             EmitBoxIfNeeded(arguments[0]);
 
             // If options is null, skip
+            var optionsLocal = IL.DeclareLocal(_ctx.Types.Object);
             IL.Emit(OpCodes.Dup);
-            IL.Emit(OpCodes.Brfalse, optionsLabel);
+            IL.Emit(OpCodes.Stloc, optionsLocal);
+            IL.Emit(OpCodes.Brfalse, optionsNullLabel);
 
-            // Try to get 'write' property: $Runtime.GetProperty(options, "write")
+            // Extract 'write' callback
+            var skipWriteLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, optionsLocal);
             IL.Emit(OpCodes.Ldstr, "write");
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
-
-            // Store write callback
             var writeCallbackLocal = IL.DeclareLocal(_ctx.Types.Object);
             IL.Emit(OpCodes.Stloc, writeCallbackLocal);
-
-            // If write callback is not null, set it on the instance
             IL.Emit(OpCodes.Ldloc, writeCallbackLocal);
-            IL.Emit(OpCodes.Brfalse, endLabel);
-
+            IL.Emit(OpCodes.Brfalse, skipWriteLabel);
             IL.Emit(OpCodes.Ldloc, instanceLocal);
             IL.Emit(OpCodes.Ldloc, writeCallbackLocal);
-            var setWriteCallback = _ctx.Runtime!.TSWritableType.GetMethod("SetWriteCallback");
-            IL.Emit(OpCodes.Callvirt, setWriteCallback!);
+            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSWritableType.GetMethod("SetWriteCallback")!);
+            IL.MarkLabel(skipWriteLabel);
+
+            // Extract 'final' callback
+            var skipFinalLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, optionsLocal);
+            IL.Emit(OpCodes.Ldstr, "final");
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
+            var finalCallbackLocal = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, finalCallbackLocal);
+            IL.Emit(OpCodes.Ldloc, finalCallbackLocal);
+            IL.Emit(OpCodes.Brfalse, skipFinalLabel);
+            IL.Emit(OpCodes.Ldloc, instanceLocal);
+            IL.Emit(OpCodes.Ldloc, finalCallbackLocal);
+            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSWritableType.GetMethod("SetFinalCallback")!);
+            IL.MarkLabel(skipFinalLabel);
+
             IL.Emit(OpCodes.Br, endLabel);
 
-            IL.MarkLabel(optionsLabel);
-            IL.Emit(OpCodes.Pop); // Pop the null options
+            IL.MarkLabel(optionsNullLabel);
 
             IL.MarkLabel(endLabel);
             IL.Emit(OpCodes.Ldloc, instanceLocal);

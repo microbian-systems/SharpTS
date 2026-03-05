@@ -74,7 +74,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Or);
         il.Emit(OpCodes.Brtrue, latin1Label);
 
-        // Default: UTF8
+        // Check for "utf8" or "utf-8"
+        var utf8Label = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "utf8");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "utf-8");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Brtrue, utf8Label);
+
+        // Unknown encoding - throw
+        il.Emit(OpCodes.Ldstr, "crypto.createSecretKey: unsupported encoding '");
+        il.Emit(OpCodes.Ldloc, encodingLocal);
+        il.Emit(OpCodes.Ldstr, "'");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.String, _types.String])!);
+        il.Emit(OpCodes.Newobj, typeof(Exception).GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Throw);
+
+        // UTF8
+        il.MarkLabel(utf8Label);
         il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("UTF8")!.GetGetMethod()!);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.String);
@@ -174,16 +194,32 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, pemLocal);
         il.Emit(OpCodes.Br, createKeyObjectLabel);
 
-        // Not a string - require emitted $Object and read its "key" property.
+        // Not a string - try emitted $Object first, then Dictionary<string,object?>
         il.MarkLabel(notStringLabel);
+
+        // Check for $Object (emitted type)
+        var tryDictLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
-        var noGetPropertyLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, noGetPropertyLabel);
+        il.Emit(OpCodes.Brfalse, tryDictLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSObjectType);
         il.Emit(OpCodes.Ldstr, "key");
         il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, pemLocal);
+        il.Emit(OpCodes.Br, createKeyObjectLabel);
+
+        // Check for Dictionary<string,object?> (compiled object literals)
+        il.MarkLabel(tryDictLabel);
+        var noGetPropertyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, noGetPropertyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldstr, "key");
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetProperty("Item")!.GetGetMethod()!);
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Stloc, pemLocal);
         il.Emit(OpCodes.Br, createKeyObjectLabel);

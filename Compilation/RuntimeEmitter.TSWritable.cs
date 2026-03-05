@@ -128,11 +128,11 @@ public partial class RuntimeEmitter
         // Constructor
         EmitTSWritableCtor(typeBuilder, runtime);
 
-        // Methods
+        // Methods (Cork/Uncork before End, since End calls Uncork)
         EmitTSWritableWrite(typeBuilder, runtime);
-        EmitTSWritableEnd(typeBuilder, runtime);
         EmitTSWritableCork(typeBuilder, runtime);
         EmitTSWritableUncork(typeBuilder, runtime);
+        EmitTSWritableEnd(typeBuilder, runtime);
         EmitTSWritableDestroy(typeBuilder, runtime);
         EmitTSWritableSetDefaultEncoding(typeBuilder, runtime);
 
@@ -208,6 +208,7 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var returnFalseLabel = il.DefineLabel();
         var callCallbackLabel = il.DefineLabel();
+        var notCorkedLabel = il.DefineLabel();
 
         // if (_destroyed || _ended) return false
         il.Emit(OpCodes.Ldarg_0);
@@ -216,6 +217,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsWritableEndedField);
         il.Emit(OpCodes.Brtrue, returnFalseLabel);
+
+        // if (_corked) { _corkBuffer.Add(new object[] { chunk, encoding, callback }); return false; }
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableCorkedField);
+        il.Emit(OpCodes.Brfalse, notCorkedLabel);
+
+        // Buffer the write: _corkBuffer.Add(new object[] { chunk, encoding, callback })
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableCorkBufferField);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1); // chunk
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_2); // encoding
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldarg_3); // callback
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
+        il.Emit(OpCodes.Ldc_I4_0); // return false (matches interpreter)
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notCorkedLabel);
 
         // If _writeCallback is set, invoke it
         var noCallbackLabel = il.DefineLabel();
@@ -310,22 +339,15 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var alreadyEndedLabel = il.DefineLabel();
+        var noChunkLabel = il.DefineLabel();
+        var noFinalCallbackLabel = il.DefineLabel();
 
         // if (_ended) return this
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsWritableEndedField);
         il.Emit(OpCodes.Brtrue, alreadyEndedLabel);
 
-        // _ended = true; _writable = false
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Stfld, _tsWritableEndedField);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stfld, _tsWritableWritableField);
-
-        // Write final chunk if provided
-        var noChunkLabel = il.DefineLabel();
+        // Write final chunk BEFORE setting _ended (Write() rejects when _ended is true)
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, noChunkLabel);
         il.Emit(OpCodes.Ldarg_0);
@@ -336,6 +358,49 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
 
         il.MarkLabel(noChunkLabel);
+
+        // _ended = true; _writable = false
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _tsWritableEndedField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, _tsWritableWritableField);
+
+        // Flush cork buffer if corked
+        var notCorkedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableCorkedField);
+        il.Emit(OpCodes.Brfalse, notCorkedLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, runtime.TSWritableUncork);
+        il.MarkLabel(notCorkedLabel);
+
+        // Invoke _finalCallback if set
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableFinalCallbackField);
+        il.Emit(OpCodes.Brfalse, noFinalCallbackLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableFinalCallbackField);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, noFinalCallbackLabel);
+
+        // _finalCallback.InvokeWithThis(this, [new $WriteCallbackWrapper(null)])
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableFinalCallbackField);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldarg_0); // this
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull); // no user callback
+        il.Emit(OpCodes.Newobj, _tsWriteCallbackWrapperCtor);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(noFinalCallbackLabel);
 
         // _finished = true
         il.Emit(OpCodes.Ldarg_0);
@@ -385,10 +450,77 @@ public partial class RuntimeEmitter
         runtime.TSWritableUncork = method;
 
         var il = method.GetILGenerator();
+        var notCorkedLabel = il.DefineLabel();
+
+        // if (!_corked) return
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableCorkedField);
+        il.Emit(OpCodes.Brfalse, notCorkedLabel);
+
+        // _corked = false (must be set before flushing so Write() calls go through)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, _tsWritableCorkedField);
-        // TODO: flush cork buffer
+
+        // Flush: for (int i = 0; i < _corkBuffer.Count; i++) {
+        //   var entry = (object[])_corkBuffer[i];
+        //   Write(entry[0], entry[1], entry[2]);
+        // }
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        var entryLocal = il.DeclareLocal(typeof(object[]));
+        var loopStartLabel = il.DefineLabel();
+        var loopCondLabel = il.DefineLabel();
+
+        // i = 0
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopCondLabel);
+
+        // Loop body
+        il.MarkLabel(loopStartLabel);
+
+        // entry = (object[])_corkBuffer[i]
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableCorkBufferField);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetProperty("Item")!.GetGetMethod()!);
+        il.Emit(OpCodes.Castclass, typeof(object[]));
+        il.Emit(OpCodes.Stloc, entryLocal);
+
+        // this.Write(entry[0], entry[1], entry[2])
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, entryLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref); // chunk
+        il.Emit(OpCodes.Ldloc, entryLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_Ref); // encoding
+        il.Emit(OpCodes.Ldloc, entryLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldelem_Ref); // callback
+        il.Emit(OpCodes.Callvirt, runtime.TSWritableWrite);
+        il.Emit(OpCodes.Pop); // discard bool return
+
+        // i++
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        // Loop condition: i < _corkBuffer.Count
+        il.MarkLabel(loopCondLabel);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableCorkBufferField);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Blt, loopStartLabel);
+
+        // _corkBuffer.Clear()
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableCorkBufferField);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Clear")!);
+
+        il.MarkLabel(notCorkedLabel);
         il.Emit(OpCodes.Ret);
     }
 

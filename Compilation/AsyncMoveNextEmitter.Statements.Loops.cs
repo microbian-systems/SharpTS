@@ -180,6 +180,7 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Call, getAwaiter);
             var awaiterLocal = _il.DeclareLocal(_types.TaskAwaiterOfObject);
             _il.Emit(OpCodes.Stloc, awaiterLocal);
+
             _il.Emit(OpCodes.Ldloca, awaiterLocal);
             var getResult = _types.GetMethodNoParams(_types.TaskAwaiterOfObject, "GetResult");
             _il.Emit(OpCodes.Call, getResult);

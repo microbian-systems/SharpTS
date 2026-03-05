@@ -580,25 +580,25 @@ public class SharpTSBuffer
             "readBigInt64LE" => new BuiltInMethod("readBigInt64LE", 0, 1, (interp, recv, args) =>
             {
                 int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadBigInt64LE(offset);
+                return new SharpTSBigInt(ReadBigInt64LE(offset));
             }),
 
             "readBigInt64BE" => new BuiltInMethod("readBigInt64BE", 0, 1, (interp, recv, args) =>
             {
                 int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadBigInt64BE(offset);
+                return new SharpTSBigInt(ReadBigInt64BE(offset));
             }),
 
             "readBigUInt64LE" => new BuiltInMethod("readBigUInt64LE", 0, 1, (interp, recv, args) =>
             {
                 int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadBigUInt64LE(offset);
+                return new SharpTSBigInt(ReadBigUInt64LE(offset));
             }),
 
             "readBigUInt64BE" => new BuiltInMethod("readBigUInt64BE", 0, 1, (interp, recv, args) =>
             {
                 int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadBigUInt64BE(offset);
+                return new SharpTSBigInt(ReadBigUInt64BE(offset));
             }),
 
             // Multi-byte write methods
@@ -1082,6 +1082,7 @@ public class SharpTSBuffer
         ValidateOffset(offset, 8);
         long longValue = value switch
         {
+            SharpTSBigInt sbi => (long)sbi.Value,
             BigInteger bi => (long)bi,
             double d => (long)d,
             _ => throw new Exception("Value must be a BigInt or number")
@@ -1098,6 +1099,7 @@ public class SharpTSBuffer
         ValidateOffset(offset, 8);
         long longValue = value switch
         {
+            SharpTSBigInt sbi => (long)sbi.Value,
             BigInteger bi => (long)bi,
             double d => (long)d,
             _ => throw new Exception("Value must be a BigInt or number")
@@ -1114,6 +1116,7 @@ public class SharpTSBuffer
         ValidateOffset(offset, 8);
         ulong ulongValue = value switch
         {
+            SharpTSBigInt sbi => (ulong)sbi.Value,
             BigInteger bi => (ulong)bi,
             double d => (ulong)d,
             _ => throw new Exception("Value must be a BigInt or number")
@@ -1130,6 +1133,7 @@ public class SharpTSBuffer
         ValidateOffset(offset, 8);
         ulong ulongValue = value switch
         {
+            SharpTSBigInt sbi => (ulong)sbi.Value,
             BigInteger bi => (ulong)bi,
             double d => (ulong)d,
             _ => throw new Exception("Value must be a BigInt or number")

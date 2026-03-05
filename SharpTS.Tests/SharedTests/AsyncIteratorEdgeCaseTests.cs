@@ -14,7 +14,7 @@ public class AsyncIteratorEdgeCaseTests
     #region Error Handling
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncIterator_RejectedPromiseInNext_PropagatesError(ExecutionMode mode)
     {
         var source = """

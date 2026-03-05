@@ -147,7 +147,7 @@ public class IntlListFormatTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void IntlListFormat_FormatToPartsReturnsArray(ExecutionMode mode)
     {
         var source = @"

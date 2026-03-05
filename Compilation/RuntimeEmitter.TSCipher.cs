@@ -371,11 +371,12 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitTSCipherUpdate(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Parameter types are object to allow $Undefined to be passed for encoding
         var method = typeBuilder.DefineMethod(
             "Update",
             MethodAttributes.Public,
             _types.Object,
-            [_types.Object, _types.String, _types.String]
+            [_types.Object, _types.Object, _types.Object]
         );
         runtime.TSCipherUpdateMethod = method;
 
@@ -672,7 +673,18 @@ public partial class RuntimeEmitter
 
         il.Emit(loadData);
         il.Emit(OpCodes.Stloc, dataLocal);
+
+        // Encoding may be object ($Undefined, null, or string) — extract string or null
+        var encodingIsStringLabel = il.DefineLabel();
+        var encodingResolvedLabel = il.DefineLabel();
         il.Emit(loadEncoding);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, encodingIsStringLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldnull);
+        il.MarkLabel(encodingIsStringLabel);
+        il.MarkLabel(encodingResolvedLabel);
         il.Emit(OpCodes.Stloc, encodingLocal);
 
         var isBufferLabel = il.DefineLabel();
@@ -766,7 +778,15 @@ public partial class RuntimeEmitter
         var returnBufferLabel = il.DefineLabel();
         var encodingLocal = il.DeclareLocal(_types.String);
 
+        // Encoding may be object ($Undefined, null, or string) — extract string or null
+        var outEncIsStringLabel = il.DefineLabel();
         il.Emit(loadEncoding);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, outEncIsStringLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldnull);
+        il.MarkLabel(outEncIsStringLabel);
         il.Emit(OpCodes.Stloc, encodingLocal);
 
         // if (encoding == null) return Buffer

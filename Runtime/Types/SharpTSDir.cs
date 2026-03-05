@@ -85,13 +85,13 @@ public sealed class SharpTSDir : ISharpTSPropertyAccessor
         return new SharpTSObject(new Dictionary<string, object?>
         {
             ["name"] = name,
-            ["isFile"] = new BuiltInMethod("isFile", 0, 0, (_, _, _) => isFile && !isDir),
-            ["isDirectory"] = new BuiltInMethod("isDirectory", 0, 0, (_, _, _) => isDir),
-            ["isSymbolicLink"] = new BuiltInMethod("isSymbolicLink", 0, 0, (_, _, _) => isSymlink),
-            ["isBlockDevice"] = new BuiltInMethod("isBlockDevice", 0, 0, (_, _, _) => false),
-            ["isCharacterDevice"] = new BuiltInMethod("isCharacterDevice", 0, 0, (_, _, _) => false),
-            ["isFIFO"] = new BuiltInMethod("isFIFO", 0, 0, (_, _, _) => false),
-            ["isSocket"] = new BuiltInMethod("isSocket", 0, 0, (_, _, _) => false),
+            ["isFile"] = isFile && !isDir,
+            ["isDirectory"] = isDir,
+            ["isSymbolicLink"] = isSymlink,
+            ["isBlockDevice"] = false,
+            ["isCharacterDevice"] = false,
+            ["isFIFO"] = false,
+            ["isSocket"] = false,
         });
     }
 

@@ -296,7 +296,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Writable_Cork_Uncork(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -326,7 +326,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Writable_End_WithChunk(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -354,7 +354,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Writable_Final_Callback(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
