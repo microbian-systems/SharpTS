@@ -40,5 +40,15 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable
         return new SharpTSAsyncGenerator(_declaration, environment, interpreter);
     }
 
+    /// <summary>
+    /// Creates a bound version with 'this' set for method calls.
+    /// </summary>
+    public SharpTSAsyncGeneratorFunction Bind(SharpTSInstance instance)
+    {
+        RuntimeEnvironment boundEnv = new(_closure);
+        boundEnv.Define("this", instance);
+        return new SharpTSAsyncGeneratorFunction(_declaration, boundEnv);
+    }
+
     public override string ToString() => $"[async function* {_declaration.Name?.Lexeme ?? "anonymous"}]";
 }

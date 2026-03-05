@@ -208,7 +208,7 @@ public class PrivateFieldAsyncTests
     // additional support for recognizing async generator class methods as async iterables.
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_CanReadPrivateField(ExecutionMode mode)
     {
         var source = """
@@ -237,7 +237,7 @@ public class PrivateFieldAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_CanWritePrivateField(ExecutionMode mode)
     {
         var source = """

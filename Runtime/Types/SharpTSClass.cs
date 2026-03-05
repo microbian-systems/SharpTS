@@ -114,6 +114,7 @@ public class SharpTSClass(
             SharpTSFunction func => func.Bind(instance),
             SharpTSAsyncFunction asyncFunc => asyncFunc.Bind(instance),
             SharpTSGeneratorFunction genFunc => genFunc.Bind(instance),
+            SharpTSAsyncGeneratorFunction asyncGenFunc => asyncGenFunc.Bind(instance),
             _ => method // For other callables that don't need binding
         };
     }

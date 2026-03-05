@@ -1632,7 +1632,9 @@ public partial class Interpreter : IDisposable
         {
             // Create the appropriate function type based on async/generator flags
             ISharpTSCallable func;
-            if (method.IsAsync)
+            if (method.IsGenerator && method.IsAsync)
+                func = new SharpTSAsyncGeneratorFunction(method, _environment);
+            else if (method.IsAsync)
                 func = new SharpTSAsyncFunction(method, _environment);
             else if (method.IsGenerator)
                 func = new SharpTSGeneratorFunction(method, _environment);
