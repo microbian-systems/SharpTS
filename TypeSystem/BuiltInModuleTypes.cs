@@ -416,6 +416,18 @@ public static class BuiltInModuleTypes
             // linkSync(existingPath, newPath) -> void
             ["linkSync"] = new TypeInfo.Function([stringType, stringType], voidType),
 
+            // Stream factory methods
+            ["createReadStream"] = new TypeInfo.Function(
+                [stringType, anyType],
+                anyType,
+                RequiredParams: 1
+            ),
+            ["createWriteStream"] = new TypeInfo.Function(
+                [stringType, anyType],
+                anyType,
+                RequiredParams: 1
+            ),
+
             // Constants object
             ["constants"] = constantsType,
 
@@ -1538,6 +1550,7 @@ public static class BuiltInModuleTypes
             ["readableEnded"] = boolType,
             ["readableLength"] = numberType,
             ["readableEncoding"] = stringType,
+            ["readableFlowing"] = new TypeInfo.Union([boolType, new TypeInfo.Null()]),
             ["destroyed"] = boolType,
 
             // Writable methods
@@ -1552,7 +1565,13 @@ public static class BuiltInModuleTypes
             ["writableEnded"] = boolType,
             ["writableFinished"] = boolType,
             ["writableLength"] = numberType,
-            ["writableCorked"] = numberType
+            ["writableCorked"] = numberType,
+            ["writableHighWaterMark"] = numberType,
+
+            // Stream path properties (for ReadStream/WriteStream)
+            ["path"] = stringType,
+            ["bytesRead"] = numberType,
+            ["bytesWritten"] = numberType
         }.ToFrozenDictionary());
 
         // Readable constructor

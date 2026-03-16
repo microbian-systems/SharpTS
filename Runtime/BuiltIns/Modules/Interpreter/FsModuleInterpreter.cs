@@ -96,6 +96,9 @@ public static class FsModuleInterpreter
             ["opendirSync"] = new BuiltInMethod("opendirSync", 1, 1, OpendirSync),
             // Hard links
             ["linkSync"] = new BuiltInMethod("linkSync", 2, 2, LinkSync),
+            // Stream factory methods
+            ["createReadStream"] = new BuiltInMethod("createReadStream", 1, 2, CreateReadStream),
+            ["createWriteStream"] = new BuiltInMethod("createWriteStream", 1, 2, CreateWriteStream),
             ["constants"] = CreateConstants(),
 
             // Callback-based async methods
@@ -873,6 +876,52 @@ public static class FsModuleInterpreter
             LibC.CreateHardLink(existingPath, newPath);
         });
         return null;
+    }
+
+    #endregion
+
+    #region Stream Factory Methods
+
+    private static object? CreateReadStream(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var path = args[0]?.ToString() ?? throw new Exception("Runtime Error: path is required");
+
+        Dictionary<string, object?>? options = null;
+        if (args.Count > 1 && args[1] is SharpTSObject opts)
+        {
+            options = new Dictionary<string, object?>();
+            foreach (var key in new[] { "encoding", "start", "end", "highWaterMark", "flags", "autoClose" })
+            {
+                var val = opts.GetProperty(key);
+                if (val != null)
+                    options[key] = val;
+            }
+        }
+
+        var stream = new SharpTSReadStream(path, options);
+        stream.StartReading(interpreter);
+        return stream;
+    }
+
+    private static object? CreateWriteStream(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var path = args[0]?.ToString() ?? throw new Exception("Runtime Error: path is required");
+
+        Dictionary<string, object?>? options = null;
+        if (args.Count > 1 && args[1] is SharpTSObject opts)
+        {
+            options = new Dictionary<string, object?>();
+            foreach (var key in new[] { "flags", "autoClose" })
+            {
+                var val = opts.GetProperty(key);
+                if (val != null)
+                    options[key] = val;
+            }
+        }
+
+        var stream = new SharpTSWriteStream(path, options);
+        stream.EmitOpen(interpreter);
+        return stream;
     }
 
     #endregion

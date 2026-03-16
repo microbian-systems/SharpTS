@@ -23,6 +23,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsWritableCorkBufferField = null!;
     private FieldBuilder _tsWritableWriteCallbackField = null!;
     private FieldBuilder _tsWritableFinalCallbackField = null!;
+    private FieldBuilder _tsWritableHighWaterMarkField = null!;
 
     /// <summary>
     /// Emits the $WriteCallbackWrapper helper class.
@@ -124,6 +125,7 @@ public partial class RuntimeEmitter
         _tsWritableCorkBufferField = typeBuilder.DefineField("_corkBuffer", listType, FieldAttributes.Private);
         _tsWritableWriteCallbackField = typeBuilder.DefineField("_writeCallback", _types.Object, FieldAttributes.Private);
         _tsWritableFinalCallbackField = typeBuilder.DefineField("_finalCallback", _types.Object, FieldAttributes.Private);
+        _tsWritableHighWaterMarkField = typeBuilder.DefineField("_highWaterMark", _types.Int32, FieldAttributes.Private);
 
         // Constructor
         EmitTSWritableCtor(typeBuilder, runtime);
@@ -190,6 +192,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stfld, _tsWritableCorkBufferField);
+
+        // _highWaterMark = 16384
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, 16384);
+        il.Emit(OpCodes.Stfld, _tsWritableHighWaterMarkField);
 
         il.Emit(OpCodes.Ret);
     }
@@ -722,5 +729,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsWritableDestroyedField);
         il.Emit(OpCodes.Ret);
         destroyedProp.SetGetMethod(getDestroyed);
+
+        // writableHighWaterMark property
+        var writableHwmProp = typeBuilder.DefineProperty("WritableHighWaterMark", PropertyAttributes.None, _types.Double, null);
+        var getWritableHwm = typeBuilder.DefineMethod(
+            "get_WritableHighWaterMark",
+            MethodAttributes.Public | MethodAttributes.SpecialName,
+            _types.Double,
+            Type.EmptyTypes
+        );
+        il = getWritableHwm.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableHighWaterMarkField);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+        writableHwmProp.SetGetMethod(getWritableHwm);
     }
 }

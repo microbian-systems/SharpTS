@@ -64,6 +64,9 @@ public partial class RuntimeEmitter
         // Constructor: public $EventEmitter()
         EmitTSEventEmitterCtor(typeBuilder, runtime, dictType, listType);
 
+        // Virtual hook must be defined before AddListenerInternal (which calls it)
+        EmitTSEventEmitterOnListenerAdded(typeBuilder, runtime);
+
         // Instance methods - AddListenerInternal must be defined first as it's called by On/Once/Prepend methods
         EmitTSEventEmitterAddListenerInternal(typeBuilder, runtime, listType, dictType);
         EmitTSEventEmitterOn(typeBuilder, runtime, listType);
@@ -829,13 +832,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse_S, endLabel);
 
         // Insert at beginning
+        var afterAddLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, listenersLocal);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldloc, wrapperLocal);
         var insertMethod = GetListMethod(listType, _listInsert);
         il.Emit(OpCodes.Callvirt, insertMethod);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Br, afterAddLabel);
 
         il.MarkLabel(endLabel);
         // Add at end
@@ -843,6 +846,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, wrapperLocal);
         var addItemMethod = GetListMethod(listType, _listAdd);
         il.Emit(OpCodes.Callvirt, addItemMethod);
+
+        il.MarkLabel(afterAddLabel);
+        // Call virtual OnListenerAdded(eventName) for subclass notification
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1); // eventName
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOnListenerAdded);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
     }
@@ -886,6 +896,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOff);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits virtual OnListenerAdded(string eventName) - called at end of AddListenerInternal.
+    /// Default implementation is empty; $Readable overrides to enter flowing mode on 'data'.
+    /// </summary>
+    private void EmitTSEventEmitterOnListenerAdded(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "OnListenerAdded",
+            MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.NewSlot,
+            _types.Void,
+            [_types.String]
+        );
+        runtime.TSEventEmitterOnListenerAdded = method;
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ret); // Default: no-op
     }
 
     /// <summary>

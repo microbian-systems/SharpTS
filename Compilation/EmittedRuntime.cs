@@ -1461,6 +1461,7 @@ public class EmittedRuntime
     public MethodBuilder TSEventEmitterSetMaxListeners { get; set; } = null!;
     public MethodBuilder TSEventEmitterGetMaxListeners { get; set; } = null!;
     public MethodBuilder TSEventEmitterAddListenerInternal { get; set; } = null!;
+    public MethodBuilder TSEventEmitterOnListenerAdded { get; set; } = null!;
 
     // $AbortController / $AbortSignal support
     public MethodBuilder FireAbortEvent { get; set; } = null!;

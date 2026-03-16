@@ -16,6 +16,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsReadableDestroyedField = null!;
     private FieldBuilder _tsReadableEncodingField = null!;
     private FieldBuilder _tsReadableReadableField = null!;
+    private FieldBuilder _tsReadableFlowingField = null!; // int: -1=initial, 0=paused, 1=flowing
 
     /// <summary>
     /// Phase 1: Define the $Readable type, fields, and constructor.
@@ -42,6 +43,7 @@ public partial class RuntimeEmitter
         _tsReadableDestroyedField = typeBuilder.DefineField("_destroyed", _types.Boolean, FieldAttributes.Family);
         _tsReadableEncodingField = typeBuilder.DefineField("_encoding", _types.String, FieldAttributes.Family);
         _tsReadableReadableField = typeBuilder.DefineField("_readable", _types.Boolean, FieldAttributes.Family);
+        _tsReadableFlowingField = typeBuilder.DefineField("_flowing", _types.Int32, FieldAttributes.Family);
 
         // Constructor
         EmitTSReadableCtor(typeBuilder, runtime, queueOfObject);
@@ -60,6 +62,9 @@ public partial class RuntimeEmitter
 
         // Property getters
         EmitTSReadablePropertyGetters(typeBuilder, runtime, queueOfObject);
+
+        // Override OnListenerAdded to enter flowing mode on 'data' event
+        EmitTSReadableOnListenerAdded(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -129,6 +134,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _tsReadableReadableField);
+
+        // _flowing = -1 (initial/null)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Stfld, _tsReadableFlowingField);
 
         il.Emit(OpCodes.Ret);
     }
@@ -258,7 +268,32 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, returnFalseLabel);
 
         il.MarkLabel(notNullLabel);
-        // _readBuffer.Enqueue(chunk)
+
+        // Check if flowing mode: if (_flowing == 1) emit 'data' directly
+        var notFlowingLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableFlowingField);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Bne_Un, notFlowingLabel);
+
+        // Flowing: emit 'data' event with chunk
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "data");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
+
+        // return true
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notFlowingLabel);
+        // Not flowing: _readBuffer.Enqueue(chunk)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
         il.Emit(OpCodes.Ldarg_1);
@@ -398,6 +433,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
 
         il.MarkLabel(notEndedLabel);
+
+        // Set _flowing = 1 (flowing mode) after pipe setup
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _tsReadableFlowingField);
 
         // return destination
         il.Emit(OpCodes.Ldarg_1);
@@ -550,6 +590,10 @@ public partial class RuntimeEmitter
         runtime.TSReadablePause = method;
 
         var il = method.GetILGenerator();
+        // _flowing = 0 (paused)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, _tsReadableFlowingField);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
     }
@@ -566,6 +610,56 @@ public partial class RuntimeEmitter
         runtime.TSReadableResume = method;
 
         var il = method.GetILGenerator();
+        var queueType = typeof(Queue<object?>);
+        var countGetter = queueType.GetProperty("Count")!.GetGetMethod()!;
+        var dequeueMethod = queueType.GetMethod("Dequeue")!;
+
+        // _flowing = 1 (flowing)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _tsReadableFlowingField);
+
+        // Drain buffer: while (_readBuffer.Count > 0) emit('data', _readBuffer.Dequeue())
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+        il.Emit(OpCodes.Callvirt, countGetter);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, loopEnd);
+
+        // emit('data', dequeue())
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "data");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+        il.Emit(OpCodes.Callvirt, dequeueMethod);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+
+        // If ended, emit 'end'
+        var notEndedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableEndedField);
+        il.Emit(OpCodes.Brfalse, notEndedLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "end");
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(notEndedLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
     }
@@ -582,7 +676,74 @@ public partial class RuntimeEmitter
         runtime.TSReadableIsPaused = method;
 
         var il = method.GetILGenerator();
-        il.Emit(OpCodes.Ldc_I4_0); // Always return false in sync mode
+        // return _flowing == 0
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableFlowingField);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitTSReadableOnListenerAdded(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // Override OnListenerAdded: if eventName == "data" && _flowing != 1, set _flowing = 1
+        var method = typeBuilder.DefineMethod(
+            "OnListenerAdded",
+            MethodAttributes.Public | MethodAttributes.Virtual,
+            _types.Void,
+            [_types.String]
+        );
+
+        var il = method.GetILGenerator();
+        var skipLabel = il.DefineLabel();
+
+        // if (eventName != "data") return
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "data");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("op_Equality", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        // if (_flowing == 1) return (already flowing)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableFlowingField);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Beq, skipLabel);
+
+        // _flowing = 1
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _tsReadableFlowingField);
+
+        // Drain buffer: while (_readBuffer.Count > 0) emit('data', _readBuffer.Dequeue())
+        var queueType = typeof(Queue<object?>);
+        var countGetter = queueType.GetProperty("Count")!.GetGetMethod()!;
+        var dequeueMethod = queueType.GetMethod("Dequeue")!;
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+        il.Emit(OpCodes.Callvirt, countGetter);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, loopEnd);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "data");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+        il.Emit(OpCodes.Callvirt, dequeueMethod);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.MarkLabel(skipLabel);
         il.Emit(OpCodes.Ret);
     }
 
@@ -659,5 +820,35 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsReadableDestroyedField);
         il.Emit(OpCodes.Ret);
         destroyedProp.SetGetMethod(getDestroyed);
+
+        // readableFlowing property: returns false when _flowing == -1 (initial) or 0 (paused), true when 1
+        var readableFlowingProp = typeBuilder.DefineProperty("ReadableFlowing", PropertyAttributes.None, _types.Object, null);
+        var getReadableFlowing = typeBuilder.DefineMethod(
+            "get_ReadableFlowing",
+            MethodAttributes.Public | MethodAttributes.SpecialName,
+            _types.Object,
+            Type.EmptyTypes
+        );
+        il = getReadableFlowing.GetILGenerator();
+        var flowingTrueLabel = il.DefineLabel();
+        var flowingEndLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableFlowingField);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Beq, flowingTrueLabel);
+
+        // Not flowing: return false (boxed)
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Br, flowingEndLabel);
+
+        il.MarkLabel(flowingTrueLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Box, _types.Boolean);
+
+        il.MarkLabel(flowingEndLabel);
+        il.Emit(OpCodes.Ret);
+        readableFlowingProp.SetGetMethod(getReadableFlowing);
     }
 }

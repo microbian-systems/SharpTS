@@ -659,4 +659,197 @@ public class StreamModuleTests
     }
 
     #endregion
+
+    #region Flowing Mode
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_FlowingMode_DataEvent(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const readable = new Readable();
+                const chunks: string[] = [];
+
+                readable.on('data', (chunk: string) => {
+                    chunks.push(chunk);
+                });
+
+                readable.push('hello');
+                readable.push(' world');
+                readable.push(null);
+
+                console.log(chunks.join(''));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("hello world\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_FlowingMode_EndEvent(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const readable = new Readable();
+                let ended = false;
+
+                readable.on('data', (chunk: string) => {
+                    // consume data
+                });
+                readable.on('end', () => {
+                    ended = true;
+                });
+
+                readable.push('data');
+                readable.push(null);
+
+                console.log(ended);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_FlowingMode_Pause_Resume(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const readable = new Readable();
+                const chunks: string[] = [];
+
+                readable.on('data', (chunk: string) => {
+                    chunks.push(chunk);
+                });
+
+                readable.push('first');
+                readable.pause();
+                readable.push('second');
+                readable.push('third');
+
+                console.log('paused: ' + chunks.length);
+                readable.resume();
+                console.log('resumed: ' + chunks.length);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("paused: 1\nresumed: 3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Readable_Pipe_EntersFlowingMode(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, Writable } from 'stream';
+                const readable = new Readable();
+                const chunks: string[] = [];
+                const writable = new Writable({
+                    write(chunk: string, encoding: string, callback: () => void) {
+                        chunks.push(chunk);
+                        callback();
+                    }
+                });
+
+                readable.pipe(writable);
+
+                // After pipe, pushing should flow data
+                readable.push('hello');
+                readable.push(' world');
+                readable.push(null);
+
+                console.log(chunks.join(''));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("hello world\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_ReadableFlowing_Property(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const readable = new Readable();
+
+                console.log(readable.readableFlowing);
+                readable.on('data', () => {});
+                console.log(readable.readableFlowing);
+                readable.pause();
+                console.log(readable.readableFlowing);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("false\ntrue\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_FlowingMode_MultiplePush(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const readable = new Readable();
+                let count = 0;
+
+                readable.on('data', () => {
+                    count++;
+                });
+
+                readable.push('a');
+                readable.push('b');
+                readable.push('c');
+                readable.push(null);
+
+                console.log(count);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("3\n", output);
+    }
+
+    #endregion
+
+    #region Drain
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Writable_WritableHighWaterMark_Property(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Writable } from 'stream';
+                const writable = new Writable();
+                console.log(writable.writableHighWaterMark);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("16384\n", output);
+    }
+
+    #endregion
 }

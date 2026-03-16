@@ -319,6 +319,17 @@ public class SharpTSEventEmitter
             // In Node.js this emits a warning. For now we just continue silently.
             // A full implementation could emit a 'warning' event or write to stderr.
         }
+
+        // Notify subclasses (e.g., Readable enters flowing mode on 'data' listener)
+        OnListenerAdded(eventName);
+    }
+
+    /// <summary>
+    /// Called after a listener is added. Override in subclasses to react to specific events.
+    /// </summary>
+    protected virtual void OnListenerAdded(string eventName)
+    {
+        // Default: no-op. Readable overrides this to enter flowing mode on 'data'.
     }
 
     public override string ToString() => "EventEmitter {}";

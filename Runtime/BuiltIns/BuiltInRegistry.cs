@@ -680,6 +680,14 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSPassThrough), (instance, name) =>
             ((SharpTSPassThrough)instance).GetMember(name));
 
+        // ReadStream members (extends Readable, for fs.createReadStream)
+        registry.RegisterInstanceType(typeof(SharpTSReadStream), (instance, name) =>
+            ((SharpTSReadStream)instance).GetMember(name));
+
+        // WriteStream members (extends Writable, for fs.createWriteStream)
+        registry.RegisterInstanceType(typeof(SharpTSWriteStream), (instance, name) =>
+            ((SharpTSWriteStream)instance).GetMember(name));
+
         // Stream constructors
         registry.RegisterInstanceType(typeof(SharpTSReadableConstructor), (instance, name) =>
             ((SharpTSReadableConstructor)instance).GetProperty(name));

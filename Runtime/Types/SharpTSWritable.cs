@@ -21,6 +21,9 @@ public class SharpTSWritable : SharpTSEventEmitter
     private ISharpTSCallable? _writeCallback;
     private ISharpTSCallable? _finalCallback;
     private ISharpTSCallable? _destroyCallback;
+    private int _highWaterMark = 16384;
+    private int _pendingWrites;
+    private bool _needDrain;
 
     /// <summary>
     /// Sets the custom write callback (from constructor options).
@@ -58,6 +61,7 @@ public class SharpTSWritable : SharpTSEventEmitter
             "writableFinished" => _finished,
             "writableLength" => (double)_corkBuffer.Count,
             "writableCorked" => (double)(_corked ? 1 : 0),
+            "writableHighWaterMark" => (double)_highWaterMark,
             "destroyed" => _destroyed,
 
             // Inherit from EventEmitter
@@ -110,10 +114,12 @@ public class SharpTSWritable : SharpTSEventEmitter
 
     private object? DoWrite(Interp interpreter, object? chunk, string? encoding, ISharpTSCallable? callback)
     {
+        _pendingWrites++;
+
         if (_writeCallback != null)
         {
             // Custom write callback: (chunk, encoding, callback)
-            var cbWrapper = new WriteCallbackWrapper(callback, interpreter);
+            var cbWrapper = new WriteCallbackWrapper(callback, interpreter, this);
             var writeArgs = new List<object?> { chunk, encoding ?? "utf8", cbWrapper };
             try
             {
@@ -128,23 +134,41 @@ public class SharpTSWritable : SharpTSEventEmitter
         else
         {
             // Default behavior: just accept the data
+            _pendingWrites--;
             callback?.Call(interpreter, []);
+            CheckDrain(interpreter);
+        }
+
+        // Return false when pending writes exceed threshold (backpressure)
+        if (_pendingWrites >= 16)
+        {
+            _needDrain = true;
+            return false;
         }
 
         return true;
     }
 
+    private void CheckDrain(Interp interpreter)
+    {
+        if (_needDrain && _pendingWrites < 16)
+        {
+            _needDrain = false;
+            EmitEvent(interpreter, "drain", []);
+        }
+    }
+
     /// <summary>
-    /// Internal write method for piped data.
+    /// Internal write method for piped data. Returns false on backpressure.
     /// </summary>
-    internal void WriteInternal(Interp interpreter, object? chunk, string? encoding)
+    internal bool WriteInternal(Interp interpreter, object? chunk, string? encoding)
     {
         if (_destroyed || _ended)
         {
-            return;
+            return false;
         }
 
-        DoWrite(interpreter, chunk, encoding, null);
+        return (bool)(DoWrite(interpreter, chunk, encoding, null) ?? false);
     }
 
     /// <summary>
@@ -207,7 +231,7 @@ public class SharpTSWritable : SharpTSEventEmitter
         // Call final callback
         if (_finalCallback != null)
         {
-            var finalCbWrapper = new WriteCallbackWrapper(null, interpreter);
+            var finalCbWrapper = new WriteCallbackWrapper(null, interpreter, this);
             try
             {
                 _finalCallback.Call(interpreter, [finalCbWrapper]);
@@ -343,11 +367,13 @@ public class SharpTSWritable : SharpTSEventEmitter
     {
         private readonly ISharpTSCallable? _callback;
         private readonly Interp _interpreter;
+        private readonly SharpTSWritable _stream;
 
-        public WriteCallbackWrapper(ISharpTSCallable? callback, Interp interpreter)
+        public WriteCallbackWrapper(ISharpTSCallable? callback, Interp interpreter, SharpTSWritable stream)
         {
             _callback = callback;
             _interpreter = interpreter;
+            _stream = stream;
         }
 
         public int Arity() => 1;
@@ -356,8 +382,12 @@ public class SharpTSWritable : SharpTSEventEmitter
         {
             // error argument
             var error = arguments.Count > 0 ? arguments[0] : null;
-            // For now, just call the original callback
+            // Decrement pending writes and check for drain
+            _stream._pendingWrites--;
+            // Call the original callback
             _callback?.Call(_interpreter, []);
+            // Check if we need to emit drain
+            _stream.CheckDrain(_interpreter);
             return null;
         }
     }

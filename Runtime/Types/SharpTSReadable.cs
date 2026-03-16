@@ -19,6 +19,7 @@ public class SharpTSReadable : SharpTSEventEmitter
     private bool _destroyed;
     private string _encoding = "utf8";
     private bool _readable = true;
+    private bool? _flowing; // null=initial, true=flowing, false=paused
 
     /// <summary>
     /// Gets a member (method or property) by name for interpreter dispatch.
@@ -39,16 +40,67 @@ public class SharpTSReadable : SharpTSEventEmitter
             "resume" => new BuiltInMethod("resume", 0, Resume),
             "isPaused" => new BuiltInMethod("isPaused", 0, IsPaused),
 
+            // Wrap event methods to drain buffer after 'data' listener is added
+            "on" or "addListener" => new BuiltInMethod(name, 2, WrapOnForFlowing),
+            "once" => new BuiltInMethod("once", 2, WrapOnceForFlowing),
+
             // Properties
             "readable" => _readable && !_ended && !_destroyed,
             "readableEnded" => _ended,
             "readableLength" => (double)_readBuffer.Count,
             "readableEncoding" => _encoding,
+            "readableFlowing" => _flowing ?? (object)false,
             "destroyed" => _destroyed,
 
             // Inherit from EventEmitter
             _ => base.GetMember(name)
         };
+    }
+
+    private object? WrapOnForFlowing(Interp interpreter, object? receiver, List<object?> args)
+    {
+        // Call base on
+        var baseOn = base.GetMember("on") as BuiltInMethod;
+        baseOn?.Bind(this).Call(interpreter, args);
+
+        var eventName = args.Count > 0 ? args[0]?.ToString() : null;
+
+        // If a 'data' listener was added, drain the buffer
+        if (eventName == "data" && _flowing == true && _readBuffer.Count > 0)
+        {
+            DrainBuffer(interpreter);
+        }
+
+        // If an 'end' listener was added on an already-ended stream, emit 'end' immediately
+        if (eventName == "end" && _ended && _readBuffer.Count == 0)
+        {
+            EmitEvent(interpreter, "end", []);
+        }
+
+        return this;
+    }
+
+    private object? WrapOnceForFlowing(Interp interpreter, object? receiver, List<object?> args)
+    {
+        // Call base once
+        var baseOnce = base.GetMember("once") as BuiltInMethod;
+        baseOnce?.Bind(this).Call(interpreter, args);
+
+        var eventName = args.Count > 0 ? args[0]?.ToString() : null;
+
+        // If a 'data' listener was added, drain the buffer
+        if (eventName == "data" && _flowing == true && _readBuffer.Count > 0)
+        {
+            DrainBuffer(interpreter);
+        }
+
+        // If an 'end' listener was added on an already-ended stream, emit 'end' immediately
+        if (eventName == "end" && _ended && _readBuffer.Count == 0)
+        {
+            EmitEvent(interpreter, "end", []);
+        }
+
+        return this;
     }
 
     /// <summary>
@@ -231,15 +283,31 @@ public class SharpTSReadable : SharpTSEventEmitter
             // EOF signal
             _ended = true;
             _readable = false;
-            EmitEndEvent(interpreter);
+            if (_flowing == true)
+            {
+                EmitEvent(interpreter, "end", []);
+            }
+            else
+            {
+                EmitEndEvent(interpreter);
+            }
             FlushPipes(interpreter);
             return false;
         }
 
-        _readBuffer.Enqueue(chunk);
-
-        // In sync mode, immediately pipe to destinations
-        FlushToPipes(interpreter, chunk);
+        if (_flowing == true)
+        {
+            // Flowing mode: emit 'data' event directly, don't buffer
+            EmitEvent(interpreter, "data", [chunk]);
+            FlushToPipes(interpreter, chunk);
+        }
+        else
+        {
+            // Non-flowing mode: buffer as before
+            _readBuffer.Enqueue(chunk);
+            // In sync mode, immediately pipe to destinations
+            FlushToPipes(interpreter, chunk);
+        }
 
         return true;
     }
@@ -312,6 +380,9 @@ public class SharpTSReadable : SharpTSEventEmitter
             var chunk = _readBuffer.Dequeue();
             WriteToDestination(interpreter, destObj, chunk, _encoding);
         }
+
+        // Enter flowing mode so future pushes emit 'data' and flow to pipes
+        _flowing = true;
 
         // If already ended, end the destination
         if (shouldEnd && _ended)
@@ -433,20 +504,33 @@ public class SharpTSReadable : SharpTSEventEmitter
 
     private object? Pause(Interp interpreter, object? receiver, List<object?> args)
     {
-        // In sync mode, pause is a no-op but we track state for compatibility
+        _flowing = false;
         return this;
     }
 
     private object? Resume(Interp interpreter, object? receiver, List<object?> args)
     {
-        // In sync mode, resume is a no-op
+        _flowing = true;
+
+        // Drain existing buffer by emitting 'data' for each queued chunk
+        while (_readBuffer.Count > 0)
+        {
+            var chunk = _readBuffer.Dequeue();
+            EmitEvent(interpreter, "data", [chunk]);
+        }
+
+        // If already ended, emit 'end'
+        if (_ended)
+        {
+            EmitEvent(interpreter, "end", []);
+        }
+
         return this;
     }
 
     private object? IsPaused(Interp interpreter, object? receiver, List<object?> args)
     {
-        // In sync mode, always return false
-        return false;
+        return _flowing == false;
     }
 
     private void EmitEndEvent(Interp interpreter)
@@ -458,7 +542,43 @@ public class SharpTSReadable : SharpTSEventEmitter
     {
         foreach (var dest in _pipeDestinations)
         {
-            dest.WriteInternal(interpreter, chunk, _encoding);
+            var ok = dest.WriteInternal(interpreter, chunk, _encoding);
+            if (!ok)
+            {
+                // Backpressure: pause self, resume on drain
+                _flowing = false;
+                var self = this;
+                dest.AddListenerDirect("drain", new DrainResumeListener(self));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Listener that resumes the readable when the writable drains.
+    /// Implements ISharpTSCallable for interpreter mode compatibility.
+    /// </summary>
+    private class DrainResumeListener : ISharpTSCallable
+    {
+        private readonly SharpTSReadable _readable;
+
+        public DrainResumeListener(SharpTSReadable readable)
+        {
+            _readable = readable;
+        }
+
+        public int Arity() => 0;
+
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            _readable._flowing = true;
+            // Drain any buffered data
+            while (_readable._readBuffer.Count > 0)
+            {
+                var chunk = _readable._readBuffer.Dequeue();
+                _readable.EmitEvent(interpreter, "data", [chunk]);
+                _readable.FlushToPipes(interpreter, chunk);
+            }
+            return null;
         }
     }
 
@@ -479,6 +599,33 @@ public class SharpTSReadable : SharpTSEventEmitter
             var fullArgs = new List<object?> { eventName };
             fullArgs.AddRange(args);
             emit.Bind(this).Call(interpreter, fullArgs);
+        }
+    }
+
+    /// <summary>
+    /// When a 'data' listener is added, enter flowing mode automatically.
+    /// The actual buffer drain happens in the wrapped on/addListener methods
+    /// which have access to the interpreter.
+    /// </summary>
+    protected override void OnListenerAdded(string eventName)
+    {
+        if (eventName == "data" && _flowing != true)
+        {
+            _flowing = true;
+        }
+    }
+
+    /// <summary>
+    /// Drains the existing read buffer by emitting 'data' events for each queued chunk.
+    /// Called after a 'data' listener is added, when the interpreter is available.
+    /// Does NOT emit 'end' — that's handled separately when the 'end' listener is added.
+    /// </summary>
+    private void DrainBuffer(Interp interpreter)
+    {
+        while (_readBuffer.Count > 0)
+        {
+            var chunk = _readBuffer.Dequeue();
+            EmitEvent(interpreter, "data", [chunk]);
         }
     }
 
