@@ -428,6 +428,23 @@ public static class BuiltInModuleTypes
                 RequiredParams: 1
             ),
 
+            // File watching
+            ["watch"] = new TypeInfo.Function(
+                [stringType, anyType, anyType],
+                anyType,
+                RequiredParams: 1
+            ),
+            ["watchFile"] = new TypeInfo.Function(
+                [stringType, anyType, anyType],
+                anyType,
+                RequiredParams: 2
+            ),
+            ["unwatchFile"] = new TypeInfo.Function(
+                [stringType, anyType],
+                voidType,
+                RequiredParams: 1
+            ),
+
             // Constants object
             ["constants"] = constantsType,
 

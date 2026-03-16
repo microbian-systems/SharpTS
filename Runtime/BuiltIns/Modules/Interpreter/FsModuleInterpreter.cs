@@ -123,6 +123,11 @@ public static class FsModuleInterpreter
             ["link"] = new BuiltInMethod("link", 3, 3, Link),
             ["mkdtemp"] = new BuiltInMethod("mkdtemp", 2, 3, Mkdtemp),
 
+            // File watching
+            ["watch"] = new BuiltInMethod("watch", 1, 3, Watch),
+            ["watchFile"] = new BuiltInMethod("watchFile", 2, 3, WatchFile),
+            ["unwatchFile"] = new BuiltInMethod("unwatchFile", 1, 2, UnwatchFile),
+
             // Promise-based methods namespace
             ["promises"] = FsPromisesModuleInterpreter.CreatePromisesNamespace()
         };
@@ -1438,6 +1443,136 @@ public static class FsModuleInterpreter
         });
 
         return SharpTSUndefined.Instance;
+    }
+
+    #endregion
+
+    #region File Watching
+
+    /// <summary>
+    /// Tracks active StatWatchers for unwatchFile() support.
+    /// </summary>
+    private static readonly Dictionary<string, SharpTSStatWatcher> _statWatchers = [];
+
+    private static object? Watch(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var filename = args[0]?.ToString() ?? throw new Exception("Runtime Error: watch requires a filename");
+
+        Dictionary<string, object?>? options = null;
+        ISharpTSCallable? listener = null;
+
+        // Parse overloaded args: watch(filename, options?, listener?)
+        if (args.Count > 1)
+        {
+            if (args[1] is SharpTSObject optObj)
+            {
+                options = new Dictionary<string, object?>();
+                foreach (var key in new[] { "recursive", "persistent", "encoding" })
+                {
+                    var val = optObj.GetProperty(key);
+                    if (val != null && val is not SharpTSUndefined)
+                        options[key] = val;
+                }
+            }
+            else if (args[1] is Dictionary<string, object?> dict)
+            {
+                options = dict;
+            }
+            else if (args[1] is ISharpTSCallable cb)
+            {
+                listener = cb;
+            }
+        }
+
+        if (args.Count > 2 && args[2] is ISharpTSCallable listener2)
+        {
+            listener = listener2;
+        }
+
+        var watcher = new SharpTSFSWatcher(filename, options, interpreter);
+
+        // If listener provided, register it for the 'change' event
+        if (listener != null)
+        {
+            watcher.AddListenerDirect("change", listener);
+        }
+
+        return watcher;
+    }
+
+    private static object? WatchFile(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var filename = args[0]?.ToString() ?? throw new Exception("Runtime Error: watchFile requires a filename");
+        var fullPath = Path.GetFullPath(filename);
+
+        Dictionary<string, object?>? options = null;
+        ISharpTSCallable? listener = null;
+
+        // Parse overloaded args: watchFile(filename, options?, listener)
+        if (args.Count == 2)
+        {
+            if (args[1] is ISharpTSCallable cb)
+                listener = cb;
+        }
+        else if (args.Count >= 3)
+        {
+            if (args[1] is SharpTSObject optObj)
+            {
+                options = new Dictionary<string, object?>();
+                foreach (var key in new[] { "persistent", "interval" })
+                {
+                    var val = optObj.GetProperty(key);
+                    if (val != null && val is not SharpTSUndefined)
+                        options[key] = val;
+                }
+            }
+            else if (args[1] is Dictionary<string, object?> dict)
+            {
+                options = dict;
+            }
+
+            if (args[2] is ISharpTSCallable cb2)
+                listener = cb2;
+        }
+
+        if (listener == null)
+            throw new Exception("Runtime Error: watchFile requires a listener callback");
+
+        // Close existing watcher for this file if any
+        if (_statWatchers.TryGetValue(fullPath, out var existing))
+        {
+            existing.CloseInternal();
+        }
+
+        var watcher = new SharpTSStatWatcher(filename, options, interpreter);
+        watcher.AddListenerDirect("change", listener);
+        _statWatchers[fullPath] = watcher;
+
+        return watcher;
+    }
+
+    private static object? UnwatchFile(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var filename = args[0]?.ToString() ?? throw new Exception("Runtime Error: unwatchFile requires a filename");
+        var fullPath = Path.GetFullPath(filename);
+
+        if (_statWatchers.TryGetValue(fullPath, out var watcher))
+        {
+            // If a specific listener was provided, remove just that listener
+            if (args.Count > 1 && args[1] is ISharpTSCallable listener)
+            {
+                var offMethod = watcher.GetMember("off") as BuiltInMethod;
+                offMethod?.Call(interpreter, ["change", listener]);
+            }
+            else
+            {
+                // Remove all listeners and close
+                watcher.CloseInternal();
+                _statWatchers.Remove(fullPath);
+            }
+        }
+
+        return null;
     }
 
     #endregion

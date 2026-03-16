@@ -720,6 +720,13 @@ public sealed class BuiltInRegistry
 
         registry.RegisterInstanceType(typeof(SharpTSHttpResponse), (instance, name) =>
             ((SharpTSHttpResponse)instance).GetMember(name));
+
+        // Register file watcher types
+        registry.RegisterInstanceType(typeof(SharpTSFSWatcher), (instance, name) =>
+            ((SharpTSFSWatcher)instance).GetMember(name));
+
+        registry.RegisterInstanceType(typeof(SharpTSStatWatcher), (instance, name) =>
+            ((SharpTSStatWatcher)instance).GetMember(name));
     }
 
     private static void RegisterWorkerTypes(BuiltInRegistry registry)

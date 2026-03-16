@@ -416,7 +416,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| `fs` / `fs/promises` | ✅ | readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, renameSync, copyFileSync, appendFileSync, readFile, writeFile, mkdir, readdir, stat, unlink, rename, rm, access, lstat, realpath, createReadStream, createWriteStream |
+| `fs` / `fs/promises` | ✅ | readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, renameSync, copyFileSync, appendFileSync, readFile, writeFile, mkdir, readdir, stat, unlink, rename, rm, access, lstat, realpath, createReadStream, createWriteStream, watch, watchFile, unwatchFile |
 | `path` | ✅ | join, resolve, dirname, basename, extname, normalize, isAbsolute, relative, parse, format, sep, delimiter, posix, win32 |
 | `os` | ✅ | platform, arch, cpus, hostname, homedir, tmpdir, type, release, uptime, totalmem, freemem, EOL, networkInterfaces, loadavg, userInfo |
 | `process` | ✅ | argv, env, cwd(), exit(), pid, platform, arch, version, stdout, stderr, stdin, hrtime, nextTick, memoryUsage, exitCode |
@@ -425,17 +425,17 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough, pipeline |
 | `buffer` | ✅ | Buffer.from, Buffer.alloc, Buffer.allocUnsafe, Buffer.concat, Buffer.isBuffer, Buffer.byteLength; instance methods: toString, slice, copy, write, fill, includes, indexOf, compare, equals, readUInt/Int, writeUInt/Int, toJSON |
 | `http` | ✅ | createServer, request, get; Server: listen, close; IncomingMessage/ServerResponse; request/response streaming |
-| `child_process` | ✅ | execSync, exec, spawnSync |
+| `child_process` | ⚠️ | execSync, spawnSync (sync only) |
 | `url` | ✅ | URL, URLSearchParams, fileURLToPath, pathToFileURL, format, parse |
 | `util` | ✅ | promisify, deprecate, types (isDate, isRegExp, isMap, isSet, etc.), format, inspect, TextEncoder, TextDecoder |
 | `querystring` | ✅ | parse, stringify, escape, unescape |
 | `zlib` | ✅ | gzipSync, gunzipSync, deflateSync, inflateSync, brotliCompressSync, brotliDecompressSync |
-| `dns` | ✅ | lookup, resolve, resolve4, resolve6, promises API |
+| `dns` | ⚠️ | lookup, lookupService (sync only) |
 | `assert` | ✅ | ok, equal, notEqual, deepEqual, notDeepEqual, strictEqual, notStrictEqual, deepStrictEqual, throws, doesNotThrow, rejects, doesNotReject, fail, match, doesNotMatch, assert.strict |
 | `readline` | ✅ | createInterface, question, close |
 | `string_decoder` | ✅ | StringDecoder: write, end, encoding |
 | `timers` | ✅ | setTimeout, clearTimeout, setInterval, clearInterval, setImmediate, clearImmediate |
-| `perf_hooks` | ✅ | performance.now(), performance.mark(), performance.measure(), performance.getEntries(), PerformanceObserver |
+| `perf_hooks` | ⚠️ | performance.now(), performance.timeOrigin |
 | `worker_threads` | ✅ | Worker, isMainThread, parentPort, workerData, MessageChannel, MessagePort |
 
 ---

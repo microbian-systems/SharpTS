@@ -99,9 +99,11 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | **Promise APIs (`fs/promises`)** | | |
 | `fs/promises` | ✅ | Full promise-based API (also via `fs.promises`) |
 | **Advanced** | | |
-| `createReadStream` | ❌ | No stream support |
-| `createWriteStream` | ❌ | No stream support |
-| `watch` / `watchFile` | ❌ | |
+| `createReadStream` | ✅ | Returns Readable stream with `data`, `end`, `error` events |
+| `createWriteStream` | ✅ | Returns Writable stream with `finish`, `error` events |
+| `watch` | ✅ | Returns FSWatcher (EventEmitter) with `change`, `rename`, `error`, `close` events; supports `recursive` option |
+| `watchFile` | ✅ | Polling-based file watching with `(current, previous)` Stats callback; supports `interval` option |
+| `unwatchFile` | ✅ | Stop watching a file previously started with watchFile |
 | **Error Codes** | ✅ | ENOENT, EACCES, EEXIST, EISDIR, ENOTDIR, ENOTEMPTY, EBADF, EXDEV, etc. |
 
 ---
@@ -397,10 +399,14 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `process.stdout.write()` | ✅ | Basic only |
 | `process.stderr.write()` | ✅ | Basic only |
 | `process.stdin` events | ❌ | No event-based input |
+| **Flowing Mode** | | |
+| Auto-flowing on `data` listener | ✅ | Enters flowing mode when 'data' listener added |
+| `pause()` / `resume()` | ✅ | Flow control with buffer draining on resume |
+| `readableFlowing` property | ✅ | null/false/true states |
+| Pipe backpressure | ✅ | Pauses source on writable backpressure, resumes on drain |
 | **Not Implemented** | | |
-| Flowing mode | ❌ | Sync push/pull only |
 | Object mode | ❌ | Buffer/string chunks only |
-| Backpressure | ❌ | No highWaterMark handling |
+| highWaterMark enforcement | ❌ | No read-side backpressure (push always succeeds) |
 
 ---
 
@@ -678,13 +684,14 @@ This document tracks Node.js module and API implementation status in SharpTS.
 
 ## Summary
 
-SharpTS provides comprehensive support for file system operations (sync, callback-based async, and promise-based via `fs/promises`), including file descriptor APIs, directory utilities, hard/symbolic links, and permissions. Also includes path manipulation, OS information, process management, crypto (hashing, encryption, key derivation, signing), URL parsing, binary data handling via Buffer, EventEmitter for event-driven patterns, timers (setTimeout/setInterval/setImmediate), string decoding for multi-byte characters, high-resolution performance timing, stream classes (Readable, Writable, Duplex, Transform, PassThrough) with sync push/pull mode and pipe support, the Web Fetch API for HTTP client requests, basic HTTP server via `http.createServer`, DNS resolution (lookup/lookupService), and Worker Threads for parallel execution. The module system supports both ES modules and CommonJS import syntax.
+SharpTS provides comprehensive support for file system operations (sync, callback-based async, and promise-based via `fs/promises`), including file descriptor APIs, directory utilities, hard/symbolic links, permissions, file watching (`watch`, `watchFile`, `unwatchFile`), and streaming (`createReadStream`, `createWriteStream`). Also includes path manipulation, OS information, process management, crypto (hashing, encryption, key derivation, signing), URL parsing, binary data handling via Buffer, EventEmitter for event-driven patterns, timers (setTimeout/setInterval/setImmediate), string decoding for multi-byte characters, high-resolution performance timing, stream classes (Readable, Writable, Duplex, Transform, PassThrough) with flowing mode (auto-flowing on `data` listener, pause/resume, pipe backpressure), the Web Fetch API for HTTP client requests, basic HTTP server via `http.createServer`, DNS resolution (lookup/lookupService), and Worker Threads for parallel execution. The module system supports both ES modules and CommonJS import syntax.
 
 **Key Gaps:**
-- No flowing/async stream mode (sync push/pull only)
 - No net (TCP/IPC) sockets
 - No cluster support
 - HTTP server is basic (no full event lifecycle)
+- No object mode streams
+- No highWaterMark enforcement on read-side backpressure
 
 **Recommended Workarounds:**
 - Use ES module syntax instead of `require()`
@@ -696,7 +703,7 @@ SharpTS provides comprehensive support for file system operations (sync, callbac
 
 Priority features to implement for broader Node.js compatibility:
 
-1. **Flowing stream mode** - Event-based async streaming (higher effort)
-2. **net module** - TCP/IPC socket support (higher effort)
-3. **Full HTTP server events** - Complete request/response lifecycle events (medium effort)
-4. **cluster module** - Multi-process support (higher effort)
+1. **net module** - TCP/IPC socket support (higher effort)
+2. **Full HTTP server events** - Complete request/response lifecycle events (medium effort)
+3. **cluster module** - Multi-process support (higher effort)
+4. **Object mode streams** - Non-buffer chunk types for stream pipelines (medium effort)
