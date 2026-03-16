@@ -55,10 +55,13 @@ public class ModuleResolver
         }
         else
         {
+            // Strip 'node:' prefix (e.g., 'node:fs' -> 'fs')
+            var bareSpecifier = specifier.StartsWith("node:") ? specifier[5..] : specifier;
+
             // Check for built-in modules first (fs, path, os, etc.)
-            if (BuiltInModuleRegistry.IsBuiltIn(specifier))
+            if (BuiltInModuleRegistry.IsBuiltIn(bareSpecifier))
             {
-                return BuiltInModuleRegistry.GetBuiltInPath(specifier);
+                return BuiltInModuleRegistry.GetBuiltInPath(bareSpecifier);
             }
 
             // Bare specifier (e.g., 'lodash')

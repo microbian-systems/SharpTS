@@ -1352,7 +1352,9 @@ public static class BuiltInModuleTypes
             "perf_hooks" => GetPerfHooksModuleTypes(),
             "stream" => GetStreamModuleTypes(),
             "http" => GetHttpModuleTypes(),
+            "https" => GetHttpModuleTypes(),
             "dns" => GetDnsModuleTypes(),
+            "net" => GetNetModuleTypes(),
             _ => null
         };
     }
@@ -1400,6 +1402,93 @@ public static class BuiltInModuleTypes
             ["ADDRCONFIG"] = numberType,
             ["V4MAPPED"] = numberType,
             ["ALL"] = numberType
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the net module.
+    /// </summary>
+    public static Dictionary<string, TypeInfo> GetNetModuleTypes()
+    {
+        var anyType = new TypeInfo.Any();
+        var stringType = new TypeInfo.String();
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        var voidType = new TypeInfo.Void();
+        var booleanType = BooleanType;
+
+        // EventEmitter methods shared by Server and Socket
+        var eventEmitterMembers = new Dictionary<string, TypeInfo>
+        {
+            ["on"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["addListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["once"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["off"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["removeListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["removeAllListeners"] = new TypeInfo.Function([stringType], anyType, RequiredParams: 0),
+            ["emit"] = new TypeInfo.Function([stringType, anyType], booleanType, RequiredParams: 1, HasRestParam: true),
+            ["listenerCount"] = new TypeInfo.Function([stringType], numberType),
+            ["listeners"] = new TypeInfo.Function([stringType], new TypeInfo.Array(anyType)),
+            ["eventNames"] = new TypeInfo.Function([], new TypeInfo.Array(stringType)),
+            ["prependListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["prependOnceListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["setMaxListeners"] = new TypeInfo.Function([numberType], anyType),
+            ["getMaxListeners"] = new TypeInfo.Function([], numberType)
+        };
+
+        // Socket type
+        var socketMembers = new Dictionary<string, TypeInfo>(eventEmitterMembers)
+        {
+            ["connect"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
+            ["write"] = new TypeInfo.Function([anyType, anyType, anyType], booleanType, RequiredParams: 1),
+            ["end"] = new TypeInfo.Function([anyType, anyType, anyType], anyType, RequiredParams: 0),
+            ["destroy"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            ["setEncoding"] = new TypeInfo.Function([stringType], anyType),
+            ["setTimeout"] = new TypeInfo.Function([numberType, anyType], anyType, RequiredParams: 1),
+            ["setNoDelay"] = new TypeInfo.Function([booleanType], anyType, RequiredParams: 0),
+            ["setKeepAlive"] = new TypeInfo.Function([booleanType, numberType], anyType, RequiredParams: 0),
+            ["address"] = new TypeInfo.Function([], anyType),
+            ["ref"] = new TypeInfo.Function([], anyType),
+            ["unref"] = new TypeInfo.Function([], anyType),
+            ["pause"] = new TypeInfo.Function([], anyType),
+            ["resume"] = new TypeInfo.Function([], anyType),
+            ["pipe"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
+            ["remoteAddress"] = stringType,
+            ["remotePort"] = numberType,
+            ["remoteFamily"] = stringType,
+            ["localAddress"] = stringType,
+            ["localPort"] = numberType,
+            ["bytesRead"] = numberType,
+            ["bytesWritten"] = numberType,
+            ["connecting"] = booleanType,
+            ["destroyed"] = booleanType,
+            ["readyState"] = stringType
+        };
+        var socketType = new TypeInfo.Record(socketMembers.ToFrozenDictionary());
+
+        // Server type
+        var serverMembers = new Dictionary<string, TypeInfo>(eventEmitterMembers)
+        {
+            ["listen"] = new TypeInfo.Function([anyType, anyType, anyType, anyType], anyType, RequiredParams: 0),
+            ["close"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            ["address"] = new TypeInfo.Function([], anyType),
+            ["getConnections"] = new TypeInfo.Function([anyType], anyType),
+            ["ref"] = new TypeInfo.Function([], anyType),
+            ["unref"] = new TypeInfo.Function([], anyType),
+            ["listening"] = booleanType,
+            ["maxConnections"] = numberType
+        };
+        var serverType = new TypeInfo.Record(serverMembers.ToFrozenDictionary());
+
+        return new Dictionary<string, TypeInfo>
+        {
+            ["createServer"] = new TypeInfo.Function([anyType, anyType], serverType, RequiredParams: 0),
+            ["createConnection"] = new TypeInfo.Function([anyType, anyType], socketType, RequiredParams: 1),
+            ["connect"] = new TypeInfo.Function([anyType, anyType], socketType, RequiredParams: 1),
+            ["isIP"] = new TypeInfo.Function([stringType], numberType),
+            ["isIPv4"] = new TypeInfo.Function([stringType], booleanType),
+            ["isIPv6"] = new TypeInfo.Function([stringType], booleanType),
+            ["Server"] = new TypeInfo.Function([anyType, anyType], serverType, RequiredParams: 0),
+            ["Socket"] = new TypeInfo.Function([anyType], socketType, RequiredParams: 0)
         };
     }
 

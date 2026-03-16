@@ -392,6 +392,8 @@ public partial class RuntimeEmitter
         EmitUrlMethods(typeBuilder, runtime);
         // HTTP module methods (fetch, http.createServer, etc.) - must be before globalThis
         EmitHttpModuleMethods(typeBuilder, runtime);
+        // Net module methods (net.createServer, net.connect, etc.)
+        EmitNetModuleMethods(typeBuilder, runtime);
         // globalThis methods (ES2020) - must be after HTTP for fetch reference
         EmitGlobalThisMethods(typeBuilder, runtime);
         // Define util inspect method signatures before ConsoleExtensions (ConsoleDir uses UtilInspectValue)

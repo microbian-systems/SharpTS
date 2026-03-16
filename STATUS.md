@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-03-16 (Added process EventEmitter, object mode streams, async child_process)
+**Last Updated:** 2026-03-16 (Added net module, HTTP event enhancements, node: prefix support)
 
 ## Legend
 - ✅ Implemented
@@ -424,7 +424,8 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `events` | ✅ | EventEmitter: on, once, emit, removeListener, removeAllListeners, listenerCount, listeners, prependListener, prependOnceListener, off, setMaxListeners, getMaxListeners, eventNames |
 | `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough, pipeline; object mode support (`objectMode: true`) |
 | `buffer` | ✅ | Buffer.from, Buffer.alloc, Buffer.allocUnsafe, Buffer.concat, Buffer.isBuffer, Buffer.byteLength; instance methods: toString, slice, copy, write, fill, includes, indexOf, compare, equals, readUInt/Int, writeUInt/Int, toJSON |
-| `http` | ✅ | createServer, request, get; Server: listen, close; IncomingMessage/ServerResponse; request/response streaming |
+| `http` / `https` | ✅ | createServer, request, get; Server: listen, close; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
+| `net` | ✅ | createServer, createConnection/connect, Socket (EventEmitter + Duplex), Server (EventEmitter); isIP, isIPv4, isIPv6 |
 | `child_process` | ✅ | execSync, spawnSync, exec, spawn with ChildProcess EventEmitter |
 | `url` | ✅ | URL, URLSearchParams, fileURLToPath, pathToFileURL, format, parse |
 | `util` | ✅ | promisify, deprecate, types (isDate, isRegExp, isMap, isSet, etc.), format, inspect, TextEncoder, TextDecoder |

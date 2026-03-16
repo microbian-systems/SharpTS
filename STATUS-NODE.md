@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-02-04 (Updated to reflect actual implementation status)
+**Last Updated:** 2026-03-16 (Added net module, HTTP event enhancements)
 
 ## Legend
 - ✅ Implemented
@@ -33,8 +33,8 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `timers` | ✅ | setTimeout, setInterval, setImmediate + clear variants (module import) |
 | `string_decoder` | ✅ | StringDecoder class for multi-byte character handling |
 | `perf_hooks` | ✅ | performance.now(), performance.timeOrigin |
-| `http` / `https` | ⚠️ | createServer, request, get; STATUS_CODES, METHODS (https uses http) |
-| `net` | ❌ | No TCP/IPC sockets |
+| `http` / `https` | ✅ | createServer, request, get; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
+| `net` | ✅ | createServer, createConnection/connect, Socket, Server; isIP, isIPv4, isIPv6 |
 | `dns` | ⚠️ | lookup, lookupService (sync only) |
 | `zlib` | ✅ | gzip, deflate, deflateRaw, brotli, zstd (sync APIs) |
 | `worker_threads` | ⚠️ | Worker, MessageChannel, parentPort, workerData, isMainThread |
@@ -651,14 +651,66 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `METHODS` | ✅ | Array of supported HTTP methods |
 | `STATUS_CODES` | ✅ | Map of status codes to messages |
 | `globalAgent` | ✅ | Global HTTP agent object |
+| **IncomingMessage** | | |
+| Readable stream methods | ✅ | on, pipe, read, pause, resume, push (extends Readable) |
+| `method`, `url`, `headers` | ✅ | Request properties |
+| `httpVersion` | ✅ | Protocol version |
+| `rawHeaders` | ✅ | Alternating [name, value] array |
+| `complete` | ✅ | Whether body has been fully read |
+| **ServerResponse** | | |
+| Writable stream methods | ✅ | on, write, end, cork, uncork (extends Writable) |
+| `writeHead()` | ✅ | Set status code, message, and headers |
+| `setHeader()` / `getHeader()` | ✅ | Individual header management |
+| `hasHeader()` / `removeHeader()` | ✅ | Header inspection and removal |
+| `getHeaderNames()` | ✅ | List all set header names |
+| `flushHeaders()` | ✅ | Send headers immediately |
+| `statusCode` / `statusMessage` | ✅ | Readable/writable properties |
+| `headersSent` / `finished` | ✅ | State properties |
+| `finish` / `close` events | ✅ | Writable stream events on end |
 | **Not Implemented** | | |
 | `Agent` class | ❌ | Connection pooling agent |
-| `ClientRequest` events | ❌ | No event-based request lifecycle |
-| `IncomingMessage` events | ❌ | No event-based response streaming |
 
 ---
 
-## 22. WORKER_THREADS
+## 22. NET (TCP)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Server** | | |
+| `createServer(options?, listener?)` | ✅ | Create TCP server with optional connection listener |
+| `server.listen(port, host?, callback?)` | ✅ | Start listening on port; supports port 0 for auto-assign |
+| `server.close(callback?)` | ✅ | Stop accepting new connections |
+| `server.address()` | ✅ | Returns { address, family, port } |
+| `server.getConnections(callback)` | ✅ | Get number of concurrent connections |
+| `server.listening` | ✅ | Whether server is listening |
+| `server.maxConnections` | ✅ | Limit concurrent connections |
+| Server events | ✅ | 'connection', 'listening', 'close', 'error' |
+| **Socket** | | |
+| `createConnection(options, listener?)` | ✅ | Create client socket and connect |
+| `connect(options, listener?)` | ✅ | Alias for createConnection |
+| `socket.write(data, encoding?, callback?)` | ✅ | Write data to socket |
+| `socket.end(data?, encoding?, callback?)` | ✅ | Half-close the socket |
+| `socket.destroy(error?)` | ✅ | Fully close and clean up |
+| `socket.setEncoding(encoding)` | ✅ | Set string encoding for data events |
+| `socket.setTimeout(timeout, callback?)` | ✅ | Set socket timeout |
+| `socket.setNoDelay(noDelay?)` | ✅ | Disable Nagle's algorithm |
+| `socket.setKeepAlive(enable?, delay?)` | ✅ | Enable/disable keep-alive |
+| `socket.address()` | ✅ | Local address info |
+| `socket.pause()` / `resume()` | ✅ | Flow control |
+| `socket.pipe(dest)` | ✅ | Pipe to writable stream |
+| Socket properties | ✅ | remoteAddress, remotePort, remoteFamily, localAddress, localPort, bytesRead, bytesWritten, connecting, destroyed, readyState |
+| Socket events | ✅ | 'connect', 'data', 'end', 'close', 'error', 'drain', 'timeout' |
+| **Utilities** | | |
+| `isIP(input)` | ✅ | Returns 4 (IPv4), 6 (IPv6), or 0 (invalid) |
+| `isIPv4(input)` | ✅ | True if valid IPv4 address |
+| `isIPv6(input)` | ✅ | True if valid IPv6 address |
+| **Not Implemented** | | |
+| IPC sockets | ❌ | Named pipes / Unix domain sockets |
+| `socket.ref()` / `unref()` | ⚠️ | Basic support via event loop ref counting |
+
+---
+
+## 23. WORKER_THREADS
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -691,9 +743,8 @@ This document tracks Node.js module and API implementation status in SharpTS.
 SharpTS provides comprehensive support for file system operations (sync, callback-based async, and promise-based via `fs/promises`), including file descriptor APIs, directory utilities, hard/symbolic links, permissions, file watching (`watch`, `watchFile`, `unwatchFile`), and streaming (`createReadStream`, `createWriteStream`). Also includes path manipulation, OS information, process management, crypto (hashing, encryption, key derivation, signing), URL parsing, binary data handling via Buffer, EventEmitter for event-driven patterns, timers (setTimeout/setInterval/setImmediate), string decoding for multi-byte characters, high-resolution performance timing, stream classes (Readable, Writable, Duplex, Transform, PassThrough) with flowing mode (auto-flowing on `data` listener, pause/resume, pipe backpressure), the Web Fetch API for HTTP client requests, basic HTTP server via `http.createServer`, DNS resolution (lookup/lookupService), and Worker Threads for parallel execution. The module system supports both ES modules and CommonJS import syntax.
 
 **Key Gaps:**
-- No net (TCP/IPC) sockets
+- No IPC sockets (named pipes / Unix domain sockets)
 - No cluster support
-- HTTP server is basic (no full event lifecycle)
 - Object mode streams: interpreter only (compiled mode pending)
 - No highWaterMark enforcement on read-side backpressure
 
@@ -707,7 +758,7 @@ SharpTS provides comprehensive support for file system operations (sync, callbac
 
 Priority features to implement for broader Node.js compatibility:
 
-1. **net module** - TCP/IPC socket support (higher effort)
-2. **Full HTTP server events** - Complete request/response lifecycle events (medium effort)
-3. **cluster module** - Multi-process support (higher effort)
-4. **Object mode streams** - Non-buffer chunk types for stream pipelines (medium effort)
+1. **IPC sockets** - Named pipes / Unix domain socket support in net module (medium effort)
+2. **cluster module** - Multi-process support (higher effort)
+3. **Object mode streams (compiled)** - Non-buffer chunk types for stream pipelines in compiled mode (medium effort)
+4. **package.json exports** - Modern npm package resolution (medium effort)

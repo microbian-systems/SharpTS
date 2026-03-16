@@ -8,20 +8,19 @@ namespace SharpTS.Runtime.Types;
 
 /// <summary>
 /// Runtime representation of an HTTP IncomingMessage (request).
+/// Extends SharpTSReadable for full Readable stream semantics (data, end, error events).
 /// </summary>
 /// <remarks>
 /// Wraps an HttpListenerRequest to provide the Node.js IncomingMessage interface.
-/// Properties: method, url, headers, httpVersion
-/// Events: on('data', callback), on('end', callback)
+/// Properties: method, url, headers, httpVersion, statusCode, statusMessage
+/// Inherits stream methods: on, once, pipe, read, pause, resume, etc.
 /// </remarks>
-public class SharpTSHttpRequest : ITypeCategorized
+public class SharpTSHttpRequest : SharpTSReadable, ITypeCategorized
 {
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Record;
 
     private readonly HttpListenerRequest _request;
-    private readonly List<(string Event, ISharpTSCallable Callback)> _listeners = new();
-    private byte[]? _body;
     private bool _bodyRead;
     private bool _endEmitted;
 
@@ -50,59 +49,32 @@ public class SharpTSHttpRequest : ITypeCategorized
 
     /// <summary>
     /// Gets a member (property or method) by name.
+    /// Overrides Readable.GetMember to add HTTP-specific properties.
     /// </summary>
-    public object? GetMember(string name)
+    public new object? GetMember(string name)
     {
         return name switch
         {
+            // HTTP-specific properties
             "method" => Method,
             "url" => Url,
             "httpVersion" => HttpVersion,
             "headers" => GetHeadersObject(),
-            "on" => new BuiltInMethod("on", 2, (interp, receiver, args) =>
-            {
-                if (receiver is SharpTSHttpRequest req)
-                    return req.On(interp, args);
-                return receiver;
-            }).Bind(this),
-            "once" => new BuiltInMethod("once", 2, (interp, receiver, args) =>
-            {
-                if (receiver is SharpTSHttpRequest req)
-                    return req.Once(interp, args);
-                return receiver;
-            }).Bind(this),
+            "rawHeaders" => GetRawHeaders(),
             "socket" => CreateSocketObject(),
             "complete" => _bodyRead && _endEmitted,
-            _ => SharpTSUndefined.Instance
+            "statusCode" => (double)_request.ProtocolVersion.Major, // For response messages
+            "statusMessage" => (object?)null,
+            "trailers" => new SharpTSObject(new Dictionary<string, object?>()),
+            "aborted" => false,
+
+            // Inherit Readable stream methods (on, once, pipe, read, pause, resume, etc.)
+            _ => base.GetMember(name)
         };
     }
 
     /// <summary>
-    /// Registers an event listener.
-    /// </summary>
-    private object? On(Interpreter interpreter, List<object?> args)
-    {
-        if (args.Count < 2)
-            throw new Exception("Runtime Error: on() requires event name and callback");
-
-        var eventName = args[0]?.ToString() ?? throw new Exception("Runtime Error: event name must be a string");
-        var callback = args[1] as ISharpTSCallable ?? throw new Exception("Runtime Error: callback must be a function");
-
-        _listeners.Add((eventName, callback));
-        return this;
-    }
-
-    /// <summary>
-    /// Registers a one-time event listener.
-    /// </summary>
-    private object? Once(Interpreter interpreter, List<object?> args)
-    {
-        // For simplicity, once is handled the same as on since we only emit each event once anyway
-        return On(interpreter, args);
-    }
-
-    /// <summary>
-    /// Emits events to listeners and reads the body.
+    /// Emits data and end events by reading the request body.
     /// Called internally when the request is processed.
     /// </summary>
     internal async Task EmitDataEventsAsync(Interpreter interpreter)
@@ -113,35 +85,25 @@ public class SharpTSHttpRequest : ITypeCategorized
         {
             using var ms = new MemoryStream();
             await _request.InputStream.CopyToAsync(ms);
-            _body = ms.ToArray();
+            var body = ms.ToArray();
             _bodyRead = true;
 
-            // Emit 'data' event with the body as a Buffer
-            if (_body.Length > 0)
+            // Push data into the Readable stream (triggers 'data' events if flowing)
+            if (body.Length > 0)
             {
-                var dataListeners = _listeners.Where(l => l.Event == "data").ToList();
-                foreach (var (_, callback) in dataListeners)
-                {
-                    callback.Call(interpreter, new List<object?> { new SharpTSBuffer(_body) });
-                }
+                var pushMethod = base.GetMember("push") as BuiltInMethod;
+                pushMethod?.Bind(this).Call(interpreter, [new SharpTSBuffer(body)]);
             }
 
-            // Emit 'end' event
+            // Signal EOF
+            var pushNull = base.GetMember("push") as BuiltInMethod;
+            pushNull?.Bind(this).Call(interpreter, new List<object?> { null });
             _endEmitted = true;
-            var endListeners = _listeners.Where(l => l.Event == "end").ToList();
-            foreach (var (_, callback) in endListeners)
-            {
-                callback.Call(interpreter, new List<object?>());
-            }
         }
         catch (Exception ex)
         {
-            // Emit 'error' event
-            var errorListeners = _listeners.Where(l => l.Event == "error").ToList();
-            foreach (var (_, callback) in errorListeners)
-            {
-                callback.Call(interpreter, new List<object?> { new SharpTSError(ex.Message) });
-            }
+            // Emit 'error' event through the Readable stream
+            EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
         }
     }
 
@@ -159,6 +121,23 @@ public class SharpTSHttpRequest : ITypeCategorized
             }
         }
         return new SharpTSObject(headers);
+    }
+
+    /// <summary>
+    /// Gets raw headers as alternating [name, value] array.
+    /// </summary>
+    private SharpTSArray GetRawHeaders()
+    {
+        var raw = new List<object?>();
+        foreach (string? key in _request.Headers.AllKeys)
+        {
+            if (key != null)
+            {
+                raw.Add(key);
+                raw.Add(_request.Headers[key]);
+            }
+        }
+        return new SharpTSArray(raw);
     }
 
     /// <summary>

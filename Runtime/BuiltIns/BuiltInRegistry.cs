@@ -729,6 +729,13 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSHttpResponse), (instance, name) =>
             ((SharpTSHttpResponse)instance).GetMember(name));
 
+        // Register net module types
+        registry.RegisterInstanceType(typeof(SharpTSNetServer), (instance, name) =>
+            ((SharpTSNetServer)instance).GetMember(name));
+
+        registry.RegisterInstanceType(typeof(SharpTSSocket), (instance, name) =>
+            ((SharpTSSocket)instance).GetMember(name));
+
         // Register file watcher types
         registry.RegisterInstanceType(typeof(SharpTSFSWatcher), (instance, name) =>
             ((SharpTSFSWatcher)instance).GetMember(name));

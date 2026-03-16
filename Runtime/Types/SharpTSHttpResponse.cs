@@ -8,13 +8,15 @@ namespace SharpTS.Runtime.Types;
 
 /// <summary>
 /// Runtime representation of an HTTP ServerResponse.
+/// Extends SharpTSWritable for full Writable stream semantics (write, end, drain, finish events).
 /// </summary>
 /// <remarks>
 /// Wraps an HttpListenerResponse to provide the Node.js ServerResponse interface.
-/// Properties: statusCode, statusMessage, headersSent
-/// Methods: writeHead(status, headers?), write(data), end(data?), setHeader(name, value)
+/// Properties: statusCode, statusMessage, headersSent, finished
+/// Methods: writeHead, write, end, setHeader, getHeader, removeHeader, getHeaderNames, hasHeader
+/// Inherits stream methods: on, once, cork, uncork, destroy, etc.
 /// </remarks>
-public class SharpTSHttpResponse : ITypeCategorized
+public class SharpTSHttpResponse : SharpTSWritable, ITypeCategorized
 {
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Record;
@@ -23,6 +25,7 @@ public class SharpTSHttpResponse : ITypeCategorized
     private bool _headersSent;
     private bool _finished;
     private readonly List<byte> _bodyBuffer = new();
+    private readonly Dictionary<string, string> _pendingHeaders = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Creates a new ServerResponse wrapping an HttpListenerResponse.
@@ -62,56 +65,76 @@ public class SharpTSHttpResponse : ITypeCategorized
 
     /// <summary>
     /// Gets a member (property or method) by name.
+    /// Overrides Writable.GetMember to add HTTP-specific methods.
     /// </summary>
-    public object? GetMember(string name)
+    public new object? GetMember(string name)
     {
         return name switch
         {
+            // HTTP-specific properties
             "statusCode" => StatusCode,
             "statusMessage" => StatusMessage,
             "headersSent" => HeadersSent,
             "finished" => Finished,
-            "writeHead" => new BuiltInMethod("writeHead", 1, 2, (interp, receiver, args) =>
+            "sendDate" => true,
+            "connection" => (object?)null,
+            "socket" => (object?)null,
+
+            // HTTP-specific methods
+            "writeHead" => new BuiltInMethod("writeHead", 1, 3, (interp, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res)
-                    return res.WriteHead(args);
+                if (receiver is SharpTSHttpResponse res) return res.WriteHead(interp, args);
                 return receiver;
             }).Bind(this),
-            "write" => new BuiltInMethod("write", 1, 2, (interp, receiver, args) =>
+            "write" => new BuiltInMethod("write", 1, 3, (interp, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res)
-                    return res.Write(args);
+                if (receiver is SharpTSHttpResponse res) return res.WriteData(interp, args);
                 return true;
             }).Bind(this),
-            "end" => new BuiltInMethod("end", 0, 2, (interp, receiver, args) =>
+            "end" => new BuiltInMethod("end", 0, 3, (interp, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res)
-                    return res.End(args);
+                if (receiver is SharpTSHttpResponse res) return res.EndResponse(interp, args);
                 return receiver;
             }).Bind(this),
             "setHeader" => new BuiltInMethod("setHeader", 2, (interp, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res)
-                    return res.SetHeader(args);
+                if (receiver is SharpTSHttpResponse res) return res.SetHeader(args);
                 return receiver;
             }).Bind(this),
             "getHeader" => new BuiltInMethod("getHeader", 1, (interp, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res)
-                    return res.GetHeader(args);
+                if (receiver is SharpTSHttpResponse res) return res.GetHeader(args);
                 return SharpTSUndefined.Instance;
             }).Bind(this),
             "removeHeader" => new BuiltInMethod("removeHeader", 1, (interp, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res)
-                    return res.RemoveHeader(args);
+                if (receiver is SharpTSHttpResponse res) return res.RemoveHeader(args);
                 return receiver;
             }).Bind(this),
-            "on" => new BuiltInMethod("on", 2, (_, receiver, _) => receiver).Bind(this),
-            _ => SharpTSUndefined.Instance
+            "getHeaderNames" => new BuiltInMethod("getHeaderNames", 0, (interp, receiver, args) =>
+            {
+                return new SharpTSArray(_pendingHeaders.Keys.Select(k => (object?)k.ToLowerInvariant()).ToList());
+            }).Bind(this),
+            "hasHeader" => new BuiltInMethod("hasHeader", 1, (interp, receiver, args) =>
+            {
+                var headerName = args.Count > 0 ? args[0]?.ToString() : null;
+                return headerName != null && _pendingHeaders.ContainsKey(headerName);
+            }).Bind(this),
+            "flushHeaders" => new BuiltInMethod("flushHeaders", 0, (interp, receiver, args) =>
+            {
+                FlushHeaders();
+                return null;
+            }).Bind(this),
+            "writeContinue" => new BuiltInMethod("writeContinue", 0, (interp, receiver, args) => null).Bind(this),
+
+            // Inherit Writable stream methods (on, once, cork, uncork, etc.)
+            _ => base.GetMember(name)
         };
     }
 
+    /// <summary>
+    /// Sets a member (property) by name.
+    /// </summary>
     /// <summary>
     /// Sets a member (property) by name.
     /// </summary>
@@ -133,7 +156,7 @@ public class SharpTSHttpResponse : ITypeCategorized
     /// <summary>
     /// Writes the status code and headers.
     /// </summary>
-    private object? WriteHead(List<object?> args)
+    private object? WriteHead(Interpreter interpreter, List<object?> args)
     {
         if (_headersSent)
             throw new Exception("Runtime Error: Cannot call writeHead after headers have been sent");
@@ -143,14 +166,20 @@ public class SharpTSHttpResponse : ITypeCategorized
 
         _response.StatusCode = (int)statusCode;
 
+        // Optional status message (string as second arg)
+        int headersArgIdx = 1;
+        if (args.Count > 1 && args[1] is string statusMsg)
+        {
+            _response.StatusDescription = statusMsg;
+            headersArgIdx = 2;
+        }
+
         // Optional headers
-        if (args.Count > 1 && args[1] is SharpTSObject headers)
+        if (args.Count > headersArgIdx && args[headersArgIdx] is SharpTSObject headers)
         {
             foreach (var kv in headers.Fields)
             {
-                var headerName = kv.Key;
-                var headerValue = kv.Value?.ToString() ?? "";
-                SetResponseHeader(headerName, headerValue);
+                SetResponseHeader(kv.Key, kv.Value?.ToString() ?? "");
             }
         }
 
@@ -160,7 +189,7 @@ public class SharpTSHttpResponse : ITypeCategorized
     /// <summary>
     /// Writes data to the response body.
     /// </summary>
-    private object? Write(List<object?> args)
+    private object? WriteData(Interpreter interpreter, List<object?> args)
     {
         if (_finished)
             throw new Exception("Runtime Error: Cannot write after response has ended");
@@ -184,21 +213,31 @@ public class SharpTSHttpResponse : ITypeCategorized
         }
 
         _bodyBuffer.AddRange(data);
+
+        // Call write callback if provided
+        ISharpTSCallable? callback = null;
+        if (args.Count > 1 && args[1] is ISharpTSCallable cb1) callback = cb1;
+        if (args.Count > 2 && args[2] is ISharpTSCallable cb2) callback = cb2;
+        callback?.Call(interpreter, []);
+
         return true;
     }
 
     /// <summary>
     /// Ends the response, optionally writing final data.
     /// </summary>
-    private object? End(List<object?> args)
+    private object? EndResponse(Interpreter interpreter, List<object?> args)
     {
         if (_finished) return this;
 
         // Write any final data
-        if (args.Count > 0 && args[0] != null)
+        if (args.Count > 0 && args[0] != null && args[0] is not ISharpTSCallable)
         {
-            Write(args);
+            WriteData(interpreter, args);
         }
+
+        // Flush pending headers
+        FlushHeaders();
 
         // Actually send the response
         try
@@ -217,6 +256,20 @@ public class SharpTSHttpResponse : ITypeCategorized
         }
 
         _finished = true;
+
+        // Call callback
+        ISharpTSCallable? callback = null;
+        foreach (var arg in args)
+        {
+            if (arg is ISharpTSCallable cb) { callback = cb; break; }
+        }
+        callback?.Call(interpreter, []);
+
+        // Emit 'finish' event (Writable stream semantics)
+        EmitEvent(interpreter, "finish", []);
+        // Emit 'close' event
+        EmitEvent(interpreter, "close", []);
+
         return this;
     }
 
@@ -234,6 +287,7 @@ public class SharpTSHttpResponse : ITypeCategorized
         var name = args[0]?.ToString() ?? throw new Exception("Runtime Error: header name must be a string");
         var value = args[1]?.ToString() ?? "";
 
+        _pendingHeaders[name] = value;
         SetResponseHeader(name, value);
         return this;
     }
@@ -247,6 +301,9 @@ public class SharpTSHttpResponse : ITypeCategorized
 
         var name = args[0]?.ToString();
         if (name == null) return SharpTSUndefined.Instance;
+
+        if (_pendingHeaders.TryGetValue(name, out var val))
+            return val;
 
         var headerValue = _response.Headers[name];
         return string.IsNullOrEmpty(headerValue) ? SharpTSUndefined.Instance : (object)headerValue;
@@ -265,9 +322,21 @@ public class SharpTSHttpResponse : ITypeCategorized
         var name = args[0]?.ToString();
         if (name != null)
         {
+            _pendingHeaders.Remove(name);
             _response.Headers.Remove(name);
         }
         return this;
+    }
+
+    /// <summary>
+    /// Flushes pending headers to the response.
+    /// </summary>
+    private void FlushHeaders()
+    {
+        foreach (var (name, value) in _pendingHeaders)
+        {
+            SetResponseHeader(name, value);
+        }
     }
 
     /// <summary>
@@ -275,7 +344,6 @@ public class SharpTSHttpResponse : ITypeCategorized
     /// </summary>
     private void SetResponseHeader(string name, string value)
     {
-        // Some headers must be set via properties
         if (name.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
         {
             _response.ContentType = value;

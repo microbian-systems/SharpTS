@@ -30,7 +30,9 @@ public static class BuiltInModuleRegistry
         "stream",
         "http",
         "worker_threads",
-        "dns"
+        "dns",
+        "net",
+        "https"
     ];
 
     /// <summary>

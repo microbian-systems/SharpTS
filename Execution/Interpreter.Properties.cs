@@ -548,6 +548,20 @@ public partial class Interpreter
             throw new InterpreterException($"Cannot set property '{set.Name.Lexeme}' on Error.");
         }
 
+        // Handle HTTP response property assignment (statusCode, statusMessage)
+        if (obj is SharpTSHttpResponse httpRes)
+        {
+            httpRes.SetMember(set.Name.Lexeme, value);
+            return value;
+        }
+
+        // Handle net server property assignment (maxConnections)
+        if (obj is SharpTSNetServer netServer)
+        {
+            netServer.SetMember(set.Name.Lexeme, value);
+            return value;
+        }
+
         // Handle AbortSignal property assignment (onabort)
         if (obj is SharpTSAbortSignal signal)
         {

@@ -1235,6 +1235,13 @@ public class EmittedRuntime
     public MethodBuilder TSHttpResponseGetMember { get; set; } = null!;
     public MethodBuilder TSHttpResponseSetMember { get; set; } = null!;
 
+    // Net module methods
+    public MethodBuilder NetCreateServer { get; set; } = null!;
+    public MethodBuilder NetCreateConnection { get; set; } = null!;
+    public MethodBuilder NetIsIP { get; set; } = null!;
+    public MethodBuilder NetIsIPv4 { get; set; } = null!;
+    public MethodBuilder NetIsIPv6 { get; set; } = null!;
+
     // $Headers type - emitted for standalone Headers support
     public TypeBuilder TSHeadersType { get; set; } = null!;
     public ConstructorBuilder TSHeadersCtor { get; set; } = null!;
