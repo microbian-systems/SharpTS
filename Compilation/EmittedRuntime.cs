@@ -1006,6 +1006,10 @@ public class EmittedRuntime
     public MethodBuilder ProcessUptime { get; set; } = null!;
     public MethodBuilder ProcessMemoryUsage { get; set; } = null!;
     public MethodBuilder ProcessGetNextTick { get; set; } = null!;
+    public MethodBuilder ProcessEventEmitterCall { get; set; } = null!;
+    public MethodBuilder ProcessEmitExit { get; set; } = null!;
+    public MethodBuilder GetProcessEventEmitter { get; set; } = null!;
+    public FieldBuilder ProcessEventEmitterInstance { get; set; } = null!;
 
     // Process stdin/stdout/stderr stream methods
     public MethodBuilder StdinRead { get; set; } = null!;
@@ -1423,6 +1427,8 @@ public class EmittedRuntime
     // Child process module methods
     public MethodBuilder ChildProcessExecSync { get; set; } = null!;
     public MethodBuilder ChildProcessSpawnSync { get; set; } = null!;
+    public MethodBuilder ChildProcessExec { get; set; } = null!;
+    public MethodBuilder ChildProcessSpawn { get; set; } = null!;
 
     // Querystring module methods
     public MethodBuilder QuerystringParse { get; set; } = null!;

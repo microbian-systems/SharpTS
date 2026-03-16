@@ -70,6 +70,23 @@ public sealed class ProcessStaticEmitter : IStaticTypeEmitterStrategy
                 EmitNextTick(emitter, arguments);
                 return true;
 
+            case "on":
+            case "addListener":
+            case "once":
+            case "off":
+            case "removeListener":
+            case "removeAllListeners":
+            case "prependListener":
+            case "prependOnceListener":
+            case "emit":
+            case "listeners":
+            case "listenerCount":
+            case "eventNames":
+            case "setMaxListeners":
+            case "getMaxListeners":
+                EmitProcessEventEmitterCall(emitter, methodName, arguments);
+                return true;
+
             default:
                 return false;
         }
@@ -299,6 +316,154 @@ public sealed class ProcessStaticEmitter : IStaticTypeEmitterStrategy
             // Empty args array
             il.Emit(OpCodes.Ldc_I4_0);
             il.Emit(OpCodes.Newarr, ctx.Types.Object);
+        }
+    }
+
+    /// <summary>
+    /// Emits IL for EventEmitter method calls on process (on, once, off, emit, etc.).
+    /// Uses the compiled $EventEmitter singleton for process events.
+    /// </summary>
+    private static void EmitProcessEventEmitterCall(IEmitterContext emitter, string methodName, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        var runtime = ctx.Runtime!;
+
+        switch (methodName)
+        {
+            case "on":
+            case "addListener":
+                // On(string eventName, object listener) -> $EventEmitter
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                EmitStringArg(emitter, arguments, 0);
+                EmitBoxedArg(emitter, arguments, 1);
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOn);
+                break;
+
+            case "once":
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                EmitStringArg(emitter, arguments, 0);
+                EmitBoxedArg(emitter, arguments, 1);
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOnce);
+                break;
+
+            case "off":
+            case "removeListener":
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                EmitStringArg(emitter, arguments, 0);
+                EmitBoxedArg(emitter, arguments, 1);
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOff);
+                break;
+
+            case "emit":
+                // Emit(string eventName, object[] args) -> bool
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                EmitStringArg(emitter, arguments, 0);
+                // Pack remaining args into object[]
+                var extraCount = Math.Max(0, arguments.Count - 1);
+                il.Emit(OpCodes.Ldc_I4, extraCount);
+                il.Emit(OpCodes.Newarr, ctx.Types.Object);
+                for (int i = 1; i < arguments.Count; i++)
+                {
+                    il.Emit(OpCodes.Dup);
+                    il.Emit(OpCodes.Ldc_I4, i - 1);
+                    emitter.EmitExpression(arguments[i]);
+                    emitter.EmitBoxIfNeeded(arguments[i]);
+                    il.Emit(OpCodes.Stelem_Ref);
+                }
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
+                il.Emit(OpCodes.Box, ctx.Types.Boolean);
+                break;
+
+            case "removeAllListeners":
+                // RemoveAllListeners(string eventName) -> $EventEmitter
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                EmitStringArg(emitter, arguments, 0);
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterRemoveAllListeners);
+                break;
+
+            case "listenerCount":
+                // ListenerCount(string eventName) -> double
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                EmitStringArg(emitter, arguments, 0);
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterListenerCount);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                break;
+
+            case "listeners":
+                // Listeners(string eventName) -> TSArray
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                EmitStringArg(emitter, arguments, 0);
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterListeners);
+                break;
+
+            case "eventNames":
+                // EventNames() -> TSArray
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEventNames);
+                break;
+
+            case "prependListener":
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                EmitStringArg(emitter, arguments, 0);
+                EmitBoxedArg(emitter, arguments, 1);
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterPrependListener);
+                break;
+
+            case "prependOnceListener":
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                EmitStringArg(emitter, arguments, 0);
+                EmitBoxedArg(emitter, arguments, 1);
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterPrependOnceListener);
+                break;
+
+            case "setMaxListeners":
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                if (arguments.Count > 0)
+                    emitter.EmitExpressionAsDouble(arguments[0]);
+                else
+                    il.Emit(OpCodes.Ldc_R8, 10.0);
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterSetMaxListeners);
+                break;
+
+            case "getMaxListeners":
+                il.Emit(OpCodes.Call, runtime.GetProcessEventEmitter);
+                il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterGetMaxListeners);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                break;
+
+            default:
+                il.Emit(OpCodes.Ldnull);
+                break;
+        }
+    }
+
+    private static void EmitStringArg(IEmitterContext emitter, List<Expr> arguments, int index)
+    {
+        var il = emitter.Context.IL;
+        if (index < arguments.Count)
+        {
+            emitter.EmitExpression(arguments[index]);
+            emitter.EmitBoxIfNeeded(arguments[index]);
+            il.Emit(OpCodes.Callvirt, emitter.Context.Types.GetMethodNoParams(emitter.Context.Types.Object, "ToString"));
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldstr, "");
+        }
+    }
+
+    private static void EmitBoxedArg(IEmitterContext emitter, List<Expr> arguments, int index)
+    {
+        var il = emitter.Context.IL;
+        if (index < arguments.Count)
+        {
+            emitter.EmitExpression(arguments[index]);
+            emitter.EmitBoxIfNeeded(arguments[index]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
         }
     }
 

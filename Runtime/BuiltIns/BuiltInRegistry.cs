@@ -182,6 +182,7 @@ public sealed class BuiltInRegistry
         RegisterEventEmitterType(registry);
         RegisterStringDecoderType(registry);
         RegisterStreamTypes(registry);
+        RegisterChildProcessType(registry);
         RegisterHttpTypes(registry);
         RegisterWorkerTypes(registry);
         RegisterSymbolType(registry);
@@ -699,6 +700,13 @@ public sealed class BuiltInRegistry
             ((SharpTSTransformConstructor)instance).GetProperty(name));
         registry.RegisterInstanceType(typeof(SharpTSPassThroughConstructor), (instance, name) =>
             ((SharpTSPassThroughConstructor)instance).GetProperty(name));
+    }
+
+    private static void RegisterChildProcessType(BuiltInRegistry registry)
+    {
+        // ChildProcess instance member lookup (pid, exitCode, stdout, stderr, kill, on, emit, etc.)
+        registry.RegisterInstanceType(typeof(SharpTSChildProcess), (instance, name) =>
+            ((SharpTSChildProcess)instance).GetMember(name));
     }
 
     private static void RegisterHttpTypes(BuiltInRegistry registry)

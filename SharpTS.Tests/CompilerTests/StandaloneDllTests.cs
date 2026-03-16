@@ -30,6 +30,8 @@ public class StandaloneDllTests
         "Compilation/RuntimeEmitter.Proxy.cs",        // Proxy CreateProxy/CreateRevocableProxy (requires SharpTS.dll at runtime)
         "Compilation/RuntimeEmitter.Intl.cs",         // Intl.NumberFormat runtime dispatch via RuntimeTypes
         "Compilation/RuntimeEmitter.AbortController.cs", // AbortSignal.any() via RuntimeTypes.AbortSignalAnyCompiled
+        "Compilation/RuntimeEmitter.ChildProcessHelpers.cs", // exec/spawn async delegation to interpreter module
+        "Compilation/RuntimeEmitter.ProcessHelpers.cs",      // ProcessEventEmitterCall and ProcessEmitExit fallback
     };
 
     /// <summary>

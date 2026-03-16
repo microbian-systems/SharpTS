@@ -45,6 +45,12 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
                 setEncoding?.Bind(stream).Call(interpreter, [encoding]);
             }
 
+            // objectMode option
+            if (options.GetProperty("objectMode") is true)
+            {
+                stream.ObjectMode = true;
+            }
+
             // highWaterMark is typically used for async backpressure
             // In sync mode we don't need it, but accept it for compatibility
         }

@@ -49,6 +49,12 @@ public sealed class SharpTSWritableConstructor : ISharpTSCallable
                 stream.SetDestroyCallback(destroyCallback);
             }
 
+            // objectMode option
+            if (options.GetProperty("objectMode") is true)
+            {
+                stream.ObjectMode = true;
+            }
+
             // highWaterMark and other options accepted for compatibility
         }
 

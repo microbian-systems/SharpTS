@@ -24,6 +24,12 @@ public class SharpTSWritable : SharpTSEventEmitter
     private int _highWaterMark = 16384;
     private int _pendingWrites;
     private bool _needDrain;
+    private bool _objectMode;
+
+    /// <summary>
+    /// Gets or sets whether this stream operates in object mode.
+    /// </summary>
+    public bool ObjectMode { get => _objectMode; set => _objectMode = value; }
 
     /// <summary>
     /// Sets the custom write callback (from constructor options).
@@ -62,6 +68,7 @@ public class SharpTSWritable : SharpTSEventEmitter
             "writableLength" => (double)_corkBuffer.Count,
             "writableCorked" => (double)(_corked ? 1 : 0),
             "writableHighWaterMark" => (double)_highWaterMark,
+            "writableObjectMode" => _objectMode,
             "destroyed" => _destroyed,
 
             // Inherit from EventEmitter

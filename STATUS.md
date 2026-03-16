@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-02-22 (Added `Intl.Segmenter`, `Intl.DisplayNames` with full interpreter and compiler support)
+**Last Updated:** 2026-03-16 (Added process EventEmitter, object mode streams, async child_process)
 
 ## Legend
 - ✅ Implemented
@@ -419,13 +419,13 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `fs` / `fs/promises` | ✅ | readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, renameSync, copyFileSync, appendFileSync, readFile, writeFile, mkdir, readdir, stat, unlink, rename, rm, access, lstat, realpath, createReadStream, createWriteStream, watch, watchFile, unwatchFile |
 | `path` | ✅ | join, resolve, dirname, basename, extname, normalize, isAbsolute, relative, parse, format, sep, delimiter, posix, win32 |
 | `os` | ✅ | platform, arch, cpus, hostname, homedir, tmpdir, type, release, uptime, totalmem, freemem, EOL, networkInterfaces, loadavg, userInfo |
-| `process` | ✅ | argv, env, cwd(), exit(), pid, platform, arch, version, stdout, stderr, stdin, hrtime, nextTick, memoryUsage, exitCode |
+| `process` | ✅ | argv, env, cwd(), exit(), pid, platform, arch, version, stdout, stderr, stdin, hrtime, nextTick, memoryUsage, exitCode; EventEmitter support (on, once, emit, off, removeAllListeners, listeners, listenerCount, eventNames) |
 | `crypto` | ✅ | createHash, createHmac, randomBytes, randomUUID, randomInt, randomFillSync, createCipheriv/Decipheriv, pbkdf2/Sync, scrypt/Sync, timingSafeEqual, generateKeyPair/Sync, createSign/Verify, createDiffieHellman, createECDH, hkdf/Sync, getHashes, getCiphers, getCurves, constants |
 | `events` | ✅ | EventEmitter: on, once, emit, removeListener, removeAllListeners, listenerCount, listeners, prependListener, prependOnceListener, off, setMaxListeners, getMaxListeners, eventNames |
-| `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough, pipeline |
+| `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough, pipeline; object mode support (`objectMode: true`) |
 | `buffer` | ✅ | Buffer.from, Buffer.alloc, Buffer.allocUnsafe, Buffer.concat, Buffer.isBuffer, Buffer.byteLength; instance methods: toString, slice, copy, write, fill, includes, indexOf, compare, equals, readUInt/Int, writeUInt/Int, toJSON |
 | `http` | ✅ | createServer, request, get; Server: listen, close; IncomingMessage/ServerResponse; request/response streaming |
-| `child_process` | ⚠️ | execSync, spawnSync (sync only) |
+| `child_process` | ✅ | execSync, spawnSync, exec, spawn with ChildProcess EventEmitter |
 | `url` | ✅ | URL, URLSearchParams, fileURLToPath, pathToFileURL, format, parse |
 | `util` | ✅ | promisify, deprecate, types (isDate, isRegExp, isMap, isSet, etc.), format, inspect, TextEncoder, TextDecoder |
 | `querystring` | ✅ | parse, stringify, escape, unescape |

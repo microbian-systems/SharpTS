@@ -14,6 +14,8 @@ public partial class RuntimeEmitter
     {
         EmitChildProcessExecSync(typeBuilder, runtime);
         EmitChildProcessSpawnSync(typeBuilder, runtime);
+        EmitChildProcessExec(typeBuilder, runtime);
+        EmitChildProcessSpawn(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -543,6 +545,128 @@ public partial class RuntimeEmitter
         il.MarkLabel(noErrorMsgLabel);
 
         il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static object ChildProcessExec(string command, object optionsOrCallback, object callback)
+    /// Delegates to ChildProcessModuleInterpreter.GetExports()["exec"] via reflection.
+    /// </summary>
+    private void EmitChildProcessExec(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ChildProcessExec",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.String, _types.Object, _types.Object]);
+        runtime.ChildProcessExec = method;
+        runtime.RegisterBuiltInModuleMethod("child_process", "exec", method);
+
+        var il = method.GetILGenerator();
+        EmitChildProcessReflectionCall(il, "exec", 3);
+    }
+
+    /// <summary>
+    /// Emits: public static object ChildProcessSpawn(string command, object args, object options)
+    /// Delegates to ChildProcessModuleInterpreter.GetExports()["spawn"] via reflection.
+    /// </summary>
+    private void EmitChildProcessSpawn(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ChildProcessSpawn",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.String, _types.Object, _types.Object]);
+        runtime.ChildProcessSpawn = method;
+        runtime.RegisterBuiltInModuleMethod("child_process", "spawn", method);
+
+        var il = method.GetILGenerator();
+        EmitChildProcessReflectionCall(il, "spawn", 3);
+    }
+
+    /// <summary>
+    /// Emits IL that calls ChildProcessModuleInterpreter.GetExports()[methodName] via reflection.
+    /// The method loads the type, calls GetExports(), gets the BuiltInMethod, and invokes it with args.
+    /// </summary>
+    private void EmitChildProcessReflectionCall(ILGenerator il, string methodName, int argCount)
+    {
+        // Type moduleType = Type.GetType("SharpTS.Runtime.BuiltIns.Modules.Interpreter.ChildProcessModuleInterpreter, SharpTS");
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.Modules.Interpreter.ChildProcessModuleInterpreter, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        var typeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // If null, return null
+        var typeOk = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brtrue, typeOk);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(typeOk);
+
+        // MethodInfo getExports = moduleType.GetMethod("GetExports");
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "GetExports");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        // object exports = getExports.Invoke(null, Array.Empty<object>());
+        il.Emit(OpCodes.Ldnull); // static method
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        // Cast to Dictionary<string, object?>
+        var exportsLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, exportsLocal);
+
+        // Get the method by name: dict[methodName]
+        // Use reflection: exports.GetType().GetProperty("Item").GetValue(exports, new object[] { methodName })
+        il.Emit(OpCodes.Ldloc, exportsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "Item");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String));
+        il.Emit(OpCodes.Ldloc, exportsLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldstr, methodName);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object, _types.ObjectArray));
+        var builtInLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, builtInLocal);
+
+        // Build args list: new List<object?> { arg0, arg1, arg2 }
+        il.Emit(OpCodes.Newobj, _types.ListObjectNullableDefaultCtor);
+        var argsLocal = il.DeclareLocal(_types.ListOfObjectNullable);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        for (int i = 0; i < argCount; i++)
+        {
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Ldarg, i);
+            if (i == 0) // string command - box to object
+            {
+                // already object via Ldarg
+            }
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObjectNullable, "Add", _types.Object));
+        }
+
+        // Call builtIn.GetType().GetMethod("Call").Invoke(builtIn, new object[] { null, argsList })
+        il.Emit(OpCodes.Ldloc, builtInLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "Call");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        il.Emit(OpCodes.Ldloc, builtInLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull); // interpreter = null
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
     }
 }

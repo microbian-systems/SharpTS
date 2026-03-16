@@ -23,7 +23,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `url` | ✅ | WHATWG URL + legacy parse/format/resolve |
 | `querystring` | ✅ | parse, stringify, escape, unescape |
 | `assert` | ✅ | Full testing utilities |
-| `child_process` | ⚠️ | Synchronous only (`execSync`, `spawnSync`) |
+| `child_process` | ✅ | execSync, spawnSync, exec, spawn with ChildProcess EventEmitter |
 | `util` | ✅ | format, inspect, isDeepStrictEqual, parseArgs, toUSVString, stripVTControlCharacters, getSystemErrorName, getSystemErrorMap, promisify, types helpers, deprecate, callbackify, inherits, TextEncoder/TextDecoder |
 | `console` | ✅ | log, error, warn, info, debug, clear, time/timeEnd/timeLog, assert, count/countReset, table, dir, group/groupEnd, trace |
 | `readline` | ⚠️ | questionSync, createInterface |
@@ -174,8 +174,9 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `memoryUsage` | ✅ | |
 | `nextTick` | ✅ | Schedules callback (implemented via timer) |
 | **Events** | | |
-| `on('exit')` | ❌ | No EventEmitter on process |
-| `on('uncaughtException')` | ❌ | No EventEmitter on process |
+| `on('exit')` | ✅ | Process extends EventEmitter; exit event emitted before process.exit() |
+| `on('uncaughtException')` | ✅ | Process extends EventEmitter; uncaughtException event support |
+| `on(event, listener)` | ✅ | Full EventEmitter API (on, once, off, emit, removeAllListeners, etc.) |
 
 ---
 
@@ -253,10 +254,10 @@ This document tracks Node.js module and API implementation status in SharpTS.
 |---------|--------|-------|
 | `execSync` | ✅ | With cwd, timeout, env, shell options |
 | `spawnSync` | ✅ | With cwd, timeout, env options |
-| `exec` | ❌ | No async support |
-| `spawn` | ❌ | No async support |
+| `exec` | ✅ | Async with callback(error, stdout, stderr); returns ChildProcess EventEmitter |
+| `spawn` | ✅ | Async; returns ChildProcess with stdout/stderr streams and events |
 | `fork` | ❌ | |
-| Process events | ❌ | No EventEmitter |
+| ChildProcess events | ✅ | close, exit, error events via EventEmitter |
 
 ---
 
@@ -404,8 +405,11 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `pause()` / `resume()` | ✅ | Flow control with buffer draining on resume |
 | `readableFlowing` property | ✅ | null/false/true states |
 | Pipe backpressure | ✅ | Pauses source on writable backpressure, resumes on drain |
+| **Object Mode** | | |
+| Object mode | ✅ | `objectMode: true` option; streams accept any JS value (interpreter mode; compiled mode pending) |
+| `readableObjectMode` | ✅ | Property: whether readable side is in object mode |
+| `writableObjectMode` | ✅ | Property: whether writable side is in object mode |
 | **Not Implemented** | | |
-| Object mode | ❌ | Buffer/string chunks only |
 | highWaterMark enforcement | ❌ | No read-side backpressure (push always succeeds) |
 
 ---
@@ -690,7 +694,7 @@ SharpTS provides comprehensive support for file system operations (sync, callbac
 - No net (TCP/IPC) sockets
 - No cluster support
 - HTTP server is basic (no full event lifecycle)
-- No object mode streams
+- Object mode streams: interpreter only (compiled mode pending)
 - No highWaterMark enforcement on read-side backpressure
 
 **Recommended Workarounds:**

@@ -18,7 +18,9 @@ public static class ChildProcessModuleInterpreter
         return new Dictionary<string, object?>
         {
             ["execSync"] = new BuiltInMethod("execSync", 1, 2, ExecSync),
-            ["spawnSync"] = new BuiltInMethod("spawnSync", 1, 3, SpawnSync)
+            ["spawnSync"] = new BuiltInMethod("spawnSync", 1, 3, SpawnSync),
+            ["exec"] = new BuiltInMethod("exec", 1, 3, Exec),
+            ["spawn"] = new BuiltInMethod("spawn", 1, 3, Spawn)
         };
     }
 
@@ -154,6 +156,240 @@ public static class ChildProcessModuleInterpreter
             ["status"] = (double)exitCode,
             ["signal"] = signal
         });
+    }
+
+    /// <summary>
+    /// exec(command, options?, callback?) - Executes a command asynchronously.
+    /// Returns a ChildProcess object. Calls callback(error, stdout, stderr) when done.
+    /// </summary>
+    private static object? Exec(Interp interpreter, object? receiver, List<object?> args)
+    {
+        if (args.Count == 0 || args[0] is not string command)
+            throw new Exception("child_process.exec requires a command string");
+
+        SharpTSObject? options = null;
+        ISharpTSCallable? callback = null;
+
+        // Parse arguments: exec(command, options?, callback?)
+        if (args.Count > 1)
+        {
+            if (args[1] is ISharpTSCallable cb1)
+            {
+                callback = cb1;
+            }
+            else
+            {
+                options = args[1] as SharpTSObject;
+                if (args.Count > 2 && args[2] is ISharpTSCallable cb2)
+                {
+                    callback = cb2;
+                }
+            }
+        }
+
+        var cwd = GetStringOption(options, "cwd");
+        var timeout = GetDoubleOption(options, "timeout", -1);
+
+        // Create the ChildProcess event emitter
+        var childProcess = new SharpTSChildProcess();
+
+        // Run the process asynchronously
+        Task.Run(() =>
+        {
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    startInfo.FileName = "cmd.exe";
+                    startInfo.Arguments = $"/c {command}";
+                }
+                else
+                {
+                    startInfo.FileName = "/bin/sh";
+                    startInfo.Arguments = $"-c \"{command.Replace("\"", "\\\"")}\"";
+                }
+
+                if (!string.IsNullOrEmpty(cwd))
+                    startInfo.WorkingDirectory = cwd;
+
+                ApplyEnvOptions(options, startInfo);
+
+                using var process = new Process { StartInfo = startInfo };
+                process.Start();
+                childProcess.SetPid(process.Id);
+
+                var stdout = process.StandardOutput.ReadToEnd();
+                var stderr = process.StandardError.ReadToEnd();
+
+                if (timeout > 0)
+                {
+                    if (!process.WaitForExit((int)timeout))
+                    {
+                        process.Kill();
+                        childProcess.SetExitCode(-1);
+                        childProcess.EmitDirect("error", new SharpTSObject(new Dictionary<string, object?>
+                        {
+                            ["message"] = "Command timed out"
+                        }));
+                        callback?.Call(null!, [new SharpTSObject(new Dictionary<string, object?>
+                        {
+                            ["message"] = "Command timed out"
+                        }), stdout, stderr]);
+                        return;
+                    }
+                }
+                else
+                {
+                    process.WaitForExit();
+                }
+
+                childProcess.SetExitCode(process.ExitCode);
+
+                if (process.ExitCode != 0)
+                {
+                    var errorObj = new SharpTSObject(new Dictionary<string, object?>
+                    {
+                        ["message"] = $"Command failed with exit code {process.ExitCode}",
+                        ["code"] = (double)process.ExitCode
+                    });
+                    callback?.Call(null!, [errorObj, stdout, stderr]);
+                }
+                else
+                {
+                    callback?.Call(null!, [null, stdout, stderr]);
+                }
+
+                childProcess.EmitDirect("close", (double)process.ExitCode);
+                childProcess.EmitDirect("exit", (double)process.ExitCode);
+            }
+            catch (Exception ex)
+            {
+                var errorObj = new SharpTSObject(new Dictionary<string, object?>
+                {
+                    ["message"] = ex.Message
+                });
+                childProcess.EmitDirect("error", errorObj);
+                callback?.Call(null!, [errorObj, "", ""]);
+            }
+        });
+
+        return childProcess;
+    }
+
+    /// <summary>
+    /// spawn(command, args?, options?) - Spawns a process asynchronously.
+    /// Returns a ChildProcess object with stdout/stderr streams.
+    /// </summary>
+    private static object? Spawn(Interp interpreter, object? receiver, List<object?> args)
+    {
+        if (args.Count == 0 || args[0] is not string command)
+            throw new Exception("child_process.spawn requires a command");
+
+        var cmdArgs = new List<string>();
+        SharpTSObject? options = null;
+
+        if (args.Count > 1 && args[1] is SharpTSArray argsArray)
+        {
+            foreach (var arg in argsArray.Elements)
+            {
+                cmdArgs.Add(arg?.ToString() ?? "");
+            }
+            if (args.Count > 2)
+                options = args[2] as SharpTSObject;
+        }
+        else if (args.Count > 1)
+        {
+            options = args[1] as SharpTSObject;
+        }
+
+        var cwd = GetStringOption(options, "cwd");
+        var useShell = GetBoolOption(options, "shell", false);
+
+        // Create the ChildProcess event emitter with streams
+        var childProcess = new SharpTSChildProcess();
+        var stdoutStream = new SharpTSReadable();
+        var stderrStream = new SharpTSReadable();
+        childProcess.SetStdoutStream(stdoutStream);
+        childProcess.SetStderrStream(stderrStream);
+
+        // Run asynchronously
+        Task.Run(() =>
+        {
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = command,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    RedirectStandardInput = true,
+                    CreateNoWindow = true
+                };
+
+                foreach (var arg in cmdArgs)
+                {
+                    startInfo.ArgumentList.Add(arg);
+                }
+
+                if (!string.IsNullOrEmpty(cwd))
+                    startInfo.WorkingDirectory = cwd;
+
+                ApplyEnvOptions(options, startInfo);
+
+                using var process = new Process { StartInfo = startInfo };
+                process.Start();
+                childProcess.SetPid(process.Id);
+
+                // Read stdout and stderr asynchronously and push to streams
+                var stdoutTask = Task.Run(() =>
+                {
+                    var buffer = new char[4096];
+                    int read;
+                    while ((read = process.StandardOutput.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        stdoutStream.EmitDirect("data", new string(buffer, 0, read));
+                    }
+                    stdoutStream.EmitDirect("end");
+                });
+
+                var stderrTask = Task.Run(() =>
+                {
+                    var buffer = new char[4096];
+                    int read;
+                    while ((read = process.StandardError.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        stderrStream.EmitDirect("data", new string(buffer, 0, read));
+                    }
+                    stderrStream.EmitDirect("end");
+                });
+
+                process.WaitForExit();
+                stdoutTask.Wait();
+                stderrTask.Wait();
+
+                childProcess.SetExitCode(process.ExitCode);
+                childProcess.EmitDirect("close", (double)process.ExitCode);
+                childProcess.EmitDirect("exit", (double)process.ExitCode);
+            }
+            catch (Exception ex)
+            {
+                childProcess.EmitDirect("error", new SharpTSObject(new Dictionary<string, object?>
+                {
+                    ["message"] = ex.Message
+                }));
+            }
+        });
+
+        return childProcess;
     }
 
     private static string? GetStringOption(SharpTSObject? options, string name)

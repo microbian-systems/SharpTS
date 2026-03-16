@@ -158,14 +158,27 @@ public class SharpTSEventEmitter
                 }
             }
 
-            // Call the listener
-            if (wrapper.Listener is ISharpTSCallable callable)
-            {
-                callable.Call(interpreter, eventArgs);
-            }
+            // Call the listener - support multiple listener types
+            InvokeListener(wrapper.Listener, interpreter, eventArgs);
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Invokes a listener supporting multiple listener types (ISharpTSCallable, TSFunction, Action, BuiltInMethod).
+    /// </summary>
+    private static void InvokeListener(object listener, Interp? interpreter, List<object?> eventArgs)
+    {
+        if (listener is ISharpTSCallable callable)
+        {
+            callable.Call(interpreter!, eventArgs);
+        }
+        else
+        {
+            // Try direct invocation for compiled code (TSFunction, Action, etc.)
+            InvokeListenerDirect(listener, eventArgs.ToArray());
+        }
     }
 
     /// <summary>

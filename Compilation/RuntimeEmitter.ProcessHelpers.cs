@@ -16,6 +16,9 @@ public partial class RuntimeEmitter
         EmitProcessUptime(typeBuilder, runtime);
         EmitProcessMemoryUsage(typeBuilder, runtime);
         EmitProcessGetNextTick(typeBuilder, runtime);
+        EmitProcessEventEmitterCallMethod(typeBuilder, runtime);
+        EmitProcessEmitExitMethod(typeBuilder, runtime);
+        EmitGetProcessEventEmitter(typeBuilder, runtime);
         EmitStdinMethods(typeBuilder, runtime);
         EmitStdoutMethods(typeBuilder, runtime);
         EmitStderrMethods(typeBuilder, runtime);
@@ -704,6 +707,146 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle", _types.RuntimeMethodHandle));
         il.Emit(OpCodes.Castclass, _types.MethodInfo);
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static object ProcessEventEmitterCall(string methodName, object[] args)
+    /// Delegates to ProcessBuiltIns.EventEmitterCall via reflection.
+    /// </summary>
+    private void EmitProcessEventEmitterCallMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ProcessEventEmitterCall",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.String, _types.ObjectArray]
+        );
+        runtime.ProcessEventEmitterCall = method;
+
+        var il = method.GetILGenerator();
+
+        // Type t = Type.GetType("SharpTS.Runtime.BuiltIns.ProcessBuiltIns, SharpTS");
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.ProcessBuiltIns, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        var typeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        var typeOk = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brtrue, typeOk);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(typeOk);
+
+        // MethodInfo m = t.GetMethod("EventEmitterCall");
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "EventEmitterCall");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+
+        // m.Invoke(null, new object[] { methodName, args })
+        il.Emit(OpCodes.Ldnull); // static method
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0); // methodName (string)
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1); // args (object[])
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static void ProcessEmitExit(int exitCode)
+    /// Calls ProcessBuiltIns.EmitExitEvent to fire the 'exit' event.
+    /// </summary>
+    private void EmitProcessEmitExitMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ProcessEmitExit",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(void),
+            [_types.Int32]
+        );
+        runtime.ProcessEmitExit = method;
+
+        var il = method.GetILGenerator();
+
+        // Type.GetType("SharpTS.Runtime.BuiltIns.ProcessBuiltIns, SharpTS")
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.ProcessBuiltIns, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        var typeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // If type not found, just return
+        var typeOk = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brtrue, typeOk);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(typeOk);
+
+        // Call EmitExitEvent(null, exitCode) via reflection
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "EmitExitEvent");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        il.Emit(OpCodes.Ldnull); // static method
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull); // interpreter = null
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_0); // exitCode
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Pop); // discard return value
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits a static field and getter for a process-level EventEmitter singleton.
+    /// The field is a $EventEmitter instance created lazily.
+    /// </summary>
+    private void EmitGetProcessEventEmitter(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // Static field to store the singleton
+        var field = typeBuilder.DefineField(
+            "_processEventEmitter",
+            runtime.TSEventEmitterType,
+            FieldAttributes.Private | FieldAttributes.Static
+        );
+        runtime.ProcessEventEmitterInstance = field;
+
+        // Getter method that lazily creates the instance
+        var getter = typeBuilder.DefineMethod(
+            "GetProcessEventEmitter",
+            MethodAttributes.Public | MethodAttributes.Static,
+            runtime.TSEventEmitterType,
+            Type.EmptyTypes
+        );
+        runtime.GetProcessEventEmitter = getter;
+
+        var il = getter.GetILGenerator();
+
+        // if (_processEventEmitter != null) return it
+        il.Emit(OpCodes.Ldsfld, field);
+        var createNew = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, createNew);
+        il.Emit(OpCodes.Ldsfld, field);
+        il.Emit(OpCodes.Ret);
+
+        // Create new instance
+        il.MarkLabel(createNew);
+        il.Emit(OpCodes.Newobj, runtime.TSEventEmitterCtor);
+        il.Emit(OpCodes.Stsfld, field);
+        il.Emit(OpCodes.Ldsfld, field);
         il.Emit(OpCodes.Ret);
     }
 }

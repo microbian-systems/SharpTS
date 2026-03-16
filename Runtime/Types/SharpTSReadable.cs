@@ -20,6 +20,13 @@ public class SharpTSReadable : SharpTSEventEmitter
     private string _encoding = "utf8";
     private bool _readable = true;
     private bool? _flowing; // null=initial, true=flowing, false=paused
+    private bool _objectMode;
+
+    /// <summary>
+    /// Gets or sets whether this stream operates in object mode.
+    /// In object mode, chunks can be any JavaScript value (not just strings/Buffers).
+    /// </summary>
+    public bool ObjectMode { get => _objectMode; set => _objectMode = value; }
 
     /// <summary>
     /// Gets a member (method or property) by name for interpreter dispatch.
@@ -50,6 +57,7 @@ public class SharpTSReadable : SharpTSEventEmitter
             "readableLength" => (double)_readBuffer.Count,
             "readableEncoding" => _encoding,
             "readableFlowing" => _flowing ?? (object)false,
+            "readableObjectMode" => _objectMode,
             "destroyed" => _destroyed,
 
             // Inherit from EventEmitter
@@ -111,6 +119,12 @@ public class SharpTSReadable : SharpTSEventEmitter
         if (_destroyed || _readBuffer.Count == 0)
         {
             return null;
+        }
+
+        // In object mode, always return one object at a time (size parameter is ignored)
+        if (_objectMode)
+        {
+            return _readBuffer.Dequeue();
         }
 
         int? size = null;

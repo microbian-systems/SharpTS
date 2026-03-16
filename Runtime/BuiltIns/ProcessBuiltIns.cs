@@ -72,6 +72,13 @@ public static class ProcessBuiltIns
             "memoryUsage" => _memoryUsage,
             "nextTick" => _nextTick,
 
+            // EventEmitter methods - delegate to the process singleton
+            "on" or "addListener" or "once" or "off" or "removeListener"
+                or "emit" or "removeAllListeners" or "listeners" or "rawListeners"
+                or "listenerCount" or "eventNames" or "prependListener"
+                or "prependOnceListener" or "setMaxListeners" or "getMaxListeners"
+                => SharpTSProcess.Instance.GetMember(name),
+
             _ => null
         };
     }
@@ -213,8 +220,157 @@ public static class ProcessBuiltIns
         {
             exitCode = (int)d;
         }
+
+        // Emit 'exit' event synchronously before exiting, matching Node.js behavior
+        EmitExitEvent(i, exitCode);
+
         Environment.Exit(exitCode);
         return null; // Never reached
+    }
+
+    /// <summary>
+    /// Emits the 'exit' event on the process object.
+    /// Called before process.exit() and at natural program end.
+    /// In Node.js, the exit event callback receives the exit code as argument.
+    /// </summary>
+    public static void EmitExitEvent(Interpreter? interpreter, int exitCode)
+    {
+        try
+        {
+            var process = SharpTSProcess.Instance;
+            if (interpreter != null)
+            {
+                // Use interpreter-based emit for interpreted mode
+                var emit = process.GetMember("emit") as BuiltInMethod;
+                emit?.Bind(process).Call(interpreter, ["exit", (double)exitCode]);
+            }
+            else
+            {
+                // Use direct emit for compiled mode (no interpreter available)
+                process.EmitDirect("exit", (double)exitCode);
+            }
+        }
+        catch
+        {
+            // Node.js ignores errors in exit handlers
+        }
+    }
+
+    /// <summary>
+    /// Dispatches an EventEmitter method call on the process singleton.
+    /// Used by compiled code to call process.on(), process.emit(), etc.
+    /// </summary>
+    /// <param name="methodName">The EventEmitter method name (on, once, emit, etc.).</param>
+    /// <param name="args">The arguments to pass to the method.</param>
+    /// <returns>The result of the method call.</returns>
+    public static object? EventEmitterCall(string methodName, object?[] args)
+    {
+        var process = SharpTSProcess.Instance;
+
+        // For "on", "once", "addListener": register listener directly
+        switch (methodName)
+        {
+            case "on":
+            case "addListener":
+                if (args.Length >= 2 && args[0] is string onEvent)
+                {
+                    process.AddListenerDirect(onEvent, args[1]!, once: false);
+                    return process;
+                }
+                return process;
+
+            case "once":
+                if (args.Length >= 2 && args[0] is string onceEvent)
+                {
+                    process.AddListenerDirect(onceEvent, args[1]!, once: true);
+                    return process;
+                }
+                return process;
+
+            case "emit":
+                if (args.Length >= 1 && args[0] is string emitEvent)
+                {
+                    var emitArgs = args.Length > 1 ? args[1..] : [];
+                    return process.EmitDirect(emitEvent, emitArgs);
+                }
+                return false;
+
+            case "off":
+            case "removeListener":
+                // Delegate to GetMember for complex operations
+                var offMethod = process.GetMember(methodName) as BuiltInMethod;
+                if (offMethod != null)
+                {
+                    return offMethod.Bind(process).Call(null!, args.ToList<object?>());
+                }
+                return process;
+
+            case "removeAllListeners":
+                var removeMethod = process.GetMember(methodName) as BuiltInMethod;
+                if (removeMethod != null)
+                {
+                    return removeMethod.Bind(process).Call(null!, args.ToList<object?>());
+                }
+                return process;
+
+            case "listenerCount":
+                var lcMethod = process.GetMember(methodName) as BuiltInMethod;
+                if (lcMethod != null)
+                {
+                    return lcMethod.Bind(process).Call(null!, args.ToList<object?>());
+                }
+                return 0.0;
+
+            case "listeners":
+            case "eventNames":
+            case "setMaxListeners":
+            case "getMaxListeners":
+            case "prependListener":
+            case "prependOnceListener":
+                var method = process.GetMember(methodName) as BuiltInMethod;
+                if (method != null)
+                {
+                    return method.Bind(process).Call(null!, args.ToList<object?>());
+                }
+                return process;
+
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// Handles uncaught exceptions by emitting 'uncaughtException' on process.
+    /// Returns true if the exception was handled (a listener was registered).
+    /// </summary>
+    public static bool EmitUncaughtException(Interpreter? interpreter, Exception exception)
+    {
+        try
+        {
+            var process = SharpTSProcess.Instance;
+            // Create an Error-like object for the exception
+            var errorObj = new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["message"] = exception.Message,
+                ["stack"] = exception.StackTrace ?? "",
+                ["name"] = exception.GetType().Name
+            });
+
+            if (interpreter != null)
+            {
+                var emit = process.GetMember("emit") as BuiltInMethod;
+                var result = emit?.Bind(process).Call(interpreter, ["uncaughtException", errorObj]);
+                return result is true;
+            }
+            else
+            {
+                return process.EmitDirect("uncaughtException", errorObj);
+            }
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>

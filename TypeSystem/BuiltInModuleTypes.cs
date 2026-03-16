@@ -829,7 +829,28 @@ public static class BuiltInModuleTypes
                 voidType,
                 RequiredParams: 1,
                 HasRestParam: true
-            )
+            ),
+
+            // EventEmitter methods
+            ["on"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["addListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["once"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["off"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["removeListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["emit"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN),
+                RequiredParams: 1,
+                HasRestParam: true
+            ),
+            ["removeAllListeners"] = new TypeInfo.Function([stringType], anyType, RequiredParams: 0),
+            ["listenerCount"] = new TypeInfo.Function([stringType], numberType),
+            ["listeners"] = new TypeInfo.Function([stringType], new TypeInfo.Array(anyType)),
+            ["eventNames"] = new TypeInfo.Function([], new TypeInfo.Array(stringType)),
+            ["prependListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["prependOnceListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["setMaxListeners"] = new TypeInfo.Function([numberType], anyType),
+            ["getMaxListeners"] = new TypeInfo.Function([], numberType)
         };
     }
 
@@ -1110,13 +1131,36 @@ public static class BuiltInModuleTypes
             ["signal"] = new TypeInfo.Union([stringType, new TypeInfo.Null()])
         }.ToFrozenDictionary());
 
+        var childProcessType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["pid"] = numberType,
+            ["exitCode"] = new TypeInfo.Union([numberType, new TypeInfo.Null()]),
+            ["killed"] = new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN),
+            ["stdout"] = anyType,
+            ["stderr"] = anyType,
+            ["on"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["once"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["kill"] = new TypeInfo.Function([stringType], new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN), RequiredParams: 0)
+        }.ToFrozenDictionary());
+
         return new Dictionary<string, TypeInfo>
         {
-            // Methods
+            // Sync methods
             ["execSync"] = new TypeInfo.Function([stringType, anyType], stringType, RequiredParams: 1),
             ["spawnSync"] = new TypeInfo.Function(
                 [stringType, new TypeInfo.Array(stringType), anyType],
                 spawnResultType,
+                RequiredParams: 1
+            ),
+            // Async methods
+            ["exec"] = new TypeInfo.Function(
+                [stringType, anyType, anyType],
+                childProcessType,
+                RequiredParams: 1
+            ),
+            ["spawn"] = new TypeInfo.Function(
+                [stringType, new TypeInfo.Array(stringType), anyType],
+                childProcessType,
                 RequiredParams: 1
             )
         };
@@ -1568,6 +1612,7 @@ public static class BuiltInModuleTypes
             ["readableLength"] = numberType,
             ["readableEncoding"] = stringType,
             ["readableFlowing"] = new TypeInfo.Union([boolType, new TypeInfo.Null()]),
+            ["readableObjectMode"] = boolType,
             ["destroyed"] = boolType,
 
             // Writable methods
@@ -1584,6 +1629,7 @@ public static class BuiltInModuleTypes
             ["writableLength"] = numberType,
             ["writableCorked"] = numberType,
             ["writableHighWaterMark"] = numberType,
+            ["writableObjectMode"] = boolType,
 
             // Stream path properties (for ReadStream/WriteStream)
             ["path"] = stringType,

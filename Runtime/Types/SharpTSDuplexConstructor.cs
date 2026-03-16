@@ -55,6 +55,12 @@ public sealed class SharpTSDuplexConstructor : ISharpTSCallable
                 var setEncoding = stream.GetMember("setEncoding") as Runtime.BuiltIns.BuiltInMethod;
                 setEncoding?.Bind(stream).Call(interpreter, [encoding]);
             }
+
+            // objectMode option - sets both readable and writable sides
+            if (options.GetProperty("objectMode") is true)
+            {
+                stream.ObjectMode = true;
+            }
         }
 
         return stream;
