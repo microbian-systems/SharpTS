@@ -578,8 +578,41 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.MarkLabel(endLabel);
     }
 
+    protected override void EmitBranchToLabel(Label target)
+    {
+        // Use Leave instead of Br when inside exception-protected regions
+        if (_ctx!.ExceptionBlockDepth > 0)
+            _il.Emit(OpCodes.Leave, target);
+        else
+            _il.Emit(OpCodes.Br, target);
+    }
+
     protected override void EmitTryCatch(Stmt.TryCatch t)
     {
+        // Check if this try block contains any suspension points (yield or await)
+        bool hasSuspensionsInTry = ContainsSuspension(t.TryBlock);
+        bool hasSuspensionsInCatch = t.CatchBlock != null && ContainsSuspension(t.CatchBlock);
+        bool hasSuspensionsInFinally = t.FinallyBlock != null && ContainsSuspension(t.FinallyBlock);
+
+        if (hasSuspensionsInTry || hasSuspensionsInCatch || hasSuspensionsInFinally)
+        {
+            // Cannot use IL exception blocks when suspension points exist inside them
+            // because: (1) state switch can't jump into protected regions,
+            // (2) yield/return can't use 'ret' inside try blocks,
+            // (3) 'leave' from try/finally would trigger finally prematurely on yield.
+            // Use flag-based exception tracking instead.
+            EmitTryCatchWithSuspensions(t);
+        }
+        else
+        {
+            // No suspension points - safe to use IL exception blocks
+            EmitSimpleTryCatch(t);
+        }
+    }
+
+    private void EmitSimpleTryCatch(Stmt.TryCatch t)
+    {
+        _ctx!.ExceptionBlockDepth++;
         _il.BeginExceptionBlock();
 
         foreach (var stmt in t.TryBlock)
@@ -613,6 +646,232 @@ public partial class AsyncGeneratorMoveNextEmitter
         }
 
         _il.EndExceptionBlock();
+        _ctx!.ExceptionBlockDepth--;
     }
+
+    private void EmitTryCatchWithSuspensions(Stmt.TryCatch t)
+    {
+        // Flag-based exception tracking: instead of IL exception blocks,
+        // wrap synchronous segments in mini try/catch blocks and track
+        // exceptions via a local variable.
+        var caughtExceptionLocal = _il.DeclareLocal(typeof(object));
+        var afterTryBodyLabel = _il.DefineLabel();
+        var afterTryCatchLabel = _il.DefineLabel();
+
+        // Initialize caught exception to null
+        _il.Emit(OpCodes.Ldnull);
+        _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+
+        // Emit try body with segmented exception handling
+        EmitTryBodyWithSuspensions(t.TryBlock, caughtExceptionLocal, afterTryBodyLabel);
+
+        _il.MarkLabel(afterTryBodyLabel);
+
+        // Handle catch block
+        if (t.CatchBlock != null)
+        {
+            var skipCatchLabel = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+            _il.Emit(OpCodes.Brfalse, skipCatchLabel);
+
+            // Store exception in catch param if needed
+            if (t.CatchParam != null)
+            {
+                var exLocal = _il.DeclareLocal(typeof(object));
+                _ctx!.Locals.RegisterLocal(t.CatchParam.Lexeme, exLocal);
+                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                _il.Emit(OpCodes.Stloc, exLocal);
+            }
+
+            // Clear the exception since catch handles it
+            _il.Emit(OpCodes.Ldnull);
+            _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+
+            // Emit catch block statements
+            foreach (var stmt in t.CatchBlock)
+                EmitStatement(stmt);
+
+            _il.MarkLabel(skipCatchLabel);
+        }
+
+        // Handle finally block - always runs
+        if (t.FinallyBlock != null)
+        {
+            foreach (var stmt in t.FinallyBlock)
+                EmitStatement(stmt);
+
+            // After finally, rethrow if exception was not handled by catch
+            if (t.CatchBlock == null)
+            {
+                var noExceptionLabel = _il.DefineLabel();
+                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                _il.Emit(OpCodes.Brfalse, noExceptionLabel);
+
+                // Rethrow the pending exception
+                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateException);
+                _il.Emit(OpCodes.Throw);
+
+                _il.MarkLabel(noExceptionLabel);
+            }
+        }
+
+        _il.MarkLabel(afterTryCatchLabel);
+    }
+
+    private void EmitTryBodyWithSuspensions(List<Stmt> tryBody, LocalBuilder caughtExceptionLocal, Label afterTryLabel)
+    {
+        // Walk through try body statements. Synchronous segments (no yield/await)
+        // are wrapped in mini try/catch blocks. Suspension-containing statements
+        // are emitted normally (outside any IL exception block) so the state switch
+        // can reach their resume labels.
+        List<Stmt> syncSegment = [];
+
+        foreach (var stmt in tryBody)
+        {
+            if (ContainsSuspensionInStmt(stmt))
+            {
+                // Emit accumulated sync statements in mini try/catch
+                if (syncSegment.Count > 0)
+                {
+                    EmitSyncSegmentInTry(syncSegment, caughtExceptionLocal);
+                    syncSegment.Clear();
+                }
+
+                // Check exception before continuing with suspension
+                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                _il.Emit(OpCodes.Brtrue, afterTryLabel);
+
+                // Emit the suspension-containing statement normally
+                EmitStatement(stmt);
+            }
+            else
+            {
+                syncSegment.Add(stmt);
+            }
+        }
+
+        // Emit remaining sync statements
+        if (syncSegment.Count > 0)
+        {
+            EmitSyncSegmentInTry(syncSegment, caughtExceptionLocal);
+        }
+    }
+
+    private void EmitSyncSegmentInTry(List<Stmt> statements, LocalBuilder caughtExceptionLocal)
+    {
+        // Skip if exception already caught
+        var skipLabel = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+        _il.Emit(OpCodes.Brtrue, skipLabel);
+
+        // Wrap sync statements in a mini try/catch
+        _il.BeginExceptionBlock();
+        foreach (var stmt in statements)
+            EmitStatement(stmt);
+
+        _il.BeginCatchBlock(typeof(Exception));
+        _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
+        _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+
+        _il.EndExceptionBlock();
+
+        _il.MarkLabel(skipLabel);
+    }
+
+    #region Suspension Detection
+
+    private static bool ContainsSuspension(List<Stmt> statements)
+    {
+        foreach (var stmt in statements)
+        {
+            if (ContainsSuspensionInStmt(stmt))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool ContainsSuspensionInStmt(Stmt stmt)
+    {
+        switch (stmt)
+        {
+            case Stmt.Expression e:
+                return ContainsSuspensionInExpr(e.Expr);
+            case Stmt.Var v:
+                return v.Initializer != null && ContainsSuspensionInExpr(v.Initializer);
+            case Stmt.Const c:
+                return ContainsSuspensionInExpr(c.Initializer);
+            case Stmt.Return r:
+                return r.Value != null && ContainsSuspensionInExpr(r.Value);
+            case Stmt.If i:
+                return ContainsSuspensionInExpr(i.Condition) ||
+                       ContainsSuspensionInStmt(i.ThenBranch) ||
+                       (i.ElseBranch != null && ContainsSuspensionInStmt(i.ElseBranch));
+            case Stmt.While w:
+                return ContainsSuspensionInExpr(w.Condition) || ContainsSuspensionInStmt(w.Body);
+            case Stmt.DoWhile dw:
+                return ContainsSuspensionInStmt(dw.Body) || ContainsSuspensionInExpr(dw.Condition);
+            case Stmt.For f:
+                return (f.Initializer != null && ContainsSuspensionInStmt(f.Initializer)) ||
+                       (f.Condition != null && ContainsSuspensionInExpr(f.Condition)) ||
+                       (f.Increment != null && ContainsSuspensionInExpr(f.Increment)) ||
+                       ContainsSuspensionInStmt(f.Body);
+            case Stmt.ForOf fo:
+                return ContainsSuspensionInExpr(fo.Iterable) || ContainsSuspensionInStmt(fo.Body);
+            case Stmt.ForIn fi:
+                return ContainsSuspensionInExpr(fi.Object) || ContainsSuspensionInStmt(fi.Body);
+            case Stmt.Block b:
+                return b.Statements != null && ContainsSuspension(b.Statements);
+            case Stmt.Sequence seq:
+                return ContainsSuspension(seq.Statements);
+            case Stmt.TryCatch t:
+                return ContainsSuspension(t.TryBlock) ||
+                       (t.CatchBlock != null && ContainsSuspension(t.CatchBlock)) ||
+                       (t.FinallyBlock != null && ContainsSuspension(t.FinallyBlock));
+            default:
+                return false;
+        }
+    }
+
+    private static bool ContainsSuspensionInExpr(Expr expr)
+    {
+        switch (expr)
+        {
+            case Expr.Yield:
+            case Expr.Await:
+                return true;
+            case Expr.Comma c:
+                return ContainsSuspensionInExpr(c.Left) || ContainsSuspensionInExpr(c.Right);
+            case Expr.Binary b:
+                return ContainsSuspensionInExpr(b.Left) || ContainsSuspensionInExpr(b.Right);
+            case Expr.Logical l:
+                return ContainsSuspensionInExpr(l.Left) || ContainsSuspensionInExpr(l.Right);
+            case Expr.Unary u:
+                return ContainsSuspensionInExpr(u.Right);
+            case Expr.Delete d:
+                return ContainsSuspensionInExpr(d.Operand);
+            case Expr.Grouping g:
+                return ContainsSuspensionInExpr(g.Expression);
+            case Expr.Call c:
+                if (ContainsSuspensionInExpr(c.Callee)) return true;
+                foreach (var arg in c.Arguments)
+                    if (ContainsSuspensionInExpr(arg)) return true;
+                return false;
+            case Expr.Assign a:
+                return ContainsSuspensionInExpr(a.Value);
+            case Expr.Ternary t:
+                return ContainsSuspensionInExpr(t.Condition) ||
+                       ContainsSuspensionInExpr(t.ThenBranch) ||
+                       ContainsSuspensionInExpr(t.ElseBranch);
+            case Expr.Get g:
+                return ContainsSuspensionInExpr(g.Object);
+            case Expr.Set s:
+                return ContainsSuspensionInExpr(s.Object) || ContainsSuspensionInExpr(s.Value);
+            default:
+                return false;
+        }
+    }
+
+    #endregion
 
 }

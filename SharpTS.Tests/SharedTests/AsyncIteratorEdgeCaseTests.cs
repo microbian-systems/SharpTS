@@ -91,6 +91,9 @@ public class AsyncIteratorEdgeCaseTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_TryFinally_CleanupRuns(ExecutionMode mode)
     {
+        // Compiled mode: for-await-of break doesn't call generator.return() yet,
+        // so finally doesn't trigger on early exit. Kept InterpretedOnly until
+        // generator.return() semantics are implemented for for-await-of break.
         var source = """
             let cleanupRan = false;
 

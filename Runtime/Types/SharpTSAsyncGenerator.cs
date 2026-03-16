@@ -427,8 +427,8 @@ public class SharpTSAsyncGenerator
             throw new YieldException(value, yieldExpr.IsDelegating);
         }
 
-        // For other expressions, evaluate synchronously but check for yield
-        return _interpreter.Evaluate(expr);
+        // For other expressions, evaluate asynchronously to support nested await
+        return await _interpreter.EvaluateAsync(expr);
     }
 
     /// <summary>

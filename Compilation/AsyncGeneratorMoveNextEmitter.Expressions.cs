@@ -568,9 +568,20 @@ public partial class AsyncGeneratorMoveNextEmitter
             return;
         }
 
+        // Check captured top-level vars (entry-point display class)
+        if (_ctx!.CapturedTopLevelVars?.Contains(name) == true &&
+            _ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
+            _ctx.EntryPointDisplayClassStaticField != null)
+        {
+            _il.Emit(OpCodes.Ldsfld, _ctx.EntryPointDisplayClassStaticField);
+            _il.Emit(OpCodes.Ldfld, entryPointField);
+            SetStackUnknown();
+            return;
+        }
+
         // Check if it's an imported value (from another module) - must check BEFORE Functions
         // because cross-module function references need to go through the import field
-        if (_ctx!.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+        if (_ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
         {
             _il.Emit(OpCodes.Ldsfld, topLevelField);
             SetStackUnknown();
@@ -613,7 +624,25 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Dup);
 
         // Use resolver to store (consumes one copy, leaves one on stack as return value)
-        _resolver!.TryStoreVariable(name);
+        if (!_resolver!.TryStoreVariable(name))
+        {
+            // Fallback: check captured top-level vars (entry-point display class)
+            if (_ctx!.CapturedTopLevelVars?.Contains(name) == true &&
+                _ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
+                _ctx.EntryPointDisplayClassStaticField != null)
+            {
+                var temp = _il.DeclareLocal(typeof(object));
+                _il.Emit(OpCodes.Stloc, temp);
+                _il.Emit(OpCodes.Ldsfld, _ctx.EntryPointDisplayClassStaticField);
+                _il.Emit(OpCodes.Ldloc, temp);
+                _il.Emit(OpCodes.Stfld, entryPointField);
+            }
+            // Fallback: check top-level static vars
+            else if (_ctx!.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+            {
+                _il.Emit(OpCodes.Stsfld, topLevelField);
+            }
+        }
 
         SetStackUnknown();
     }

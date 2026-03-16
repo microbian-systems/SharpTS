@@ -928,11 +928,8 @@ public class AsyncGeneratorTests
         Assert.Equal("10\n20\n30\n", output);
     }
 
-    /// <summary>
-    /// Compiled-only: the interpreter doesn't support await inside binary expressions within yield.
-    /// </summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_YieldAwaitWithComputation(ExecutionMode mode)
     {
         var source = """
