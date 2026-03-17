@@ -33,7 +33,8 @@ public static class BuiltInModuleRegistry
         "dns",
         "dns/promises",
         "net",
-        "https"
+        "https",
+        "tls"
     ];
 
     /// <summary>

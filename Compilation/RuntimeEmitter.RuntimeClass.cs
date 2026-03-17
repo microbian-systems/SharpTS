@@ -394,6 +394,8 @@ public partial class RuntimeEmitter
         EmitHttpModuleMethods(typeBuilder, runtime);
         // Net module methods (net.createServer, net.connect, etc.)
         EmitNetModuleMethods(typeBuilder, runtime);
+        // TLS module methods (tls.createServer, tls.connect, etc.)
+        EmitTlsModuleMethods(typeBuilder, runtime);
         // globalThis methods (ES2020) - must be after HTTP for fetch reference
         EmitGlobalThisMethods(typeBuilder, runtime);
         // Define util inspect method signatures before ConsoleExtensions (ConsoleDir uses UtilInspectValue)

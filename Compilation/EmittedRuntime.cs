@@ -1242,6 +1242,13 @@ public class EmittedRuntime
     public MethodBuilder NetIsIPv4 { get; set; } = null!;
     public MethodBuilder NetIsIPv6 { get; set; } = null!;
 
+    // TLS module methods
+    public MethodBuilder TlsCreateServer { get; set; } = null!;
+    public MethodBuilder TlsConnect { get; set; } = null!;
+    public MethodBuilder TlsCreateSecureContext { get; set; } = null!;
+    public MethodBuilder TlsGetDefaultMinVersion { get; set; } = null!;
+    public MethodBuilder TlsGetDefaultMaxVersion { get; set; } = null!;
+
     // $Headers type - emitted for standalone Headers support
     public TypeBuilder TSHeadersType { get; set; } = null!;
     public ConstructorBuilder TSHeadersCtor { get; set; } = null!;

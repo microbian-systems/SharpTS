@@ -426,6 +426,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `buffer` | ✅ | Buffer.from, Buffer.alloc, Buffer.allocUnsafe, Buffer.concat, Buffer.isBuffer, Buffer.byteLength; instance methods: toString, slice, copy, write, fill, includes, indexOf, compare, equals, readUInt/Int, writeUInt/Int, toJSON |
 | `http` / `https` | ✅ | createServer, request, get; Server: listen, close; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
 | `net` | ✅ | createServer, createConnection/connect, Socket (EventEmitter + Duplex), Server (EventEmitter); isIP, isIPv4, isIPv6 |
+| `tls` | ✅ | createServer, connect, createSecureContext, TLSSocket (extends Socket), Server; DEFAULT_MIN_VERSION/MAX_VERSION; secureConnect/secureConnection/tlsClientError events |
 | `child_process` | ✅ | execSync, spawnSync, exec, spawn with ChildProcess EventEmitter |
 | `url` | ✅ | URL, URLSearchParams, fileURLToPath, pathToFileURL, format, parse |
 | `util` | ✅ | promisify, deprecate, types (isDate, isRegExp, isMap, isSet, etc.), format, inspect, TextEncoder, TextDecoder |

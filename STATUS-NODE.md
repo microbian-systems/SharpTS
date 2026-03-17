@@ -35,6 +35,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `perf_hooks` | ✅ | performance.now(), performance.timeOrigin |
 | `http` / `https` | ✅ | createServer, request, get; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
 | `net` | ✅ | createServer, createConnection/connect, Socket, Server; isIP, isIPv4, isIPv6 |
+| `tls` | ✅ | createServer, connect, createSecureContext, TLSSocket, Server; DEFAULT_MIN_VERSION, DEFAULT_MAX_VERSION; secureConnect/secureConnection/tlsClientError events |
 | `dns` | ✅ | lookup, lookupService, resolve, resolve4, resolve6, reverse, resolveMx, resolveTxt, resolveSrv, resolveCname, resolveNs, resolveSoa, resolvePtr, resolveCaa, resolveNaptr (callback + dns/promises) |
 | `zlib` | ✅ | gzip, deflate, deflateRaw, brotli, zstd (sync + streaming + async callback APIs) |
 | `worker_threads` | ⚠️ | Worker, MessageChannel, parentPort, workerData, isMainThread |
@@ -727,7 +728,41 @@ This document tracks Node.js module and API implementation status in SharpTS.
 
 ---
 
-## 23. WORKER_THREADS
+## 23. TLS (SSL)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Server** | | |
+| `createServer(options?, listener?)` | ✅ | Create TLS server with cert/key options |
+| `server.listen(port, host?, callback?)` | ✅ | Start listening; requires key+cert |
+| `server.close(callback?)` | ✅ | Stop accepting new connections |
+| `server.address()` | ✅ | Returns { address, family, port } |
+| `server.getConnections(callback)` | ✅ | Get number of concurrent connections |
+| `server.listening` | ✅ | Whether server is listening |
+| Server events | ✅ | 'secureConnection', 'tlsClientError', 'listening', 'close', 'error' |
+| **TLSSocket** | | |
+| `connect(port, host?, options?, callback?)` | ✅ | Create TLS client connection |
+| `connect(options, callback?)` | ✅ | Options-based connect variant |
+| `socket.authorized` | ✅ | Whether peer certificate was verified |
+| `socket.encrypted` | ✅ | Always true for TLS sockets |
+| `socket.alpnProtocol` | ✅ | Negotiated ALPN protocol |
+| `socket.getCipher()` | ✅ | Returns { name, standardName, version } |
+| `socket.getPeerCertificate()` | ✅ | Returns { subject, issuer, valid_from, valid_to, serialNumber } |
+| `socket.getProtocol()` | ✅ | Returns 'TLSv1.2' or 'TLSv1.3' |
+| All net.Socket methods | ✅ | Inherits write, end, destroy, setEncoding, etc. |
+| TLSSocket events | ✅ | 'secureConnect' + all net.Socket events |
+| **Module Functions** | | |
+| `createSecureContext(options?)` | ✅ | Create reusable secure context |
+| `DEFAULT_MIN_VERSION` | ✅ | 'TLSv1.2' |
+| `DEFAULT_MAX_VERSION` | ✅ | 'TLSv1.3' |
+| **Not Implemented** | | |
+| ALPN negotiation | ❌ | ALPNProtocols option not yet supported |
+| Client certificate auth | ⚠️ | requestCert option exists but limited |
+| SNI callback | ❌ | SNICallback not implemented |
+
+---
+
+## 24. WORKER_THREADS
 
 | Feature | Status | Notes |
 |---------|--------|-------|

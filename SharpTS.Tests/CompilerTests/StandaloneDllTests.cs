@@ -33,6 +33,7 @@ public class StandaloneDllTests
         "Compilation/RuntimeEmitter.ChildProcessHelpers.cs", // exec/spawn async delegation to interpreter module
         "Compilation/RuntimeEmitter.ProcessHelpers.cs",      // ProcessEventEmitterCall and ProcessEmitExit fallback
         "Compilation/RuntimeEmitter.Net.cs",                 // Net module createServer/createConnection via interpreter types
+        "Compilation/RuntimeEmitter.Tls.cs",                 // TLS module createServer/connect via interpreter types
         "Compilation/RuntimeEmitter.ZlibHelpers.cs",           // Zlib streaming createGzip/etc. via interpreter types
     };
 

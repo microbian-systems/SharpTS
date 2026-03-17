@@ -562,6 +562,13 @@ public partial class Interpreter
             return value;
         }
 
+        // Handle TLS server property assignment (maxConnections)
+        if (obj is SharpTSTlsServer tlsServer)
+        {
+            tlsServer.SetMember(set.Name.Lexeme, value);
+            return value;
+        }
+
         // Handle AbortSignal property assignment (onabort)
         if (obj is SharpTSAbortSignal signal)
         {

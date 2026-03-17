@@ -737,6 +737,12 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSNetServer), (instance, name) =>
             ((SharpTSNetServer)instance).GetMember(name));
 
+        // TLS types must be registered before their base types (subclass before superclass)
+        registry.RegisterInstanceType(typeof(SharpTSTlsSocket), (instance, name) =>
+            ((SharpTSTlsSocket)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSTlsServer), (instance, name) =>
+            ((SharpTSTlsServer)instance).GetMember(name));
+
         registry.RegisterInstanceType(typeof(SharpTSSocket), (instance, name) =>
             ((SharpTSSocket)instance).GetMember(name));
 

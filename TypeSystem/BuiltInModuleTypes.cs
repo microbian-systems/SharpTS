@@ -1419,6 +1419,7 @@ public static class BuiltInModuleTypes
             "dns" => GetDnsModuleTypes(),
             "dns/promises" => GetDnsPromisesModuleTypes(),
             "net" => GetNetModuleTypes(),
+            "tls" => GetTlsModuleTypes(),
             _ => null
         };
     }
@@ -1701,6 +1702,101 @@ public static class BuiltInModuleTypes
             ["isIPv6"] = new TypeInfo.Function([stringType], booleanType),
             ["Server"] = new TypeInfo.Function([anyType, anyType], serverType, RequiredParams: 0),
             ["Socket"] = new TypeInfo.Function([anyType], socketType, RequiredParams: 0)
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the tls module.
+    /// </summary>
+    public static Dictionary<string, TypeInfo> GetTlsModuleTypes()
+    {
+        var anyType = new TypeInfo.Any();
+        var stringType = new TypeInfo.String();
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        var booleanType = BooleanType;
+
+        // EventEmitter methods shared by Server and Socket
+        var eventEmitterMembers = new Dictionary<string, TypeInfo>
+        {
+            ["on"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["addListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["once"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["off"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["removeListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["removeAllListeners"] = new TypeInfo.Function([stringType], anyType, RequiredParams: 0),
+            ["emit"] = new TypeInfo.Function([stringType, anyType], booleanType, RequiredParams: 1, HasRestParam: true),
+            ["listenerCount"] = new TypeInfo.Function([stringType], numberType),
+            ["listeners"] = new TypeInfo.Function([stringType], new TypeInfo.Array(anyType)),
+            ["eventNames"] = new TypeInfo.Function([], new TypeInfo.Array(stringType)),
+            ["prependListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["prependOnceListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["setMaxListeners"] = new TypeInfo.Function([numberType], anyType),
+            ["getMaxListeners"] = new TypeInfo.Function([], numberType)
+        };
+
+        // TLSSocket type - extends Socket with TLS-specific members
+        var tlsSocketMembers = new Dictionary<string, TypeInfo>(eventEmitterMembers)
+        {
+            // Inherited Socket methods
+            ["connect"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
+            ["write"] = new TypeInfo.Function([anyType, anyType, anyType], booleanType, RequiredParams: 1),
+            ["end"] = new TypeInfo.Function([anyType, anyType, anyType], anyType, RequiredParams: 0),
+            ["destroy"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            ["setEncoding"] = new TypeInfo.Function([stringType], anyType),
+            ["setTimeout"] = new TypeInfo.Function([numberType, anyType], anyType, RequiredParams: 1),
+            ["setNoDelay"] = new TypeInfo.Function([booleanType], anyType, RequiredParams: 0),
+            ["setKeepAlive"] = new TypeInfo.Function([booleanType, numberType], anyType, RequiredParams: 0),
+            ["address"] = new TypeInfo.Function([], anyType),
+            ["ref"] = new TypeInfo.Function([], anyType),
+            ["unref"] = new TypeInfo.Function([], anyType),
+            ["pause"] = new TypeInfo.Function([], anyType),
+            ["resume"] = new TypeInfo.Function([], anyType),
+            ["pipe"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
+            ["remoteAddress"] = stringType,
+            ["remotePort"] = numberType,
+            ["remoteFamily"] = stringType,
+            ["localAddress"] = stringType,
+            ["localPort"] = numberType,
+            ["bytesRead"] = numberType,
+            ["bytesWritten"] = numberType,
+            ["connecting"] = booleanType,
+            ["destroyed"] = booleanType,
+            ["readyState"] = stringType,
+            // TLS-specific properties
+            ["authorized"] = booleanType,
+            ["encrypted"] = booleanType,
+            ["alpnProtocol"] = new TypeInfo.Union([stringType, new TypeInfo.Null()]),
+            // TLS-specific methods
+            ["getCipher"] = new TypeInfo.Function([], anyType),
+            ["getPeerCertificate"] = new TypeInfo.Function([booleanType], anyType, RequiredParams: 0),
+            ["getProtocol"] = new TypeInfo.Function([], new TypeInfo.Union([stringType, new TypeInfo.Null()])),
+            ["renegotiate"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 0)
+        };
+        var tlsSocketType = new TypeInfo.Record(tlsSocketMembers.ToFrozenDictionary());
+
+        // TLS Server type
+        var serverMembers = new Dictionary<string, TypeInfo>(eventEmitterMembers)
+        {
+            ["listen"] = new TypeInfo.Function([anyType, anyType, anyType, anyType], anyType, RequiredParams: 0),
+            ["close"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            ["address"] = new TypeInfo.Function([], anyType),
+            ["getConnections"] = new TypeInfo.Function([anyType], anyType),
+            ["ref"] = new TypeInfo.Function([], anyType),
+            ["unref"] = new TypeInfo.Function([], anyType),
+            ["listening"] = booleanType,
+            ["maxConnections"] = numberType
+        };
+        var serverType = new TypeInfo.Record(serverMembers.ToFrozenDictionary());
+
+        return new Dictionary<string, TypeInfo>
+        {
+            ["createServer"] = new TypeInfo.Function([anyType, anyType], serverType, RequiredParams: 0),
+            ["connect"] = new TypeInfo.Function([anyType, anyType, anyType, anyType], tlsSocketType, RequiredParams: 1),
+            ["createSecureContext"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            ["Server"] = new TypeInfo.Function([anyType, anyType], serverType, RequiredParams: 0),
+            ["TLSSocket"] = new TypeInfo.Function([anyType], tlsSocketType, RequiredParams: 0),
+            ["DEFAULT_MIN_VERSION"] = stringType,
+            ["DEFAULT_MAX_VERSION"] = stringType
         };
     }
 

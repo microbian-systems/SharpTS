@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -12,17 +13,17 @@ namespace SharpTS.Runtime.Types;
 /// </summary>
 public class SharpTSSocket : SharpTSEventEmitter
 {
-    private TcpClient? _client;
-    private NetworkStream? _stream;
-    private Interp? _interpreter;
+    protected internal TcpClient? _client;
+    protected internal Stream? _stream;
+    protected internal Interp? _interpreter;
     private bool _connecting;
-    private bool _destroyed;
+    protected internal bool _destroyed;
     private bool _ended;
     private int _bytesRead;
     private int _bytesWritten;
     private CancellationTokenSource? _readCts;
-    private string _encoding = "utf8";
-    private bool _readingStarted;
+    protected internal string _encoding = "utf8";
+    protected internal bool _readingStarted;
 
     /// <summary>
     /// Creates a new Socket wrapping an existing TcpClient (server-side).
@@ -346,7 +347,7 @@ public class SharpTSSocket : SharpTSEventEmitter
     /// Starts reading from the socket asynchronously.
     /// Called after connection is established.
     /// </summary>
-    internal void StartReading(Interp interpreter)
+    internal virtual void StartReading(Interp interpreter)
     {
         if (_destroyed || _stream == null) return;
 
@@ -426,7 +427,7 @@ public class SharpTSSocket : SharpTSEventEmitter
         }, token);
     }
 
-    internal void EmitEvent(Interp interpreter, string eventName, List<object?> args)
+    protected internal void EmitEvent(Interp interpreter, string eventName, List<object?> args)
     {
         var emit = base.GetMember("emit") as BuiltInMethod;
         if (emit != null)
@@ -437,7 +438,7 @@ public class SharpTSSocket : SharpTSEventEmitter
         }
     }
 
-    private static byte[] ChunkToBytes(object? chunk, string encoding)
+    protected internal static byte[] ChunkToBytes(object? chunk, string encoding)
     {
         return chunk switch
         {
