@@ -677,6 +677,10 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSTransform), (instance, name) =>
             ((SharpTSTransform)instance).GetMember(name));
 
+        // ZlibTransform stream members (extends Transform)
+        registry.RegisterInstanceType(typeof(SharpTSZlibTransform), (instance, name) =>
+            ((SharpTSZlibTransform)instance).GetMember(name));
+
         // PassThrough stream members (extends Transform)
         registry.RegisterInstanceType(typeof(SharpTSPassThrough), (instance, name) =>
             ((SharpTSPassThrough)instance).GetMember(name));

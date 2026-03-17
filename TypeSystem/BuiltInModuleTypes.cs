@@ -1235,6 +1235,8 @@ public static class BuiltInModuleTypes
     {
         var bufferType = new TypeInfo.Buffer();
         var anyType = new TypeInfo.Any();
+        var inputType = new TypeInfo.Union([bufferType, new TypeInfo.String()]);
+        var transformType = anyType; // Transform stream type
 
         return new Dictionary<string, TypeInfo>
         {
@@ -1304,6 +1306,46 @@ public static class BuiltInModuleTypes
                 bufferType,
                 RequiredParams: 1
             ),
+
+            // Streaming APIs (return Transform streams)
+            ["createGzip"] = new TypeInfo.Function(
+                [anyType], transformType, RequiredParams: 0),
+            ["createGunzip"] = new TypeInfo.Function(
+                [anyType], transformType, RequiredParams: 0),
+            ["createDeflate"] = new TypeInfo.Function(
+                [anyType], transformType, RequiredParams: 0),
+            ["createInflate"] = new TypeInfo.Function(
+                [anyType], transformType, RequiredParams: 0),
+            ["createDeflateRaw"] = new TypeInfo.Function(
+                [anyType], transformType, RequiredParams: 0),
+            ["createInflateRaw"] = new TypeInfo.Function(
+                [anyType], transformType, RequiredParams: 0),
+            ["createBrotliCompress"] = new TypeInfo.Function(
+                [anyType], transformType, RequiredParams: 0),
+            ["createBrotliDecompress"] = new TypeInfo.Function(
+                [anyType], transformType, RequiredParams: 0),
+            ["createUnzip"] = new TypeInfo.Function(
+                [anyType], transformType, RequiredParams: 0),
+
+            // Async callback APIs
+            ["gzip"] = new TypeInfo.Function(
+                [inputType, anyType, anyType], new TypeInfo.Void(), RequiredParams: 2),
+            ["gunzip"] = new TypeInfo.Function(
+                [inputType, anyType, anyType], new TypeInfo.Void(), RequiredParams: 2),
+            ["deflate"] = new TypeInfo.Function(
+                [inputType, anyType, anyType], new TypeInfo.Void(), RequiredParams: 2),
+            ["inflate"] = new TypeInfo.Function(
+                [inputType, anyType, anyType], new TypeInfo.Void(), RequiredParams: 2),
+            ["deflateRaw"] = new TypeInfo.Function(
+                [inputType, anyType, anyType], new TypeInfo.Void(), RequiredParams: 2),
+            ["inflateRaw"] = new TypeInfo.Function(
+                [inputType, anyType, anyType], new TypeInfo.Void(), RequiredParams: 2),
+            ["brotliCompress"] = new TypeInfo.Function(
+                [inputType, anyType, anyType], new TypeInfo.Void(), RequiredParams: 2),
+            ["brotliDecompress"] = new TypeInfo.Function(
+                [inputType, anyType, anyType], new TypeInfo.Void(), RequiredParams: 2),
+            ["unzip"] = new TypeInfo.Function(
+                [inputType, anyType, anyType], new TypeInfo.Void(), RequiredParams: 2),
 
             // Constants object
             ["constants"] = anyType

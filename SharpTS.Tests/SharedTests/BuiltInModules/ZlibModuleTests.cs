@@ -566,4 +566,302 @@ public class ZlibModuleTests
     }
 
     #endregion
+
+    #region Streaming API Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Zlib_CreateGzip_WriteAndRead(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+
+                const gzip = zlib.createGzip();
+                const chunks: Buffer[] = [];
+
+                gzip.on('data', (chunk: Buffer) => {
+                    chunks.push(chunk);
+                });
+                gzip.on('end', () => {
+                    const compressed = Buffer.concat(chunks);
+                    const decompressed = zlib.gunzipSync(compressed);
+                    console.log(decompressed.toString());
+                });
+
+                gzip.write('hello world');
+                gzip.end();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("hello world\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Zlib_CreateDeflate_WriteAndVerify(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+
+                const deflate = zlib.createDeflate();
+                const chunks: Buffer[] = [];
+
+                deflate.on('data', (chunk: Buffer) => {
+                    chunks.push(chunk);
+                });
+                deflate.on('end', () => {
+                    const compressed = Buffer.concat(chunks);
+                    const decompressed = zlib.inflateSync(compressed);
+                    console.log(decompressed.toString());
+                });
+
+                deflate.write('compressed data');
+                deflate.end();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("compressed data\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Zlib_CreateBrotliCompress_WriteAndVerify(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+
+                const compress = zlib.createBrotliCompress();
+                const chunks: Buffer[] = [];
+
+                compress.on('data', (chunk: Buffer) => {
+                    chunks.push(chunk);
+                });
+                compress.on('end', () => {
+                    const compressed = Buffer.concat(chunks);
+                    const decompressed = zlib.brotliDecompressSync(compressed);
+                    console.log(decompressed.toString());
+                });
+
+                compress.write('brotli test data');
+                compress.end();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("brotli test data\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Zlib_CreateGzip_WriteAndCollect(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+
+                const gzip = zlib.createGzip();
+                const chunks: Buffer[] = [];
+
+                gzip.on('data', (chunk: Buffer) => {
+                    chunks.push(chunk);
+                });
+                gzip.on('end', () => {
+                    const compressed = Buffer.concat(chunks);
+                    // Verify it's valid gzip by decompressing with sync API
+                    const decompressed = zlib.gunzipSync(compressed);
+                    console.log(decompressed.toString());
+                });
+
+                gzip.write('streaming ');
+                gzip.write('compression');
+                gzip.end();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("streaming compression\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Zlib_CreateDeflateRaw_WriteAndVerify(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+
+                const deflate = zlib.createDeflateRaw();
+                const chunks: Buffer[] = [];
+
+                deflate.on('data', (chunk: Buffer) => {
+                    chunks.push(chunk);
+                });
+                deflate.on('end', () => {
+                    const compressed = Buffer.concat(chunks);
+                    const decompressed = zlib.inflateRawSync(compressed);
+                    console.log(decompressed.toString());
+                });
+
+                deflate.write('raw deflate test');
+                deflate.end();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("raw deflate test\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Zlib_CreateUnzip_AutoDetectsGzip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+
+                // Compress with gzip first
+                const compressed = zlib.gzipSync('auto detect me');
+
+                // Decompress with createUnzip (auto-detect)
+                const unzip = zlib.createUnzip();
+                const chunks: Buffer[] = [];
+                unzip.on('data', (chunk: Buffer) => {
+                    chunks.push(chunk);
+                });
+                unzip.on('end', () => {
+                    console.log(Buffer.concat(chunks).toString());
+                });
+
+                unzip.write(compressed);
+                unzip.end();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("auto detect me\n", output);
+    }
+
+    #endregion
+
+    #region Async Callback API Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Gzip_Async_Callback(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+
+                const input = Buffer.from('async gzip test');
+                zlib.gzip(input, (err: any, result: Buffer) => {
+                    if (err) {
+                        console.log('error: ' + err);
+                        return;
+                    }
+                    const decompressed = zlib.gunzipSync(result);
+                    console.log(decompressed.toString());
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("async gzip test\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Deflate_Async_Callback(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+
+                zlib.deflate('async deflate', (err: any, result: Buffer) => {
+                    if (err) {
+                        console.log('error: ' + err);
+                        return;
+                    }
+                    const decompressed = zlib.inflateSync(result);
+                    console.log(decompressed.toString());
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("async deflate\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Zlib_BrotliCompress_Async_Callback(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+
+                zlib.brotliCompress('async brotli', (err: any, result: Buffer) => {
+                    if (err) {
+                        console.log('error: ' + err);
+                        return;
+                    }
+                    const decompressed = zlib.brotliDecompressSync(result);
+                    console.log(decompressed.toString());
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("async brotli\n", output);
+    }
+
+    #endregion
+
+    #region Named Import Tests for Streaming APIs
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Zlib_NamedImport_CreateGzip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { createGzip, gunzipSync } from 'zlib';
+
+                const gzip = createGzip();
+                const chunks: Buffer[] = [];
+
+                gzip.on('data', (chunk: Buffer) => {
+                    chunks.push(chunk);
+                });
+                gzip.on('end', () => {
+                    const compressed = Buffer.concat(chunks);
+                    const decompressed = gunzipSync(compressed);
+                    console.log(decompressed.toString());
+                });
+
+                gzip.write('named import streaming');
+                gzip.end();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("named import streaming\n", output);
+    }
+
+    #endregion
 }

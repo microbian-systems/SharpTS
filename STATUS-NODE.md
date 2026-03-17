@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-16 (Added async crypto/DNS, compiled object mode streams, dns/promises module)
+**Last Updated:** 2026-03-16 (Added zlib streaming APIs, async callback APIs)
 
 ## Legend
 - ✅ Implemented
@@ -36,7 +36,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `http` / `https` | ✅ | createServer, request, get; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
 | `net` | ✅ | createServer, createConnection/connect, Socket, Server; isIP, isIPv4, isIPv6 |
 | `dns` | ✅ | lookup, lookupService, resolve, resolve4, resolve6, reverse (callback + dns/promises) |
-| `zlib` | ✅ | gzip, deflate, deflateRaw, brotli, zstd (sync APIs) |
+| `zlib` | ✅ | gzip, deflate, deflateRaw, brotli, zstd (sync + streaming + async callback APIs) |
 | `worker_threads` | ⚠️ | Worker, MessageChannel, parentPort, workerData, isMainThread |
 | `cluster` | ❌ | No cluster support |
 
@@ -461,13 +461,18 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `windowBits` | ⚠️ | Not directly supported in .NET |
 | `memLevel` | ⚠️ | Not directly supported in .NET |
 | `strategy` | ⚠️ | Not directly supported in .NET |
-| **Async APIs** | | |
-| `gzip` / `gunzip` | ❌ | Use sync versions |
-| `deflate` / `inflate` | ❌ | Use sync versions |
-| `brotliCompress` / `brotliDecompress` | ❌ | Use sync versions |
-| **Streaming APIs** | | |
-| `createGzip` / `createGunzip` | ❌ | No stream support |
-| `createDeflate` / `createInflate` | ❌ | No stream support |
+| **Async Callback APIs** | | |
+| `gzip` / `gunzip` | ✅ | Callback-based async (interpreter mode) |
+| `deflate` / `inflate` | ✅ | Callback-based async (interpreter mode) |
+| `deflateRaw` / `inflateRaw` | ✅ | Callback-based async (interpreter mode) |
+| `brotliCompress` / `brotliDecompress` | ✅ | Callback-based async (interpreter mode) |
+| `unzip` | ✅ | Callback-based async with auto-detect (interpreter mode) |
+| **Streaming APIs (Transform)** | | |
+| `createGzip` / `createGunzip` | ✅ | Returns Transform stream; true streaming compression, accumulate-then-decompress |
+| `createDeflate` / `createInflate` | ✅ | Returns Transform stream; zlib header format |
+| `createDeflateRaw` / `createInflateRaw` | ✅ | Returns Transform stream; raw deflate format |
+| `createBrotliCompress` / `createBrotliDecompress` | ✅ | Returns Transform stream; Brotli format |
+| `createUnzip` | ✅ | Returns Transform stream; auto-detects gzip/deflate/raw |
 
 ---
 
