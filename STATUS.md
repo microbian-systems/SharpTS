@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-03-16 (Added zlib streaming APIs and async callback APIs)
+**Last Updated:** 2026-03-16 (Added DNS record type resolution: MX, TXT, SRV, CNAME, NS, SOA, PTR, CAA, NAPTR)
 
 ## Legend
 - ✅ Implemented
@@ -431,7 +431,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `util` | ✅ | promisify, deprecate, types (isDate, isRegExp, isMap, isSet, etc.), format, inspect, TextEncoder, TextDecoder |
 | `querystring` | ✅ | parse, stringify, escape, unescape |
 | `zlib` | ✅ | Sync: gzipSync, gunzipSync, deflateSync, inflateSync, deflateRawSync, inflateRawSync, brotliCompressSync, brotliDecompressSync; Streaming: createGzip, createGunzip, createDeflate, createInflate, createDeflateRaw, createInflateRaw, createBrotliCompress, createBrotliDecompress, createUnzip; Async callback: gzip, gunzip, deflate, inflate, deflateRaw, inflateRaw, brotliCompress, brotliDecompress, unzip |
-| `dns` | ✅ | lookup, lookupService, resolve, resolve4, resolve6, reverse (callback + dns/promises) |
+| `dns` | ✅ | lookup, lookupService, resolve, resolve4, resolve6, reverse, resolveMx, resolveTxt, resolveSrv, resolveCname, resolveNs, resolveSoa, resolvePtr, resolveCaa, resolveNaptr (callback + dns/promises) |
 | `assert` | ✅ | ok, equal, notEqual, deepEqual, notDeepEqual, strictEqual, notStrictEqual, deepStrictEqual, throws, doesNotThrow, rejects, doesNotReject, fail, match, doesNotMatch, assert.strict |
 | `readline` | ✅ | createInterface, question, close |
 | `string_decoder` | ✅ | StringDecoder: write, end, encoding |

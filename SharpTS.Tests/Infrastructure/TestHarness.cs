@@ -263,11 +263,20 @@ public static class TestHarness
             compiler.Compile(statements, typeMap, deadCodeInfo);
             compiler.Save(dllPath);
 
-            // Copy SharpTS.dll for runtime dependency (needed for Promise.all/race/allSettled/any)
+            // Copy SharpTS.dll and its dependencies for runtime dependency (needed for Promise.all/race/allSettled/any)
             var sharpTsDll = typeof(RuntimeTypes).Assembly.Location;
             if (!string.IsNullOrEmpty(sharpTsDll) && File.Exists(sharpTsDll))
             {
                 File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
+
+                // Copy transitive dependencies needed by SharpTS runtime helpers
+                var sharpTsDir = Path.GetDirectoryName(sharpTsDll)!;
+                foreach (var dep in new[] { "DnsClient.dll" })
+                {
+                    var depPath = Path.Combine(sharpTsDir, dep);
+                    if (File.Exists(depPath))
+                        File.Copy(depPath, Path.Combine(tempDir, dep), overwrite: true);
+                }
             }
 
             // Write runtimeconfig.json
@@ -454,11 +463,20 @@ public static class TestHarness
         compiler.Compile(statements, typeMap, deadCodeInfo);
         compiler.Save(dllPath);
 
-        // Copy SharpTS.dll for runtime dependency
+        // Copy SharpTS.dll and its dependencies for runtime dependency
         var sharpTsDll = typeof(RuntimeTypes).Assembly.Location;
         if (!string.IsNullOrEmpty(sharpTsDll) && File.Exists(sharpTsDll))
         {
             File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
+
+            // Copy transitive dependencies needed by SharpTS runtime helpers
+            var sharpTsDir = Path.GetDirectoryName(sharpTsDll)!;
+            foreach (var dep in new[] { "DnsClient.dll" })
+            {
+                var depPath = Path.Combine(sharpTsDir, dep);
+                if (File.Exists(depPath))
+                    File.Copy(depPath, Path.Combine(tempDir, dep), overwrite: true);
+            }
         }
 
         // Write runtimeconfig.json
@@ -624,11 +642,20 @@ public static class TestHarness
             compiler.CompileModules(allModules, resolver, typeMap, deadCodeInfo);
             compiler.Save(dllPath);
 
-            // Copy SharpTS.dll for runtime dependency
+            // Copy SharpTS.dll and its dependencies for runtime dependency
             var sharpTsDll = typeof(RuntimeTypes).Assembly.Location;
             if (!string.IsNullOrEmpty(sharpTsDll) && File.Exists(sharpTsDll))
             {
                 File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
+
+                // Copy transitive dependencies needed by SharpTS runtime helpers
+                var sharpTsDir = Path.GetDirectoryName(sharpTsDll)!;
+                foreach (var dep in new[] { "DnsClient.dll" })
+                {
+                    var depPath = Path.Combine(sharpTsDir, dep);
+                    if (File.Exists(depPath))
+                        File.Copy(depPath, Path.Combine(tempDir, dep), overwrite: true);
+                }
             }
 
             // Write runtimeconfig.json
@@ -787,11 +814,20 @@ public static class TestHarness
             var allErrors = VerifyIL(dllPath);
             var errors = allErrors.Where(e => !e.Contains("Failed to load assembly")).ToList();
 
-            // Copy SharpTS.dll for runtime dependency
+            // Copy SharpTS.dll and its dependencies for runtime dependency
             var sharpTsDll = typeof(RuntimeTypes).Assembly.Location;
             if (!string.IsNullOrEmpty(sharpTsDll) && File.Exists(sharpTsDll))
             {
                 File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
+
+                // Copy transitive dependencies needed by SharpTS runtime helpers
+                var sharpTsDir = Path.GetDirectoryName(sharpTsDll)!;
+                foreach (var dep in new[] { "DnsClient.dll" })
+                {
+                    var depPath = Path.Combine(sharpTsDir, dep);
+                    if (File.Exists(depPath))
+                        File.Copy(depPath, Path.Combine(tempDir, dep), overwrite: true);
+                }
             }
 
             // Write runtimeconfig.json

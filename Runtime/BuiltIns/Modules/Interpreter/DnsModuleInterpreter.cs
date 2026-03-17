@@ -13,6 +13,7 @@ namespace SharpTS.Runtime.BuiltIns.Modules.Interpreter;
 /// Provides synchronous DNS resolution methods.
 /// In Node.js, dns.lookup uses the OS resolver and is typically callback-based.
 /// SharpTS implements synchronous versions that return results directly.
+/// Record-type resolution (MX, TXT, SRV, etc.) delegates to <see cref="DnsRecordResolver"/>.
 /// </remarks>
 public static class DnsModuleInterpreter
 {
@@ -32,6 +33,15 @@ public static class DnsModuleInterpreter
             ["resolve4"] = new BuiltInMethod("resolve4", 2, Resolve4Async),
             ["resolve6"] = new BuiltInMethod("resolve6", 2, Resolve6Async),
             ["reverse"] = new BuiltInMethod("reverse", 2, ReverseAsync),
+            ["resolveMx"] = new BuiltInMethod("resolveMx", 2, ResolveMxAsync),
+            ["resolveTxt"] = new BuiltInMethod("resolveTxt", 2, ResolveTxtAsync),
+            ["resolveSrv"] = new BuiltInMethod("resolveSrv", 2, ResolveSrvAsync),
+            ["resolveCname"] = new BuiltInMethod("resolveCname", 2, ResolveCnameAsync),
+            ["resolveNs"] = new BuiltInMethod("resolveNs", 2, ResolveNsAsync),
+            ["resolveSoa"] = new BuiltInMethod("resolveSoa", 2, ResolveSoaAsync),
+            ["resolvePtr"] = new BuiltInMethod("resolvePtr", 2, ResolvePtrAsync),
+            ["resolveCaa"] = new BuiltInMethod("resolveCaa", 2, ResolveCaaAsync),
+            ["resolveNaptr"] = new BuiltInMethod("resolveNaptr", 2, ResolveNaptrAsync),
 
             // Promises API
             ["promises"] = new SharpTSObject(GetPromisesExports()),
@@ -78,24 +88,22 @@ public static class DnsModuleInterpreter
             ["resolve"] = new BuiltInAsyncMethod("resolve", 1, 2, ResolvePromise),
             ["resolve4"] = new BuiltInAsyncMethod("resolve4", 1, 1, Resolve4Promise),
             ["resolve6"] = new BuiltInAsyncMethod("resolve6", 1, 1, Resolve6Promise),
-            ["reverse"] = new BuiltInAsyncMethod("reverse", 1, 1, ReversePromise)
+            ["reverse"] = new BuiltInAsyncMethod("reverse", 1, 1, ReversePromise),
+            ["resolveMx"] = new BuiltInAsyncMethod("resolveMx", 1, 1, ResolveMxPromise),
+            ["resolveTxt"] = new BuiltInAsyncMethod("resolveTxt", 1, 1, ResolveTxtPromise),
+            ["resolveSrv"] = new BuiltInAsyncMethod("resolveSrv", 1, 1, ResolveSrvPromise),
+            ["resolveCname"] = new BuiltInAsyncMethod("resolveCname", 1, 1, ResolveCnamePromise),
+            ["resolveNs"] = new BuiltInAsyncMethod("resolveNs", 1, 1, ResolveNsPromise),
+            ["resolveSoa"] = new BuiltInAsyncMethod("resolveSoa", 1, 1, ResolveSoaPromise),
+            ["resolvePtr"] = new BuiltInAsyncMethod("resolvePtr", 1, 1, ResolvePtrPromise),
+            ["resolveCaa"] = new BuiltInAsyncMethod("resolveCaa", 1, 1, ResolveCaaPromise),
+            ["resolveNaptr"] = new BuiltInAsyncMethod("resolveNaptr", 1, 1, ResolveNaptrPromise)
         };
     }
 
     /// <summary>
     /// dns.lookup(hostname[, options][, callback]) - Resolves a hostname to an IP address.
     /// </summary>
-    /// <remarks>
-    /// Options can be:
-    /// - A number specifying the address family (4 for IPv4, 6 for IPv6, 0 for both)
-    /// - An object with { family?: number, hints?: number, all?: boolean }
-    ///
-    /// Returns:
-    /// - If all is false (default): { address: string, family: number }
-    /// - If all is true: Array of { address: string, family: number }
-    ///
-    /// In Node.js this is async with callback, but SharpTS uses synchronous pattern.
-    /// </remarks>
     private static object? Lookup(Interp interpreter, object? receiver, List<object?> args)
     {
         if (args.Count == 0 || args[0] is not string hostname)
@@ -245,10 +253,90 @@ public static class DnsModuleInterpreter
         return new SharpTSArray(addresses.Select(a => (object?)a.ToString()).ToList());
     }
 
+    /// <summary>
+    /// Wraps raw DNS resolution results from DnsRecordResolver into SharpTS types.
+    /// List&lt;object?&gt; of dicts → SharpTSArray of SharpTSObjects,
+    /// List&lt;object?&gt; of lists (TXT) → SharpTSArray of SharpTSArrays,
+    /// List&lt;object?&gt; of strings → SharpTSArray,
+    /// Dictionary → SharpTSObject.
+    /// </summary>
+    private static object WrapDnsResult(object raw)
+    {
+        if (raw is Dictionary<string, object?> dict)
+            return new SharpTSObject(dict);
+
+        if (raw is List<object?> list)
+        {
+            var wrapped = list.Select<object?, object?>(item => item switch
+            {
+                Dictionary<string, object?> d => new SharpTSObject(d),
+                List<object?> inner => new SharpTSArray(inner),
+                _ => item
+            }).ToList();
+            return new SharpTSArray(wrapped);
+        }
+
+        return raw;
+    }
+
     #region Async Callback-based DNS Resolution
 
     /// <summary>
-    /// dns.resolve(hostname[, rrtype], callback) - Resolve hostname to array of addresses.
+    /// Generic helper for callback-based async DNS resolution using DnsRecordResolver.
+    /// </summary>
+    private static object? ResolveRecordAsync(Interp interpreter, string methodName, List<object?> args,
+        Func<string, object> resolveFunc)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        var callback = args[^1] as ISharpTSCallable
+            ?? throw new Exception($"Runtime Error: dns.{methodName} callback is required");
+
+        interpreter.Ref();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var raw = resolveFunc(hostname);
+                var result = WrapDnsResult(raw);
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter, [null, result]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+            catch (Exception ex)
+            {
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+        });
+
+        return SharpTSUndefined.Instance;
+    }
+
+    /// <summary>
+    /// Extracts the DNS error code from an exception message.
+    /// </summary>
+    private static string ExtractErrorCode(Exception ex)
+    {
+        var msg = ex.Message;
+        // Error messages follow pattern "Runtime Error: dns.xxx ECODE hostname"
+        if (msg.StartsWith("Runtime Error:"))
+        {
+            var parts = msg.Split(' ');
+            if (parts.Length >= 4)
+                return parts[3]; // The error code
+        }
+        if (ex is SocketException sex)
+            return GetErrorCode(sex);
+        return "EAI_FAIL";
+    }
+
+    /// <summary>
+    /// dns.resolve(hostname[, rrtype], callback) - Resolve hostname using specified record type.
     /// </summary>
     private static object? ResolveAsync(Interp interpreter, object? receiver, List<object?> args)
     {
@@ -266,24 +354,19 @@ public static class DnsModuleInterpreter
         {
             try
             {
-                AddressFamily? family = rrtype.ToUpperInvariant() switch
-                {
-                    "A" => AddressFamily.InterNetwork,
-                    "AAAA" => AddressFamily.InterNetworkV6,
-                    _ => null // For unrecognized, return all
-                };
-                var result = ResolveAddresses(hostname, family);
+                var raw = DnsRecordResolver.Resolve(hostname, rrtype);
+                var result = WrapDnsResult(raw);
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
                     callback.Call(interpreter, [null, result]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
-            catch (SocketException ex)
+            catch (Exception ex)
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [CreateDnsError(GetErrorCode(ex), hostname), null]);
+                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -406,6 +489,33 @@ public static class DnsModuleInterpreter
         return SharpTSUndefined.Instance;
     }
 
+    private static object? ResolveMxAsync(Interp interpreter, object? receiver, List<object?> args) =>
+        ResolveRecordAsync(interpreter, "resolveMx", args, DnsRecordResolver.ResolveMx);
+
+    private static object? ResolveTxtAsync(Interp interpreter, object? receiver, List<object?> args) =>
+        ResolveRecordAsync(interpreter, "resolveTxt", args, DnsRecordResolver.ResolveTxt);
+
+    private static object? ResolveSrvAsync(Interp interpreter, object? receiver, List<object?> args) =>
+        ResolveRecordAsync(interpreter, "resolveSrv", args, DnsRecordResolver.ResolveSrv);
+
+    private static object? ResolveCnameAsync(Interp interpreter, object? receiver, List<object?> args) =>
+        ResolveRecordAsync(interpreter, "resolveCname", args, DnsRecordResolver.ResolveCname);
+
+    private static object? ResolveNsAsync(Interp interpreter, object? receiver, List<object?> args) =>
+        ResolveRecordAsync(interpreter, "resolveNs", args, DnsRecordResolver.ResolveNs);
+
+    private static object? ResolveSoaAsync(Interp interpreter, object? receiver, List<object?> args) =>
+        ResolveRecordAsync(interpreter, "resolveSoa", args, hostname => DnsRecordResolver.ResolveSoa(hostname));
+
+    private static object? ResolvePtrAsync(Interp interpreter, object? receiver, List<object?> args) =>
+        ResolveRecordAsync(interpreter, "resolvePtr", args, DnsRecordResolver.ResolvePtr);
+
+    private static object? ResolveCaaAsync(Interp interpreter, object? receiver, List<object?> args) =>
+        ResolveRecordAsync(interpreter, "resolveCaa", args, DnsRecordResolver.ResolveCaa);
+
+    private static object? ResolveNaptrAsync(Interp interpreter, object? receiver, List<object?> args) =>
+        ResolveRecordAsync(interpreter, "resolveNaptr", args, DnsRecordResolver.ResolveNaptr);
+
     #endregion
 
     #region Promise-based DNS Resolution
@@ -445,16 +555,7 @@ public static class DnsModuleInterpreter
         string rrtype = "A";
         if (args.Count > 1 && args[1] is string rt) rrtype = rt;
 
-        return await Task.Run<object?>(() =>
-        {
-            AddressFamily? family = rrtype.ToUpperInvariant() switch
-            {
-                "A" => AddressFamily.InterNetwork,
-                "AAAA" => AddressFamily.InterNetworkV6,
-                _ => null
-            };
-            return ResolveAddresses(hostname, family);
-        });
+        return await Task.Run<object?>(() => WrapDnsResult(DnsRecordResolver.Resolve(hostname, rrtype)));
     }
 
     private static async Task<object?> Resolve4Promise(Interp interpreter, object? receiver, List<object?> args)
@@ -479,6 +580,60 @@ public static class DnsModuleInterpreter
             var hostEntry = Dns.GetHostEntry(ipAddress);
             return new SharpTSArray(new List<object?> { hostEntry.HostName });
         });
+    }
+
+    private static async Task<object?> ResolveMxPromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        return await Task.Run<object?>(() => WrapDnsResult(DnsRecordResolver.ResolveMx(hostname)));
+    }
+
+    private static async Task<object?> ResolveTxtPromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        return await Task.Run<object?>(() => WrapDnsResult(DnsRecordResolver.ResolveTxt(hostname)));
+    }
+
+    private static async Task<object?> ResolveSrvPromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        return await Task.Run<object?>(() => WrapDnsResult(DnsRecordResolver.ResolveSrv(hostname)));
+    }
+
+    private static async Task<object?> ResolveCnamePromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        return await Task.Run<object?>(() => WrapDnsResult(DnsRecordResolver.ResolveCname(hostname)));
+    }
+
+    private static async Task<object?> ResolveNsPromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        return await Task.Run<object?>(() => WrapDnsResult(DnsRecordResolver.ResolveNs(hostname)));
+    }
+
+    private static async Task<object?> ResolveSoaPromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        return await Task.Run<object?>(() => WrapDnsResult(DnsRecordResolver.ResolveSoa(hostname)));
+    }
+
+    private static async Task<object?> ResolvePtrPromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        return await Task.Run<object?>(() => WrapDnsResult(DnsRecordResolver.ResolvePtr(hostname)));
+    }
+
+    private static async Task<object?> ResolveCaaPromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        return await Task.Run<object?>(() => WrapDnsResult(DnsRecordResolver.ResolveCaa(hostname)));
+    }
+
+    private static async Task<object?> ResolveNaptrPromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        return await Task.Run<object?>(() => WrapDnsResult(DnsRecordResolver.ResolveNaptr(hostname)));
     }
 
     #endregion

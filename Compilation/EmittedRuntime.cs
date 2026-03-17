@@ -1856,6 +1856,9 @@ public class EmittedRuntime
     public MethodBuilder DnsLookupService { get; set; } = null!;
     public MethodBuilder DnsGetLookup { get; set; } = null!;
     public MethodBuilder DnsGetLookupService { get; set; } = null!;
+    public MethodBuilder DnsResolveRecord { get; set; } = null!;
+    public MethodBuilder DnsConvertList { get; set; } = null!;
+    public MethodBuilder DnsDoQuery { get; set; } = null!;
 
     // ============================================================
     // Private Field/Method Access Helpers for Async Contexts

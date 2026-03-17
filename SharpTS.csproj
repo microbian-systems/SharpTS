@@ -28,8 +28,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="LICENSE" Pack="true" PackagePath=""/>
-    <None Include="README.md" Pack="true" PackagePath=""/>
+    <None Include="LICENSE" Pack="true" PackagePath="" />
+    <None Include="README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 
   <!-- Exclude test, example, benchmark, and SDK projects from this compilation -->
@@ -49,8 +49,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="DnsClient" Version="1.8.0" />
     <PackageReference Include="MinVer" Version="6.0.0" PrivateAssets="All" />
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All"/>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
     <PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" />
     <PackageReference Include="Microsoft.ILVerification" Version="10.0.0" />
     <PackageReference Include="NuGet.Packaging" Version="7.0.1" />

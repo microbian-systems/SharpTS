@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-16 (Added zlib streaming APIs, async callback APIs)
+**Last Updated:** 2026-03-16 (Added DNS record type resolution: MX, TXT, SRV, CNAME, NS, SOA, PTR, CAA, NAPTR)
 
 ## Legend
 - ✅ Implemented
@@ -35,7 +35,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `perf_hooks` | ✅ | performance.now(), performance.timeOrigin |
 | `http` / `https` | ✅ | createServer, request, get; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
 | `net` | ✅ | createServer, createConnection/connect, Socket, Server; isIP, isIPv4, isIPv6 |
-| `dns` | ✅ | lookup, lookupService, resolve, resolve4, resolve6, reverse (callback + dns/promises) |
+| `dns` | ✅ | lookup, lookupService, resolve, resolve4, resolve6, reverse, resolveMx, resolveTxt, resolveSrv, resolveCname, resolveNs, resolveSoa, resolvePtr, resolveCaa, resolveNaptr (callback + dns/promises) |
 | `zlib` | ✅ | gzip, deflate, deflateRaw, brotli, zstd (sync + streaming + async callback APIs) |
 | `worker_threads` | ⚠️ | Worker, MessageChannel, parentPort, workerData, isMainThread |
 | `cluster` | ❌ | No cluster support |
@@ -632,16 +632,23 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `V4MAPPED` | ✅ | Map IPv4 to IPv6 hint |
 | `ALL` | ✅ | Return all addresses hint |
 | **Async Resolution** | | |
-| `resolve` | ✅ | Async callback-based; supports rrtype parameter (A, AAAA) |
+| `resolve` | ✅ | Async callback-based; supports rrtype parameter (A, AAAA, MX, TXT, SRV, CNAME, NS, SOA, PTR, CAA, NAPTR) |
 | `resolve4` | ✅ | Async callback-based; resolves IPv4 addresses |
 | `resolve6` | ✅ | Async callback-based; resolves IPv6 addresses |
 | `reverse` | ✅ | Async callback-based; reverse DNS lookup |
+| `resolveMx` | ✅ | MX records → `[{ exchange, priority }]` |
+| `resolveTxt` | ✅ | TXT records → `string[][]` (chunks per record) |
+| `resolveSrv` | ✅ | SRV records → `[{ name, port, priority, weight }]` |
+| `resolveCname` | ✅ | CNAME records → `string[]` |
+| `resolveNs` | ✅ | NS records → `string[]` |
+| `resolveSoa` | ✅ | SOA record → `{ nsname, hostmaster, serial, refresh, retry, expire, minttl }` |
+| `resolvePtr` | ✅ | PTR records → `string[]` |
+| `resolveCaa` | ✅ | CAA records → `[{ critical, issue/issuewild/iodef }]` |
+| `resolveNaptr` | ✅ | NAPTR records → `[{ flags, service, regexp, replacement, order, preference }]` |
 | **Promise API** | | |
-| `dns/promises` | ✅ | Promise-based: lookup, resolve, resolve4, resolve6, reverse |
+| `dns/promises` | ✅ | Promise-based: all callback methods available as promise variants |
 | `dns.promises` | ✅ | Sub-module access to promise API |
 | **Not Implemented** | | |
-| `resolveMx` / `resolveTxt` | ❌ | MX/TXT record lookup (requires DnsClient) |
-| `resolveSrv` / `resolveCname` | ❌ | SRV/CNAME record lookup |
 | `Resolver` class | ❌ | Use module methods |
 
 ---

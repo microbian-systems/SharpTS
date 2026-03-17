@@ -18,6 +18,8 @@ public sealed class DnsModuleEmitter : IBuiltInModuleEmitter
     [
         "lookup", "lookupService",
         "resolve", "resolve4", "resolve6", "reverse",
+        "resolveMx", "resolveTxt", "resolveSrv", "resolveCname", "resolveNs",
+        "resolveSoa", "resolvePtr", "resolveCaa", "resolveNaptr",
         "ADDRCONFIG", "V4MAPPED", "ALL",
         "NODATA", "FORMERR", "SERVFAIL", "NOTFOUND", "NOTIMP", "REFUSED",
         "BADQUERY", "BADNAME", "BADFAMILY", "BADRESP", "CONNREFUSED", "TIMEOUT",

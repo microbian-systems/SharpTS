@@ -1480,6 +1480,42 @@ public static class BuiltInModuleTypes
             ["reverse"] = new TypeInfo.Function(
                 [stringType, anyType],
                 new TypeInfo.Void()),
+            // dns.resolveMx(hostname, callback) -> void
+            ["resolveMx"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
+            // dns.resolveTxt(hostname, callback) -> void
+            ["resolveTxt"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
+            // dns.resolveSrv(hostname, callback) -> void
+            ["resolveSrv"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
+            // dns.resolveCname(hostname, callback) -> void
+            ["resolveCname"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
+            // dns.resolveNs(hostname, callback) -> void
+            ["resolveNs"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
+            // dns.resolveSoa(hostname, callback) -> void
+            ["resolveSoa"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
+            // dns.resolvePtr(hostname, callback) -> void
+            ["resolvePtr"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
+            // dns.resolveCaa(hostname, callback) -> void
+            ["resolveCaa"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
+            // dns.resolveNaptr(hostname, callback) -> void
+            ["resolveNaptr"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
 
             // dns.promises sub-module
             ["promises"] = anyType,
@@ -1550,7 +1586,34 @@ public static class BuiltInModuleTypes
                 new TypeInfo.Promise(stringArrayType)),
             ["reverse"] = new TypeInfo.Function(
                 [stringType],
-                new TypeInfo.Promise(stringArrayType))
+                new TypeInfo.Promise(stringArrayType)),
+            ["resolveMx"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(anyType)),
+            ["resolveTxt"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(anyType)),
+            ["resolveSrv"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(anyType)),
+            ["resolveCname"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(stringArrayType)),
+            ["resolveNs"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(stringArrayType)),
+            ["resolveSoa"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(anyType)),
+            ["resolvePtr"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(stringArrayType)),
+            ["resolveCaa"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(anyType)),
+            ["resolveNaptr"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(anyType))
         };
     }
 
