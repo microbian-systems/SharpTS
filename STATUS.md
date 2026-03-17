@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-03-16 (Expanded perf_hooks: mark/measure/getEntries/clearMarks/clearMeasures/PerformanceObserver; Added dgram UDP module)
+**Last Updated:** 2026-03-17 (Added cluster module: fork, IPC messaging, worker lifecycle events)
 
 ## Legend
 - ✅ Implemented
@@ -428,6 +428,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `net` | ✅ | createServer, createConnection/connect, Socket (EventEmitter + Duplex), Server (EventEmitter); isIP, isIPv4, isIPv6 |
 | `tls` | ✅ | createServer, connect, createSecureContext, TLSSocket (extends Socket), Server; DEFAULT_MIN_VERSION/MAX_VERSION; secureConnect/secureConnection/tlsClientError events |
 | `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; message/listening/close/error events |
+| `cluster` | ✅ | isPrimary/isWorker/isMaster, fork, worker.send/disconnect/kill/isDead/isConnected, process.send/on('message') IPC, cluster events, disconnect, setupPrimary |
 | `child_process` | ✅ | execSync, spawnSync, exec, spawn with ChildProcess EventEmitter |
 | `url` | ✅ | URL, URLSearchParams, fileURLToPath, pathToFileURL, format, parse |
 | `util` | ✅ | promisify, deprecate, types (isDate, isRegExp, isMap, isSet, etc.), format, inspect, TextEncoder, TextDecoder |

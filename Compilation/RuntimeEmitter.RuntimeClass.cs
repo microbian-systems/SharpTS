@@ -439,6 +439,9 @@ public partial class RuntimeEmitter
         // Worker Threads support (SharedArrayBuffer, TypedArrays, Atomics, MessagePort, Worker)
         EmitWorkerHelpers(typeBuilder, runtime);
 
+        // Cluster module support
+        EmitClusterHelpers(typeBuilder, runtime);
+
         // Private member helpers are no longer emitted; async/generator emitters
         // now bind directly to class-private storage and method tokens.
 

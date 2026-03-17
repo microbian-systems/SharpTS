@@ -131,6 +131,12 @@ public partial class Interpreter : IDisposable
     private ParsedModule? _currentModule;
     private ModuleInstance? _currentModuleInstance;
 
+    /// <summary>
+    /// Gets or sets the path of the entry module (first module in InterpretModules).
+    /// Used by the cluster module to re-execute the same script in worker threads.
+    /// </summary>
+    public string? EntryModulePath { get; set; }
+
     // Flag to indicate interpreter has been disposed - timer callbacks should not execute
     private volatile bool _isDisposed;
 
@@ -806,6 +812,12 @@ public partial class Interpreter : IDisposable
     {
         _typeMap = typeMap;
         _moduleResolver = resolver;
+
+        // Capture entry module path for cluster.fork() support
+        if (modules.Count > 0 && EntryModulePath == null)
+        {
+            EntryModulePath = modules[^1].Path;
+        }
 
         try
         {

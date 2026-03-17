@@ -1986,4 +1986,39 @@ public class EmittedRuntime
     public MethodBuilder PDSGetPrototype { get; set; } = null!;
     public MethodBuilder PDSDefineProperty { get; set; } = null!;
     public MethodBuilder PDSGetPropertyDescriptor { get; set; } = null!;
+
+    // cluster module — emitted types (no reflection to SharpTS.dll)
+    // $ClusterContext: static class with [ThreadStatic] fields for worker detection
+    public TypeBuilder ClusterContextType { get; set; } = null!;
+    public FieldBuilder ClusterContextIsWorkerField { get; set; } = null!;
+    public FieldBuilder ClusterContextWorkerIdField { get; set; } = null!;
+    public FieldBuilder ClusterContextCurrentWorkerField { get; set; } = null!;
+    public FieldBuilder ClusterContextPrimaryToWorkerQueueField { get; set; } = null!;
+    public FieldBuilder ClusterContextWorkerToPrimaryQueueField { get; set; } = null!;
+
+    // $ClusterWorker: extends $EventEmitter, manages a worker thread with IPC
+    public TypeBuilder ClusterWorkerType { get; set; } = null!;
+    public ConstructorBuilder ClusterWorkerCtor { get; set; } = null!;
+    public MethodBuilder ClusterWorkerSend { get; set; } = null!;
+    public MethodBuilder ClusterWorkerDisconnect { get; set; } = null!;
+    public MethodBuilder ClusterWorkerKill { get; set; } = null!;
+    public MethodBuilder ClusterWorkerGetMember { get; set; } = null!;
+    public MethodBuilder ClusterWorkerDeliverMessages { get; set; } = null!;
+
+    // $ClusterManager: extends $EventEmitter, singleton managing all workers
+    public TypeBuilder ClusterManagerType { get; set; } = null!;
+    public FieldBuilder ClusterManagerInstanceField { get; set; } = null!;
+    public FieldBuilder ClusterManagerEntryPointField { get; set; } = null!;
+    public MethodBuilder ClusterManagerFork { get; set; } = null!;
+    public MethodBuilder ClusterManagerDisconnectAll { get; set; } = null!;
+    public MethodBuilder ClusterManagerSetupPrimary { get; set; } = null!;
+    public MethodBuilder ClusterManagerGetWorkersObject { get; set; } = null!;
+    public MethodBuilder ClusterManagerGetSettings { get; set; } = null!;
+    public MethodBuilder ClusterManagerGetMember { get; set; } = null!;
+    public MethodBuilder ClusterManagerRemoveWorker { get; set; } = null!;
+    public MethodBuilder ClusterManagerEmitWorkerEvent { get; set; } = null!;
+
+    // Convenience statics on $Runtime (delegate to emitted types)
+    public MethodBuilder ClusterIsPrimary { get; set; } = null!;
+    public MethodBuilder ClusterIsWorker { get; set; } = null!;
 }

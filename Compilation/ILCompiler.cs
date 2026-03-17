@@ -654,6 +654,7 @@ public partial class ILCompiler
         _builtInModuleEmitterRegistry.Register(new NetModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new TlsModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new DgramModuleEmitter());
+        _builtInModuleEmitterRegistry.Register(new ClusterModuleEmitter());
 
         // https delegates to http emitter
         var httpsEmitter = new HttpModuleEmitter();

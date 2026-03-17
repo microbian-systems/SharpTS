@@ -72,6 +72,22 @@ public static class ProcessBuiltIns
             "memoryUsage" => _memoryUsage,
             "nextTick" => _nextTick,
 
+            // Cluster worker IPC methods
+            "send" when ClusterContext.IsWorker => new BuiltInMethod("send", 1, (interp, recv, args) =>
+            {
+                if (args.Count == 0)
+                    throw new Exception("process.send() requires at least one argument");
+                ClusterContext.CurrentWorker?.PostMessageToPrimary(args[0]);
+                return true;
+            }),
+            "disconnect" when ClusterContext.IsWorker => new BuiltInMethod("disconnect", 0, (interp, recv, args) =>
+            {
+                // Signal disconnect to primary
+                try { ClusterContext.PrimaryToWorkerQueue?.CompleteAdding(); } catch { }
+                return null;
+            }),
+            "connected" when ClusterContext.IsWorker => !ClusterContext.CancellationToken.IsCancellationRequested,
+
             // EventEmitter methods - delegate to the process singleton
             "on" or "addListener" or "once" or "off" or "removeListener"
                 or "emit" or "removeAllListeners" or "listeners" or "rawListeners"

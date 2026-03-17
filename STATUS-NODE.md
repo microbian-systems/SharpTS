@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-16 (Expanded perf_hooks: mark/measure/getEntries/PerformanceObserver; Added dgram UDP module)
+**Last Updated:** 2026-03-17 (Added cluster module: fork, IPC messaging, worker lifecycle events)
 
 ## Legend
 - ✅ Implemented
@@ -40,7 +40,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `zlib` | ✅ | gzip, deflate, deflateRaw, brotli, zstd (sync + streaming + async callback APIs) |
 | `worker_threads` | ⚠️ | Worker, MessageChannel, parentPort, workerData, isMainThread |
 | `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; message/listening/close/error events |
-| `cluster` | ❌ | No cluster support |
+| `cluster` | ✅ | isPrimary/isWorker/isMaster, fork, worker.send/disconnect/kill/isDead/isConnected, process.send (IPC), cluster events (fork/online/disconnect/exit/message), cluster.disconnect, setupPrimary, workers dict |
 
 ---
 
@@ -837,7 +837,7 @@ SharpTS provides comprehensive support for file system operations (sync, callbac
 
 **Key Gaps:**
 - No IPC sockets (named pipes / Unix domain sockets)
-- No cluster support
+- No HTTP port sharing in cluster (round-robin load balancing)
 - No highWaterMark enforcement on read-side backpressure
 
 **Recommended Workarounds:**
@@ -851,7 +851,7 @@ SharpTS provides comprehensive support for file system operations (sync, callbac
 Priority features to implement for broader Node.js compatibility:
 
 1. **IPC sockets** - Named pipes / Unix domain socket support in net module (medium effort)
-2. **cluster module** - Multi-process support (higher effort)
+2. **cluster HTTP port sharing** - Round-robin load balancing (medium effort)
 3. **package.json exports** - Modern npm package resolution (medium effort)
 4. **tls module** - TLS/SSL support for secure connections (medium effort)
 5. **MX/TXT/SRV DNS records** - Requires DnsClient NuGet package (low effort)

@@ -1421,6 +1421,7 @@ public static class BuiltInModuleTypes
             "net" => GetNetModuleTypes(),
             "tls" => GetTlsModuleTypes(),
             "dgram" => GetDgramModuleTypes(),
+            "cluster" => GetClusterModuleTypes(),
             _ => null
         };
     }
@@ -2231,6 +2232,62 @@ public static class BuiltInModuleTypes
         {
             ["createSocket"] = new TypeInfo.Function([anyType, anyType], socketType, RequiredParams: 1),
             ["Socket"] = new TypeInfo.Function([anyType, anyType], socketType, RequiredParams: 1)
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the cluster module.
+    /// </summary>
+    public static Dictionary<string, TypeInfo> GetClusterModuleTypes()
+    {
+        var boolType = BooleanType;
+        var anyType = new TypeInfo.Any();
+        var voidType = new TypeInfo.Void();
+        var stringType = new TypeInfo.String();
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+
+        // Worker type
+        var workerType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["id"] = numberType,
+            ["send"] = new TypeInfo.Function([anyType], boolType),
+            ["disconnect"] = new TypeInfo.Function([], voidType),
+            ["kill"] = new TypeInfo.Function([stringType], voidType, RequiredParams: 0),
+            ["isDead"] = new TypeInfo.Function([], boolType),
+            ["isConnected"] = new TypeInfo.Function([], boolType),
+            ["exitedAfterDisconnect"] = boolType,
+            ["on"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["once"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["off"] = new TypeInfo.Function([stringType, anyType], anyType),
+        }.ToFrozenDictionary());
+
+        return new Dictionary<string, TypeInfo>
+        {
+            // Boolean properties
+            ["isPrimary"] = boolType,
+            ["isWorker"] = boolType,
+            ["isMaster"] = boolType,
+
+            // Methods
+            ["fork"] = new TypeInfo.Function([anyType], workerType, RequiredParams: 0),
+            ["disconnect"] = new TypeInfo.Function([anyType], voidType, RequiredParams: 0),
+            ["setupPrimary"] = new TypeInfo.Function([anyType], voidType, RequiredParams: 0),
+            ["setupMaster"] = new TypeInfo.Function([anyType], voidType, RequiredParams: 0),
+
+            // Properties
+            ["workers"] = anyType,
+            ["worker"] = anyType,
+            ["settings"] = anyType,
+
+            // EventEmitter methods
+            ["on"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["once"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["off"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["emit"] = new TypeInfo.Function([stringType, anyType], boolType, HasRestParam: true),
+            ["removeAllListeners"] = new TypeInfo.Function([stringType], anyType, RequiredParams: 0),
+            ["listeners"] = new TypeInfo.Function([stringType], anyType),
+            ["listenerCount"] = new TypeInfo.Function([stringType], numberType),
+            ["eventNames"] = new TypeInfo.Function([], anyType),
         };
     }
 }

@@ -36,6 +36,7 @@ public class StandaloneDllTests
         "Compilation/RuntimeEmitter.Tls.cs",                 // TLS module createServer/connect via interpreter types
         "Compilation/RuntimeEmitter.Dgram.cs",               // Dgram module createSocket via interpreter types
         "Compilation/RuntimeEmitter.ZlibHelpers.cs",           // Zlib streaming createGzip/etc. via interpreter types
+        // RuntimeEmitter.ClusterHelpers.cs — pure IL, no reflection needed
     };
 
     /// <summary>

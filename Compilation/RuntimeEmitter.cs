@@ -167,6 +167,10 @@ public partial class RuntimeEmitter
         // NOTE: Must come after EventEmitter ($HttpServer extends $EventEmitter)
         EmitHttpTypes(moduleBuilder, runtime);
 
+        // Emit cluster types for standalone cluster support
+        // NOTE: Must come after EventEmitter ($ClusterWorker and $ClusterManager extend it)
+        EmitClusterTypes(moduleBuilder, runtime);
+
         // Emit $FileDescriptorTable for standalone fs fd-based operations (Phase 21)
         // NOTE: Must come after $NodeError (uses NodeErrorCtor for EBADF errors)
         EmitFileDescriptorTableType(moduleBuilder, runtime);

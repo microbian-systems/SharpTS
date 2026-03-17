@@ -785,6 +785,10 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSWorker), (instance, name) =>
             ((SharpTSWorker)instance).GetMember(name));
 
+        // Register ClusterWorker instance members
+        registry.RegisterInstanceType(typeof(SharpTSClusterWorker), (instance, name) =>
+            ((SharpTSClusterWorker)instance).GetMember(name));
+
         // Register MessagePort instance members
         registry.RegisterInstanceType(typeof(SharpTSMessagePort), (instance, name) =>
             ((SharpTSMessagePort)instance).GetMember(name));
