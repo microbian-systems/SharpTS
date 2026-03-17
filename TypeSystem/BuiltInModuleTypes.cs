@@ -864,6 +864,7 @@ public static class BuiltInModuleTypes
         var anyType = new TypeInfo.Any();
         var bufferType = new TypeInfo.Buffer();
         var bufferOrStringType = new TypeInfo.Union([bufferType, stringType]);
+        var voidType = new TypeInfo.Void();
 
         return new Dictionary<string, TypeInfo>
         {
@@ -981,7 +982,27 @@ public static class BuiltInModuleTypes
             // Accepts string, Buffer, or object with 'key' property
             ["createPrivateKey"] = new TypeInfo.Function(
                 [anyType],
-                anyType) // Returns KeyObject
+                anyType), // Returns KeyObject
+
+            // Async (callback-based) key derivation
+            // pbkdf2(password, salt, iterations, keylen, digest, callback) -> void
+            ["pbkdf2"] = new TypeInfo.Function(
+                [bufferOrStringType, bufferOrStringType, numberType, numberType, stringType, anyType],
+                voidType),
+            // scrypt(password, salt, keylen[, options], callback) -> void
+            ["scrypt"] = new TypeInfo.Function(
+                [bufferOrStringType, bufferOrStringType, numberType, anyType, anyType],
+                voidType,
+                RequiredParams: 4),
+            // generateKeyPair(type[, options], callback) -> void
+            ["generateKeyPair"] = new TypeInfo.Function(
+                [stringType, anyType, anyType],
+                voidType,
+                RequiredParams: 2),
+            // hkdf(digest, ikm, salt, info, keylen, callback) -> void
+            ["hkdf"] = new TypeInfo.Function(
+                [stringType, bufferOrStringType, bufferOrStringType, bufferOrStringType, numberType, anyType],
+                voidType)
         };
     }
 
@@ -1354,6 +1375,7 @@ public static class BuiltInModuleTypes
             "http" => GetHttpModuleTypes(),
             "https" => GetHttpModuleTypes(),
             "dns" => GetDnsModuleTypes(),
+            "dns/promises" => GetDnsPromisesModuleTypes(),
             "net" => GetNetModuleTypes(),
             _ => null
         };
@@ -1398,10 +1420,95 @@ public static class BuiltInModuleTypes
                 RequiredParams: 2
             ),
 
+            // Async callback-based methods
+            // dns.resolve(hostname[, rrtype], callback) -> void
+            ["resolve"] = new TypeInfo.Function(
+                [stringType, anyType, anyType],
+                new TypeInfo.Void(),
+                RequiredParams: 2),
+            // dns.resolve4(hostname, callback) -> void
+            ["resolve4"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
+            // dns.resolve6(hostname, callback) -> void
+            ["resolve6"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
+            // dns.reverse(ip, callback) -> void
+            ["reverse"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Void()),
+
+            // dns.promises sub-module
+            ["promises"] = anyType,
+
             // Constants
             ["ADDRCONFIG"] = numberType,
             ["V4MAPPED"] = numberType,
-            ["ALL"] = numberType
+            ["ALL"] = numberType,
+            ["NODATA"] = stringType,
+            ["FORMERR"] = stringType,
+            ["SERVFAIL"] = stringType,
+            ["NOTFOUND"] = stringType,
+            ["NOTIMP"] = stringType,
+            ["REFUSED"] = stringType,
+            ["BADQUERY"] = stringType,
+            ["BADNAME"] = stringType,
+            ["BADFAMILY"] = stringType,
+            ["BADRESP"] = stringType,
+            ["CONNREFUSED"] = stringType,
+            ["TIMEOUT"] = stringType,
+            ["EOF"] = stringType,
+            ["FILE"] = stringType,
+            ["NOMEM"] = stringType,
+            ["DESTRUCTION"] = stringType,
+            ["BADSTR"] = stringType,
+            ["BADFLAGS"] = stringType,
+            ["NONAME"] = stringType,
+            ["BADHINTS"] = stringType,
+            ["NOTINITIALIZED"] = stringType,
+            ["LOADIPHLPAPI"] = stringType,
+            ["ADDRGETNETWORKPARAMS"] = stringType,
+            ["CANCELLED"] = stringType
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the dns/promises module.
+    /// </summary>
+    public static Dictionary<string, TypeInfo> GetDnsPromisesModuleTypes()
+    {
+        var stringType = new TypeInfo.String();
+        var anyType = new TypeInfo.Any();
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+
+        var lookupResultType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["address"] = stringType,
+            ["family"] = numberType
+        }.ToFrozenDictionary());
+
+        var stringArrayType = new TypeInfo.Array(stringType);
+
+        return new Dictionary<string, TypeInfo>
+        {
+            ["lookup"] = new TypeInfo.Function(
+                [stringType, anyType],
+                new TypeInfo.Promise(lookupResultType),
+                RequiredParams: 1),
+            ["resolve"] = new TypeInfo.Function(
+                [stringType, stringType],
+                new TypeInfo.Promise(stringArrayType),
+                RequiredParams: 1),
+            ["resolve4"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(stringArrayType)),
+            ["resolve6"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(stringArrayType)),
+            ["reverse"] = new TypeInfo.Function(
+                [stringType],
+                new TypeInfo.Promise(stringArrayType))
         };
     }
 

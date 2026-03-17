@@ -9,7 +9,7 @@ namespace SharpTS.Tests.SharedTests.BuiltInModules;
 public class StreamObjectModeTests
 {
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Readable_ObjectMode_PushAndReadObjects(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -32,7 +32,7 @@ public class StreamObjectModeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Readable_ObjectMode_ReadReturnsOneObjectAtATime(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -55,7 +55,7 @@ public class StreamObjectModeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Readable_ObjectMode_ReadableObjectModeProperty(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -74,7 +74,7 @@ public class StreamObjectModeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Writable_ObjectMode_AcceptsObjects(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -103,7 +103,7 @@ public class StreamObjectModeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Writable_ObjectMode_WritableObjectModeProperty(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -122,7 +122,7 @@ public class StreamObjectModeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Transform_ObjectMode_TransformsObjects(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -148,7 +148,7 @@ public class StreamObjectModeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Readable_ObjectMode_PushArraysAsValues(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -169,7 +169,7 @@ public class StreamObjectModeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Readable_ObjectMode_PushNumbers(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -192,7 +192,7 @@ public class StreamObjectModeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Duplex_ObjectMode_BothSides(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

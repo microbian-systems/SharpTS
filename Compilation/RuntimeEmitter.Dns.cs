@@ -17,6 +17,9 @@ public partial class RuntimeEmitter
         EmitDnsLookupService(typeBuilder, runtime);
         EmitDnsGetLookup(typeBuilder, runtime);
         EmitDnsGetLookupService(typeBuilder, runtime);
+
+        // Async (callback-based) DNS resolution wrappers
+        EmitDnsAsyncResolveWrappers(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -515,5 +518,383 @@ public partial class RuntimeEmitter
         getterIl.Emit(OpCodes.Castclass, _types.MethodInfo);
         getterIl.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
         getterIl.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits async DNS resolution wrapper methods: resolve, resolve4, resolve6, reverse.
+    /// Each calls the sync DnsLookup method and invokes the callback with (null, result) or (error, null).
+    /// </summary>
+    private void EmitDnsAsyncResolveWrappers(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // resolve4(hostname, callback) -> calls DnsLookup with family=4, returns array of IPs
+        EmitDnsResolveByFamily(typeBuilder, runtime, "resolve4", 4);
+
+        // resolve6(hostname, callback) -> calls DnsLookup with family=6, returns array of IPs
+        EmitDnsResolveByFamily(typeBuilder, runtime, "resolve6", 6);
+
+        // resolve(hostname, rrtype_or_callback, callback?) -> calls DnsLookup
+        EmitDnsResolveWrapper(typeBuilder, runtime);
+
+        // reverse(ip, callback) -> reverse DNS lookup
+        EmitDnsReverseWrapper(typeBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Emits resolve4/resolve6: hostname + callback -> calls DnsLookup with fixed family, extracts addresses array.
+    /// </summary>
+    private void EmitDnsResolveByFamily(TypeBuilder typeBuilder, EmittedRuntime runtime, string methodName, int family)
+    {
+        // DnsWrapper_resolve4(hostname, callback)
+        var method = typeBuilder.DefineMethod(
+            "DnsWrapper_" + methodName,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]);
+
+        var il = method.GetILGenerator();
+        var resultLocal = il.DeclareLocal(_types.Object);
+        var endLabel = il.DefineLabel();
+
+        il.BeginExceptionBlock();
+
+        // Call DnsLookup(hostname, family_number) - returns { address, family } but we need array of strings
+        // Use System.Net.Dns.GetHostEntry directly for array result
+        // hostname.ToString()
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+
+        // Call Dns.GetHostEntry(hostname) -> IPHostEntry
+        il.Emit(OpCodes.Call, typeof(Dns).GetMethod("GetHostEntry", [typeof(string)])!);
+        var hostEntryLocal = il.DeclareLocal(typeof(IPHostEntry));
+        il.Emit(OpCodes.Stloc, hostEntryLocal);
+
+        // Get AddressList
+        il.Emit(OpCodes.Ldloc, hostEntryLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IPHostEntry).GetProperty("AddressList")!.GetGetMethod()!);
+        var addressListLocal = il.DeclareLocal(typeof(IPAddress[]));
+        il.Emit(OpCodes.Stloc, addressListLocal);
+
+        // Build List<object> of matching addresses
+        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
+        var listLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Stloc, listLocal);
+
+        // for (int i = 0; i < addressList.Length; i++)
+        var indexLocal = il.DeclareLocal(typeof(int));
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        var loopStart = il.DefineLabel();
+        var loopCond = il.DefineLabel();
+        il.Emit(OpCodes.Br, loopCond);
+
+        il.MarkLabel(loopStart);
+        // if (addressList[i].AddressFamily == target)
+        il.Emit(OpCodes.Ldloc, addressListLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, typeof(IPAddress).GetProperty("AddressFamily")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4, family == 4 ? (int)AddressFamily.InterNetwork : (int)AddressFamily.InterNetworkV6);
+        var skipLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, skipLabel);
+
+        // list.Add(address.ToString())
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldloc, addressListLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IPAddress), "ToString"));
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
+
+        il.MarkLabel(skipLabel);
+        // i++
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        // i < addressList.Length
+        il.MarkLabel(loopCond);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, addressListLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Blt, loopStart);
+
+        // Create $Array from list
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // callback.Invoke([null, result])
+        il.Emit(OpCodes.Ldarg_1); // callback
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        // catch
+        il.BeginCatchBlock(typeof(Exception));
+        var exLocal = il.DeclareLocal(typeof(Exception));
+        il.Emit(OpCodes.Stloc, exLocal);
+
+        il.Emit(OpCodes.Ldarg_1); // callback
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(Exception), "get_Message"));
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        il.EndExceptionBlock();
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        runtime.RegisterBuiltInModuleMethod("dns", methodName, method);
+    }
+
+    /// <summary>
+    /// Emits resolve(hostname, rrtype_or_callback, callback?):
+    /// If 2 args: resolve(hostname, callback) with default rrtype="A"
+    /// If 3 args: resolve(hostname, rrtype, callback)
+    /// </summary>
+    private void EmitDnsResolveWrapper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsWrapper_resolve",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]);
+
+        var il = method.GetILGenerator();
+        var callbackLocal = il.DeclareLocal(_types.Object);
+        var endLabel = il.DefineLabel();
+
+        // If arg2 != null, callback=arg2 (3-arg form)
+        // If arg2 == null, callback=arg1 (2-arg form, default rrtype)
+        var threeArgLabel = il.DefineLabel();
+        var afterCallbackLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brtrue, threeArgLabel);
+
+        // 2-arg form: callback=arg1
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+        il.Emit(OpCodes.Br, afterCallbackLabel);
+
+        il.MarkLabel(threeArgLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+
+        il.MarkLabel(afterCallbackLabel);
+
+        il.BeginExceptionBlock();
+
+        // Use DnsLookup(hostname, null) which returns {address, family}
+        // For resolve() we want array of strings, so use GetHostEntry
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, typeof(Dns).GetMethod("GetHostEntry", [typeof(string)])!);
+        var hostEntryLocal = il.DeclareLocal(typeof(IPHostEntry));
+        il.Emit(OpCodes.Stloc, hostEntryLocal);
+
+        // Build list from all addresses
+        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
+        var listLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Stloc, listLocal);
+
+        il.Emit(OpCodes.Ldloc, hostEntryLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IPHostEntry).GetProperty("AddressList")!.GetGetMethod()!);
+        var addrArrayLocal = il.DeclareLocal(typeof(IPAddress[]));
+        il.Emit(OpCodes.Stloc, addrArrayLocal);
+
+        var idxLocal = il.DeclareLocal(typeof(int));
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        var loopS = il.DefineLabel();
+        var loopC = il.DefineLabel();
+        il.Emit(OpCodes.Br, loopC);
+        il.MarkLabel(loopS);
+
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldloc, addrArrayLocal);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IPAddress), "ToString"));
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
+
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.MarkLabel(loopC);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldloc, addrArrayLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Blt, loopS);
+
+        // Create $Array
+        var resultLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // callback(null, result)
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        il.BeginCatchBlock(typeof(Exception));
+        var exLocal = il.DeclareLocal(typeof(Exception));
+        il.Emit(OpCodes.Stloc, exLocal);
+
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(Exception), "get_Message"));
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        il.EndExceptionBlock();
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        runtime.RegisterBuiltInModuleMethod("dns", "resolve", method);
+    }
+
+    /// <summary>
+    /// Emits reverse(ip, callback): reverse DNS lookup.
+    /// </summary>
+    private void EmitDnsReverseWrapper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsWrapper_reverse",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]);
+
+        var il = method.GetILGenerator();
+        var resultLocal = il.DeclareLocal(_types.Object);
+        var endLabel = il.DefineLabel();
+
+        il.BeginExceptionBlock();
+
+        // Parse IP address
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, typeof(IPAddress).GetMethod("Parse", [typeof(string)])!);
+        var ipLocal = il.DeclareLocal(typeof(IPAddress));
+        il.Emit(OpCodes.Stloc, ipLocal);
+
+        // Dns.GetHostEntry(ip) -> IPHostEntry
+        il.Emit(OpCodes.Ldloc, ipLocal);
+        il.Emit(OpCodes.Call, typeof(Dns).GetMethod("GetHostEntry", [typeof(IPAddress)])!);
+        var hostEntryLocal = il.DeclareLocal(typeof(IPHostEntry));
+        il.Emit(OpCodes.Stloc, hostEntryLocal);
+
+        // Build array with hostname
+        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
+        var listLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Stloc, listLocal);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldloc, hostEntryLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IPHostEntry).GetProperty("HostName")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
+
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // callback(null, result)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        il.BeginCatchBlock(typeof(Exception));
+        var exLocal = il.DeclareLocal(typeof(Exception));
+        il.Emit(OpCodes.Stloc, exLocal);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(Exception), "get_Message"));
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        il.EndExceptionBlock();
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        runtime.RegisterBuiltInModuleMethod("dns", "reverse", method);
     }
 }

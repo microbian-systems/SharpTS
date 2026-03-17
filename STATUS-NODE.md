@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-16 (Added net module, HTTP event enhancements)
+**Last Updated:** 2026-03-16 (Added async crypto/DNS, compiled object mode streams, dns/promises module)
 
 ## Legend
 - ✅ Implemented
@@ -19,7 +19,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `path` | ✅ | Full API |
 | `os` | ✅ | Full API |
 | `process` | ✅ | Properties + methods, available as module and global |
-| `crypto` | ⚠️ | Hash, HMAC, Cipher, PBKDF2, scrypt, HKDF, RSA encrypt/decrypt, Sign/Verify, DH/ECDH, KeyPair, KeyObject |
+| `crypto` | ✅ | Hash, HMAC, Cipher, PBKDF2, scrypt, HKDF (sync + async callback), RSA encrypt/decrypt, Sign/Verify, DH/ECDH, KeyPair (sync + async), KeyObject |
 | `url` | ✅ | WHATWG URL + legacy parse/format/resolve |
 | `querystring` | ✅ | parse, stringify, escape, unescape |
 | `assert` | ✅ | Full testing utilities |
@@ -35,7 +35,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `perf_hooks` | ✅ | performance.now(), performance.timeOrigin |
 | `http` / `https` | ✅ | createServer, request, get; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
 | `net` | ✅ | createServer, createConnection/connect, Socket, Server; isIP, isIPv4, isIPv6 |
-| `dns` | ⚠️ | lookup, lookupService (sync only) |
+| `dns` | ✅ | lookup, lookupService, resolve, resolve4, resolve6, reverse (callback + dns/promises) |
 | `zlib` | ✅ | gzip, deflate, deflateRaw, brotli, zstd (sync APIs) |
 | `worker_threads` | ⚠️ | Worker, MessageChannel, parentPort, workerData, isMainThread |
 | `cluster` | ❌ | No cluster support |
@@ -199,14 +199,14 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | **Key Derivation** | | |
 | `pbkdf2Sync` | ✅ | sha1, sha256, sha384, sha512 (not md5) |
 | `scryptSync` | ✅ | With N/cost, r/blockSize, p/parallelization options |
-| `pbkdf2` / `scrypt` | ❌ | Async versions - use sync versions |
+| `pbkdf2` / `scrypt` | ✅ | Async callback-based versions with event loop integration |
 | **Comparison** | | |
 | `timingSafeEqual` | ✅ | Constant-time buffer comparison (prevents timing attacks) |
 | **Signing** | | |
 | `createSign` / `createVerify` | ✅ | RSA and EC keys; SHA1/256/384/512; hex/base64/Buffer output |
 | **Key Generation** | | |
 | `generateKeyPairSync` | ✅ | RSA (2048/4096) and EC (P-256/P-384/P-521); PEM format |
-| `generateKeyPair` | ❌ | Async version - use sync version |
+| `generateKeyPair` | ✅ | Async callback-based version with (err, publicKey, privateKey) signature |
 | **Diffie-Hellman** | | |
 | `createDiffieHellman` | ✅ | With prime length or explicit prime/generator |
 | `getDiffieHellman` | ✅ | Predefined groups: modp1, modp2, modp5, modp14-18 |
@@ -221,7 +221,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `publicDecrypt` | ✅ | RSA PKCS#1 v1.5 verification primitive |
 | **HKDF** | | |
 | `hkdfSync` | ✅ | HKDF key derivation (RFC 5869); sha256, sha384, sha512 |
-| `hkdf` | ❌ | Async version - use sync version |
+| `hkdf` | ✅ | Async callback-based version with event loop integration |
 | **KeyObject** | | |
 | `createSecretKey` | ✅ | Create symmetric KeyObject from Buffer |
 | `createPublicKey` | ✅ | Create public KeyObject from PEM |
@@ -406,7 +406,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `readableFlowing` property | ✅ | null/false/true states |
 | Pipe backpressure | ✅ | Pauses source on writable backpressure, resumes on drain |
 | **Object Mode** | | |
-| Object mode | ✅ | `objectMode: true` option; streams accept any JS value (interpreter mode; compiled mode pending) |
+| Object mode | ✅ | `objectMode: true` option; streams accept any JS value (both interpreter and compiled modes) |
 | `readableObjectMode` | ✅ | Property: whether readable side is in object mode |
 | `writableObjectMode` | ✅ | Property: whether writable side is in object mode |
 | **Not Implemented** | | |
@@ -626,13 +626,18 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `ADDRCONFIG` | ✅ | Address configuration hint |
 | `V4MAPPED` | ✅ | Map IPv4 to IPv6 hint |
 | `ALL` | ✅ | Return all addresses hint |
+| **Async Resolution** | | |
+| `resolve` | ✅ | Async callback-based; supports rrtype parameter (A, AAAA) |
+| `resolve4` | ✅ | Async callback-based; resolves IPv4 addresses |
+| `resolve6` | ✅ | Async callback-based; resolves IPv6 addresses |
+| `reverse` | ✅ | Async callback-based; reverse DNS lookup |
+| **Promise API** | | |
+| `dns/promises` | ✅ | Promise-based: lookup, resolve, resolve4, resolve6, reverse |
+| `dns.promises` | ✅ | Sub-module access to promise API |
 | **Not Implemented** | | |
-| `resolve` | ❌ | Use lookup instead |
-| `resolve4` / `resolve6` | ❌ | Use lookup with family option |
-| `resolveMx` / `resolveTxt` | ❌ | MX/TXT record lookup |
-| `reverse` | ❌ | Use lookupService instead |
+| `resolveMx` / `resolveTxt` | ❌ | MX/TXT record lookup (requires DnsClient) |
+| `resolveSrv` / `resolveCname` | ❌ | SRV/CNAME record lookup |
 | `Resolver` class | ❌ | Use module methods |
-| Async callbacks | ❌ | Sync-only, returns directly |
 
 ---
 
@@ -745,7 +750,6 @@ SharpTS provides comprehensive support for file system operations (sync, callbac
 **Key Gaps:**
 - No IPC sockets (named pipes / Unix domain sockets)
 - No cluster support
-- Object mode streams: interpreter only (compiled mode pending)
 - No highWaterMark enforcement on read-side backpressure
 
 **Recommended Workarounds:**
@@ -760,5 +764,6 @@ Priority features to implement for broader Node.js compatibility:
 
 1. **IPC sockets** - Named pipes / Unix domain socket support in net module (medium effort)
 2. **cluster module** - Multi-process support (higher effort)
-3. **Object mode streams (compiled)** - Non-buffer chunk types for stream pipelines in compiled mode (medium effort)
-4. **package.json exports** - Modern npm package resolution (medium effort)
+3. **package.json exports** - Modern npm package resolution (medium effort)
+4. **tls module** - TLS/SSL support for secure connections (medium effort)
+5. **MX/TXT/SRV DNS records** - Requires DnsClient NuGet package (low effort)

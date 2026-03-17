@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-03-16 (Added net module, HTTP event enhancements, node: prefix support)
+**Last Updated:** 2026-03-16 (Added async crypto/DNS, compiled object mode streams, dns/promises module)
 
 ## Legend
 - ✅ Implemented
@@ -420,9 +420,9 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `path` | ✅ | join, resolve, dirname, basename, extname, normalize, isAbsolute, relative, parse, format, sep, delimiter, posix, win32 |
 | `os` | ✅ | platform, arch, cpus, hostname, homedir, tmpdir, type, release, uptime, totalmem, freemem, EOL, networkInterfaces, loadavg, userInfo |
 | `process` | ✅ | argv, env, cwd(), exit(), pid, platform, arch, version, stdout, stderr, stdin, hrtime, nextTick, memoryUsage, exitCode; EventEmitter support (on, once, emit, off, removeAllListeners, listeners, listenerCount, eventNames) |
-| `crypto` | ✅ | createHash, createHmac, randomBytes, randomUUID, randomInt, randomFillSync, createCipheriv/Decipheriv, pbkdf2/Sync, scrypt/Sync, timingSafeEqual, generateKeyPair/Sync, createSign/Verify, createDiffieHellman, createECDH, hkdf/Sync, getHashes, getCiphers, getCurves, constants |
+| `crypto` | ✅ | createHash, createHmac, randomBytes, randomUUID, randomInt, randomFillSync, createCipheriv/Decipheriv, pbkdf2/pbkdf2Sync, scrypt/scryptSync, timingSafeEqual, generateKeyPair/generateKeyPairSync, createSign/Verify, createDiffieHellman, createECDH, hkdf/hkdfSync, getHashes, getCiphers, getCurves, constants |
 | `events` | ✅ | EventEmitter: on, once, emit, removeListener, removeAllListeners, listenerCount, listeners, prependListener, prependOnceListener, off, setMaxListeners, getMaxListeners, eventNames |
-| `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough, pipeline; object mode support (`objectMode: true`) |
+| `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough, pipeline; object mode support (`objectMode: true`) in both interpreter and compiled modes |
 | `buffer` | ✅ | Buffer.from, Buffer.alloc, Buffer.allocUnsafe, Buffer.concat, Buffer.isBuffer, Buffer.byteLength; instance methods: toString, slice, copy, write, fill, includes, indexOf, compare, equals, readUInt/Int, writeUInt/Int, toJSON |
 | `http` / `https` | ✅ | createServer, request, get; Server: listen, close; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
 | `net` | ✅ | createServer, createConnection/connect, Socket (EventEmitter + Duplex), Server (EventEmitter); isIP, isIPv4, isIPv6 |
@@ -431,7 +431,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `util` | ✅ | promisify, deprecate, types (isDate, isRegExp, isMap, isSet, etc.), format, inspect, TextEncoder, TextDecoder |
 | `querystring` | ✅ | parse, stringify, escape, unescape |
 | `zlib` | ✅ | gzipSync, gunzipSync, deflateSync, inflateSync, brotliCompressSync, brotliDecompressSync |
-| `dns` | ⚠️ | lookup, lookupService (sync only) |
+| `dns` | ✅ | lookup, lookupService, resolve, resolve4, resolve6, reverse (callback + dns/promises) |
 | `assert` | ✅ | ok, equal, notEqual, deepEqual, notDeepEqual, strictEqual, notStrictEqual, deepStrictEqual, throws, doesNotThrow, rejects, doesNotReject, fail, match, doesNotMatch, assert.strict |
 | `readline` | ✅ | createInterface, question, close |
 | `string_decoder` | ✅ | StringDecoder: write, end, encoding |

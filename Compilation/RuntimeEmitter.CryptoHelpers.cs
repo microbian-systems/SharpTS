@@ -351,6 +351,51 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldarg_0);  // key (as object)
             il.Emit(OpCodes.Call, runtime.CryptoCreatePrivateKey);
         });
+
+        // === Async (callback-based) wrappers ===
+        // These call the sync versions and invoke the callback with (null, result) or (errorMsg, null)
+
+        // pbkdf2(password, salt, iterations, keylen, digest, callback) -> null
+        EmitCryptoAsyncWrapper(typeBuilder, runtime, "pbkdf2", 6, (il, runtime_) =>
+        {
+            // Call sync version: CryptoPbkdf2Sync(password_bytes, salt_bytes, iterations, keylen, digest)
+            il.Emit(OpCodes.Ldarg_0);
+            EmitObjectToKeyBytes(il);
+            il.Emit(OpCodes.Ldarg_1);
+            EmitObjectToKeyBytes(il);
+            il.Emit(OpCodes.Ldarg_2);
+            EmitObjectToInt32(il);
+            il.Emit(OpCodes.Ldarg_3);
+            EmitObjectToInt32(il);
+            il.Emit(OpCodes.Ldarg, 4);
+            EmitObjectToString(il);
+            il.Emit(OpCodes.Call, runtime_.CryptoPbkdf2Sync);
+        });
+
+        // scrypt(password, salt, keylen, options_or_callback, callback?) -> null
+        // Special: callback can be arg3 (no options) or arg4 (with options)
+        EmitCryptoScryptAsyncWrapper(typeBuilder, runtime);
+
+        // hkdf(digest, ikm, salt, info, keylen, callback) -> null
+        EmitCryptoAsyncWrapper(typeBuilder, runtime, "hkdf", 6, (il, runtime_) =>
+        {
+            // Call sync version: CryptoHkdfSync(digest, ikm_bytes, salt_bytes, info_bytes, keylen)
+            il.Emit(OpCodes.Ldarg_0);
+            EmitObjectToString(il);
+            il.Emit(OpCodes.Ldarg_1);
+            EmitObjectToKeyBytes(il);
+            il.Emit(OpCodes.Ldarg_2);
+            EmitObjectToKeyBytes(il);
+            il.Emit(OpCodes.Ldarg_3);
+            EmitObjectToKeyBytes(il);
+            il.Emit(OpCodes.Ldarg, 4);
+            EmitObjectToInt32(il);
+            il.Emit(OpCodes.Call, runtime_.CryptoHkdfSync);
+        });
+
+        // generateKeyPair(type, options, callback) -> null
+        // Special: callback is (err, publicKey, privateKey) not (err, result)
+        EmitCryptoGenerateKeyPairAsyncWrapper(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -466,5 +511,271 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.Encoding.GetMethod("GetBytes", [_types.String])!);
 
         il.MarkLabel(endLabel);
+    }
+
+    /// <summary>
+    /// Emits an async wrapper that calls a sync crypto method, then invokes the callback with (null, result) or (errorMsg, null).
+    /// The last argument is always the callback (a $TSFunction).
+    /// </summary>
+    private void EmitCryptoAsyncWrapper(
+        TypeBuilder typeBuilder,
+        EmittedRuntime runtime,
+        string methodName,
+        int paramCount,
+        Action<ILGenerator, EmittedRuntime> emitSyncCall)
+    {
+        var paramTypes = new Type[paramCount];
+        for (int i = 0; i < paramCount; i++)
+            paramTypes[i] = _types.Object;
+
+        var method = typeBuilder.DefineMethod(
+            "CryptoWrapper_" + methodName,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            paramTypes);
+
+        var il = method.GetILGenerator();
+        var callbackArgIndex = paramCount - 1;
+        var resultLocal = il.DeclareLocal(_types.Object);
+        var catchLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // try { result = syncMethod(...); callback(null, result); } catch { callback(error, null); }
+        il.BeginExceptionBlock();
+
+        // Call the sync method (emits args 0..N-2, calls runtime method)
+        emitSyncCall(il, runtime);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // callback.Invoke([null, result])
+        il.Emit(OpCodes.Ldarg, callbackArgIndex);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull); // err = null
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, resultLocal); // result
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        // catch (Exception ex)
+        il.BeginCatchBlock(typeof(Exception));
+        var exLocal = il.DeclareLocal(typeof(Exception));
+        il.Emit(OpCodes.Stloc, exLocal);
+
+        // callback.Invoke([errorMessage, null])
+        il.Emit(OpCodes.Ldarg, callbackArgIndex);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(Exception), "get_Message"));
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldnull); // result = null
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        il.EndExceptionBlock();
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        runtime.RegisterBuiltInModuleMethod("crypto", methodName, method);
+    }
+
+    /// <summary>
+    /// Special async wrapper for scrypt: callback can be arg3 (no options) or arg4 (with options).
+    /// scrypt(password, salt, keylen, callback) OR scrypt(password, salt, keylen, options, callback)
+    /// </summary>
+    private void EmitCryptoScryptAsyncWrapper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "CryptoWrapper_scrypt",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object, _types.Object, _types.Object]);
+
+        var il = method.GetILGenerator();
+        var resultLocal = il.DeclareLocal(_types.Object);
+        var callbackLocal = il.DeclareLocal(_types.Object);
+        var optionsLocal = il.DeclareLocal(_types.Object);
+        var endLabel = il.DefineLabel();
+
+        // Determine callback: if arg4 != null, callback=arg4, options=arg3
+        //                     if arg4 == null, callback=arg3, options=null
+        var arg4IsCallbackLabel = il.DefineLabel();
+        var afterCallbackLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg, 4);
+        il.Emit(OpCodes.Brtrue, arg4IsCallbackLabel);
+
+        // arg4 is null → callback=arg3, options=null
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, optionsLocal);
+        il.Emit(OpCodes.Br, afterCallbackLabel);
+
+        // arg4 is not null → callback=arg4, options=arg3
+        il.MarkLabel(arg4IsCallbackLabel);
+        il.Emit(OpCodes.Ldarg, 4);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Stloc, optionsLocal);
+
+        il.MarkLabel(afterCallbackLabel);
+
+        il.BeginExceptionBlock();
+
+        // Call sync: CryptoScryptSync(password_bytes, salt_bytes, keylen, options)
+        il.Emit(OpCodes.Ldarg_0);
+        EmitObjectToKeyBytes(il);
+        il.Emit(OpCodes.Ldarg_1);
+        EmitObjectToKeyBytes(il);
+        il.Emit(OpCodes.Ldarg_2);
+        EmitObjectToInt32(il);
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Call, runtime.CryptoScryptSync);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // callback.Invoke([null, result])
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        il.BeginCatchBlock(typeof(Exception));
+        var exLocal = il.DeclareLocal(typeof(Exception));
+        il.Emit(OpCodes.Stloc, exLocal);
+
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(Exception), "get_Message"));
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        il.EndExceptionBlock();
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        runtime.RegisterBuiltInModuleMethod("crypto", "scrypt", method);
+    }
+
+    /// <summary>
+    /// Special async wrapper for generateKeyPair which has (err, publicKey, privateKey) callback signature.
+    /// </summary>
+    private void EmitCryptoGenerateKeyPairAsyncWrapper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // generateKeyPair(type, options, callback)
+        var method = typeBuilder.DefineMethod(
+            "CryptoWrapper_generateKeyPair",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]);
+
+        var il = method.GetILGenerator();
+        var resultLocal = il.DeclareLocal(_types.Object);
+        var endLabel = il.DefineLabel();
+
+        il.BeginExceptionBlock();
+
+        // Call sync version: CryptoGenerateKeyPairSync(type, options)
+        il.Emit(OpCodes.Ldarg_0); // type
+        EmitObjectToString(il);
+        il.Emit(OpCodes.Ldarg_1); // options
+        il.Emit(OpCodes.Call, runtime.CryptoGenerateKeyPairSync);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // callback.Invoke([null, publicKey, privateKey])
+        // Get publicKey from result dict
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull); // err = null
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        // Get "publicKey" from result
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldstr, "publicKey");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        // Get "privateKey" from result
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldstr, "privateKey");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        // catch
+        il.BeginCatchBlock(typeof(Exception));
+        var exLocal = il.DeclareLocal(typeof(Exception));
+        il.Emit(OpCodes.Stloc, exLocal);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(Exception), "get_Message"));
+        il.Emit(OpCodes.Stelem_Ref);
+        // slots 1 and 2 remain null
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        il.EndExceptionBlock();
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        runtime.RegisterBuiltInModuleMethod("crypto", "generateKeyPair", method);
     }
 }

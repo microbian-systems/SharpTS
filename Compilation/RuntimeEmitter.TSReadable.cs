@@ -17,6 +17,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsReadableEncodingField = null!;
     private FieldBuilder _tsReadableReadableField = null!;
     private FieldBuilder _tsReadableFlowingField = null!; // int: -1=initial, 0=paused, 1=flowing
+    private FieldBuilder _tsReadableObjectModeField = null!;
 
     /// <summary>
     /// Phase 1: Define the $Readable type, fields, and constructor.
@@ -44,6 +45,7 @@ public partial class RuntimeEmitter
         _tsReadableEncodingField = typeBuilder.DefineField("_encoding", _types.String, FieldAttributes.Family);
         _tsReadableReadableField = typeBuilder.DefineField("_readable", _types.Boolean, FieldAttributes.Family);
         _tsReadableFlowingField = typeBuilder.DefineField("_flowing", _types.Int32, FieldAttributes.Family);
+        _tsReadableObjectModeField = typeBuilder.DefineField("_objectMode", _types.Boolean, FieldAttributes.Family);
 
         // Constructor
         EmitTSReadableCtor(typeBuilder, runtime, queueOfObject);
@@ -59,6 +61,7 @@ public partial class RuntimeEmitter
         EmitTSReadablePause(typeBuilder, runtime);
         EmitTSReadableResume(typeBuilder, runtime);
         EmitTSReadableIsPaused(typeBuilder, runtime);
+        EmitTSReadableSetObjectMode(typeBuilder, runtime);
 
         // Property getters
         EmitTSReadablePropertyGetters(typeBuilder, runtime, queueOfObject);
@@ -140,6 +143,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_M1);
         il.Emit(OpCodes.Stfld, _tsReadableFlowingField);
 
+        // _objectMode = false
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, _tsReadableObjectModeField);
+
         il.Emit(OpCodes.Ret);
     }
 
@@ -176,7 +184,22 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(hasDataLabel);
 
-        // Simplified: read all and concatenate
+        // In object mode, return one object at a time (don't concatenate)
+        var notObjectModeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableObjectModeField);
+        il.Emit(OpCodes.Brfalse, notObjectModeLabel);
+
+        // Object mode: return _readBuffer.Dequeue()
+        var dequeueMethod = queueType.GetMethod("Dequeue")!;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+        il.Emit(OpCodes.Callvirt, dequeueMethod);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notObjectModeLabel);
+
+        // Non-object mode: read all and concatenate
         var resultLocal = il.DeclareLocal(_types.StringBuilder);
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
@@ -197,7 +220,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
-        var dequeueMethod = queueType.GetMethod("Dequeue")!;
         il.Emit(OpCodes.Callvirt, dequeueMethod);
 
         // Convert to string safely
@@ -222,6 +244,23 @@ public partial class RuntimeEmitter
         // return result.ToString()
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitTSReadableSetObjectMode(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // public void SetObjectMode(bool value)
+        var method = typeBuilder.DefineMethod(
+            "SetObjectMode",
+            MethodAttributes.Public,
+            _types.Void,
+            [_types.Boolean]
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, _tsReadableObjectModeField);
         il.Emit(OpCodes.Ret);
     }
 
@@ -820,6 +859,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsReadableDestroyedField);
         il.Emit(OpCodes.Ret);
         destroyedProp.SetGetMethod(getDestroyed);
+
+        // readableObjectMode property
+        var readableObjectModeProp = typeBuilder.DefineProperty("ReadableObjectMode", PropertyAttributes.None, _types.Boolean, null);
+        var getReadableObjectMode = typeBuilder.DefineMethod(
+            "get_ReadableObjectMode",
+            MethodAttributes.Public | MethodAttributes.SpecialName,
+            _types.Boolean,
+            Type.EmptyTypes
+        );
+        il = getReadableObjectMode.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableObjectModeField);
+        il.Emit(OpCodes.Ret);
+        readableObjectModeProp.SetGetMethod(getReadableObjectMode);
 
         // readableFlowing property: returns false when _flowing == -1 (initial) or 0 (paused), true when 1
         var readableFlowingProp = typeBuilder.DefineProperty("ReadableFlowing", PropertyAttributes.None, _types.Object, null);

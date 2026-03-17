@@ -31,6 +31,7 @@ public static class BuiltInModuleRegistry
         "http",
         "worker_threads",
         "dns",
+        "dns/promises",
         "net",
         "https"
     ];

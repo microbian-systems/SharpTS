@@ -53,7 +53,12 @@ public static class CryptoModuleInterpreter
             // KeyObject API
             ["createSecretKey"] = new BuiltInMethod("createSecretKey", 1, 2, CreateSecretKey),
             ["createPublicKey"] = new BuiltInMethod("createPublicKey", 1, CreatePublicKey),
-            ["createPrivateKey"] = new BuiltInMethod("createPrivateKey", 1, CreatePrivateKey)
+            ["createPrivateKey"] = new BuiltInMethod("createPrivateKey", 1, CreatePrivateKey),
+            // Async (callback-based) key derivation
+            ["pbkdf2"] = new BuiltInMethod("pbkdf2", 6, Pbkdf2Async),
+            ["scrypt"] = new BuiltInMethod("scrypt", 4, 5, ScryptAsync),
+            ["generateKeyPair"] = new BuiltInMethod("generateKeyPair", 2, 3, GenerateKeyPairAsync),
+            ["hkdf"] = new BuiltInMethod("hkdf", 6, HkdfAsync)
         };
     }
 
@@ -655,6 +660,223 @@ public static class CryptoModuleInterpreter
         }
 
         return SharpTSKeyObject.CreatePrivateKey(pem);
+    }
+
+    #endregion
+
+    #region Async (Callback-based) Key Derivation
+
+    /// <summary>
+    /// Extracts the callback function from the last argument.
+    /// </summary>
+    private static ISharpTSCallable GetCallback(List<object?> args)
+    {
+        var callback = args[^1] as ISharpTSCallable
+            ?? throw new Exception("Runtime Error: callback is required");
+        return callback;
+    }
+
+    /// <summary>
+    /// Schedules an async callback on the interpreter's event loop and decrements the handle count.
+    /// </summary>
+    private static void ScheduleCallbackAndUnref(Interp interpreter, ISharpTSCallable callback, object? error, object? result)
+    {
+        interpreter.ScheduleTimer(0, 0, () =>
+        {
+            callback.Call(interpreter, [error, result]);
+            interpreter.Unref();
+        }, isInterval: false);
+    }
+
+    /// <summary>
+    /// Creates a Node.js-style error object for async callbacks.
+    /// </summary>
+    private static SharpTSObject CreateCryptoError(Exception ex, string method)
+    {
+        return new SharpTSObject(new Dictionary<string, object?>
+        {
+            ["code"] = "ERR_CRYPTO_INVALID_STATE",
+            ["message"] = $"crypto.{method}: {ex.Message}"
+        });
+    }
+
+    /// <summary>
+    /// crypto.pbkdf2(password, salt, iterations, keylen, digest, callback)
+    /// </summary>
+    private static object? Pbkdf2Async(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var callback = GetCallback(args);
+        var password = ConvertToBytes(args[0]);
+        var salt = ConvertToBytes(args[1]);
+        var iterations = args[2] is double d ? (int)d : 0;
+        var keylen = args[3] is double k ? (int)k : 0;
+        var digest = args[4] as string;
+
+        interpreter.Ref(); // Keep event loop alive until callback fires
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                if (password == null) throw new Exception("password is required");
+                if (salt == null) throw new Exception("salt is required");
+                if (digest == null) throw new Exception("digest must be a string");
+                if (iterations < 1) throw new Exception("iterations must be at least 1");
+
+                var hashAlgorithm = digest.ToLowerInvariant() switch
+                {
+                    "sha1" => HashAlgorithmName.SHA1,
+                    "sha256" => HashAlgorithmName.SHA256,
+                    "sha384" => HashAlgorithmName.SHA384,
+                    "sha512" => HashAlgorithmName.SHA512,
+                    _ => throw new Exception($"unsupported digest algorithm '{digest}'")
+                };
+
+                var derivedKey = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, hashAlgorithm, keylen);
+                ScheduleCallbackAndUnref(interpreter, callback, null, new SharpTSBuffer(derivedKey));
+            }
+            catch (Exception ex)
+            {
+                ScheduleCallbackAndUnref(interpreter, callback, CreateCryptoError(ex, "pbkdf2"), null);
+            }
+        });
+
+        return SharpTSUndefined.Instance;
+    }
+
+    /// <summary>
+    /// crypto.scrypt(password, salt, keylen[, options], callback)
+    /// </summary>
+    private static object? ScryptAsync(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var callback = GetCallback(args);
+        var password = ConvertToBytes(args[0]);
+        var salt = ConvertToBytes(args[1]);
+        var keylen = args[2] is double k ? (int)k : 0;
+
+        // Options are between keylen and callback
+        SharpTSObject? options = null;
+        if (args.Count > 4 && args[3] is SharpTSObject opt)
+            options = opt;
+
+        interpreter.Ref();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                if (password == null) throw new Exception("password is required");
+                if (salt == null) throw new Exception("salt is required");
+
+                int N = 16384, r = 8, p = 1;
+                if (options != null)
+                {
+                    var fields = options.Fields;
+                    if (fields.TryGetValue("N", out var costObj) && costObj is double costVal) N = (int)costVal;
+                    if (fields.TryGetValue("cost", out var cost2Obj) && cost2Obj is double cost2Val) N = (int)cost2Val;
+                    if (fields.TryGetValue("r", out var rObj) && rObj is double rVal) r = (int)rVal;
+                    if (fields.TryGetValue("blockSize", out var bsObj) && bsObj is double bsVal) r = (int)bsVal;
+                    if (fields.TryGetValue("p", out var pObj) && pObj is double pVal) p = (int)pVal;
+                    if (fields.TryGetValue("parallelization", out var parObj) && parObj is double parVal) p = (int)parVal;
+                }
+
+                if (N < 2 || (N & (N - 1)) != 0)
+                    throw new Exception("N must be a power of 2 greater than 1");
+
+                var derivedKey = SharpTS.Compilation.ScryptImpl.DeriveBytes(password, salt, N, r, p, keylen);
+                ScheduleCallbackAndUnref(interpreter, callback, null, new SharpTSBuffer(derivedKey));
+            }
+            catch (Exception ex)
+            {
+                ScheduleCallbackAndUnref(interpreter, callback, CreateCryptoError(ex, "scrypt"), null);
+            }
+        });
+
+        return SharpTSUndefined.Instance;
+    }
+
+    /// <summary>
+    /// crypto.generateKeyPair(type[, options], callback)
+    /// </summary>
+    private static object? GenerateKeyPairAsync(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var callback = GetCallback(args);
+        var keyType = args[0] as string;
+        SharpTSObject? options = null;
+        if (args.Count > 2 && args[1] is SharpTSObject opt)
+            options = opt;
+
+        interpreter.Ref();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                if (keyType == null) throw new Exception("key type is required");
+                var result = keyType.ToLowerInvariant() switch
+                {
+                    "rsa" => GenerateRsaKeyPair(options),
+                    "ec" => GenerateEcKeyPair(options),
+                    _ => throw new Exception($"unsupported key type '{keyType}'")
+                };
+                // Node.js generateKeyPair callback is (err, publicKey, privateKey)
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter, [null, result.GetProperty("publicKey"), result.GetProperty("privateKey")]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+            catch (Exception ex)
+            {
+                ScheduleCallbackAndUnref(interpreter, callback, CreateCryptoError(ex, "generateKeyPair"), null);
+            }
+        });
+
+        return SharpTSUndefined.Instance;
+    }
+
+    /// <summary>
+    /// crypto.hkdf(digest, ikm, salt, info, keylen, callback)
+    /// </summary>
+    private static object? HkdfAsync(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var callback = GetCallback(args);
+        var digest = args[0] as string;
+        var ikm = ConvertToBytes(args[1]);
+        var salt = ConvertToBytes(args[2]) ?? [];
+        var info = ConvertToBytes(args[3]) ?? [];
+        var keylen = args[4] is double k ? (int)k : 0;
+
+        interpreter.Ref();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                if (digest == null) throw new Exception("digest must be a string");
+                if (ikm == null) throw new Exception("ikm must be a Buffer or string");
+
+                if (keylen == 0)
+                {
+                    ScheduleCallbackAndUnref(interpreter, callback, null, new SharpTSBuffer([]));
+                    return;
+                }
+
+                var hashAlgorithm = digest.ToLowerInvariant() switch
+                {
+                    "sha1" => HashAlgorithmName.SHA1,
+                    "sha256" => HashAlgorithmName.SHA256,
+                    "sha384" => HashAlgorithmName.SHA384,
+                    "sha512" => HashAlgorithmName.SHA512,
+                    _ => throw new Exception($"unsupported digest algorithm '{digest}'")
+                };
+
+                var derivedKey = HKDF.DeriveKey(hashAlgorithm, ikm, keylen, salt, info);
+                ScheduleCallbackAndUnref(interpreter, callback, null, new SharpTSBuffer(derivedKey));
+            }
+            catch (Exception ex)
+            {
+                ScheduleCallbackAndUnref(interpreter, callback, CreateCryptoError(ex, "hkdf"), null);
+            }
+        });
+
+        return SharpTSUndefined.Instance;
     }
 
     #endregion

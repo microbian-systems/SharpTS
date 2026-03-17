@@ -1003,8 +1003,45 @@ public partial class ILEmitter
     /// </summary>
     private void EmitNewReadable(List<Expr> arguments)
     {
-        // new Readable(options?) - options are ignored for now
+        // new Readable(options?)
         IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSReadableCtor);
+
+        // If options provided, extract objectMode
+        if (arguments.Count > 0)
+        {
+            var instanceLocal = IL.DeclareLocal(_ctx.Runtime!.TSReadableType);
+            IL.Emit(OpCodes.Stloc, instanceLocal);
+
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+
+            var optionsLocal = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, optionsLocal);
+
+            var endLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, optionsLocal);
+            IL.Emit(OpCodes.Brfalse, endLabel);
+
+            // Extract 'objectMode' property
+            var skipObjectModeLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, optionsLocal);
+            IL.Emit(OpCodes.Ldstr, "objectMode");
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Brfalse, skipObjectModeLabel);
+            // If truthy, set object mode
+            IL.Emit(OpCodes.Pop); // Pop the objectMode value
+            IL.Emit(OpCodes.Ldloc, instanceLocal);
+            IL.Emit(OpCodes.Ldc_I4_1);
+            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSReadableType.GetMethod("SetObjectMode")!);
+            IL.Emit(OpCodes.Br, endLabel);
+            IL.MarkLabel(skipObjectModeLabel);
+            IL.Emit(OpCodes.Pop); // Pop null
+
+            IL.MarkLabel(endLabel);
+            IL.Emit(OpCodes.Ldloc, instanceLocal);
+        }
+
         SetStackUnknown();
     }
 
@@ -1064,6 +1101,21 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSWritableType.GetMethod("SetFinalCallback")!);
             IL.MarkLabel(skipFinalLabel);
 
+            // Extract 'objectMode' property
+            var skipObjectModeLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, optionsLocal);
+            IL.Emit(OpCodes.Ldstr, "objectMode");
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Brfalse, skipObjectModeLabel);
+            IL.Emit(OpCodes.Pop);
+            IL.Emit(OpCodes.Ldloc, instanceLocal);
+            IL.Emit(OpCodes.Ldc_I4_1);
+            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSWritableType.GetMethod("SetObjectMode")!);
+            IL.Emit(OpCodes.Br, endLabel);
+            IL.MarkLabel(skipObjectModeLabel);
+            IL.Emit(OpCodes.Pop);
+
             IL.Emit(OpCodes.Br, endLabel);
 
             IL.MarkLabel(optionsNullLabel);
@@ -1095,26 +1147,45 @@ public partial class ILEmitter
             EmitExpression(arguments[0]);
             EmitBoxIfNeeded(arguments[0]);
 
+            var optionsLocal = IL.DeclareLocal(_ctx.Types.Object);
             IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Stloc, optionsLocal);
             IL.Emit(OpCodes.Brfalse, optionsLabel);
 
+            // Extract 'write' callback
+            var skipWriteLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, optionsLocal);
             IL.Emit(OpCodes.Ldstr, "write");
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
-
             var writeCallbackLocal = IL.DeclareLocal(_ctx.Types.Object);
             IL.Emit(OpCodes.Stloc, writeCallbackLocal);
-
             IL.Emit(OpCodes.Ldloc, writeCallbackLocal);
-            IL.Emit(OpCodes.Brfalse, endLabel);
-
+            IL.Emit(OpCodes.Brfalse, skipWriteLabel);
             IL.Emit(OpCodes.Ldloc, instanceLocal);
             IL.Emit(OpCodes.Ldloc, writeCallbackLocal);
             var setWriteCallback = _ctx.Runtime!.TSDuplexType.GetMethod("SetWriteCallback");
             IL.Emit(OpCodes.Callvirt, setWriteCallback!);
+            IL.MarkLabel(skipWriteLabel);
+
+            // Extract 'objectMode' property
+            var skipObjectModeLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, optionsLocal);
+            IL.Emit(OpCodes.Ldstr, "objectMode");
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Brfalse, skipObjectModeLabel);
+            IL.Emit(OpCodes.Pop);
+            IL.Emit(OpCodes.Ldloc, instanceLocal);
+            IL.Emit(OpCodes.Ldc_I4_1);
+            var setObjectMode = _ctx.Runtime!.TSDuplexType.GetMethod("SetObjectMode");
+            IL.Emit(OpCodes.Callvirt, setObjectMode!);
+            IL.Emit(OpCodes.Br, endLabel);
+            IL.MarkLabel(skipObjectModeLabel);
+            IL.Emit(OpCodes.Pop);
+
             IL.Emit(OpCodes.Br, endLabel);
 
             IL.MarkLabel(optionsLabel);
-            IL.Emit(OpCodes.Pop);
 
             IL.MarkLabel(endLabel);
             IL.Emit(OpCodes.Ldloc, instanceLocal);
@@ -1144,11 +1215,13 @@ public partial class ILEmitter
             EmitExpression(arguments[0]);
             EmitBoxIfNeeded(arguments[0]);
 
+            var optionsLocal = IL.DeclareLocal(_ctx.Types.Object);
             IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Stloc, optionsLocal);
             IL.Emit(OpCodes.Brfalse, optionsLabel);
 
             // Get 'transform' property
-            IL.Emit(OpCodes.Dup); // Keep options on stack for flush
+            IL.Emit(OpCodes.Ldloc, optionsLocal);
             IL.Emit(OpCodes.Ldstr, "transform");
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
 
@@ -1165,7 +1238,9 @@ public partial class ILEmitter
 
             IL.MarkLabel(afterTransformLabel);
 
-            // Get 'flush' property (options still on stack)
+            // Get 'flush' property
+            var afterFlushLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, optionsLocal);
             IL.Emit(OpCodes.Ldstr, "flush");
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
 
@@ -1173,16 +1248,35 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Stloc, flushCallbackLocal);
 
             IL.Emit(OpCodes.Ldloc, flushCallbackLocal);
-            IL.Emit(OpCodes.Brfalse, endLabel);
+            IL.Emit(OpCodes.Brfalse, afterFlushLabel);
 
             IL.Emit(OpCodes.Ldloc, instanceLocal);
             IL.Emit(OpCodes.Ldloc, flushCallbackLocal);
             var setFlushCallback = _ctx.Runtime!.TSTransformType.GetMethod("SetFlushCallback");
             IL.Emit(OpCodes.Callvirt, setFlushCallback!);
+
+            IL.MarkLabel(afterFlushLabel);
+
+            // Extract 'objectMode' property (Transform extends Duplex)
+            var skipObjectModeLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, optionsLocal);
+            IL.Emit(OpCodes.Ldstr, "objectMode");
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Brfalse, skipObjectModeLabel);
+            IL.Emit(OpCodes.Pop);
+            IL.Emit(OpCodes.Ldloc, instanceLocal);
+            IL.Emit(OpCodes.Ldc_I4_1);
+            // Transform extends Duplex, use SetObjectMode from Duplex
+            var setObjectMode = _ctx.Runtime!.TSDuplexType.GetMethod("SetObjectMode");
+            IL.Emit(OpCodes.Callvirt, setObjectMode!);
+            IL.Emit(OpCodes.Br, endLabel);
+            IL.MarkLabel(skipObjectModeLabel);
+            IL.Emit(OpCodes.Pop);
+
             IL.Emit(OpCodes.Br, endLabel);
 
             IL.MarkLabel(optionsLabel);
-            IL.Emit(OpCodes.Pop);
 
             IL.MarkLabel(endLabel);
             IL.Emit(OpCodes.Ldloc, instanceLocal);

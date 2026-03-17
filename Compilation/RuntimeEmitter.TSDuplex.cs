@@ -17,6 +17,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsDuplexWriteCorkBufferField = null!;
     private FieldBuilder _tsDuplexWriteCallbackField = null!;
     private FieldBuilder _tsDuplexFinalCallbackField = null!;
+    private FieldBuilder _tsDuplexWritableObjectModeField = null!;
 
     /// <summary>
     /// Phase 1: Define the $Duplex type, fields, and methods.
@@ -40,6 +41,7 @@ public partial class RuntimeEmitter
         _tsDuplexWriteCorkBufferField = typeBuilder.DefineField("_writeCorkBuffer", _types.ListOfObject, FieldAttributes.Family);
         _tsDuplexWriteCallbackField = typeBuilder.DefineField("_writeCallback", _types.Object, FieldAttributes.Family);
         _tsDuplexFinalCallbackField = typeBuilder.DefineField("_finalCallback", _types.Object, FieldAttributes.Family);
+        _tsDuplexWritableObjectModeField = typeBuilder.DefineField("_writableObjectMode", _types.Boolean, FieldAttributes.Family);
 
         // Constructor
         EmitTSDuplexCtor(typeBuilder, runtime);
@@ -56,6 +58,7 @@ public partial class RuntimeEmitter
         // Setter methods for callbacks
         EmitTSDuplexSetWriteCallback(typeBuilder, runtime);
         EmitTSDuplexSetFinalCallback(typeBuilder, runtime);
+        EmitTSDuplexSetObjectMode(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -114,6 +117,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stfld, _tsDuplexWriteCorkBufferField);
+
+        // _writableObjectMode = false
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, _tsDuplexWritableObjectModeField);
 
         il.Emit(OpCodes.Ret);
     }
@@ -339,6 +347,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         writableEndedProp.SetGetMethod(getWritableEnded);
 
+        // writableObjectMode property
+        var writableObjectModeProp = typeBuilder.DefineProperty("WritableObjectMode", PropertyAttributes.None, _types.Boolean, null);
+        var getWritableObjectMode = typeBuilder.DefineMethod(
+            "get_WritableObjectMode",
+            MethodAttributes.Public | MethodAttributes.SpecialName,
+            _types.Boolean,
+            Type.EmptyTypes
+        );
+        il = getWritableObjectMode.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsDuplexWritableObjectModeField);
+        il.Emit(OpCodes.Ret);
+        writableObjectModeProp.SetGetMethod(getWritableObjectMode);
+
         // writableFinished property
         var writableFinishedProp = typeBuilder.DefineProperty("WritableFinished", PropertyAttributes.None, _types.Boolean, null);
         var getWritableFinished = typeBuilder.DefineMethod(
@@ -383,6 +405,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Stfld, _tsDuplexFinalCallbackField);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitTSDuplexSetObjectMode(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // public void SetObjectMode(bool value)
+        // Sets both the readable side (_objectMode from $Readable) and writable side
+        var method = typeBuilder.DefineMethod(
+            "SetObjectMode",
+            MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.NewSlot,
+            _types.Void,
+            [_types.Boolean]
+        );
+
+        var il = method.GetILGenerator();
+        // Set inherited _objectMode from $Readable
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, _tsReadableObjectModeField);
+        // Set _writableObjectMode
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, _tsDuplexWritableObjectModeField);
         il.Emit(OpCodes.Ret);
     }
 }

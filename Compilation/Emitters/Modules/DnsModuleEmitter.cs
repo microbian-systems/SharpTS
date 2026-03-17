@@ -17,7 +17,12 @@ public sealed class DnsModuleEmitter : IBuiltInModuleEmitter
     private static readonly string[] _exportedMembers =
     [
         "lookup", "lookupService",
-        "ADDRCONFIG", "V4MAPPED", "ALL"
+        "resolve", "resolve4", "resolve6", "reverse",
+        "ADDRCONFIG", "V4MAPPED", "ALL",
+        "NODATA", "FORMERR", "SERVFAIL", "NOTFOUND", "NOTIMP", "REFUSED",
+        "BADQUERY", "BADNAME", "BADFAMILY", "BADRESP", "CONNREFUSED", "TIMEOUT",
+        "EOF", "FILE", "NOMEM", "DESTRUCTION", "BADSTR", "BADFLAGS",
+        "NONAME", "BADHINTS", "NOTINITIALIZED", "LOADIPHLPAPI", "ADDRGETNETWORKPARAMS", "CANCELLED"
     ];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
@@ -44,6 +49,30 @@ public sealed class DnsModuleEmitter : IBuiltInModuleEmitter
             "ADDRCONFIG" => EmitConstant(il, 1.0),
             "V4MAPPED" => EmitConstant(il, 2.0),
             "ALL" => EmitConstant(il, 4.0),
+            "NODATA" => EmitStringConstant(il, "ENODATA"),
+            "FORMERR" => EmitStringConstant(il, "EFORMERR"),
+            "SERVFAIL" => EmitStringConstant(il, "ESERVFAIL"),
+            "NOTFOUND" => EmitStringConstant(il, "ENOTFOUND"),
+            "NOTIMP" => EmitStringConstant(il, "ENOTIMP"),
+            "REFUSED" => EmitStringConstant(il, "EREFUSED"),
+            "BADQUERY" => EmitStringConstant(il, "EBADQUERY"),
+            "BADNAME" => EmitStringConstant(il, "EBADNAME"),
+            "BADFAMILY" => EmitStringConstant(il, "EBADFAMILY"),
+            "BADRESP" => EmitStringConstant(il, "EBADRESP"),
+            "CONNREFUSED" => EmitStringConstant(il, "ECONNREFUSED"),
+            "TIMEOUT" => EmitStringConstant(il, "ETIMEOUT"),
+            "EOF" => EmitStringConstant(il, "EEOF"),
+            "FILE" => EmitStringConstant(il, "EFILE"),
+            "NOMEM" => EmitStringConstant(il, "ENOMEM"),
+            "DESTRUCTION" => EmitStringConstant(il, "EDESTRUCTION"),
+            "BADSTR" => EmitStringConstant(il, "EBADSTR"),
+            "BADFLAGS" => EmitStringConstant(il, "EBADFLAGS"),
+            "NONAME" => EmitStringConstant(il, "ENONAME"),
+            "BADHINTS" => EmitStringConstant(il, "EBADHINTS"),
+            "NOTINITIALIZED" => EmitStringConstant(il, "ENOTINITIALIZED"),
+            "LOADIPHLPAPI" => EmitStringConstant(il, "ELOADIPHLPAPI"),
+            "ADDRGETNETWORKPARAMS" => EmitStringConstant(il, "EADDRGETNETWORKPARAMS"),
+            "CANCELLED" => EmitStringConstant(il, "ECANCELLED"),
             _ => false
         };
     }
@@ -68,6 +97,12 @@ public sealed class DnsModuleEmitter : IBuiltInModuleEmitter
     {
         il.Emit(OpCodes.Ldc_R8, value);
         il.Emit(OpCodes.Box, typeof(double));
+        return true;
+    }
+
+    private static bool EmitStringConstant(ILGenerator il, string value)
+    {
+        il.Emit(OpCodes.Ldstr, value);
         return true;
     }
 

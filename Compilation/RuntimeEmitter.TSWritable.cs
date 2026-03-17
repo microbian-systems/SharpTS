@@ -24,6 +24,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsWritableWriteCallbackField = null!;
     private FieldBuilder _tsWritableFinalCallbackField = null!;
     private FieldBuilder _tsWritableHighWaterMarkField = null!;
+    private FieldBuilder _tsWritableObjectModeField = null!;
 
     /// <summary>
     /// Emits the $WriteCallbackWrapper helper class.
@@ -126,6 +127,7 @@ public partial class RuntimeEmitter
         _tsWritableWriteCallbackField = typeBuilder.DefineField("_writeCallback", _types.Object, FieldAttributes.Private);
         _tsWritableFinalCallbackField = typeBuilder.DefineField("_finalCallback", _types.Object, FieldAttributes.Private);
         _tsWritableHighWaterMarkField = typeBuilder.DefineField("_highWaterMark", _types.Int32, FieldAttributes.Private);
+        _tsWritableObjectModeField = typeBuilder.DefineField("_objectMode", _types.Boolean, FieldAttributes.Private);
 
         // Constructor
         EmitTSWritableCtor(typeBuilder, runtime);
@@ -141,6 +143,7 @@ public partial class RuntimeEmitter
         // Setter methods for callbacks
         EmitTSWritableSetWriteCallback(typeBuilder, runtime);
         EmitTSWritableSetFinalCallback(typeBuilder, runtime);
+        EmitTSWritableSetObjectMode(typeBuilder, runtime);
 
         // Property getters
         EmitTSWritablePropertyGetters(typeBuilder, runtime);
@@ -197,6 +200,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4, 16384);
         il.Emit(OpCodes.Stfld, _tsWritableHighWaterMarkField);
+
+        // _objectMode = false
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, _tsWritableObjectModeField);
 
         il.Emit(OpCodes.Ret);
     }
@@ -643,6 +651,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    private void EmitTSWritableSetObjectMode(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // public void SetObjectMode(bool value)
+        var method = typeBuilder.DefineMethod(
+            "SetObjectMode",
+            MethodAttributes.Public,
+            _types.Void,
+            [_types.Boolean]
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, _tsWritableObjectModeField);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitTSWritablePropertyGetters(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // writable property: _writable && !_ended && !_destroyed
@@ -729,6 +754,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsWritableDestroyedField);
         il.Emit(OpCodes.Ret);
         destroyedProp.SetGetMethod(getDestroyed);
+
+        // writableObjectMode property
+        var writableObjectModeProp = typeBuilder.DefineProperty("WritableObjectMode", PropertyAttributes.None, _types.Boolean, null);
+        var getWritableObjectMode = typeBuilder.DefineMethod(
+            "get_WritableObjectMode",
+            MethodAttributes.Public | MethodAttributes.SpecialName,
+            _types.Boolean,
+            Type.EmptyTypes
+        );
+        il = getWritableObjectMode.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableObjectModeField);
+        il.Emit(OpCodes.Ret);
+        writableObjectModeProp.SetGetMethod(getWritableObjectMode);
 
         // writableHighWaterMark property
         var writableHwmProp = typeBuilder.DefineProperty("WritableHighWaterMark", PropertyAttributes.None, _types.Double, null);
