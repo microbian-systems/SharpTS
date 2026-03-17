@@ -918,6 +918,9 @@ public partial class RuntimeEmitter
         // Method: clone() - creates a copy sharing body bytes
         EmitFetchResponseCloneMethod(typeBuilder, runtime, ctor);
 
+        // Property: body - returns a Readable stream of the response body
+        EmitFetchResponseBodyGetter(typeBuilder, runtime);
+
         // Store the type reference
         runtime.TSFetchResponseType = typeBuilder;
         runtime.TSFetchResponseCtor = ctor;
@@ -1095,6 +1098,88 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _fetchResponseBodyBytesField);
 
         il.Emit(OpCodes.Newobj, ctor);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits a 'body' property getter on $FetchResponse that returns a Readable stream.
+    /// Uses the emitted $Readable type directly for compiled-mode compatibility.
+    /// </summary>
+    private void EmitFetchResponseBodyGetter(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // Define a cached field for the body readable
+        var bodyStreamField = typeBuilder.DefineField("_bodyStream", _types.Object, FieldAttributes.Private);
+
+        var prop = typeBuilder.DefineProperty("body", PropertyAttributes.None, _types.Object, null);
+        var getter = typeBuilder.DefineMethod(
+            "get_Body",
+            MethodAttributes.Public | MethodAttributes.SpecialName,
+            _types.Object,
+            Type.EmptyTypes
+        );
+        prop.SetGetMethod(getter);
+
+        var il = getter.GetILGenerator();
+
+        // if (_bodyStream != null) return _bodyStream;
+        var createLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, bodyStreamField);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, createLabel);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(createLabel);
+        il.Emit(OpCodes.Pop); // pop the null
+
+        // Create emitted $Readable directly (no reflection needed)
+        il.Emit(OpCodes.Newobj, runtime.TSReadableCtor);
+        var readableLocal = il.DeclareLocal(runtime.TSReadableType);
+        il.Emit(OpCodes.Stloc, readableLocal);
+
+        // Push body bytes as a single chunk, then push null for EOF
+        // readable.Push(new $Buffer(bodyBytes))
+        var bodyBytesLocal = il.DeclareLocal(_types.ByteArray);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _fetchResponseBodyBytesField);
+        il.Emit(OpCodes.Stloc, bodyBytesLocal);
+
+        // Check if bodyBytes is not null and has length > 0
+        var pushEofLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, bodyBytesLocal);
+        il.Emit(OpCodes.Brfalse, pushEofLabel);
+        il.Emit(OpCodes.Ldloc, bodyBytesLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, pushEofLabel);
+
+        // Push body bytes: readable.Push(new $Buffer(bodyBytes))
+        il.Emit(OpCodes.Ldloc, readableLocal);
+        il.Emit(OpCodes.Ldloc, bodyBytesLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSBufferCtor); // new $Buffer(byte[])
+        il.Emit(OpCodes.Callvirt, runtime.TSReadablePush);
+        il.Emit(OpCodes.Pop); // discard bool return
+
+        // Push null for EOF: readable.Push(null)
+        il.MarkLabel(pushEofLabel);
+        il.Emit(OpCodes.Ldloc, readableLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Callvirt, runtime.TSReadablePush);
+        il.Emit(OpCodes.Pop); // discard bool return
+
+        // Mark body as consumed: this._bodyConsumed = true
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _fetchResponseBodyConsumedField);
+
+        // Cache: this._bodyStream = readable
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, readableLocal);
+        il.Emit(OpCodes.Stfld, bodyStreamField);
+
+        // Return readable
+        il.Emit(OpCodes.Ldloc, readableLocal);
         il.Emit(OpCodes.Ret);
     }
 

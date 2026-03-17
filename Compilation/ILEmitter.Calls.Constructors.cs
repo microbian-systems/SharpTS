@@ -227,6 +227,13 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new PerformanceObserver(callback) constructor
+        if (isSimpleName && simpleClassName == "PerformanceObserver")
+        {
+            EmitNewPerformanceObserver(n.Arguments);
+            return;
+        }
+
         // Special case: new SharedArrayBuffer(...) constructor
         if (isSimpleName && simpleClassName == "SharedArrayBuffer")
         {
@@ -343,6 +350,12 @@ public partial class ILEmitter
         if (namespaceParts.Count == 1 && className == "StringDecoder")
         {
             EmitNewStringDecoder(n.Arguments);
+            return;
+        }
+        // Special case: new ph.PerformanceObserver() (module-qualified)
+        if (namespaceParts.Count == 1 && className == "PerformanceObserver")
+        {
+            EmitNewPerformanceObserver(n.Arguments);
             return;
         }
 
@@ -995,6 +1008,26 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSStringDecoderCtor);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits code for new PerformanceObserver(callback) construction.
+    /// </summary>
+    private void EmitNewPerformanceObserver(List<Expr> arguments)
+    {
+        // Pack callback into object[] and call PerfHooksCreateObserverWrapper
+        IL.Emit(OpCodes.Ldc_I4_1);
+        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+        if (arguments.Count > 0)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldc_I4_0);
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+            IL.Emit(OpCodes.Stelem_Ref);
+        }
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.PerfHooksCreateObserver);
         SetStackUnknown();
     }
 

@@ -7,13 +7,14 @@ namespace SharpTS.Compilation.Emitters.Modules;
 /// Emits IL code for the Node.js 'perf_hooks' module.
 /// </summary>
 /// <remarks>
-/// Provides high-resolution timing APIs similar to the browser's Performance API.
+/// Provides high-resolution timing APIs similar to the browser's Performance API,
+/// including mark(), measure(), getEntries*(), clear*(), and PerformanceObserver.
 /// </remarks>
 public sealed class PerfHooksModuleEmitter : IBuiltInModuleEmitter
 {
     public string ModuleName => "perf_hooks";
 
-    private static readonly string[] _exportedMembers = ["performance"];
+    private static readonly string[] _exportedMembers = ["performance", "PerformanceObserver"];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
 
@@ -28,16 +29,28 @@ public sealed class PerfHooksModuleEmitter : IBuiltInModuleEmitter
     {
         if (propertyName == "performance")
         {
-            // Return the performance object
             var ctx = emitter.Context;
             var il = ctx.IL;
-
             il.Emit(OpCodes.Call, ctx.Runtime!.PerfHooksGetPerformance);
+            return true;
+        }
+
+        if (propertyName == "PerformanceObserver")
+        {
+            // Return a TSFunction wrapping PerfHooksCreateObserverWrapper
+            var ctx = emitter.Context;
+            var il = ctx.IL;
+            il.Emit(OpCodes.Ldnull); // target
+            il.Emit(OpCodes.Ldtoken, ctx.Runtime!.PerfHooksCreateObserver);
+            il.Emit(OpCodes.Call, typeof(System.Reflection.MethodBase)
+                .GetMethod("GetMethodFromHandle", [typeof(RuntimeMethodHandle)])!);
+            il.Emit(OpCodes.Castclass, typeof(System.Reflection.MethodInfo));
+            il.Emit(OpCodes.Newobj, ctx.Runtime.TSFunctionCtor);
             return true;
         }
 
         return false;
     }
 
-    public bool IsExportedProperty(string memberName) => memberName is "performance";
+    public bool IsExportedProperty(string memberName) => memberName is "performance" or "PerformanceObserver";
 }

@@ -46,6 +46,7 @@ public static class BuiltInModuleValues
             "net" => NetModuleInterpreter.GetExports(),
             "https" => HttpModuleInterpreter.GetExports(), // https delegates to http
             "tls" => TlsModuleInterpreter.GetExports(),
+            "dgram" => DgramModuleInterpreter.GetExports(),
             _ => throw new Exception($"Unknown built-in module: {moduleName}")
         };
     }
@@ -58,6 +59,7 @@ public static class BuiltInModuleValues
         return moduleName is "fs" or "fs/promises" or "path" or "os" or "querystring" or "assert" or "url"
             or "process" or "crypto" or "util" or "readline" or "child_process" or "buffer"
             or "zlib" or "events" or "timers" or "string_decoder" or "perf_hooks" or "stream"
-            or "http" or "worker_threads" or "dns" or "dns/promises" or "net" or "https" or "tls";
+            or "http" or "worker_threads" or "dns" or "dns/promises" or "net" or "https" or "tls"
+            or "dgram";
     }
 }

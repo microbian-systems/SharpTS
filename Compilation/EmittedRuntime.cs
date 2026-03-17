@@ -1249,6 +1249,9 @@ public class EmittedRuntime
     public MethodBuilder TlsGetDefaultMinVersion { get; set; } = null!;
     public MethodBuilder TlsGetDefaultMaxVersion { get; set; } = null!;
 
+    // Dgram module methods
+    public MethodBuilder DgramCreateSocket { get; set; } = null!;
+
     // $Headers type - emitted for standalone Headers support
     public TypeBuilder TSHeadersType { get; set; } = null!;
     public ConstructorBuilder TSHeadersCtor { get; set; } = null!;
@@ -1609,6 +1612,24 @@ public class EmittedRuntime
     public MethodBuilder PerfHooksPerformanceNow { get; set; } = null!;
     public FieldBuilder PerfHooksStartTicks { get; set; } = null!;
     public FieldBuilder PerfHooksTicksPerMs { get; set; } = null!;
+    public FieldBuilder PerfHooksEntries { get; set; } = null!;
+    public FieldBuilder PerfHooksObservers { get; set; } = null!;
+    public MethodBuilder PerfHooksEnsureEntries { get; set; } = null!;
+    public MethodBuilder PerfHooksCreateEntry { get; set; } = null!;
+    public MethodBuilder PerfHooksGetEntryField { get; set; } = null!;
+    public MethodBuilder PerfHooksGetEntryDouble { get; set; } = null!;
+    public MethodBuilder PerfHooksFindMark { get; set; } = null!;
+    public MethodBuilder PerfHooksNotifyObservers { get; set; } = null!;
+    public MethodBuilder PerfHooksMark { get; set; } = null!;
+    public MethodBuilder PerfHooksMeasure { get; set; } = null!;
+    public MethodBuilder PerfHooksGetEntries { get; set; } = null!;
+    public MethodBuilder PerfHooksGetEntriesByName { get; set; } = null!;
+    public MethodBuilder PerfHooksGetEntriesByType { get; set; } = null!;
+    public MethodBuilder PerfHooksFilterEntries { get; set; } = null!;
+    public MethodBuilder PerfHooksClearByType { get; set; } = null!;
+    public MethodBuilder PerfHooksClearMarks { get; set; } = null!;
+    public MethodBuilder PerfHooksClearMeasures { get; set; } = null!;
+    public MethodBuilder PerfHooksCreateObserver { get; set; } = null!;
 
     // $Readable type - emitted for standalone stream support
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSReadable

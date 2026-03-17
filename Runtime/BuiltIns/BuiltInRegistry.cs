@@ -746,6 +746,10 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSSocket), (instance, name) =>
             ((SharpTSSocket)instance).GetMember(name));
 
+        // Register dgram types
+        registry.RegisterInstanceType(typeof(SharpTSDatagramSocket), (instance, name) =>
+            ((SharpTSDatagramSocket)instance).GetMember(name));
+
         // Register file watcher types
         registry.RegisterInstanceType(typeof(SharpTSFSWatcher), (instance, name) =>
             ((SharpTSFSWatcher)instance).GetMember(name));

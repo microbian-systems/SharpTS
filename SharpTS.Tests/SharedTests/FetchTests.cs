@@ -588,4 +588,95 @@ public class FetchTests : IDisposable
         var output = TestHarness.Run(source, mode);
         Assert.Equal("DELETE\n", output);
     }
+
+    // ========== Response.body (ReadableStream) tests ==========
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fetch_ResponseBody_Exists(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test() {
+                const response = await fetch('{{_server.BaseUrl}}/text');
+                console.log(response.body !== null);
+                console.log(response.body !== undefined);
+                console.log(typeof response.body === 'object');
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fetch_ResponseBody_IsReadable(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test() {
+                const response = await fetch('{{_server.BaseUrl}}/text');
+                const body = response.body;
+                console.log(typeof body.on === 'function');
+                console.log(typeof body.pipe === 'function');
+                console.log(typeof body.read === 'function');
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fetch_ResponseBody_ReadData(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test() {
+                const response = await fetch('{{_server.BaseUrl}}/text');
+                const body = response.body;
+                const chunk = body.read();
+                console.log(chunk !== null);
+                console.log(chunk.length > 0);
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fetch_ResponseBody_BodyUsedAfterAccess(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test() {
+                const response = await fetch('{{_server.BaseUrl}}/text');
+                console.log(response.bodyUsed === false);
+                const body = response.body;
+                // Accessing body marks it as consumed
+                console.log(response.bodyUsed === true);
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fetch_ResponseBody_ReadBinaryData(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function test() {
+                const response = await fetch('{{_server.BaseUrl}}/binary');
+                const body = response.body;
+                const chunk = body.read();
+                console.log(chunk !== null);
+                console.log(chunk.length > 0);
+            }
+            test();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
 }

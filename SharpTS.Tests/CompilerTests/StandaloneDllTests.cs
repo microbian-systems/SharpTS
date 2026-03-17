@@ -34,6 +34,7 @@ public class StandaloneDllTests
         "Compilation/RuntimeEmitter.ProcessHelpers.cs",      // ProcessEventEmitterCall and ProcessEmitExit fallback
         "Compilation/RuntimeEmitter.Net.cs",                 // Net module createServer/createConnection via interpreter types
         "Compilation/RuntimeEmitter.Tls.cs",                 // TLS module createServer/connect via interpreter types
+        "Compilation/RuntimeEmitter.Dgram.cs",               // Dgram module createSocket via interpreter types
         "Compilation/RuntimeEmitter.ZlibHelpers.cs",           // Zlib streaming createGzip/etc. via interpreter types
     };
 

@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-16 (Added DNS record type resolution: MX, TXT, SRV, CNAME, NS, SOA, PTR, CAA, NAPTR)
+**Last Updated:** 2026-03-16 (Expanded perf_hooks: mark/measure/getEntries/PerformanceObserver; Added dgram UDP module)
 
 ## Legend
 - ✅ Implemented
@@ -32,13 +32,14 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `buffer` | ✅ | Full Buffer class with multi-byte LE/BE, float/double, BigInt, search, swap |
 | `timers` | ✅ | setTimeout, setInterval, setImmediate + clear variants (module import) |
 | `string_decoder` | ✅ | StringDecoder class for multi-byte character handling |
-| `perf_hooks` | ✅ | performance.now(), performance.timeOrigin |
+| `perf_hooks` | ✅ | performance.now(), timeOrigin, mark(), measure(), getEntries/ByName/ByType(), clearMarks/Measures(); PerformanceObserver |
 | `http` / `https` | ✅ | createServer, request, get; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
 | `net` | ✅ | createServer, createConnection/connect, Socket, Server; isIP, isIPv4, isIPv6 |
 | `tls` | ✅ | createServer, connect, createSecureContext, TLSSocket, Server; DEFAULT_MIN_VERSION, DEFAULT_MAX_VERSION; secureConnect/secureConnection/tlsClientError events |
 | `dns` | ✅ | lookup, lookupService, resolve, resolve4, resolve6, reverse, resolveMx, resolveTxt, resolveSrv, resolveCname, resolveNs, resolveSoa, resolvePtr, resolveCaa, resolveNaptr (callback + dns/promises) |
 | `zlib` | ✅ | gzip, deflate, deflateRaw, brotli, zstd (sync + streaming + async callback APIs) |
 | `worker_threads` | ⚠️ | Worker, MessageChannel, parentPort, workerData, isMainThread |
+| `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; message/listening/close/error events |
 | `cluster` | ❌ | No cluster support |
 
 ---
@@ -522,14 +523,21 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | **performance** | | |
 | `performance.now()` | ✅ | High-resolution monotonic timestamp |
 | `performance.timeOrigin` | ✅ | Unix timestamp when process started |
+| `performance.mark(name, options?)` | ✅ | Creates PerformanceMark entry; options.startTime supported |
+| `performance.measure(name, start?, end?)` | ✅ | Creates PerformanceMeasure between marks |
+| `performance.getEntries()` | ✅ | Returns all performance entries |
+| `performance.getEntriesByName(name, type?)` | ✅ | Filter entries by name, optionally by type |
+| `performance.getEntriesByType(type)` | ✅ | Filter entries by 'mark' or 'measure' |
+| `performance.clearMarks(name?)` | ✅ | Clear all marks or by name |
+| `performance.clearMeasures(name?)` | ✅ | Clear all measures or by name |
+| **PerformanceObserver** | | |
+| `new PerformanceObserver(callback)` | ✅ | Create observer with callback |
+| `observer.observe({ entryTypes })` | ✅ | Start observing specified entry types |
+| `observer.disconnect()` | ✅ | Stop receiving notifications |
 | **Import** | | |
 | `import { performance } from 'perf_hooks'` | ✅ | Named import |
+| `import { PerformanceObserver } from 'perf_hooks'` | ✅ | Named import |
 | `import * as perf from 'perf_hooks'` | ✅ | Namespace import |
-| **Not Implemented** | | |
-| `PerformanceObserver` | ❌ | |
-| `performance.mark()` | ❌ | |
-| `performance.measure()` | ❌ | |
-| `performance.getEntries()` | ❌ | |
 
 ---
 
@@ -614,7 +622,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `Request` class | ❌ | Use options object |
 | `Response` class | ❌ | Only from fetch() return |
 | `Headers` class | ❌ | Use plain objects |
-| Streaming body | ❌ | Body fully loaded |
+| `response.body` | ✅ | Readable stream (body eagerly loaded, streamed via Readable) |
 | `AbortController` | ❌ | No request cancellation |
 | `credentials` option | ❌ | No cookie handling |
 | `redirect` option | ❌ | Auto-follows redirects |
@@ -762,7 +770,40 @@ This document tracks Node.js module and API implementation status in SharpTS.
 
 ---
 
-## 24. WORKER_THREADS
+## 24. DGRAM (UDP)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Socket Creation** | | |
+| `createSocket(type)` | ✅ | 'udp4' or 'udp6' |
+| `createSocket(options, callback?)` | ✅ | Options with `type` field |
+| **Socket Methods** | | |
+| `socket.bind(port?, address?, callback?)` | ✅ | Bind to local address; port 0 for auto-assign |
+| `socket.send(msg, port, address?, callback?)` | ✅ | Send datagram; string or Buffer |
+| `socket.send(msg, offset, length, port, address?, callback?)` | ✅ | Send with offset/length |
+| `socket.close(callback?)` | ✅ | Close socket |
+| `socket.address()` | ✅ | Returns { address, family, port } |
+| `socket.setBroadcast(flag)` | ✅ | Enable/disable broadcast |
+| `socket.setTTL(ttl)` | ✅ | Set IP TTL |
+| `socket.setMulticastTTL(ttl)` | ✅ | Set multicast TTL |
+| `socket.addMembership(addr, iface?)` | ✅ | Join multicast group |
+| `socket.dropMembership(addr)` | ✅ | Leave multicast group |
+| `socket.ref()` / `unref()` | ✅ | Event loop ref counting |
+| **Events** | | |
+| `'message'` | ✅ | `(msg: Buffer, rinfo: { address, family, port, size })` |
+| `'listening'` | ✅ | Emitted after bind completes |
+| `'close'` | ✅ | Emitted after socket closed |
+| `'error'` | ✅ | Emitted on error |
+| **EventEmitter** | ✅ | on, once, off, emit, removeListener, etc. |
+| **Not Implemented** | | |
+| `socket.getRecvBufferSize()` / `setRecvBufferSize()` | ❌ | Buffer size control |
+| `socket.getSendBufferSize()` / `setSendBufferSize()` | ❌ | Buffer size control |
+| `socket.remoteAddress()` | ❌ | Connected socket remote info |
+| `socket.connect(port, address?)` | ❌ | Connected UDP mode |
+
+---
+
+## 25. WORKER_THREADS
 
 | Feature | Status | Notes |
 |---------|--------|-------|

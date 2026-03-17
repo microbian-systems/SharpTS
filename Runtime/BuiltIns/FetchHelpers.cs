@@ -163,4 +163,25 @@ public static class FetchHelpers
 
         return headers;
     }
+
+    /// <summary>
+    /// Populates a SharpTSReadable stream with body bytes from a fetch response.
+    /// Called via reflection from compiled $FetchResponse.body getter.
+    /// </summary>
+    public static void PopulateBodyStream(object readable, byte[] bodyBytes)
+    {
+        if (readable is SharpTSReadable stream)
+        {
+            var pushMethod = stream.GetMember("push") as BuiltInMethod;
+            if (pushMethod != null)
+            {
+                var bound = pushMethod.Bind(stream);
+                if (bodyBytes != null && bodyBytes.Length > 0)
+                {
+                    bound.Call(null!, new List<object?> { new SharpTSBuffer(bodyBytes) });
+                }
+                bound.Call(null!, new List<object?> { null }); // EOF
+            }
+        }
+    }
 }

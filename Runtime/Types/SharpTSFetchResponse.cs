@@ -24,6 +24,7 @@ public class SharpTSFetchResponse : ITypeCategorized
     private readonly string _url;
     private byte[]? _bodyBytes;
     private bool _bodyConsumed;
+    private SharpTSReadable? _bodyStream;
 
     /// <summary>
     /// Creates a new Response wrapping an HttpResponseMessage.
@@ -77,6 +78,7 @@ public class SharpTSFetchResponse : ITypeCategorized
                     return resp.Clone();
                 throw new Exception("Runtime Error: clone requires a Response object");
             }).Bind(this),
+            "body" => GetBodyReadable(),
             "bodyUsed" => _bodyConsumed,
             _ => SharpTSUndefined.Instance
         };
@@ -182,6 +184,44 @@ public class SharpTSFetchResponse : ITypeCategorized
     private SharpTSHeaders GetHeadersObject()
     {
         return new SharpTSHeaders(_response);
+    }
+
+    /// <summary>
+    /// Gets the response body as a Readable stream.
+    /// The stream pushes the full body as a single Buffer chunk, then signals EOF.
+    /// Accessing body marks the body as consumed (same as calling json/text/arrayBuffer).
+    /// </summary>
+    private SharpTSReadable GetBodyReadable()
+    {
+        if (_bodyStream != null)
+            return _bodyStream;
+
+        _bodyStream = new SharpTSReadable();
+
+        // Load body bytes eagerly and push into the readable
+        // This follows the existing pattern where body is fully loaded
+        Task.Run(async () =>
+        {
+            try
+            {
+                var bytes = await ReadBodyAsBytesAsync();
+                var buf = new SharpTSBuffer(bytes);
+
+                // Push data and EOF into the readable's internal buffer
+                // The readable will drain when a 'data' listener is added
+                var pushMethod = _bodyStream.GetMember("push") as BuiltInMethod;
+                pushMethod?.Bind(_bodyStream).Call(null!, new List<object?> { buf });
+                pushMethod?.Bind(_bodyStream).Call(null!, new List<object?> { null }); // EOF
+            }
+            catch (Exception)
+            {
+                // Body already consumed or error - push EOF
+                var pushMethod = _bodyStream.GetMember("push") as BuiltInMethod;
+                pushMethod?.Bind(_bodyStream).Call(null!, new List<object?> { null });
+            }
+        }).GetAwaiter().GetResult();
+
+        return _bodyStream;
     }
 
     /// <summary>

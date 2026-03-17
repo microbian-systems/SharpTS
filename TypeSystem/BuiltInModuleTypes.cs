@@ -1420,6 +1420,7 @@ public static class BuiltInModuleTypes
             "dns/promises" => GetDnsPromisesModuleTypes(),
             "net" => GetNetModuleTypes(),
             "tls" => GetTlsModuleTypes(),
+            "dgram" => GetDgramModuleTypes(),
             _ => null
         };
     }
@@ -1953,15 +1954,67 @@ public static class BuiltInModuleTypes
     /// </summary>
     public static Dictionary<string, TypeInfo> GetPerfHooksModuleTypes()
     {
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        var stringType = new TypeInfo.String();
+        var anyType = new TypeInfo.Any();
+        var voidType = new TypeInfo.Void();
+
+        // PerformanceEntry: { name: string, entryType: string, startTime: number, duration: number }
+        var performanceEntryType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["name"] = stringType,
+            ["entryType"] = stringType,
+            ["startTime"] = numberType,
+            ["duration"] = numberType
+        }.ToFrozenDictionary());
+
+        var performanceEntryArrayType = new TypeInfo.Array(performanceEntryType);
+
         var performanceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
         {
-            ["now"] = new TypeInfo.Function([], new TypeInfo.Primitive(TokenType.TYPE_NUMBER)),
-            ["timeOrigin"] = new TypeInfo.Primitive(TokenType.TYPE_NUMBER)
+            ["now"] = new TypeInfo.Function([], numberType),
+            ["timeOrigin"] = numberType,
+            ["mark"] = new TypeInfo.Function([stringType, anyType], performanceEntryType, RequiredParams: 1),
+            ["measure"] = new TypeInfo.Function([stringType, stringType, stringType], performanceEntryType, RequiredParams: 1),
+            ["getEntries"] = new TypeInfo.Function([], performanceEntryArrayType),
+            ["getEntriesByName"] = new TypeInfo.Function([stringType, stringType], performanceEntryArrayType, RequiredParams: 1),
+            ["getEntriesByType"] = new TypeInfo.Function([stringType], performanceEntryArrayType),
+            ["clearMarks"] = new TypeInfo.Function([stringType], voidType, RequiredParams: 0),
+            ["clearMeasures"] = new TypeInfo.Function([stringType], voidType, RequiredParams: 0)
         }.ToFrozenDictionary());
+
+        // PerformanceObserverEntryList: { getEntries(): PerformanceEntry[] }
+        var entryListType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["getEntries"] = new TypeInfo.Function([], performanceEntryArrayType)
+        }.ToFrozenDictionary());
+
+        // PerformanceObserver instance: { observe(options): void, disconnect(): void }
+        var observerInstanceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["observe"] = new TypeInfo.Function([anyType], voidType),
+            ["disconnect"] = new TypeInfo.Function([], voidType)
+        }.ToFrozenDictionary());
+
+        // PerformanceObserver constructor
+        var observerConstructorType = new TypeInfo.Interface(
+            Name: "PerformanceObserver",
+            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
+            OptionalMembers: FrozenSet<string>.Empty,
+            ConstructorSignatures:
+            [
+                new TypeInfo.ConstructorSignature(
+                    TypeParams: null,
+                    ParamTypes: [new TypeInfo.Function([entryListType], voidType)],
+                    ReturnType: observerInstanceType,
+                    RequiredParams: 1)
+            ]
+        );
 
         return new Dictionary<string, TypeInfo>
         {
-            ["performance"] = performanceType
+            ["performance"] = performanceType,
+            ["PerformanceObserver"] = observerConstructorType
         };
     }
 
@@ -2131,6 +2184,53 @@ public static class BuiltInModuleTypes
             ["Duplex"] = duplexConstructorType,
             ["Transform"] = transformConstructorType,
             ["PassThrough"] = passThroughConstructorType
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the dgram module.
+    /// </summary>
+    public static Dictionary<string, TypeInfo> GetDgramModuleTypes()
+    {
+        var anyType = new TypeInfo.Any();
+        var stringType = new TypeInfo.String();
+        var voidType = new TypeInfo.Void();
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        var boolType = new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
+
+        // Socket instance type (extends EventEmitter)
+        var socketType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            // EventEmitter methods
+            ["on"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["once"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["emit"] = new TypeInfo.Function([stringType, anyType], boolType, RequiredParams: 1, HasRestParam: true),
+            ["off"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["removeListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["removeAllListeners"] = new TypeInfo.Function([stringType], anyType, RequiredParams: 0),
+            ["addListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["listeners"] = new TypeInfo.Function([stringType], new TypeInfo.Array(anyType)),
+            ["listenerCount"] = new TypeInfo.Function([stringType], numberType),
+            ["eventNames"] = new TypeInfo.Function([], new TypeInfo.Array(stringType)),
+
+            // Socket methods
+            ["bind"] = new TypeInfo.Function([anyType, anyType, anyType], anyType, RequiredParams: 0),
+            ["send"] = new TypeInfo.Function([anyType, anyType, anyType, anyType, anyType, anyType], anyType, RequiredParams: 2),
+            ["close"] = new TypeInfo.Function([anyType], voidType, RequiredParams: 0),
+            ["address"] = new TypeInfo.Function([], anyType),
+            ["setBroadcast"] = new TypeInfo.Function([boolType], voidType),
+            ["setTTL"] = new TypeInfo.Function([numberType], voidType),
+            ["setMulticastTTL"] = new TypeInfo.Function([numberType], voidType),
+            ["addMembership"] = new TypeInfo.Function([stringType, stringType], voidType, RequiredParams: 1),
+            ["dropMembership"] = new TypeInfo.Function([stringType], voidType),
+            ["ref"] = new TypeInfo.Function([], anyType),
+            ["unref"] = new TypeInfo.Function([], anyType)
+        }.ToFrozenDictionary());
+
+        return new Dictionary<string, TypeInfo>
+        {
+            ["createSocket"] = new TypeInfo.Function([anyType, anyType], socketType, RequiredParams: 1),
+            ["Socket"] = new TypeInfo.Function([anyType, anyType], socketType, RequiredParams: 1)
         };
     }
 }
