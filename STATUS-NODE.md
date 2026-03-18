@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-17 (Added cluster module: fork, IPC messaging, worker lifecycle events)
+**Last Updated:** 2026-03-17 (Consistency fixes: dgram connected mode ✅, AbortController/Headers ✅, updated recommended next steps)
 
 ## Legend
 - ✅ Implemented
@@ -618,12 +618,12 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | **Async Support** | | |
 | `await fetch(...)` | ✅ | Full async/await support |
 | Promise chaining | ✅ | `.then()` style |
+| `response.body` | ✅ | Readable stream (body eagerly loaded, streamed via Readable) |
+| `Headers` class | ✅ | Constructable `new Headers(init?)` with get/set/has/delete/append/forEach/entries/keys/values |
+| `AbortController` / `signal` option | ✅ | `new AbortController()`, `signal.aborted`, `abort(reason?)`, `throwIfAborted()`, `AbortSignal.abort()`/`timeout()`/`any()`; fetch `signal` option with pre-abort check and cancellation |
 | **Not Implemented** | | |
 | `Request` class | ❌ | Use options object |
 | `Response` class | ❌ | Only from fetch() return |
-| `Headers` class | ❌ | Use plain objects |
-| `response.body` | ✅ | Readable stream (body eagerly loaded, streamed via Readable) |
-| `AbortController` | ❌ | No request cancellation |
 | `credentials` option | ❌ | No cookie handling |
 | `redirect` option | ❌ | Auto-follows redirects |
 
@@ -795,11 +795,12 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `'close'` | ✅ | Emitted after socket closed |
 | `'error'` | ✅ | Emitted on error |
 | **EventEmitter** | ✅ | on, once, off, emit, removeListener, etc. |
-| **Not Implemented** | | |
-| `socket.getRecvBufferSize()` / `setRecvBufferSize()` | ❌ | Buffer size control |
-| `socket.getSendBufferSize()` / `setSendBufferSize()` | ❌ | Buffer size control |
-| `socket.remoteAddress()` | ❌ | Connected socket remote info |
-| `socket.connect(port, address?)` | ❌ | Connected UDP mode |
+| **Connected Mode** | | |
+| `socket.connect(port, address?)` | ✅ | Connected UDP mode; emits 'connect' event |
+| `socket.disconnect()` | ✅ | Disconnect from remote address |
+| `socket.remoteAddress()` | ✅ | Returns `{ address, family, port }` for connected socket |
+| `socket.getRecvBufferSize()` / `setRecvBufferSize()` | ✅ | Receive buffer size control |
+| `socket.getSendBufferSize()` / `setSendBufferSize()` | ✅ | Send buffer size control |
 
 ---
 
@@ -833,7 +834,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 
 ## Summary
 
-SharpTS provides comprehensive support for file system operations (sync, callback-based async, and promise-based via `fs/promises`), including file descriptor APIs, directory utilities, hard/symbolic links, permissions, file watching (`watch`, `watchFile`, `unwatchFile`), and streaming (`createReadStream`, `createWriteStream`). Also includes path manipulation, OS information, process management, crypto (hashing, encryption, key derivation, signing), URL parsing, binary data handling via Buffer, EventEmitter for event-driven patterns, timers (setTimeout/setInterval/setImmediate), string decoding for multi-byte characters, high-resolution performance timing, stream classes (Readable, Writable, Duplex, Transform, PassThrough) with flowing mode (auto-flowing on `data` listener, pause/resume, pipe backpressure), the Web Fetch API for HTTP client requests, basic HTTP server via `http.createServer`, DNS resolution (lookup/lookupService), and Worker Threads for parallel execution. The module system supports both ES modules and CommonJS import syntax.
+SharpTS provides comprehensive support for file system operations (sync, callback-based async, and promise-based via `fs/promises`), including file descriptor APIs, directory utilities, hard/symbolic links, permissions, file watching (`watch`, `watchFile`, `unwatchFile`), and streaming (`createReadStream`, `createWriteStream`). Also includes path manipulation, OS information, process management, crypto (hashing, encryption, key derivation, signing), URL parsing, binary data handling via Buffer, EventEmitter for event-driven patterns, timers (setTimeout/setInterval/setImmediate), string decoding for multi-byte characters, high-resolution performance timing, stream classes (Readable, Writable, Duplex, Transform, PassThrough) with flowing mode (auto-flowing on `data` listener, pause/resume, pipe backpressure), the Web Fetch API for HTTP client requests with AbortController support, HTTP/HTTPS servers via `http.createServer`/`https.createServer`, TLS/SSL via `tls` module, TCP via `net` module, UDP via `dgram` module (including connected mode), DNS resolution (full record type support), cluster module for multi-process scaling, and Worker Threads for parallel execution. The module system supports both ES modules and CommonJS import syntax.
 
 **Key Gaps:**
 - No IPC sockets (named pipes / Unix domain sockets)
@@ -850,8 +851,8 @@ SharpTS provides comprehensive support for file system operations (sync, callbac
 
 Priority features to implement for broader Node.js compatibility:
 
-1. **IPC sockets** - Named pipes / Unix domain socket support in net module (medium effort)
-2. **cluster HTTP port sharing** - Round-robin load balancing (medium effort)
-3. **package.json exports** - Modern npm package resolution (medium effort)
-4. **tls module** - TLS/SSL support for secure connections (medium effort)
-5. **MX/TXT/SRV DNS records** - Requires DnsClient NuGet package (low effort)
+1. **package.json exports** - Modern npm package resolution (medium effort)
+2. **AsyncLocalStorage / async_hooks** - Request-scoped context propagation for frameworks (medium effort)
+3. **IPC sockets** - Named pipes / Unix domain socket support in net module (medium effort)
+4. **cluster HTTP port sharing** - Round-robin load balancing (medium effort)
+5. **child_process.fork()** - Complete the child_process module (low effort)
