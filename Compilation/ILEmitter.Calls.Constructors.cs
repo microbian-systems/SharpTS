@@ -107,6 +107,13 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new FinalizationRegistry(callback) constructor
+        if (isSimpleName && simpleClassName == "FinalizationRegistry")
+        {
+            EmitNewFinalizationRegistry(n.Arguments);
+            return;
+        }
+
         // Special case: new Proxy(target, handler) constructor
         if (isSimpleName && simpleClassName == "Proxy")
         {
@@ -704,6 +711,25 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateWeakRef);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits code for new FinalizationRegistry(callback) construction.
+    /// </summary>
+    private void EmitNewFinalizationRegistry(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateFinalizationRegistry);
         SetStackUnknown();
     }
 

@@ -96,6 +96,13 @@ public partial class RuntimeEmitter
         );
         runtime.MapNullSentinel = mapNullSentinelField;
 
+        // Static field for FinalizationRegistry poke table
+        runtime.FinRegPokeTableField = typeBuilder.DefineField(
+            "_finRegPokeTable",
+            _types.ConditionalWeakTableObjectObject,
+            FieldAttributes.Private | FieldAttributes.Static
+        );
+
         // Static field for console group indentation level (needed early for ConsoleLog)
         var consoleGroupLevelField = typeBuilder.DefineField(
             "_consoleGroupLevel",
@@ -143,6 +150,9 @@ public partial class RuntimeEmitter
         // Initialize perf_hooks timing fields (must be called after fields are defined)
         // Note: Fields will be defined by EmitPerfHooksMethods, so we defer this initialization
         // The initialization is done inline in EmitPerfHooksMethods instead
+
+        // Initialize _finRegPokeTable = new ConditionalWeakTable<object, object>()
+        EmitFinRegPokeTableInit(cctorIL, runtime);
 
         cctorIL.Emit(OpCodes.Ret);
 
@@ -365,6 +375,8 @@ public partial class RuntimeEmitter
         EmitWeakSetMethods(typeBuilder, runtime);
         // WeakRef methods
         EmitWeakRefMethods(typeBuilder, runtime);
+        // FinalizationRegistry methods
+        EmitFinalizationRegistryMethods(typeBuilder, runtime);
         // Proxy methods
         EmitProxyMethods(typeBuilder, runtime);
         // AbortController/AbortSignal methods (FireAbortEvent must be emitted before AbortController methods)

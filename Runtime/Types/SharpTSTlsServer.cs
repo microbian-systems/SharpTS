@@ -31,6 +31,8 @@ public class SharpTSTlsServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
     private X509Certificate2? _certificate;
     private bool _requestCert;
     private bool _rejectUnauthorized;
+    private List<SslApplicationProtocol>? _alpnProtocols;
+    private ISharpTSCallable? _sniCallback;
 
     /// <summary>
     /// Creates a new TLS server with certificate options and an optional connection listener.
@@ -56,6 +58,19 @@ public class SharpTSTlsServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
                 _requestCert = reqCert;
             if (options.GetProperty("rejectUnauthorized") is bool reject)
                 _rejectUnauthorized = reject;
+
+            // Parse ALPNProtocols
+            if (options.GetProperty("ALPNProtocols") is SharpTSArray alpnArray)
+            {
+                _alpnProtocols = alpnArray.Elements
+                    .OfType<string>()
+                    .Select(s => new SslApplicationProtocol(s))
+                    .ToList();
+            }
+
+            // Parse SNICallback
+            if (options.GetProperty("SNICallback") is ISharpTSCallable sniCb)
+                _sniCallback = sniCb;
         }
     }
 
@@ -201,6 +216,34 @@ public class SharpTSTlsServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
                                 ClientCertificateRequired = _requestCert,
                                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                             };
+
+                            if (_alpnProtocols != null)
+                                authOptions.ApplicationProtocols = _alpnProtocols;
+
+                            if (_sniCallback != null)
+                            {
+                                var sniCb = _sniCallback;
+                                var interp = interpreter;
+                                authOptions.ServerCertificateSelectionCallback = (sender, hostName) =>
+                                {
+                                    try
+                                    {
+                                        var result = sniCb.Call(interp, [hostName]);
+                                        if (result is SharpTSObject ctx)
+                                        {
+                                            var ctxCert = ctx.GetProperty("cert") as string;
+                                            var ctxKey = ctx.GetProperty("key") as string;
+                                            if (ctxCert != null && ctxKey != null)
+                                            {
+                                                var newCert = X509Certificate2.CreateFromPem(ctxCert, ctxKey);
+                                                return X509CertificateLoader.LoadPkcs12(newCert.Export(X509ContentType.Pfx), null);
+                                            }
+                                        }
+                                    }
+                                    catch { }
+                                    return cert;
+                                };
+                            }
 
                             await sslStream.AuthenticateAsServerAsync(authOptions);
 

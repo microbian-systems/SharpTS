@@ -5,6 +5,7 @@ namespace SharpTS.Compilation;
 
 /// <summary>
 /// TLS module support for compiled TypeScript: tls.createServer, tls.connect, etc.
+/// Uses emitted $TlsSocket and $TlsServer types for standalone DLL support (no SharpTS.dll dependency).
 /// </summary>
 public partial class RuntimeEmitter
 {
@@ -15,6 +16,7 @@ public partial class RuntimeEmitter
     {
         EmitTlsCreateServer(typeBuilder, runtime);
         EmitTlsConnect(typeBuilder, runtime);
+        EmitTlsCreateSocket(typeBuilder, runtime);
         EmitTlsCreateSecureContext(typeBuilder, runtime);
         EmitTlsGetDefaultMinVersion(typeBuilder, runtime);
         EmitTlsGetDefaultMaxVersion(typeBuilder, runtime);
@@ -22,7 +24,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object TlsCreateServer(object? options, object? callback)
-    /// Creates a SharpTSTlsServer via reflection for standalone DLL support.
+    /// Creates a new $TlsServer instance (pure IL, no SharpTS.dll dependency).
     /// </summary>
     private void EmitTlsCreateServer(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -36,41 +38,17 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Type.GetType("SharpTS.Runtime.Types.SharpTSTlsServer, SharpTS")
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSTlsServer, SharpTS");
-        il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetType", [_types.String])!);
-
-        var typeLocal = il.DeclareLocal(typeof(Type));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        var typeFoundLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Brtrue, typeFoundLabel);
-
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(typeFoundLabel);
-
-        // Activator.CreateInstance(type, new object[] { options, callback })
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
+        // new $TlsServer(options, callback)
         il.Emit(OpCodes.Ldarg_0); // options
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldarg_1); // callback
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Call, typeof(Activator).GetMethod("CreateInstance", [typeof(Type), typeof(object[])])!);
+        il.Emit(OpCodes.Newobj, runtime.TlsServerCtor);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits: public static object TlsConnect(object? portOrOptions, object? hostOrCallback, object? optionsOrNull, object? callbackOrNull)
-    /// Creates a SharpTSTlsSocket via reflection and calls ConnectTls.
+    /// Creates a new $TlsSocket instance (pure IL, no SharpTS.dll dependency).
+    /// In standalone mode, the socket is created but not actually connected.
     /// </summary>
     private void EmitTlsConnect(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -84,30 +62,35 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Type.GetType("SharpTS.Runtime.Types.SharpTSTlsSocket, SharpTS")
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSTlsSocket, SharpTS");
-        il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetType", [_types.String])!);
-
-        var typeLocal = il.DeclareLocal(typeof(Type));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        var typeFoundLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Brtrue, typeFoundLabel);
-
-        il.Emit(OpCodes.Ldnull);
+        // new $TlsSocket()
+        il.Emit(OpCodes.Newobj, runtime.TlsSocketCtor);
         il.Emit(OpCodes.Ret);
+    }
 
-        il.MarkLabel(typeFoundLabel);
+    /// <summary>
+    /// Emits: public static object TlsCreateSocket()
+    /// Creates a new $TlsSocket instance directly (used by tls.TLSSocket() constructor call).
+    /// </summary>
+    private void EmitTlsCreateSocket(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "TlsCreateSocket",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            Type.EmptyTypes
+        );
+        runtime.TlsCreateSocket = method;
 
-        // Create instance (parameterless ctor)
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Call, typeof(Activator).GetMethod("CreateInstance", [typeof(Type)])!);
+        var il = method.GetILGenerator();
+
+        // new $TlsSocket()
+        il.Emit(OpCodes.Newobj, runtime.TlsSocketCtor);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits: public static object TlsCreateSecureContext(object? options)
+    /// Returns a new empty Dictionary (standalone mode doesn't need real secure context).
     /// </summary>
     private void EmitTlsCreateSecureContext(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -121,33 +104,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Type.GetType("SharpTS.Runtime.BuiltIns.Modules.Interpreter.TlsModuleInterpreter, SharpTS")
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.Modules.Interpreter.TlsModuleInterpreter, SharpTS");
-        il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetType", [_types.String])!);
-
-        var typeLocal = il.DeclareLocal(typeof(Type));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        var typeFoundLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Brtrue, typeFoundLabel);
-
-        // Fallback: return empty dictionary wrapped in object
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(typeFoundLabel);
-
-        // Call static method CreateSecureContext via reflection
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "GetExports");
-        il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetMethod", [_types.String])!);
-
-        // Invoke GetExports() - returns Dictionary, but we just return a new object
-        // Simpler: just return a new Dictionary<string,object?> as SharpTSObject-like
-        il.Emit(OpCodes.Pop);
-
-        // Just return a non-null object to indicate success
+        // Return a new Dictionary<string,object?> to indicate success
         il.Emit(OpCodes.Newobj, typeof(Dictionary<string, object?>).GetConstructor([])!);
         il.Emit(OpCodes.Ret);
     }

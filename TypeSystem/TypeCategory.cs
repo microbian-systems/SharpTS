@@ -33,6 +33,7 @@ public enum TypeCategory
     EventEmitter,
     AbortController,
     AbortSignal,
+    FinalizationRegistry,
 
     // User-defined types
     Class,          // Static access on class constructor (Foo.staticProp)

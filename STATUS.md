@@ -332,7 +332,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 |---------|--------|-------|
 | `Proxy` | ✅ | `new Proxy(target, handler)`, `Proxy.revocable()`, traps: get/set/has/deleteProperty/apply/construct |
 | `WeakRef` | ✅ | `new WeakRef(target)`, `.deref()` |
-| `FinalizationRegistry` | ❌ | No GC finalization callbacks |
+| `FinalizationRegistry` | ✅ | `new FinalizationRegistry(callback)`, `.register(target, heldValue, token?)`, `.unregister(token)` |
 | `Intl.NumberFormat` | ✅ | See Section 10 |
 | `Intl.DateTimeFormat` | ✅ | See Section 10 |
 | `Intl.Collator` | ✅ | See Section 10 |
@@ -426,8 +426,8 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `buffer` | ✅ | Buffer.from, Buffer.alloc, Buffer.allocUnsafe, Buffer.concat, Buffer.isBuffer, Buffer.byteLength; instance methods: toString, slice, copy, write, fill, includes, indexOf, compare, equals, readUInt/Int, writeUInt/Int, toJSON |
 | `http` / `https` | ✅ | createServer, request, get; Server: listen, close; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
 | `net` | ✅ | createServer, createConnection/connect, Socket (EventEmitter + Duplex), Server (EventEmitter); isIP, isIPv4, isIPv6 |
-| `tls` | ✅ | createServer, connect, createSecureContext, TLSSocket (extends Socket), Server; DEFAULT_MIN_VERSION/MAX_VERSION; secureConnect/secureConnection/tlsClientError events |
-| `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; message/listening/close/error events |
+| `tls` | ✅ | createServer, connect, createSecureContext, TLSSocket (extends Socket), Server; DEFAULT_MIN_VERSION/MAX_VERSION; ALPNProtocols, SNICallback, servername; secureConnect/secureConnection/tlsClientError events |
+| `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; connect, disconnect, remoteAddress, get/setRecvBufferSize, get/setSendBufferSize; message/listening/close/error/connect events |
 | `cluster` | ✅ | isPrimary/isWorker/isMaster, fork, worker.send/disconnect/kill/isDead/isConnected, process.send/on('message') IPC, cluster events, disconnect, setupPrimary |
 | `child_process` | ✅ | execSync, spawnSync, exec, spawn with ChildProcess EventEmitter |
 | `url` | ✅ | URL, URLSearchParams, fileURLToPath, pathToFileURL, format, parse |
@@ -436,7 +436,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `zlib` | ✅ | Sync: gzipSync, gunzipSync, deflateSync, inflateSync, deflateRawSync, inflateRawSync, brotliCompressSync, brotliDecompressSync; Streaming: createGzip, createGunzip, createDeflate, createInflate, createDeflateRaw, createInflateRaw, createBrotliCompress, createBrotliDecompress, createUnzip; Async callback: gzip, gunzip, deflate, inflate, deflateRaw, inflateRaw, brotliCompress, brotliDecompress, unzip |
 | `dns` | ✅ | lookup, lookupService, resolve, resolve4, resolve6, reverse, resolveMx, resolveTxt, resolveSrv, resolveCname, resolveNs, resolveSoa, resolvePtr, resolveCaa, resolveNaptr (callback + dns/promises) |
 | `assert` | ✅ | ok, equal, notEqual, deepEqual, notDeepEqual, strictEqual, notStrictEqual, deepStrictEqual, throws, doesNotThrow, rejects, doesNotReject, fail, match, doesNotMatch, assert.strict |
-| `readline` | ✅ | createInterface, question, close |
+| `readline` | ✅ | createInterface (extends EventEmitter), question, close, prompt, pause, resume, write, setPrompt, getPrompt, questionSync |
 | `string_decoder` | ✅ | StringDecoder: write, end, encoding |
 | `timers` | ✅ | setTimeout, clearTimeout, setInterval, clearInterval, setImmediate, clearImmediate |
 | `perf_hooks` | ✅ | performance.now(), timeOrigin, mark(), measure(), getEntries(), getEntriesByName(), getEntriesByType(), clearMarks(), clearMeasures(); PerformanceObserver |

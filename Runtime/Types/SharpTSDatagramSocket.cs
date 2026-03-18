@@ -16,6 +16,8 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
     private readonly AddressFamily _family;
     private bool _bound;
     private bool _closed;
+    private bool _connected;
+    private IPEndPoint? _connectedRemote;
     private CancellationTokenSource? _receiveCts;
 
     public SharpTSDatagramSocket(string type = "udp4")
@@ -31,7 +33,7 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
         return name switch
         {
             "bind" => new BuiltInMethod("bind", 0, 3, Bind),
-            "send" => new BuiltInMethod("send", 2, 6, Send),
+            "send" => new BuiltInMethod("send", 1, 6, Send),
             "close" => new BuiltInMethod("close", 0, 1, Close),
             "address" => new BuiltInMethod("address", 0, Address),
             "setBroadcast" => new BuiltInMethod("setBroadcast", 1, SetBroadcast),
@@ -41,6 +43,13 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
             "dropMembership" => new BuiltInMethod("dropMembership", 1, 2, DropMembership),
             "ref" => new BuiltInMethod("ref", 0, Ref),
             "unref" => new BuiltInMethod("unref", 0, Unref),
+            "connect" => new BuiltInMethod("connect", 1, 3, Connect),
+            "disconnect" => new BuiltInMethod("disconnect", 0, Disconnect),
+            "remoteAddress" => new BuiltInMethod("remoteAddress", 0, RemoteAddress),
+            "getRecvBufferSize" => new BuiltInMethod("getRecvBufferSize", 0, GetRecvBufferSize),
+            "setRecvBufferSize" => new BuiltInMethod("setRecvBufferSize", 1, SetRecvBufferSize),
+            "getSendBufferSize" => new BuiltInMethod("getSendBufferSize", 0, GetSendBufferSize),
+            "setSendBufferSize" => new BuiltInMethod("setSendBufferSize", 1, SetSendBufferSize),
 
             // EventEmitter methods
             _ => base.GetMember(name)
@@ -127,7 +136,7 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
         }
 
         byte[] data;
-        int port;
+        int port = 0;
         string address = _family == AddressFamily.InterNetworkV6 ? "::1" : "127.0.0.1";
         ISharpTSCallable? callback = null;
 
@@ -146,6 +155,7 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
         }
 
         // Parse remaining args - detect if offset/length form or direct port form
+        bool useConnected = false;
         if (args.Count >= 4 && args[1] is double && args[2] is double && args[3] is double)
         {
             // send(msg, offset, length, port, address?, callback?)
@@ -162,6 +172,12 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
             if (args.Count > 4 && args[4] is ISharpTSCallable c4) callback = c4;
             if (args.Count > 5 && args[5] is ISharpTSCallable c5) callback = c5;
         }
+        else if (_connected && (args.Count < 2 || args[1] is not double))
+        {
+            // Connected mode: send(msg, callback?)
+            useConnected = true;
+            if (args.Count > 1 && args[1] is ISharpTSCallable c1) callback = c1;
+        }
         else
         {
             // send(msg, port, address?, callback?)
@@ -175,13 +191,21 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
         var sendCallback = callback;
         var sendPort = port;
         var sendAddress = address;
+        var sendConnected = useConnected;
 
         Task.Run(async () =>
         {
             try
             {
-                var ep = new IPEndPoint(IPAddress.Parse(sendAddress), sendPort);
-                await _client.SendAsync(sendData, sendData.Length, ep);
+                if (sendConnected)
+                {
+                    await _client.SendAsync(sendData, sendData.Length);
+                }
+                else
+                {
+                    var ep = new IPEndPoint(IPAddress.Parse(sendAddress), sendPort);
+                    await _client.SendAsync(sendData, sendData.Length, ep);
+                }
                 if (sendCallback != null)
                 {
                     interpreter.ScheduleTimer(0, 0, () =>
@@ -333,6 +357,127 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
     {
         interpreter.Unref();
         return this;
+    }
+
+    /// <summary>
+    /// Connects the socket to a remote address. After connect, send() can be called without port/address.
+    /// Signature: connect(port, address?, callback?)
+    /// </summary>
+    private object? Connect(Interp interpreter, object? receiver, List<object?> args)
+    {
+        _interpreter = interpreter;
+        int port = args.Count > 0 && args[0] is double p ? (int)p : 0;
+        string address = _family == AddressFamily.InterNetworkV6 ? "::1" : "127.0.0.1";
+        ISharpTSCallable? callback = null;
+
+        if (args.Count > 1 && args[1] is string a) address = a;
+        if (args.Count > 1 && args[1] is ISharpTSCallable cb1) callback = cb1;
+        if (args.Count > 2 && args[2] is ISharpTSCallable cb2) callback = cb2;
+
+        if (callback != null)
+        {
+            Once("connect", callback);
+        }
+
+        try
+        {
+            if (_client == null)
+            {
+                _client = new UdpClient(_family);
+            }
+            _client.Connect(IPAddress.Parse(address), port);
+            _connectedRemote = new IPEndPoint(IPAddress.Parse(address), port);
+            _connected = true;
+
+            interpreter.ScheduleTimer(0, 0, () =>
+            {
+                EmitEvent(interpreter, "connect", []);
+            }, isInterval: false);
+        }
+        catch (Exception ex)
+        {
+            interpreter.ScheduleTimer(0, 0, () =>
+            {
+                EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
+            }, isInterval: false);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Disconnects the socket from a remote address.
+    /// </summary>
+    private object? Disconnect(Interp interpreter, object? receiver, List<object?> args)
+    {
+        if (!_connected)
+        {
+            throw new Exception("Runtime Error: Not connected");
+        }
+
+        try
+        {
+            _client?.Client.Connect(new IPEndPoint(
+                _family == AddressFamily.InterNetworkV6 ? IPAddress.IPv6Any : IPAddress.Any, 0));
+            _connected = false;
+            _connectedRemote = null;
+        }
+        catch (Exception ex)
+        {
+            EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns the remote address info for a connected socket.
+    /// </summary>
+    private object? RemoteAddress(Interp interpreter, object? receiver, List<object?> args)
+    {
+        if (!_connected || _connectedRemote == null)
+        {
+            throw new Exception("Runtime Error: Not connected");
+        }
+
+        return new SharpTSObject(new Dictionary<string, object?>
+        {
+            ["address"] = _connectedRemote.Address.ToString(),
+            ["family"] = _connectedRemote.AddressFamily == AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4",
+            ["port"] = (double)_connectedRemote.Port
+        });
+    }
+
+    private object? GetRecvBufferSize(Interp interpreter, object? receiver, List<object?> args)
+    {
+        if (_client == null)
+            throw new Exception("Runtime Error: Socket is not bound");
+        return (double)_client.Client.ReceiveBufferSize;
+    }
+
+    private object? SetRecvBufferSize(Interp interpreter, object? receiver, List<object?> args)
+    {
+        if (_client == null)
+            throw new Exception("Runtime Error: Socket is not bound");
+        if (args.Count > 0 && args[0] is double size)
+            _client.Client.ReceiveBufferSize = (int)size;
+        return null;
+    }
+
+    private object? GetSendBufferSize(Interp interpreter, object? receiver, List<object?> args)
+    {
+        if (_client == null)
+            throw new Exception("Runtime Error: Socket is not bound");
+        return (double)_client.Client.SendBufferSize;
+    }
+
+    private object? SetSendBufferSize(Interp interpreter, object? receiver, List<object?> args)
+    {
+        if (_client == null)
+            throw new Exception("Runtime Error: Socket is not bound");
+        if (args.Count > 0 && args[0] is double size)
+            _client.Client.SendBufferSize = (int)size;
+        return null;
     }
 
     /// <summary>

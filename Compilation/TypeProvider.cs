@@ -170,6 +170,8 @@ public class TypeProvider
     public Type IEnumerator => Resolve("System.Collections.IEnumerator");
     public Type ConditionalWeakTableOpen => Resolve("System.Runtime.CompilerServices.ConditionalWeakTable`2");
     public Type ConcurrentDictionaryOpen => Resolve("System.Collections.Concurrent.ConcurrentDictionary`2");
+    public Type ConcurrentQueueOpen => Resolve("System.Collections.Concurrent.ConcurrentQueue`1");
+    public Type ConcurrentQueueOfObject => MakeGenericType(ConcurrentQueueOpen, Object);
     public Type IEqualityComparerOpen => Resolve("System.Collections.Generic.IEqualityComparer`1");
     public Type RuntimeHelpers => Resolve("System.Runtime.CompilerServices.RuntimeHelpers");
 

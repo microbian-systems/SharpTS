@@ -74,7 +74,7 @@ public class TlsModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TlsCreateServerReturnsServer(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -109,7 +109,7 @@ public class TlsModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TlsConnectReturnsSocket(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -129,7 +129,7 @@ public class TlsModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TlsSocketProperties(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -354,4 +354,110 @@ public class TlsModuleTests
         // Escape backticks for JS template literals
         return (certPem.Replace("`", "\\`"), keyPem.Replace("`", "\\`"));
     }
+
+    #region ALPN and SNI Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TlsSocket_Servername_Property(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = """
+                import * as tls from 'tls';
+                const socket = tls.TLSSocket();
+                console.log(socket.servername === undefined);
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("true", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void TlsConnect_ALPNProtocols(ExecutionMode mode)
+    {
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key, ALPNProtocols: ['h2', 'http/1.1'] }, (socket: any) => {
+                    console.log('alpn:' + socket.alpnProtocol);
+                    socket.end();
+                    server.close();
+                });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect(addr.port, '127.0.0.1', {
+                        rejectUnauthorized: false,
+                        ALPNProtocols: ['h2', 'http/1.1']
+                    }, () => {
+                        client.end();
+                    });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("alpn:h2", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void TlsServer_ALPNProtocols(ExecutionMode mode)
+    {
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key, ALPNProtocols: ['http/1.1'] }, (socket: any) => {
+                    console.log('server-alpn:' + socket.alpnProtocol);
+                    socket.end();
+                    server.close();
+                });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect(addr.port, '127.0.0.1', {
+                        rejectUnauthorized: false,
+                        ALPNProtocols: ['h2', 'http/1.1']
+                    }, () => {
+                        client.end();
+                    });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("server-alpn:http/1.1", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void TlsServer_SNICallback_Accepted(ExecutionMode mode)
+    {
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({
+                    cert, key,
+                    SNICallback: (hostname: string) => {
+                        return { cert, key };
+                    }
+                });
+                console.log(typeof server.listen === 'function');
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("true", output);
+    }
+
+    #endregion
 }

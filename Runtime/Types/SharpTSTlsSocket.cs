@@ -52,7 +52,8 @@ public class SharpTSTlsSocket : SharpTSSocket
             // TLS-specific properties
             "authorized" => _authorized,
             "encrypted" => _sslStream != null,
-            "alpnProtocol" => _alpnProtocol,
+            "alpnProtocol" => (object?)_alpnProtocol ?? SharpTSUndefined.Instance,
+            "servername" => (object?)_servername ?? SharpTSUndefined.Instance,
 
             // TLS-specific methods
             "getCipher" => new BuiltInMethod("getCipher", 0, GetCipher),
@@ -106,6 +107,15 @@ public class SharpTSTlsSocket : SharpTSSocket
                     TargetHost = capturedServername,
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                 };
+
+                // Parse ALPNProtocols from options
+                if (options?.GetProperty("ALPNProtocols") is SharpTSArray alpnArray)
+                {
+                    sslOptions.ApplicationProtocols = alpnArray.Elements
+                        .OfType<string>()
+                        .Select(s => new SslApplicationProtocol(s))
+                        .ToList();
+                }
 
                 await _sslStream.AuthenticateAsClientAsync(sslOptions);
 

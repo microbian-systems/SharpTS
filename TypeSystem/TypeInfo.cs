@@ -604,6 +604,14 @@ public abstract record TypeInfo
     }
 
     /// <summary>
+    /// Represents the FinalizationRegistry built-in type.
+    /// </summary>
+    public record FinalizationRegistry(TypeInfo TargetType) : TypeInfo
+    {
+        public override string ToString() => $"FinalizationRegistry<{TargetType}>";
+    }
+
+    /// <summary>
     /// Tuple type. IsReadonly indicates a readonly tuple (from const type parameters or readonly modifier).
     /// </summary>
     public record Tuple(

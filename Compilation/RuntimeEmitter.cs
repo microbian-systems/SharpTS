@@ -167,6 +167,10 @@ public partial class RuntimeEmitter
         // NOTE: Must come after EventEmitter ($HttpServer extends $EventEmitter)
         EmitHttpTypes(moduleBuilder, runtime);
 
+        // Emit TLS types for standalone TLS support
+        // NOTE: Must come after EventEmitter ($TlsSocket and $TlsServer extend $EventEmitter)
+        EmitTlsTypes(moduleBuilder, runtime);
+
         // Emit cluster types for standalone cluster support
         // NOTE: Must come after EventEmitter ($ClusterWorker and $ClusterManager extend it)
         EmitClusterTypes(moduleBuilder, runtime);
@@ -242,9 +246,18 @@ public partial class RuntimeEmitter
         // Must come before EmitRuntimeClass so Object.freeze/seal/etc. can use it
         EmitPropertyDescriptorTypes(moduleBuilder, runtime);
 
+        // Emit $DatagramSocket type definition (Phase 1)
+        // Must come after EventEmitter ($DatagramSocket extends $EventEmitter)
+        // Must come before EmitRuntimeClass so DgramCreateSocket can use the constructor
+        EmitDatagramSocketTypeDefinition(moduleBuilder, runtime);
+
         // Emit $ReadlineInterface type definition (Phase 1)
         // Must come before EmitRuntimeClass so ReadlineCreateInterface can use the constructor
         EmitReadlineInterfaceTypeDefinition(moduleBuilder, runtime);
+
+        // Emit $FinRegEntry type (finalizer helper for FinalizationRegistry)
+        // Must come before EmitRuntimeClass so Register can use the constructor
+        EmitFinRegEntryTypeDefinition(moduleBuilder, runtime);
 
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime);
@@ -252,6 +265,10 @@ public partial class RuntimeEmitter
         // Finalize $BoundArrayMethod with Invoke method (Phase 2)
         // Must come after EmitRuntimeClass (needs array methods defined)
         EmitBoundArrayMethodFinalize(runtime);
+
+        // Finalize $DatagramSocket class (Phase 2)
+        // Must come after EmitRuntimeClass
+        EmitDatagramSocketFinalize(runtime);
 
         // Finalize $ReadlineInterface class (Phase 2)
         // Must come after EmitRuntimeClass (Question uses InvokeValue)

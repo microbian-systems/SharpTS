@@ -7,6 +7,8 @@ public partial class RuntimeEmitter
 {
     // Stored field and type references for $ReadlineInterface (used in two-phase emission)
     private FieldBuilder _readlineInterfaceClosedField = null!;
+    private FieldBuilder _readlineInterfacePausedField = null!;
+    private FieldBuilder _readlineInterfacePromptField = null!;
     private TypeBuilder _readlineInterfaceTypeBuilder = null!;
 
     /// <summary>
@@ -16,16 +18,18 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitReadlineInterfaceTypeDefinition(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
-        // Define class: public sealed class $ReadlineInterface
+        // Define class: public sealed class $ReadlineInterface extends $EventEmitter
         var typeBuilder = moduleBuilder.DefineType(
             "$ReadlineInterface",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
-            _types.Object
+            runtime.TSEventEmitterType
         );
         _readlineInterfaceTypeBuilder = typeBuilder;
 
-        // Field: private bool _closed
+        // Fields
         _readlineInterfaceClosedField = typeBuilder.DefineField("_closed", _types.Boolean, FieldAttributes.Private);
+        _readlineInterfacePausedField = typeBuilder.DefineField("_paused", _types.Boolean, FieldAttributes.Private);
+        _readlineInterfacePromptField = typeBuilder.DefineField("_prompt", _types.String, FieldAttributes.Assembly);
 
         // Constructor: public $ReadlineInterface()
         var ctor = typeBuilder.DefineConstructor(
@@ -36,18 +40,31 @@ public partial class RuntimeEmitter
         runtime.ReadlineInterfaceCtor = ctor;
 
         var ctorIL = ctor.GetILGenerator();
-        // Call base constructor
+        // Call base constructor ($EventEmitter)
         ctorIL.Emit(OpCodes.Ldarg_0);
-        ctorIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        ctorIL.Emit(OpCodes.Call, runtime.TSEventEmitterCtor);
         // _closed = false
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldc_I4_0);
         ctorIL.Emit(OpCodes.Stfld, _readlineInterfaceClosedField);
+        // _paused = false
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldc_I4_0);
+        ctorIL.Emit(OpCodes.Stfld, _readlineInterfacePausedField);
+        // _prompt = "> "
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldstr, "> ");
+        ctorIL.Emit(OpCodes.Stfld, _readlineInterfacePromptField);
         ctorIL.Emit(OpCodes.Ret);
 
-        // Emit Close and Prompt methods (don't depend on InvokeValue)
+        // Emit simple methods (don't depend on InvokeValue)
         EmitReadlineInterfaceClose(typeBuilder, runtime);
         EmitReadlineInterfacePrompt(typeBuilder, runtime);
+        EmitReadlineInterfacePause(typeBuilder, runtime);
+        EmitReadlineInterfaceResume(typeBuilder, runtime);
+        EmitReadlineInterfaceWrite(typeBuilder, runtime);
+        EmitReadlineInterfaceSetPrompt(typeBuilder, runtime);
+        EmitReadlineInterfaceGetPrompt(typeBuilder, runtime);
 
         // NOTE: Question method and CreateType() are deferred to Phase 2
     }
@@ -79,7 +96,6 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var returnNullLabel = il.DefineLabel();
-        var callbackLabel = il.DefineLabel();
 
         // if (_closed) return null;
         il.Emit(OpCodes.Ldarg_0);
@@ -141,7 +157,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public object? Close()
-    /// Sets _closed = true and returns null.
+    /// Sets _closed = true, emits 'close' event, and returns this.
     /// </summary>
     private void EmitReadlineInterfaceClose(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -159,14 +175,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _readlineInterfaceClosedField);
 
-        // return null
-        il.Emit(OpCodes.Ldnull);
+        // Emit 'close' event: this.Emit("close", new object[0])
+        il.Emit(OpCodes.Ldarg_0);           // this ($ReadlineInterface IS-A $EventEmitter)
+        il.Emit(OpCodes.Ldstr, "close");
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);               // discard bool return
+
+        // return this
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
-    /// Emits: public object? Prompt()
-    /// Writes "> " to console if not closed, returns null.
+    /// Emits: public object? Prompt(object? preserveCursor)
+    /// Writes the stored prompt to console if not closed.
     /// </summary>
     private void EmitReadlineInterfacePrompt(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -185,12 +209,140 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _readlineInterfaceClosedField);
         il.Emit(OpCodes.Brtrue, returnLabel);
 
-        // Console.Write("> ")
-        il.Emit(OpCodes.Ldstr, "> ");
+        // Console.Write(_prompt)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _readlineInterfacePromptField);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "Write", _types.String));
 
         il.MarkLabel(returnLabel);
         il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object? Pause()
+    /// </summary>
+    private void EmitReadlineInterfacePause(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Pause",
+            MethodAttributes.Public,
+            _types.Object,
+            Type.EmptyTypes
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _readlineInterfacePausedField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object? Resume()
+    /// </summary>
+    private void EmitReadlineInterfaceResume(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Resume",
+            MethodAttributes.Public,
+            _types.Object,
+            Type.EmptyTypes
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, _readlineInterfacePausedField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object? Write(object data)
+    /// </summary>
+    private void EmitReadlineInterfaceWrite(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Write",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var returnLabel = il.DefineLabel();
+
+        // if (_closed) goto return
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _readlineInterfaceClosedField);
+        il.Emit(OpCodes.Brtrue, returnLabel);
+
+        // Console.Write(data?.ToString() ?? "")
+        il.Emit(OpCodes.Ldarg_1);
+        var notNullLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, notNullLabel);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Br, doneLabel);
+        il.MarkLabel(notNullLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "");
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "Write", _types.String));
+
+        il.MarkLabel(returnLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object? SetPrompt(object prompt)
+    /// </summary>
+    private void EmitReadlineInterfaceSetPrompt(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "SetPrompt",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        var notNullLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, notNullLabel);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Br, doneLabel);
+        il.MarkLabel(notNullLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "");
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Stfld, _readlineInterfacePromptField);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object? GetPrompt()
+    /// </summary>
+    private void EmitReadlineInterfaceGetPrompt(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetPrompt",
+            MethodAttributes.Public,
+            _types.Object,
+            Type.EmptyTypes
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _readlineInterfacePromptField);
         il.Emit(OpCodes.Ret);
     }
 
@@ -240,6 +392,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits: public static object ReadlineCreateInterface(object options)
     /// Creates a new $ReadlineInterface instance (pure IL, no SharpTS.dll dependency).
+    /// If options is a Dictionary with a "prompt" key, sets it on the new instance.
     /// </summary>
     private void EmitReadlineCreateInterface(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -252,9 +405,41 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // return new $ReadlineInterface();
-        // Note: options parameter is ignored for now (matches SharpTSReadlineInterface behavior)
+        // var rl = new $ReadlineInterface();
+        var rlLocal = il.DeclareLocal(_readlineInterfaceTypeBuilder);
         il.Emit(OpCodes.Newobj, runtime.ReadlineInterfaceCtor);
+        il.Emit(OpCodes.Stloc, rlLocal);
+
+        // Check if options is Dictionary<string, object?>
+        var skipPrompt = il.DefineLabel();
+        var dictType = typeof(Dictionary<string, object?>);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, dictType);
+        var dictLocal = il.DeclareLocal(dictType);
+        il.Emit(OpCodes.Stloc, dictLocal);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, skipPrompt);
+
+        // Try to get "prompt" from options dict
+        var promptLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "prompt");
+        il.Emit(OpCodes.Ldloca, promptLocal);
+        il.Emit(OpCodes.Callvirt, dictType.GetMethod("TryGetValue")!);
+        il.Emit(OpCodes.Brfalse, skipPrompt);
+
+        // If found and non-null, set rl._prompt = prompt.ToString()
+        il.Emit(OpCodes.Ldloc, promptLocal);
+        il.Emit(OpCodes.Brfalse, skipPrompt);
+        il.Emit(OpCodes.Ldloc, rlLocal);
+        il.Emit(OpCodes.Ldloc, promptLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Stfld, _readlineInterfacePromptField);
+
+        il.MarkLabel(skipPrompt);
+
+        // return rl;
+        il.Emit(OpCodes.Ldloc, rlLocal);
         il.Emit(OpCodes.Ret);
     }
 }

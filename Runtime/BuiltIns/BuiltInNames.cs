@@ -85,7 +85,7 @@ public static class BuiltInNames
     public static readonly string[] GlobalConstructorNames =
     [
         Symbol, BigInt, Date, RegExp,
-        Map, Set, WeakMap, WeakSet, WeakRef, Proxy,
+        Map, Set, WeakMap, WeakSet, WeakRef, FinalizationRegistry, Proxy,
         Array, Object, Number, String, Boolean,
         Promise, ArrayBuffer, SharedArrayBuffer, DataView,
         MessageChannel, EventEmitter, AbortController, Headers,
@@ -102,6 +102,7 @@ public static class BuiltInNames
     public const string WeakMap = "WeakMap";
     public const string WeakSet = "WeakSet";
     public const string WeakRef = "WeakRef";
+    public const string FinalizationRegistry = "FinalizationRegistry";
     public const string Proxy = "Proxy";
     public const string Array = "Array";
     public const string Object = "Object";

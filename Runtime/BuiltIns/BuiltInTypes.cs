@@ -515,6 +515,21 @@ public static class BuiltInTypes
     }
 
     /// <summary>
+    /// FinalizationRegistry has register() and unregister() methods.
+    /// </summary>
+    public static TypeInfo? GetFinalizationRegistryMemberType(string name, TypeInfo targetType)
+    {
+        return name switch
+        {
+            "register" => new TypeInfo.Function([targetType, new TypeInfo.Any(), new TypeInfo.Any()],
+                new TypeInfo.Undefined(), RequiredParams: 1),
+            "unregister" => new TypeInfo.Function([new TypeInfo.Any()],
+                new TypeInfo.Primitive(Parsing.TokenType.TYPE_BOOLEAN)),
+            _ => null
+        };
+    }
+
+    /// <summary>
     /// Type signatures for static members on the Symbol namespace
     /// </summary>
     public static TypeInfo? GetSymbolStaticMemberType(string name)

@@ -34,9 +34,10 @@ public sealed class TlsModuleEmitter : IBuiltInModuleEmitter
     {
         return methodName switch
         {
-            "createServer" => EmitCreateServer(emitter, arguments),
+            "createServer" or "Server" => EmitCreateServer(emitter, arguments),
             "connect" => EmitConnect(emitter, arguments),
             "createSecureContext" => EmitCreateSecureContext(emitter, arguments),
+            "TLSSocket" => EmitCreateSocket(emitter),
             _ => false
         };
     }
@@ -134,6 +135,17 @@ public sealed class TlsModuleEmitter : IBuiltInModuleEmitter
         }
 
         il.Emit(OpCodes.Call, ctx.Runtime!.TlsCreateSecureContext);
+        emitter.SetStackUnknown();
+        return true;
+    }
+
+    private static bool EmitCreateSocket(IEmitterContext emitter)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // Call $Runtime.TlsCreateSocket() - creates a new $TlsSocket
+        il.Emit(OpCodes.Call, ctx.Runtime!.TlsCreateSocket);
         emitter.SetStackUnknown();
         return true;
     }

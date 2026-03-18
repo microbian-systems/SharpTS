@@ -1126,12 +1126,39 @@ public static class BuiltInModuleTypes
         var stringType = new TypeInfo.String();
         var anyType = new TypeInfo.Any();
         var voidType = new TypeInfo.Void();
+        var boolType = BooleanType;
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+
+        // Interface type returned by createInterface
+        var interfaceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            // EventEmitter methods
+            ["on"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["once"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["off"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["emit"] = new TypeInfo.Function([stringType, anyType], boolType, RequiredParams: 1, HasRestParam: true),
+            ["removeAllListeners"] = new TypeInfo.Function([stringType], anyType, RequiredParams: 0),
+            ["removeListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["addListener"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["listeners"] = new TypeInfo.Function([stringType], new TypeInfo.Array(anyType)),
+            ["listenerCount"] = new TypeInfo.Function([stringType], numberType),
+            ["eventNames"] = new TypeInfo.Function([], new TypeInfo.Array(stringType)),
+            // Readline methods
+            ["question"] = new TypeInfo.Function([stringType, anyType], voidType),
+            ["close"] = new TypeInfo.Function([], anyType),
+            ["prompt"] = new TypeInfo.Function([boolType], voidType, RequiredParams: 0),
+            ["pause"] = new TypeInfo.Function([], anyType),
+            ["resume"] = new TypeInfo.Function([], anyType),
+            ["write"] = new TypeInfo.Function([stringType], voidType),
+            ["setPrompt"] = new TypeInfo.Function([stringType], voidType),
+            ["getPrompt"] = new TypeInfo.Function([], stringType)
+        }.ToFrozenDictionary());
 
         return new Dictionary<string, TypeInfo>
         {
             // Methods
             ["questionSync"] = new TypeInfo.Function([stringType], stringType),
-            ["createInterface"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0)
+            ["createInterface"] = new TypeInfo.Function([anyType], interfaceType, RequiredParams: 0)
         };
     }
 
@@ -1768,6 +1795,7 @@ public static class BuiltInModuleTypes
             ["authorized"] = booleanType,
             ["encrypted"] = booleanType,
             ["alpnProtocol"] = new TypeInfo.Union([stringType, new TypeInfo.Null()]),
+            ["servername"] = new TypeInfo.Union([stringType, new TypeInfo.Undefined()]),
             // TLS-specific methods
             ["getCipher"] = new TypeInfo.Function([], anyType),
             ["getPeerCertificate"] = new TypeInfo.Function([booleanType], anyType, RequiredParams: 0),
@@ -2216,7 +2244,7 @@ public static class BuiltInModuleTypes
 
             // Socket methods
             ["bind"] = new TypeInfo.Function([anyType, anyType, anyType], anyType, RequiredParams: 0),
-            ["send"] = new TypeInfo.Function([anyType, anyType, anyType, anyType, anyType, anyType], anyType, RequiredParams: 2),
+            ["send"] = new TypeInfo.Function([anyType, anyType, anyType, anyType, anyType, anyType], anyType, RequiredParams: 1),
             ["close"] = new TypeInfo.Function([anyType], voidType, RequiredParams: 0),
             ["address"] = new TypeInfo.Function([], anyType),
             ["setBroadcast"] = new TypeInfo.Function([boolType], voidType),
@@ -2225,7 +2253,14 @@ public static class BuiltInModuleTypes
             ["addMembership"] = new TypeInfo.Function([stringType, stringType], voidType, RequiredParams: 1),
             ["dropMembership"] = new TypeInfo.Function([stringType], voidType),
             ["ref"] = new TypeInfo.Function([], anyType),
-            ["unref"] = new TypeInfo.Function([], anyType)
+            ["unref"] = new TypeInfo.Function([], anyType),
+            ["connect"] = new TypeInfo.Function([numberType, stringType, anyType], voidType, RequiredParams: 1),
+            ["disconnect"] = new TypeInfo.Function([], voidType),
+            ["remoteAddress"] = new TypeInfo.Function([], anyType),
+            ["getRecvBufferSize"] = new TypeInfo.Function([], numberType),
+            ["setRecvBufferSize"] = new TypeInfo.Function([numberType], voidType),
+            ["getSendBufferSize"] = new TypeInfo.Function([], numberType),
+            ["setSendBufferSize"] = new TypeInfo.Function([numberType], voidType)
         }.ToFrozenDictionary());
 
         return new Dictionary<string, TypeInfo>

@@ -29,6 +29,12 @@ public static class BuiltInConstructorFactory
         [BuiltInNames.WeakMap] = _ => new SharpTSWeakMap(),
         [BuiltInNames.WeakSet] = _ => new SharpTSWeakSet(),
         [BuiltInNames.WeakRef] = args => new SharpTSWeakRef(args.Count > 0 ? args[0] : null),
+        [BuiltInNames.FinalizationRegistry] = args =>
+        {
+            if (args.Count < 1 || args[0] is not ISharpTSCallable callback)
+                throw new Exception("Runtime Error: FinalizationRegistry constructor requires a callback function.");
+            return new SharpTSFinalizationRegistry(callback);
+        },
         [BuiltInNames.EventEmitter] = _ => new SharpTSEventEmitter(),
         [BuiltInNames.AbortController] = _ => new SharpTSAbortController(),
         [BuiltInNames.Headers] = CreateHeaders,

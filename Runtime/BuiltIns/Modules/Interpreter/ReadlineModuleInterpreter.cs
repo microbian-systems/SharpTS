@@ -29,6 +29,7 @@ public static class ReadlineModuleInterpreter
 
     private static object? CreateInterface(Interp interpreter, object? receiver, List<object?> args)
     {
-        return new SharpTSReadlineInterface();
+        var options = args.Count > 0 ? args[0] as SharpTSObject : null;
+        return new SharpTSReadlineInterface(options);
     }
 }

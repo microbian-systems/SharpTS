@@ -285,6 +285,19 @@ public partial class TypeChecker
             return new TypeInfo.WeakRef(targetType);
         }
 
+        // Handle new FinalizationRegistry(callback) constructor
+        if (isSimpleName && simpleClassName == "FinalizationRegistry")
+        {
+            if (newExpr.Arguments.Count != 1)
+            {
+                throw new TypeCheckException("FinalizationRegistry constructor requires exactly 1 argument (cleanup callback).");
+            }
+
+            CheckExpr(newExpr.Arguments[0]);
+            var targetType = new TypeInfo.Any();
+            return new TypeInfo.FinalizationRegistry(targetType);
+        }
+
         // Handle new Proxy(target, handler) constructor
         if (isSimpleName && simpleClassName == "Proxy")
         {

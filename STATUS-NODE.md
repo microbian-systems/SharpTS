@@ -26,7 +26,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `child_process` | ✅ | execSync, spawnSync, exec, spawn with ChildProcess EventEmitter |
 | `util` | ✅ | format, inspect, isDeepStrictEqual, parseArgs, toUSVString, stripVTControlCharacters, getSystemErrorName, getSystemErrorMap, promisify, types helpers, deprecate, callbackify, inherits, TextEncoder/TextDecoder |
 | `console` | ✅ | log, error, warn, info, debug, clear, time/timeEnd/timeLog, assert, count/countReset, table, dir, group/groupEnd, trace |
-| `readline` | ⚠️ | questionSync, createInterface |
+| `readline` | ✅ | questionSync, createInterface (extends EventEmitter), question, close, prompt, pause, resume, write, setPrompt, getPrompt |
 | `events` | ✅ | EventEmitter with on/off/once/emit/removeListener |
 | `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough (sync mode) |
 | `buffer` | ✅ | Full Buffer class with multi-byte LE/BE, float/double, BigInt, search, swap |
@@ -35,11 +35,11 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `perf_hooks` | ✅ | performance.now(), timeOrigin, mark(), measure(), getEntries/ByName/ByType(), clearMarks/Measures(); PerformanceObserver |
 | `http` / `https` | ✅ | createServer, request, get; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
 | `net` | ✅ | createServer, createConnection/connect, Socket, Server; isIP, isIPv4, isIPv6 |
-| `tls` | ✅ | createServer, connect, createSecureContext, TLSSocket, Server; DEFAULT_MIN_VERSION, DEFAULT_MAX_VERSION; secureConnect/secureConnection/tlsClientError events |
+| `tls` | ✅ | createServer, connect, createSecureContext, TLSSocket, Server; DEFAULT_MIN_VERSION, DEFAULT_MAX_VERSION; ALPNProtocols, SNICallback, servername; secureConnect/secureConnection/tlsClientError events |
 | `dns` | ✅ | lookup, lookupService, resolve, resolve4, resolve6, reverse, resolveMx, resolveTxt, resolveSrv, resolveCname, resolveNs, resolveSoa, resolvePtr, resolveCaa, resolveNaptr (callback + dns/promises) |
 | `zlib` | ✅ | gzip, deflate, deflateRaw, brotli, zstd (sync + streaming + async callback APIs) |
 | `worker_threads` | ⚠️ | Worker, MessageChannel, parentPort, workerData, isMainThread |
-| `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; message/listening/close/error events |
+| `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; connect, disconnect, remoteAddress, get/setRecvBufferSize, get/setSendBufferSize; message/listening/close/error/connect events |
 | `cluster` | ✅ | isPrimary/isWorker/isMaster, fork, worker.send/disconnect/kill/isDead/isConnected, process.send (IPC), cluster events (fork/online/disconnect/exit/message), cluster.disconnect, setupPrimary, workers dict |
 
 ---

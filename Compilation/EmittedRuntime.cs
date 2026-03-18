@@ -505,6 +505,17 @@ public class EmittedRuntime
     public MethodBuilder CreateProxy { get; set; } = null!;
     public MethodBuilder CreateRevocableProxy { get; set; } = null!;
 
+    // FinalizationRegistry support
+    public MethodBuilder CreateFinalizationRegistry { get; set; } = null!;
+    public MethodBuilder FinalizationRegistryRegister { get; set; } = null!;
+    public MethodBuilder FinalizationRegistryUnregister { get; set; } = null!;
+
+    // $FinRegEntry emitted type (pure IL finalizer entry)
+    public Type FinRegEntryType { get; set; } = null!;
+    public ConstructorBuilder FinRegEntryCtor { get; set; } = null!;
+    public MethodBuilder FinRegEntrySuppress { get; set; } = null!;
+    public FieldBuilder FinRegPokeTableField { get; set; } = null!;
+
     // WeakMap/WeakSet/WeakRef validation helpers
     public MethodBuilder ValidateWeakMapKey { get; set; } = null!;
     public MethodBuilder ValidateWeakSetValue { get; set; } = null!;
@@ -1248,9 +1259,24 @@ public class EmittedRuntime
     public MethodBuilder TlsCreateSecureContext { get; set; } = null!;
     public MethodBuilder TlsGetDefaultMinVersion { get; set; } = null!;
     public MethodBuilder TlsGetDefaultMaxVersion { get; set; } = null!;
+    public MethodBuilder TlsCreateSocket { get; set; } = null!;
+
+    // $TlsSocket emitted type - pure IL standalone TLS socket
+    // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSTlsSocket
+    public Type TlsSocketType { get; set; } = null!;
+    public ConstructorBuilder TlsSocketCtor { get; set; } = null!;
+
+    // $TlsServer emitted type - pure IL standalone TLS server
+    // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSTlsServer
+    public Type TlsServerType { get; set; } = null!;
+    public ConstructorBuilder TlsServerCtor { get; set; } = null!;
 
     // Dgram module methods
     public MethodBuilder DgramCreateSocket { get; set; } = null!;
+
+    // $DatagramSocket emitted type
+    public Type DatagramSocketType { get; set; } = null!;
+    public ConstructorBuilder DatagramSocketCtor { get; set; } = null!;
 
     // $Headers type - emitted for standalone Headers support
     public TypeBuilder TSHeadersType { get; set; } = null!;

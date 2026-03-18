@@ -93,7 +93,7 @@ public class DgramModuleTests
     #region Bind Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Dgram_Bind_EmitsListeningEvent(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -116,7 +116,7 @@ public class DgramModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Dgram_Bind_WithCallback(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -204,7 +204,7 @@ public class DgramModuleTests
     #region Close Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Dgram_Close_EmitsCloseEvent(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -226,7 +226,7 @@ public class DgramModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Dgram_Close_WithCallback(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -251,7 +251,7 @@ public class DgramModuleTests
     #region Address Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Dgram_Address_ReturnsInfo(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -278,7 +278,7 @@ public class DgramModuleTests
     #region Socket Options Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Dgram_SetBroadcast(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -299,7 +299,7 @@ public class DgramModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Dgram_SetTTL(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -317,6 +317,143 @@ public class DgramModuleTests
 
         var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Contains("ttl-set", output);
+    }
+
+    #endregion
+
+    #region Connected Mode Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Dgram_Socket_Connect_And_Send(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as dgram from 'dgram';
+
+                const receiver = dgram.createSocket('udp4');
+                receiver.on('message', (msg: any) => {
+                    console.log(msg.toString());
+                    receiver.close();
+                });
+                receiver.bind(0, '127.0.0.1', () => {
+                    const port = receiver.address().port;
+                    const sender = dgram.createSocket('udp4');
+                    sender.connect(port, '127.0.0.1', () => {
+                        sender.send('connected-msg');
+                        setTimeout(() => { sender.close(); }, 100);
+                    });
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("connected-msg", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Dgram_Socket_Disconnect(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as dgram from 'dgram';
+                const socket = dgram.createSocket('udp4');
+                socket.bind(0, '127.0.0.1', () => {
+                    socket.connect(12345, '127.0.0.1', () => {
+                        socket.disconnect();
+                        let threw = false;
+                        try {
+                            socket.remoteAddress();
+                        } catch (e) {
+                            threw = true;
+                        }
+                        console.log(threw);
+                        socket.close();
+                    });
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("true", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Dgram_Socket_RemoteAddress(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as dgram from 'dgram';
+                const socket = dgram.createSocket('udp4');
+                socket.bind(0, '127.0.0.1', () => {
+                    socket.connect(12345, '127.0.0.1', () => {
+                        const addr = socket.remoteAddress();
+                        console.log(addr.address === '127.0.0.1');
+                        console.log(addr.family === 'IPv4');
+                        console.log(addr.port === 12345);
+                        socket.close();
+                    });
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Dgram_Socket_BufferSize_GetSet(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as dgram from 'dgram';
+                const socket = dgram.createSocket('udp4');
+                socket.bind(0, '127.0.0.1', () => {
+                    const origRecv = socket.getRecvBufferSize();
+                    const origSend = socket.getSendBufferSize();
+                    console.log(typeof origRecv === 'number');
+                    console.log(typeof origSend === 'number');
+                    socket.setRecvBufferSize(65536);
+                    socket.setSendBufferSize(65536);
+                    console.log('set-ok');
+                    socket.close();
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("true", output);
+        Assert.Contains("set-ok", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Dgram_Socket_Connect_Event(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as dgram from 'dgram';
+                const socket = dgram.createSocket('udp4');
+                socket.on('connect', () => {
+                    console.log('connect-event');
+                    socket.close();
+                });
+                socket.bind(0, '127.0.0.1', () => {
+                    socket.connect(12345, '127.0.0.1');
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("connect-event", output);
     }
 
     #endregion
