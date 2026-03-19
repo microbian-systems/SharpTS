@@ -1,0 +1,171 @@
+using System.Reflection.Emit;
+using SharpTS.Parsing;
+
+namespace SharpTS.Compilation.Emitters.Modules;
+
+/// <summary>
+/// Emits IL code for the Node.js 'vm' module.
+/// All methods delegate to VmModuleInterpreter via reflection since vm
+/// fundamentally requires the interpreter at runtime (compiles arbitrary strings).
+/// </summary>
+public sealed class VmModuleEmitter : IBuiltInModuleEmitter
+{
+    public string ModuleName => "vm";
+
+    private static readonly string[] _exportedMembers =
+    [
+        "runInNewContext", "runInThisContext", "createContext", "isContext", "Script"
+    ];
+
+    public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
+
+    public bool TryEmitMethodCall(IEmitterContext emitter, string methodName, List<Expr> arguments)
+    {
+        return methodName switch
+        {
+            "runInNewContext" => EmitRunInNewContext(emitter, arguments),
+            "runInThisContext" => EmitRunInThisContext(emitter, arguments),
+            "createContext" => EmitCreateContext(emitter, arguments),
+            "isContext" => EmitIsContext(emitter, arguments),
+            _ => false
+        };
+    }
+
+    public bool TryEmitPropertyGet(IEmitterContext emitter, string propertyName)
+    {
+        if (propertyName == "Script")
+        {
+            var ctx = emitter.Context;
+            var il = ctx.IL;
+            il.Emit(OpCodes.Call, ctx.Runtime!.VmGetScriptConstructor);
+            emitter.SetStackUnknown();
+            return true;
+        }
+
+        // Methods emitted as null for namespace dict — actual calls go through TryEmitMethodCall
+        if (propertyName is "runInNewContext" or "runInThisContext" or "createContext" or "isContext")
+        {
+            emitter.Context.IL.Emit(OpCodes.Ldnull);
+            return true;
+        }
+
+        return false;
+    }
+
+    public bool IsExportedProperty(string memberName) => memberName == "Script";
+
+    private static bool EmitRunInNewContext(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // code (string)
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // contextObject (optional)
+        if (arguments.Count > 1)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // options (optional)
+        if (arguments.Count > 2)
+        {
+            emitter.EmitExpression(arguments[2]);
+            emitter.EmitBoxIfNeeded(arguments[2]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.VmRunInNewContext);
+        emitter.SetStackUnknown();
+        return true;
+    }
+
+    private static bool EmitRunInThisContext(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // code (string)
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // options (optional)
+        if (arguments.Count > 1)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.VmRunInThisContext);
+        emitter.SetStackUnknown();
+        return true;
+    }
+
+    private static bool EmitCreateContext(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.VmCreateContext);
+        emitter.SetStackUnknown();
+        return true;
+    }
+
+    private static bool EmitIsContext(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.VmIsContext);
+        emitter.SetStackUnknown();
+        return true;
+    }
+}

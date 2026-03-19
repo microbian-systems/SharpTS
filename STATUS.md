@@ -430,6 +430,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; connect, disconnect, remoteAddress, get/setRecvBufferSize, get/setSendBufferSize; message/listening/close/error/connect events |
 | `cluster` | ✅ | isPrimary/isWorker/isMaster, fork, worker.send/disconnect/kill/isDead/isConnected, process.send/on('message') IPC, cluster events, disconnect, setupPrimary |
 | `child_process` | ✅ | execSync, spawnSync, exec, spawn, execFileSync, execFile, fork (IPC via named pipes); ChildProcess: pid, exitCode, killed, stdout, stderr, stdin, connected, kill, send, disconnect |
+| `vm` | ✅ | runInNewContext, runInThisContext, createContext, isContext, Script (runInNewContext, runInThisContext, runInContext) |
 | `url` | ✅ | URL, URLSearchParams, fileURLToPath, pathToFileURL, format, parse |
 | `util` | ✅ | promisify, deprecate, types (isDate, isRegExp, isMap, isSet, etc.), format, inspect, TextEncoder, TextDecoder |
 | `querystring` | ✅ | parse, stringify, escape, unescape |

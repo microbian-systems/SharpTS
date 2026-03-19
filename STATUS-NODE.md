@@ -41,6 +41,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `worker_threads` | ⚠️ | Worker, MessageChannel, parentPort, workerData, isMainThread |
 | `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; connect, disconnect, remoteAddress, get/setRecvBufferSize, get/setSendBufferSize; message/listening/close/error/connect events |
 | `cluster` | ✅ | isPrimary/isWorker/isMaster, fork, worker.send/disconnect/kill/isDead/isConnected, process.send (IPC), cluster events (fork/online/disconnect/exit/message), cluster.disconnect, setupPrimary, workers dict |
+| `vm` | ✅ | runInNewContext, runInThisContext, createContext, isContext, Script class |
 
 ---
 
@@ -844,6 +845,28 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `moveMessagePortToContext` | ❌ | Requires VM module |
 | `resourceLimits` | ❌ | No resource limiting |
 | `BroadcastChannel` | ❌ | |
+
+---
+
+## 26. VM
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Static Methods** | | |
+| `vm.runInNewContext(code, ctx?, opts?)` | ✅ | Executes code in fresh isolated context; context object properties seeded as variables; mutations written back |
+| `vm.runInThisContext(code, opts?)` | ✅ | Executes code in caller's scope (interpreter mode) |
+| `vm.createContext(obj?)` | ✅ | Tags object as vm context; creates empty context if no arg |
+| `vm.isContext(obj)` | ✅ | Returns whether object was contextified |
+| **Script Class** | | |
+| `new vm.Script(code, opts?)` | ✅ | Pre-parses code for repeated execution (interpreter mode) |
+| `script.runInNewContext(ctx?, opts?)` | ✅ | Runs pre-parsed script in fresh context (interpreter mode) |
+| `script.runInThisContext(opts?)` | ✅ | Runs pre-parsed script in caller's scope (interpreter mode) |
+| `script.runInContext(ctx, opts?)` | ✅ | Runs pre-parsed script in given context (interpreter mode) |
+| **Not Implemented** | | |
+| `vm.Module` / `vm.SourceTextModule` | ❌ | Experimental in Node.js |
+| `vm.compileFunction` | ❌ | |
+| `timeout` option | ❌ | Can be added later with CancellationToken |
+| `vm.measureMemory` | ❌ | |
 
 ---
 

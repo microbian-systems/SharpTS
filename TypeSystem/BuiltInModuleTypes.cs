@@ -1473,6 +1473,7 @@ public static class BuiltInModuleTypes
             "tls" => GetTlsModuleTypes(),
             "dgram" => GetDgramModuleTypes(),
             "cluster" => GetClusterModuleTypes(),
+            "vm" => GetVmModuleTypes(),
             _ => null
         };
     }
@@ -2347,6 +2348,33 @@ public static class BuiltInModuleTypes
             ["listeners"] = new TypeInfo.Function([stringType], anyType),
             ["listenerCount"] = new TypeInfo.Function([stringType], numberType),
             ["eventNames"] = new TypeInfo.Function([], anyType),
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the vm module.
+    /// </summary>
+    public static Dictionary<string, TypeInfo> GetVmModuleTypes()
+    {
+        var anyType = new TypeInfo.Any();
+        var stringType = new TypeInfo.String();
+        var boolType = BooleanType;
+
+        // Script instance type
+        var scriptType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["runInNewContext"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 0),
+            ["runInThisContext"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            ["runInContext"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
+        }.ToFrozenDictionary());
+
+        return new Dictionary<string, TypeInfo>
+        {
+            ["runInNewContext"] = new TypeInfo.Function([stringType, anyType, anyType], anyType, RequiredParams: 1),
+            ["runInThisContext"] = new TypeInfo.Function([stringType, anyType], anyType, RequiredParams: 1),
+            ["createContext"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            ["isContext"] = new TypeInfo.Function([anyType], boolType),
+            ["Script"] = new TypeInfo.Function([stringType, anyType], scriptType, RequiredParams: 1),
         };
     }
 }

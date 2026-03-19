@@ -36,7 +36,8 @@ public static class BuiltInModuleRegistry
         "https",
         "tls",
         "dgram",
-        "cluster"
+        "cluster",
+        "vm"
     ];
 
     /// <summary>

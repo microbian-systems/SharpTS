@@ -494,6 +494,18 @@ public partial class TypeChecker
             return new TypeInfo.Worker();
         }
 
+        // Handle new vm.Script(code, options?) constructor
+        if (isSimpleName && simpleClassName == "Script")
+        {
+            if (newExpr.Arguments.Count < 1)
+            {
+                throw new TypeCheckException("Script constructor requires at least 1 argument (code).");
+            }
+            foreach (var arg in newExpr.Arguments)
+                CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
         // Handle new MessageChannel() constructor
         if (isSimpleName && simpleClassName == "MessageChannel")
         {

@@ -262,6 +262,34 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new vm.Script(...) constructor
+        if (isSimpleName && simpleClassName == "Script")
+        {
+            // Emit code argument
+            if (n.Arguments.Count > 0)
+            {
+                EmitExpression(n.Arguments[0]);
+                EmitBoxIfNeeded(n.Arguments[0]);
+            }
+            else
+            {
+                IL.Emit(OpCodes.Ldnull);
+            }
+            // Emit options argument
+            if (n.Arguments.Count > 1)
+            {
+                EmitExpression(n.Arguments[1]);
+                EmitBoxIfNeeded(n.Arguments[1]);
+            }
+            else
+            {
+                IL.Emit(OpCodes.Ldnull);
+            }
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.VmNewScript);
+            SetStackUnknown();
+            return;
+        }
+
         // Special case: new Worker(...) constructor
         if (isSimpleName && simpleClassName == "Worker")
         {

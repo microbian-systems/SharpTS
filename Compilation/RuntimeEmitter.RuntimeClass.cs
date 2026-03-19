@@ -454,6 +454,9 @@ public partial class RuntimeEmitter
         // Cluster module support
         EmitClusterHelpers(typeBuilder, runtime);
 
+        // Vm module support
+        EmitVmMethods(typeBuilder, runtime);
+
         // Private member helpers are no longer emitted; async/generator emitters
         // now bind directly to class-private storage and method tokens.
 

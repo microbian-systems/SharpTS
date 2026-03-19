@@ -35,6 +35,7 @@ public class StandaloneDllTests
         // "Compilation/RuntimeEmitter.Net.cs" — now uses emitted $NetServer/$NetSocket directly (no reflection)
         "Compilation/RuntimeEmitter.ZlibHelpers.cs",           // Zlib streaming createGzip/etc. via interpreter types
         // RuntimeEmitter.ClusterHelpers.cs — pure IL, no reflection needed
+        "Compilation/RuntimeEmitter.VmHelpers.cs",             // vm module delegation to interpreter via reflection
     };
 
     /// <summary>

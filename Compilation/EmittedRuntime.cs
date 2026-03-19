@@ -2098,4 +2098,12 @@ public class EmittedRuntime
     public MethodBuilder NetSocketStartReading { get; set; } = null!;
     public MethodBuilder NetSocketSetEncoding { get; set; } = null!;
     public MethodBuilder NetSocketGetMember { get; set; } = null!;
+
+    // Vm module methods
+    public MethodBuilder VmRunInNewContext { get; set; } = null!;
+    public MethodBuilder VmRunInThisContext { get; set; } = null!;
+    public MethodBuilder VmCreateContext { get; set; } = null!;
+    public MethodBuilder VmIsContext { get; set; } = null!;
+    public MethodBuilder VmGetScriptConstructor { get; set; } = null!;
+    public MethodBuilder VmNewScript { get; set; } = null!;
 }
