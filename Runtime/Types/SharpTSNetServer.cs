@@ -1,3 +1,4 @@
+using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
 using SharpTS.Runtime.BuiltIns;
@@ -25,6 +26,10 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
     private string _host = "0.0.0.0";
     private readonly List<SharpTSSocket> _connections = [];
     private int _maxConnections = int.MaxValue;
+    private bool _isIpc;
+    private string? _pipePath;
+    private Socket? _unixSocket;
+    private bool _isClusterWorker;
 
     /// <summary>
     /// Creates a new TCP server with an optional connection listener.
@@ -33,6 +38,17 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
     {
         _connectionListener = connectionListener;
     }
+
+    /// <summary>
+    /// Creates a new TCP server from a compiled-mode callback (e.g. $TSFunction).
+    /// Activator.CreateInstance matches this overload when the argument is not ISharpTSCallable.
+    /// </summary>
+    public SharpTSNetServer(object? connectionListener)
+        : this(connectionListener as ISharpTSCallable
+               ?? (connectionListener != null
+                   ? TSFunctionCallableAdapter.WrapCallback(connectionListener)
+                   : null))
+    { }
 
     /// <summary>
     /// Whether the server is currently listening.
@@ -68,7 +84,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
     }
 
     /// <summary>
-    /// Starts listening on the specified port.
+    /// Starts listening on the specified port or IPC path.
     /// </summary>
     private object? Listen(Interp interpreter, object? receiver, List<object?> args)
     {
@@ -78,14 +94,26 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
         _interpreter = interpreter;
 
         // Parse arguments: listen(port?, host?, backlog?, callback?)
-        // or listen(options, callback?)
+        // or listen(options, callback?) or listen(path, callback?) for IPC
         ISharpTSCallable? callback = null;
+
+        // Detect IPC path: string first arg or options.path
+        if (args.Count > 0 && args[0] is string ipcPath)
+        {
+            callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
+            return ListenIpc(interpreter, ipcPath, callback);
+        }
 
         if (args.Count > 0 && args[0] is SharpTSObject options)
         {
+            if (options.GetProperty("path") is string optPath)
+            {
+                callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
+                return ListenIpc(interpreter, optPath, callback);
+            }
             if (options.GetProperty("port") is double p) _port = (int)p;
             if (options.GetProperty("host") is string h) _host = h;
-            if (args.Count > 1 && args[1] is ISharpTSCallable cb) callback = cb;
+            callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
         }
         else
         {
@@ -103,17 +131,22 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
             // Skip backlog (number)
             if (argIdx < args.Count && args[argIdx] is double)
                 argIdx++;
-            if (argIdx < args.Count && args[argIdx] is ISharpTSCallable cb)
-                callback = cb;
+            if (argIdx < args.Count)
+                callback = WrapCallbackArg(args[argIdx]);
             // Also check: listen(port, callback) where callback is arg[1]
             if (callback == null)
             {
                 for (int i = 0; i < args.Count; i++)
                 {
-                    if (args[i] is ISharpTSCallable c) { callback = c; break; }
+                    var wrapped = WrapCallbackArg(args[i]);
+                    if (wrapped != null) { callback = wrapped; break; }
                 }
             }
         }
+
+        // Cluster worker mode: register with shared listener instead of binding directly
+        if (ClusterContext.IsWorker)
+            return ListenAsClusterWorker(interpreter, callback);
 
         var ipAddress = _host == "0.0.0.0" || _host == "::"
             ? IPAddress.Any
@@ -148,6 +181,181 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
 
         // Start accepting connections
         StartAccepting(interpreter);
+
+        return this;
+    }
+
+    /// <summary>
+    /// Listens on an IPC path (named pipe on Windows, Unix domain socket on Linux/macOS).
+    /// </summary>
+    private object? ListenIpc(Interp interpreter, string path, ISharpTSCallable? callback)
+    {
+        _isIpc = true;
+        _pipePath = path;
+        _cts = new CancellationTokenSource();
+
+        if (OperatingSystem.IsWindows())
+        {
+            _isListening = true;
+            interpreter.Ref();
+
+            // Start accept loop and wait until the first pipe is ready before
+            // calling the callback (which may create a client that connects immediately).
+            var pipeReady = new ManualResetEventSlim(false);
+            StartAcceptingIpcWindows(interpreter, pipeReady);
+            pipeReady.Wait(5000); // Wait up to 5s for pipe to be ready
+
+            callback?.Call(interpreter, []);
+            EmitEvent(interpreter, "listening", []);
+        }
+        else
+        {
+            // Unix domain socket
+            // Delete stale socket file (standard Node.js behavior)
+            if (File.Exists(path))
+                File.Delete(path);
+
+            _unixSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            _unixSocket.Bind(new UnixDomainSocketEndPoint(path));
+            _unixSocket.Listen(511);
+
+            _isListening = true;
+            interpreter.Ref();
+
+            callback?.Call(interpreter, []);
+            EmitEvent(interpreter, "listening", []);
+
+            StartAcceptingIpcUnix(interpreter);
+        }
+
+        return this;
+    }
+
+    /// <summary>
+    /// Windows named pipe accept loop.
+    /// Signals pipeReady once the first WaitForConnectionAsync is pending,
+    /// so the caller can safely invoke the callback (which may create clients).
+    /// </summary>
+    private void StartAcceptingIpcWindows(Interp interpreter, ManualResetEventSlim pipeReady)
+    {
+        var token = _cts!.Token;
+        var pipeName = SharpTSSocket.ConvertToWindowsPipeName(_pipePath!);
+
+        _ = Task.Run(async () =>
+        {
+            NamedPipeServerStream? currentPipe = null;
+            bool first = true;
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    currentPipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut,
+                        NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte,
+                        PipeOptions.Asynchronous);
+
+                    // Start the async wait BEFORE signaling ready.
+                    // This ensures the overlapped I/O is pending when
+                    // the callback creates a client that connects immediately.
+                    var waitTask = currentPipe.WaitForConnectionAsync(token);
+
+                    if (first)
+                    {
+                        first = false;
+                        pipeReady.Set();
+                    }
+
+                    await waitTask;
+
+                    if (_connections.Count >= _maxConnections)
+                    {
+                        currentPipe.Dispose();
+                        continue;
+                    }
+
+                    var acceptedPipe = currentPipe;
+                    interpreter.ScheduleTimer(0, 0, () =>
+                    {
+                        var socket = new SharpTSSocket(acceptedPipe, _pipePath!);
+                        _connections.Add(socket);
+                        // For IPC: start reading BEFORE user callback so writes
+                        // don't block (Windows InOut pipes need a pending reader)
+                        var readReady = new ManualResetEventSlim(false);
+                        socket.StartReading(interpreter, readReady);
+                        readReady.Wait(5000);
+                        _connectionListener?.Call(interpreter, [socket]);
+                        EmitEvent(interpreter, "connection", [socket]);
+                    }, isInterval: false);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (ObjectDisposedException) { break; }
+                catch (IOException) { break; }
+            }
+        }, token);
+    }
+
+    /// <summary>
+    /// Unix domain socket accept loop.
+    /// </summary>
+    private void StartAcceptingIpcUnix(Interp interpreter)
+    {
+        var token = _cts!.Token;
+
+        _ = Task.Run(async () =>
+        {
+            while (!token.IsCancellationRequested && _unixSocket != null)
+            {
+                try
+                {
+                    var clientSocket = await _unixSocket.AcceptAsync(token);
+
+                    if (_connections.Count >= _maxConnections)
+                    {
+                        clientSocket.Close();
+                        continue;
+                    }
+
+                    interpreter.ScheduleTimer(0, 0, () =>
+                    {
+                        var stream = new NetworkStream(clientSocket, ownsSocket: true);
+                        var socket = new SharpTSSocket(stream, _pipePath!);
+                        _connections.Add(socket);
+                        socket.StartReading(interpreter);
+                        _connectionListener?.Call(interpreter, [socket]);
+                        EmitEvent(interpreter, "connection", [socket]);
+                    }, isInterval: false);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (ObjectDisposedException) { break; }
+                catch (SocketException) { break; }
+            }
+        }, token);
+    }
+
+    /// <summary>
+    /// Listens as a cluster worker by registering with the shared listener registry.
+    /// </summary>
+    private object? ListenAsClusterWorker(Interp interpreter, ISharpTSCallable? callback)
+    {
+        _isClusterWorker = true;
+        var registry = ClusterSingleton.Instance.SharedListeners;
+
+        registry.RegisterTcpWorker(_port, _host, ClusterContext.WorkerId, tcpClient =>
+        {
+            interpreter.ScheduleTimer(0, 0, () =>
+            {
+                var socket = new SharpTSSocket(tcpClient);
+                _connections.Add(socket);
+                _connectionListener?.Call(interpreter, [socket]);
+                EmitEvent(interpreter, "connection", [socket]);
+                socket.StartReading(interpreter);
+            }, isInterval: false);
+        }, interpreter);
+
+        _isListening = true;
+        interpreter.Ref();
+
+        callback?.Call(interpreter, []);
+        EmitEvent(interpreter, "listening", []);
 
         return this;
     }
@@ -214,19 +422,29 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
 
         _cts?.Cancel();
 
-        try
+        if (_isClusterWorker)
         {
-            _listener?.Stop();
+            ClusterSingleton.Instance.SharedListeners.UnregisterTcpWorker(_port, ClusterContext.WorkerId);
         }
-        catch
+        else if (_isIpc)
         {
-            // Ignore
+            // IPC cleanup
+            try { _unixSocket?.Close(); } catch { }
+            // Delete Unix socket file
+            if (!OperatingSystem.IsWindows() && _pipePath != null && File.Exists(_pipePath))
+            {
+                try { File.Delete(_pipePath); } catch { }
+            }
+        }
+        else
+        {
+            try { _listener?.Stop(); } catch { }
         }
 
         _isListening = false;
         _interpreter?.Unref();
 
-        ISharpTSCallable? callback = args.Count > 0 ? args[0] as ISharpTSCallable : null;
+        ISharpTSCallable? callback = args.Count > 0 ? WrapCallbackArg(args[0]) : null;
         callback?.Call(interpreter, []);
 
         EmitEvent(interpreter, "close", []);
@@ -239,7 +457,27 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
     /// </summary>
     private object? GetAddress(Interp interpreter, object? receiver, List<object?> args)
     {
-        if (!_isListening || _listener == null) return null;
+        if (!_isListening) return null;
+
+        if (_isIpc)
+        {
+            return new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["address"] = _pipePath
+            });
+        }
+
+        if (_isClusterWorker)
+        {
+            return new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["address"] = _host,
+                ["family"] = "IPv4",
+                ["port"] = (double)_port
+            });
+        }
+
+        if (_listener == null) return null;
 
         var ep = (IPEndPoint)_listener.LocalEndpoint;
         return new SharpTSObject(new Dictionary<string, object?>
@@ -274,6 +512,17 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
         return this;
     }
 
+    /// <summary>
+    /// Wraps a callback argument that may be a compiled-mode $TSFunction into ISharpTSCallable.
+    /// Returns null if the argument is not callable (e.g. a string or number).
+    /// </summary>
+    private static ISharpTSCallable? WrapCallbackArg(object? arg)
+    {
+        if (arg == null || arg is string || arg is double || arg is bool) return null;
+        if (arg is ISharpTSCallable callable) return callable;
+        return TSFunctionCallableAdapter.WrapCallback(arg);
+    }
+
     internal void EmitEvent(Interp interpreter, string eventName, List<object?> args)
     {
         var emit = base.GetMember("emit") as BuiltInMethod;
@@ -289,6 +538,11 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
     {
         _cts?.Cancel();
         _listener?.Stop();
+        try { _unixSocket?.Close(); } catch { }
+        if (!OperatingSystem.IsWindows() && _isIpc && _pipePath != null && File.Exists(_pipePath))
+        {
+            try { File.Delete(_pipePath); } catch { }
+        }
         _cts?.Dispose();
         foreach (var conn in _connections)
         {

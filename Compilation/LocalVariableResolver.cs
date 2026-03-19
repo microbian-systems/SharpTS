@@ -81,6 +81,31 @@ public class LocalVariableResolver : IVariableResolver
             return StackType.Unknown;
         }
 
+        // 2b. Arrow scope display class fields (captured arrow-local vars)
+        if (_ctx.CapturedArrowLocals?.Contains(name) == true &&
+            _ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var arrowDCField) == true)
+        {
+            if (_ctx.ArrowScopeDisplayClassLocal != null)
+            {
+                // Direct access from arrow body - use the local
+                _il.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+                _il.Emit(OpCodes.Ldfld, arrowDCField);
+            }
+            else if (_ctx.CurrentArrowScopeDCField != null)
+            {
+                // Access from nested arrow body - go through $arrowDC field
+                _il.Emit(OpCodes.Ldarg_0); // Load display class instance
+                _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField); // Load arrow scope display class
+                _il.Emit(OpCodes.Ldfld, arrowDCField); // Load the variable field
+            }
+            else
+            {
+                // Fallback - shouldn't happen
+                return null;
+            }
+            return StackType.Unknown;
+        }
+
         // 3. Locals (with type awareness)
         var local = _ctx.Locals.GetLocal(name);
         if (local != null)
@@ -145,6 +170,8 @@ public class LocalVariableResolver : IVariableResolver
         if (_ctx.TryGetParameter(name, out _)) return true;
         if (_ctx.CapturedFunctionLocals?.Contains(name) == true &&
             _ctx.FunctionDisplayClassFields?.ContainsKey(name) == true) return true;
+        if (_ctx.CapturedArrowLocals?.Contains(name) == true &&
+            _ctx.ArrowScopeDisplayClassFields?.ContainsKey(name) == true) return true;
         if (_ctx.Locals.HasLocal(name)) return true;
         if (_ctx.CapturedFields?.ContainsKey(name) == true) return true;
         if (_ctx.CapturedTopLevelVars?.Contains(name) == true &&
@@ -184,6 +211,36 @@ public class LocalVariableResolver : IVariableResolver
 
             _il.Emit(OpCodes.Ldloc, temp);
             _il.Emit(OpCodes.Stfld, funcDCField);
+            return true;
+        }
+
+        // 1b. Arrow scope display class fields (captured arrow-local vars)
+        if (_ctx.CapturedArrowLocals?.Contains(name) == true &&
+            _ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var arrowDCFieldStore) == true)
+        {
+            // Use temp local pattern for storing to fields
+            var tempArrow = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, tempArrow);
+
+            if (_ctx.ArrowScopeDisplayClassLocal != null)
+            {
+                // Direct access from arrow body - use the local
+                _il.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+            }
+            else if (_ctx.CurrentArrowScopeDCField != null)
+            {
+                // Access from nested arrow body - go through $arrowDC field
+                _il.Emit(OpCodes.Ldarg_0); // Load display class instance
+                _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField); // Load arrow scope display class
+            }
+            else
+            {
+                // Fallback - shouldn't happen
+                return false;
+            }
+
+            _il.Emit(OpCodes.Ldloc, tempArrow);
+            _il.Emit(OpCodes.Stfld, arrowDCFieldStore);
             return true;
         }
 

@@ -12,6 +12,7 @@ public partial class ILCompiler
     private readonly List<(Expr.ArrowFunction Arrow, HashSet<string> Captures)> _collectedArrows = [];
     private readonly Dictionary<Expr.ArrowFunction, Expr.ArrowFunction?> _arrowParent = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrowFunction> _arrowsNeedingFunctionDC = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Expr.ArrowFunction> _arrowsNeedingArrowDC = new(ReferenceEqualityComparer.Instance);
     private Expr.ArrowFunction? _currentParentArrow;
     private string? _currentCollectClassName;
 
@@ -26,6 +27,20 @@ public partial class ILCompiler
         // Propagate function DC requirements through arrow nesting
         // If an inner arrow needs $functionDC, parent arrows also need it
         PropagateFunctionDCRequirements();
+
+        // Define arrow scope display classes (for arrow-local vars captured by nested arrows)
+        // Skip async arrows - their bodies are emitted by async state machine emitters,
+        // which don't support arrow scope DC instantiation
+        foreach (var (arrow, _) in _collectedArrows)
+        {
+            if (!arrow.IsAsync)
+            {
+                DefineArrowScopeDisplayClass(arrow);
+            }
+        }
+
+        // Propagate arrow scope DC requirements through arrow nesting
+        PropagateArrowDCRequirements();
 
         // Define methods and display classes
         foreach (var (arrow, captures) in _collectedArrows)
@@ -93,10 +108,11 @@ public partial class ILCompiler
                     paramTypes[i] = arrow.Parameters[i].IsRest ? _types.ListOfObject : resolvedParamTypes[i];
             }
 
-            // Check if arrow needs function DC (for itself or to pass to inner arrows)
+            // Check if arrow needs function DC or arrow DC (for itself or to pass to inner arrows)
             bool needsFunctionDCForArrow = _arrowsNeedingFunctionDC.Contains(arrow);
+            bool needsArrowDCForArrow = _arrowsNeedingArrowDC.Contains(arrow);
 
-            if (captures.Count == 0 && !needsFunctionDCForArrow)
+            if (captures.Count == 0 && !needsFunctionDCForArrow && !needsArrowDCForArrow)
             {
                 // Non-capturing and doesn't need function DC: static method on $Program
                 // Use typed return when available - reflection automatically boxes at $TSFunction boundary
@@ -139,10 +155,15 @@ public partial class ILCompiler
                 bool needsFunctionDC = _arrowsNeedingFunctionDC.Contains(arrow);
                 string? sourceFunction = needsFunctionDC && _closures.ArrowFunctionDCSource.TryGetValue(arrow, out var src) ? src : null;
 
-                // Add fields for captured variables (except top-level and function-level captured vars)
+                // Check if this arrow needs arrow scope DC
+                bool needsArrowDC = _arrowsNeedingArrowDC.Contains(arrow);
+                Expr.ArrowFunction? sourceArrow = needsArrowDC && _closures.ArrowScopeDCSource.TryGetValue(arrow, out var srcArrow) ? srcArrow : null;
+
+                // Add fields for captured variables (except top-level, function-level, and arrow-scope captured vars)
                 Dictionary<string, FieldBuilder> fieldMap = [];
                 FieldBuilder? entryPointDCField = null;
                 FieldBuilder? functionDCField = null;
+                FieldBuilder? arrowDCField = null;
 
                 if (needsEntryPointDC)
                 {
@@ -156,6 +177,12 @@ public partial class ILCompiler
                     functionDCField = displayClass.DefineField("$functionDC", funcDC, FieldAttributes.Public);
                 }
 
+                if (needsArrowDC && sourceArrow != null && _closures.ArrowScopeDisplayClasses.TryGetValue(sourceArrow, out var arrowScopeDC))
+                {
+                    // Add field to hold reference to parent arrow scope display class
+                    arrowDCField = displayClass.DefineField("$arrowDC", arrowScopeDC, FieldAttributes.Public);
+                }
+
                 foreach (var capturedVar in captures)
                 {
                     // Skip top-level captured vars - they'll be accessed through $entryPointDC
@@ -166,6 +193,12 @@ public partial class ILCompiler
                     if (needsFunctionDC && sourceFunction != null &&
                         _closures.FunctionDisplayClassFields.TryGetValue(sourceFunction, out var funcFields) &&
                         funcFields.ContainsKey(capturedVar))
+                        continue;
+
+                    // Skip arrow-scope captured vars - they'll be accessed through $arrowDC
+                    if (needsArrowDC && sourceArrow != null &&
+                        _closures.ArrowScopeDisplayClassFields.TryGetValue(sourceArrow, out var arrowFields) &&
+                        arrowFields.ContainsKey(capturedVar))
                         continue;
 
                     var field = displayClass.DefineField(capturedVar, _types.Object, FieldAttributes.Public);
@@ -183,6 +216,12 @@ public partial class ILCompiler
                 if (functionDCField != null)
                 {
                     _closures.ArrowFunctionDCFields[arrow] = functionDCField;
+                }
+
+                // Track $arrowDC field for this arrow
+                if (arrowDCField != null)
+                {
+                    _closures.ArrowScopeDCFields[arrow] = arrowDCField;
                 }
 
                 // Add default constructor
@@ -575,6 +614,89 @@ public partial class ILCompiler
         }
     }
 
+    /// <summary>
+    /// Creates a display class for an arrow function's captured local variables.
+    /// This is needed when local variables are captured by inner arrow functions.
+    /// </summary>
+    private void DefineArrowScopeDisplayClass(Expr.ArrowFunction arrow)
+    {
+        var capturedLocals = _closures.Analyzer.GetCapturedLocals(arrow);
+        if (capturedLocals.Count == 0)
+            return;
+
+        var displayClass = _moduleBuilder.DefineType(
+            $"<>c__ArrowScopeDC{_closures.DisplayClassCounter++}",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.Object);
+
+        var fieldMap = new Dictionary<string, FieldBuilder>();
+        foreach (var varName in capturedLocals)
+        {
+            var field = displayClass.DefineField(varName, _types.Object, FieldAttributes.Public);
+            fieldMap[varName] = field;
+        }
+
+        var ctor = displayClass.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            Type.EmptyTypes);
+        var ctorIl = ctor.GetILGenerator();
+        ctorIl.Emit(OpCodes.Ldarg_0);
+        ctorIl.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        ctorIl.Emit(OpCodes.Ret);
+
+        _closures.ArrowScopeDisplayClasses[arrow] = displayClass;
+        _closures.ArrowScopeDisplayClassCtors[arrow] = ctor;
+        _closures.ArrowScopeDisplayClassFields[arrow] = fieldMap;
+    }
+
+    /// <summary>
+    /// Propagates arrow scope display class requirements through arrow nesting.
+    /// If an inner arrow needs $arrowDC, its parent arrows also need it to pass it through.
+    /// </summary>
+    private void PropagateArrowDCRequirements()
+    {
+        // First, identify arrows that directly capture arrow-scope locals
+        foreach (var (arrow, captures) in _collectedArrows)
+        {
+            foreach (var (parentArrow, arrowDCFields) in _closures.ArrowScopeDisplayClassFields)
+            {
+                if (captures.Any(c => arrowDCFields.ContainsKey(c)))
+                {
+                    _arrowsNeedingArrowDC.Add(arrow);
+                    _closures.ArrowScopeDCSource[arrow] = parentArrow;
+                    break;
+                }
+            }
+        }
+
+        // Propagate requirements up the parent chain
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var arrow in _arrowsNeedingArrowDC.ToList())
+            {
+                if (_arrowParent.TryGetValue(arrow, out var parent) && parent != null)
+                {
+                    // Don't propagate past the arrow that owns the DC
+                    if (_closures.ArrowScopeDisplayClasses.ContainsKey(parent))
+                        continue;
+
+                    if (!_arrowsNeedingArrowDC.Contains(parent))
+                    {
+                        _arrowsNeedingArrowDC.Add(parent);
+                        if (_closures.ArrowScopeDCSource.TryGetValue(arrow, out var source))
+                        {
+                            _closures.ArrowScopeDCSource[parent] = source;
+                        }
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
     private void EmitArrowFunctionBodies()
     {
         foreach (var (arrow, captures) in _collectedArrows)
@@ -588,11 +710,12 @@ public partial class ILCompiler
 
             var methodBuilder = _closures.ArrowMethods[arrow];
 
-            // Check if this arrow needs function DC (either directly or to pass to inner arrows)
+            // Check if this arrow needs function DC or arrow DC (either directly or to pass to inner arrows)
             // This must match the logic in CollectAndDefineArrowFunctions
             bool needsFunctionDCForArrow = _arrowsNeedingFunctionDC.Contains(arrow);
+            bool needsArrowDCForArrow = _arrowsNeedingArrowDC.Contains(arrow);
 
-            if (captures.Count == 0 && !needsFunctionDCForArrow)
+            if (captures.Count == 0 && !needsFunctionDCForArrow && !needsArrowDCForArrow)
             {
                 // Non-capturing and doesn't need function DC: emit body into static method
                 EmitArrowBody(arrow, methodBuilder, null);
@@ -655,6 +778,8 @@ public partial class ILCompiler
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
             // Function-level display class for nested arrow functions
             ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
+            // Arrow scope display class for nested arrow functions
+            ArrowScopeDCFields = _closures.ArrowScopeDCFields.Count > 0 ? _closures.ArrowScopeDCFields : null,
             // Typed return optimization - set return type so EmitReturn knows whether to box
             CurrentMethodReturnType = arrowReturnType
         };
@@ -691,6 +816,20 @@ public partial class ILCompiler
                 {
                     ctx.FunctionDisplayClassFields = funcDCFields;
                     ctx.CapturedFunctionLocals = [.. funcDCFields.Keys];
+                }
+            }
+
+            // Set the $arrowDC field if this arrow captures arrow-scope variables
+            if (_closures.ArrowScopeDCFields.TryGetValue(arrow, out var arrowScopeDCFieldRef))
+            {
+                ctx.CurrentArrowScopeDCField = arrowScopeDCFieldRef;
+
+                // Also set up the captured arrow locals info so LocalVariableResolver can use it
+                if (_closures.ArrowScopeDCSource.TryGetValue(arrow, out var sourceArrowRef) &&
+                    _closures.ArrowScopeDisplayClassFields.TryGetValue(sourceArrowRef, out var arrowDCFields))
+                {
+                    ctx.ArrowScopeDisplayClassFields = arrowDCFields;
+                    ctx.CapturedArrowLocals = [.. arrowDCFields.Keys];
                 }
             }
 
@@ -740,6 +879,38 @@ public partial class ILCompiler
                 {
                     Type? paramType = arrowParamTypes != null && i < arrowParamTypes.Length ? arrowParamTypes[i] : null;
                     ctx.DefineParameter(arrow.Parameters[i].Name.Lexeme, i, paramType);
+                }
+            }
+        }
+
+        // Create arrow scope display class instance if this arrow has captured locals
+        if (_closures.ArrowScopeDisplayClasses.TryGetValue(arrow, out var arrowScopeDCType) &&
+            _closures.ArrowScopeDisplayClassCtors.TryGetValue(arrow, out var arrowScopeDCCtor))
+        {
+            var arrowScopeDCLocal = il.DeclareLocal(arrowScopeDCType);
+            il.Emit(OpCodes.Newobj, arrowScopeDCCtor);
+            il.Emit(OpCodes.Stloc, arrowScopeDCLocal);
+            ctx.ArrowScopeDisplayClassLocal = arrowScopeDCLocal;
+            ctx.ArrowScopeDisplayClassFields = _closures.ArrowScopeDisplayClassFields[arrow];
+            ctx.CapturedArrowLocals = _closures.Analyzer.GetCapturedLocals(arrow);
+
+            // Initialize captured parameters into the arrow scope display class.
+            // This mirrors the equivalent code in ILCompiler.Functions.cs lines 287-305.
+            // Without this, inner arrows that read parameters via $arrowDC get null.
+            for (int i = 0; i < arrow.Parameters.Count; i++)
+            {
+                var paramName = arrow.Parameters[i].Name.Lexeme;
+                if (ctx.CapturedArrowLocals.Contains(paramName) &&
+                    ctx.ArrowScopeDisplayClassFields.TryGetValue(paramName, out var arrowDCField))
+                {
+                    il.Emit(OpCodes.Ldloc, arrowScopeDCLocal);
+                    // Arg index must match DefineParameter calls (lines 841-858 / 866-883):
+                    //   instance (displayClass != null): params at i+1, or i+2 with HasOwnThis
+                    //   static (displayClass == null):   params at i,   or i+1 with HasOwnThis
+                    int argOffset = displayClass != null ? 1 : 0;
+                    if (arrow.HasOwnThis) argOffset++;
+                    il.Emit(OpCodes.Ldarg, i + argOffset);
+                    il.Emit(OpCodes.Stfld, arrowDCField);
                 }
             }
         }

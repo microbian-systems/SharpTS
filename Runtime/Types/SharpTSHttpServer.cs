@@ -26,6 +26,8 @@ public class SharpTSHttpServer : SharpTSEventEmitter, ITypeCategorized, IDisposa
     private Task? _listenTask;
     private bool _isListening;
     private Interpreter? _interpreter;
+    private bool _isClusterWorker;
+    private int _port;
 
     /// <summary>
     /// Creates a new HTTP server with the given request handler.
@@ -35,6 +37,13 @@ public class SharpTSHttpServer : SharpTSEventEmitter, ITypeCategorized, IDisposa
     {
         _requestHandler = requestHandler ?? throw new ArgumentNullException(nameof(requestHandler));
     }
+
+    /// <summary>
+    /// Creates a new HTTP server from a compiled-mode callback (e.g. $TSFunction).
+    /// </summary>
+    public SharpTSHttpServer(object? requestHandler)
+        : this(TSFunctionCallableAdapter.WrapCallback(requestHandler))
+    { }
 
     /// <summary>
     /// Whether the server is currently listening.
@@ -78,7 +87,7 @@ public class SharpTSHttpServer : SharpTSEventEmitter, ITypeCategorized, IDisposa
         if (args.Count == 0 || args[0] is not double portNum)
             throw new Exception("Runtime Error: listen requires a port number");
 
-        var port = (int)portNum;
+        _port = (int)portNum;
         ISharpTSCallable? callback = null;
 
         // Second argument can be hostname (ignored for now) or callback
@@ -95,8 +104,13 @@ public class SharpTSHttpServer : SharpTSEventEmitter, ITypeCategorized, IDisposa
         }
 
         _interpreter = interpreter;
+
+        // Cluster worker mode: register with shared listener
+        if (ClusterContext.IsWorker)
+            return ListenAsClusterWorker(interpreter, callback);
+
         _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://+:{port}/");
+        _listener.Prefixes.Add($"http://+:{_port}/");
 
         try
         {
@@ -106,7 +120,7 @@ public class SharpTSHttpServer : SharpTSEventEmitter, ITypeCategorized, IDisposa
         {
             // Try localhost only if wildcard fails (requires admin on Windows)
             _listener = new HttpListener();
-            _listener.Prefixes.Add($"http://localhost:{port}/");
+            _listener.Prefixes.Add($"http://localhost:{_port}/");
             _listener.Start();
         }
 
@@ -132,17 +146,49 @@ public class SharpTSHttpServer : SharpTSEventEmitter, ITypeCategorized, IDisposa
     }
 
     /// <summary>
+    /// Listens as a cluster worker by registering with the shared HTTP listener.
+    /// </summary>
+    private object? ListenAsClusterWorker(Interpreter interpreter, ISharpTSCallable? callback)
+    {
+        _isClusterWorker = true;
+        var registry = ClusterSingleton.Instance.SharedListeners;
+
+        registry.RegisterHttpWorker(_port, ClusterContext.WorkerId, context =>
+        {
+            // Wrap HttpListenerContext and dispatch through normal handler
+            _ = HandleRequestAsync(context);
+        }, interpreter);
+
+        _isListening = true;
+        interpreter.Ref();
+
+        callback?.Call(interpreter, new List<object?>());
+        EmitEvent("listening", new List<object?>());
+
+        return this;
+    }
+
+    /// <summary>
     /// Closes the server.
     /// </summary>
     private object? Close(List<object?> args)
     {
-        if (!_isListening || _listener == null)
+        if (!_isListening)
             return this;
 
         _cts?.Cancel();
-        _listener.Stop();
-        _listener.Close();
-        _listener = null;
+
+        if (_isClusterWorker)
+        {
+            ClusterSingleton.Instance.SharedListeners.UnregisterHttpWorker(_port, ClusterContext.WorkerId);
+        }
+        else if (_listener != null)
+        {
+            _listener.Stop();
+            _listener.Close();
+            _listener = null;
+        }
+
         _isListening = false;
 
         // Unregister from interpreter's event loop
@@ -179,8 +225,20 @@ public class SharpTSHttpServer : SharpTSEventEmitter, ITypeCategorized, IDisposa
     /// </summary>
     private object? GetAddress()
     {
-        if (!_isListening || _listener == null)
+        if (!_isListening)
             return null;
+
+        if (_isClusterWorker)
+        {
+            return new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["address"] = "0.0.0.0",
+                ["family"] = "IPv4",
+                ["port"] = (double)_port
+            });
+        }
+
+        if (_listener == null) return null;
 
         var prefix = _listener.Prefixes.FirstOrDefault();
         if (prefix == null) return null;

@@ -117,6 +117,40 @@ public partial class CompilationContext
     public FieldBuilder? CurrentArrowFunctionDCField { get; set; }
 
     // ============================================
+    // Arrow Scope Display Class (for arrow-local vars captured by nested arrows)
+    // ============================================
+
+    /// <summary>
+    /// Local variable holding the current arrow's scope display class instance.
+    /// Used when arrow-local variables are captured by inner closures.
+    /// </summary>
+    public LocalBuilder? ArrowScopeDisplayClassLocal { get; set; }
+
+    /// <summary>
+    /// Fields in the current arrow's scope display class (variable name -> field).
+    /// These are local variables that are captured by inner arrow functions.
+    /// </summary>
+    public Dictionary<string, FieldBuilder>? ArrowScopeDisplayClassFields { get; set; }
+
+    /// <summary>
+    /// Set of variable names that are stored in the arrow scope display class.
+    /// Used to redirect local variable access to display class fields.
+    /// </summary>
+    public HashSet<string>? CapturedArrowLocals { get; set; }
+
+    /// <summary>
+    /// Maps arrow functions to their $arrowDC field (if they capture arrow-scope vars).
+    /// Used when creating capturing arrows to populate the reference to the arrow scope display class.
+    /// </summary>
+    public Dictionary<ArrowFunction, FieldBuilder>? ArrowScopeDCFields { get; set; }
+
+    /// <summary>
+    /// When inside a nested arrow body, this is the field that holds the reference to the parent arrow scope display class.
+    /// Used for accessing captured arrow-level variables through the $arrowDC field.
+    /// </summary>
+    public FieldBuilder? CurrentArrowScopeDCField { get; set; }
+
+    // ============================================
     // Inner Function Support
     // ============================================
 

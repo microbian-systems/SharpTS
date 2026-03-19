@@ -137,12 +137,16 @@ public partial class RuntimeEmitter
         // Must come after $DiffieHellman (uses TSDiffieHellmanType for field)
         EmitBoundDHMethodTypeDefinition(moduleBuilder, runtime);
 
+        // Emit $EventLoop singleton (must come before timer types and net/http types that call Ref/Unref/Schedule)
+        EmitTSEventLoopClass(moduleBuilder, runtime);
+
         // Emit $VirtualTimer class for virtual timer support (single-threaded semantics)
         // Must come after TSFunction (uses TSFunctionType)
         // Must come BEFORE TSTimeoutClass (TSTimeout references VirtualTimer)
         EmitVirtualTimerClass(moduleBuilder, runtime);
 
         // Emit $TSTimeout class for timer support
+        // Must come after $EventLoop (Cancel/Ref/Unref call EventLoop.Ref/Unref)
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSTimeout
         EmitTSTimeoutClass(moduleBuilder, runtime);
 
@@ -238,6 +242,10 @@ public partial class RuntimeEmitter
         // Must come before EmitRuntimeClass so GetListProperty can use the constructor
         EmitBoundArrayMethodTypeDefinition(moduleBuilder, runtime);
 
+        // Emit $MethodCallable type and constructor (Phase 1)
+        // Must come before EmitRuntimeClass so GetFieldsProperty can wrap GetMember results
+        EmitMethodCallableTypeDefinition(moduleBuilder, runtime);
+
         // Emit $TemplateStringsList class for tagged template literals
         // Must come before EmitRuntimeClass so InvokeTaggedTemplate can use the constructor
         EmitTemplateStringsListClass(moduleBuilder, runtime);
@@ -245,6 +253,16 @@ public partial class RuntimeEmitter
         // Emit $PropertyDescriptorStore and supporting types for standalone object semantics
         // Must come before EmitRuntimeClass so Object.freeze/seal/etc. can use it
         EmitPropertyDescriptorTypes(moduleBuilder, runtime);
+
+        // Emit $NetSocket type definition (Phase 1a)
+        // Must come after EventEmitter ($NetSocket extends $EventEmitter)
+        // Must come before EmitRuntimeClass so NetCreateConnection can use the constructor
+        EmitTSNetSocketPhase1(moduleBuilder, runtime);
+
+        // Emit $NetServer type definition (Phase 1a)
+        // Must come after $NetSocket ($NetServer creates $NetSocket instances)
+        // Must come before EmitRuntimeClass so NetCreateServer can use the constructor
+        EmitTSNetServerPhase1(moduleBuilder, runtime);
 
         // Emit $DatagramSocket type definition (Phase 1)
         // Must come after EventEmitter ($DatagramSocket extends $EventEmitter)
@@ -265,6 +283,24 @@ public partial class RuntimeEmitter
         // Finalize $BoundArrayMethod with Invoke method (Phase 2)
         // Must come after EmitRuntimeClass (needs array methods defined)
         EmitBoundArrayMethodFinalize(runtime);
+
+        // Finalize $MethodCallable with Invoke method (Phase 2)
+        EmitMethodCallableFinalize(runtime);
+
+        // Emit net/http closure types (Phase 1b)
+        // Must come after Phase 1a (references $NetSocket/$NetServer/$HttpServer TypeBuilders/fields)
+        // Must come before Phase 2 (methods Newobj the closure constructors)
+        EmitNetClosureTypes(moduleBuilder, runtime);
+
+        // Emit HTTP accept worker body (Phase 2)
+        // Must come after EmitNetClosureTypes (uses $HttpAcceptClosure)
+        EmitHttpServerAcceptWorkerBody(runtime);
+
+        // Finalize $NetSocket class (Phase 2)
+        EmitTSNetSocketPhase2(runtime);
+
+        // Finalize $NetServer class (Phase 2)
+        EmitTSNetServerPhase2(runtime);
 
         // Finalize $DatagramSocket class (Phase 2)
         // Must come after EmitRuntimeClass

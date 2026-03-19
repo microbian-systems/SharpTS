@@ -9,26 +9,10 @@ namespace SharpTS.Compilation;
 /// <remarks>
 /// <para>
 /// <strong>Implementation Notes:</strong>
-/// Timers use <see cref="System.Threading.Tasks.Task.Delay"/> with <c>ContinueWith</c> to schedule
-/// callbacks on the .NET thread pool. This provides non-blocking timer behavior without requiring
-/// a dedicated event loop thread.
-/// </para>
-/// <para>
-/// <strong>Important Behavioral Difference from Node.js:</strong>
-/// Unlike Node.js, timers do NOT keep the process alive. When <c>Main()</c> returns, the process
-/// exits regardless of pending timers. In Node.js, timers with <c>.ref()</c> (the default) keep
-/// the event loop running until all referenced timers complete or are cleared.
-/// </para>
-/// <para>
-/// This is a deliberate trade-off. Implementing Node.js-style event loop semantics would require:
-/// <list type="bullet">
-/// <item>A global timer registry tracking all active timers with <c>HasRef = true</c></item>
-/// <item>Modified entry point that waits for all referenced timers before returning</item>
-/// <item>Proper handling of <c>.ref()</c> and <c>.unref()</c> to add/remove from the registry</item>
-/// </list>
-/// For most compiled TypeScript use cases (CLI tools, services with their own lifecycle, scripts),
-/// the current behavior is acceptable. Programs that need timer-based keepalive can use explicit
-/// waiting mechanisms (busy-wait loops, <c>Thread.Sleep</c>, or async patterns).
+/// Timers use a virtual timer queue processed by the event loop. When timers are created,
+/// they call <c>EventLoop.Ref()</c> to keep the event loop alive. When they fire, get cancelled,
+/// or are <c>.unref()</c>'d, they call <c>EventLoop.Unref()</c>. This provides Node.js-like
+/// semantics where ref'd timers keep the process alive.
 /// </para>
 /// </remarks>
 public partial class RuntimeEmitter
@@ -142,13 +126,13 @@ public partial class RuntimeEmitter
         EmitTSTimeoutConstructor(typeBuilder, runtime, nextIdField, idField, virtualTimerField, hasRefField);
 
         // Cancel method: public void Cancel()
-        EmitTSTimeoutCancel(typeBuilder, runtime, virtualTimerField);
+        EmitTSTimeoutCancel(typeBuilder, runtime, virtualTimerField, hasRefField);
 
         // Ref method: public $TSTimeout Ref()
-        EmitTSTimeoutRef(typeBuilder, runtime, hasRefField);
+        EmitTSTimeoutRef(typeBuilder, runtime, hasRefField, virtualTimerField);
 
         // Unref method: public $TSTimeout Unref()
-        EmitTSTimeoutUnref(typeBuilder, runtime, hasRefField);
+        EmitTSTimeoutUnref(typeBuilder, runtime, hasRefField, virtualTimerField);
 
         // HasRef property getter: public bool HasRef { get; }
         EmitTSTimeoutHasRefGetter(typeBuilder, runtime, hasRefField);
@@ -195,7 +179,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitTSTimeoutCancel(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder virtualTimerField)
+    private void EmitTSTimeoutCancel(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder virtualTimerField, FieldBuilder hasRefField)
     {
         var method = typeBuilder.DefineMethod(
             "Cancel",
@@ -219,11 +204,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, runtime.VirtualTimerIsCancelled);
 
+        // if (_hasRef) { _hasRef = false; _virtualTimer.HasRef = false; EventLoop.Unref(); }
+        var skipUnref = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, hasRefField);
+        il.Emit(OpCodes.Brfalse, skipUnref);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, hasRefField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, virtualTimerField);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, runtime.VirtualTimerHasRef);
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopUnref);
+        il.MarkLabel(skipUnref);
+
         il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitTSTimeoutRef(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder hasRefField)
+    private void EmitTSTimeoutRef(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder hasRefField, FieldBuilder virtualTimerField)
     {
         var method = typeBuilder.DefineMethod(
             "Ref",
@@ -234,18 +236,31 @@ public partial class RuntimeEmitter
         runtime.TSTimeoutRef = method;
 
         var il = method.GetILGenerator();
+        var alreadyRef = il.DefineLabel();
 
-        // _hasRef = true
+        // if (!_hasRef) { _hasRef = true; _virtualTimer.HasRef = true; EventLoop.Ref(); }
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, hasRefField);
+        il.Emit(OpCodes.Brtrue, alreadyRef);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, hasRefField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, virtualTimerField);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, runtime.VirtualTimerHasRef);
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopRef);
 
+        il.MarkLabel(alreadyRef);
         // return this
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitTSTimeoutUnref(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder hasRefField)
+    private void EmitTSTimeoutUnref(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder hasRefField, FieldBuilder virtualTimerField)
     {
         var method = typeBuilder.DefineMethod(
             "Unref",
@@ -256,12 +271,24 @@ public partial class RuntimeEmitter
         runtime.TSTimeoutUnref = method;
 
         var il = method.GetILGenerator();
+        var alreadyUnref = il.DefineLabel();
 
-        // _hasRef = false
+        // if (_hasRef) { _hasRef = false; _virtualTimer.HasRef = false; EventLoop.Unref(); }
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, hasRefField);
+        il.Emit(OpCodes.Brfalse, alreadyUnref);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, hasRefField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, virtualTimerField);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, runtime.VirtualTimerHasRef);
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopUnref);
 
+        il.MarkLabel(alreadyUnref);
         // return this
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
@@ -368,6 +395,15 @@ public partial class RuntimeEmitter
         // AddVirtualTimer(virtualTimer)
         il.Emit(OpCodes.Ldloc, virtualTimerLocal);
         il.Emit(OpCodes.Call, runtime.AddVirtualTimer);
+
+        // virtualTimer.HasRef = true
+        il.Emit(OpCodes.Ldloc, virtualTimerLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, runtime.VirtualTimerHasRef);
+
+        // EventLoop.GetInstance().Ref() — timer keeps event loop alive
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopRef);
 
         // var timeout = new $TSTimeout(virtualTimer);
         var timeoutLocal = il.DeclareLocal(runtime.TSTimeoutType);
@@ -584,6 +620,15 @@ public partial class RuntimeEmitter
         // AddVirtualTimer(virtualTimer)
         il.Emit(OpCodes.Ldloc, virtualTimerLocal);
         il.Emit(OpCodes.Call, runtime.AddVirtualTimer);
+
+        // virtualTimer.HasRef = true
+        il.Emit(OpCodes.Ldloc, virtualTimerLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, runtime.VirtualTimerHasRef);
+
+        // EventLoop.GetInstance().Ref() — interval keeps event loop alive
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopRef);
 
         // var interval = new $TSTimeout(virtualTimer);
         var intervalLocal = il.DeclareLocal(runtime.TSTimeoutType);

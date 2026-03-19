@@ -17,6 +17,11 @@ public class ClusterSingleton : SharpTSEventEmitter
     private string? _entryScript;
     private SharpTSObject? _settings;
 
+    /// <summary>
+    /// Registry for shared TCP/HTTP listeners used by cluster port sharing.
+    /// </summary>
+    public SharedListenerRegistry SharedListeners { get; } = new();
+
     private ClusterSingleton() { }
 
     /// <summary>
@@ -24,6 +29,7 @@ public class ClusterSingleton : SharpTSEventEmitter
     /// </summary>
     public void Reset()
     {
+        SharedListeners.CloseAll();
         foreach (var kvp in _workers)
         {
             try { kvp.Value.Dispose(); } catch { }

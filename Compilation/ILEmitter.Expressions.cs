@@ -267,6 +267,39 @@ public partial class ILEmitter
             return;
         }
 
+        // 1b. Arrow scope display class fields (captured arrow-local vars)
+        if (_ctx.CapturedArrowLocals?.Contains(a.Name.Lexeme) == true &&
+            _ctx.ArrowScopeDisplayClassFields?.TryGetValue(a.Name.Lexeme, out var arrowDCField) == true)
+        {
+            EmitBoxIfNeeded(a.Value);
+            IL.Emit(OpCodes.Dup);
+            var temp = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, temp);
+
+            if (_ctx.ArrowScopeDisplayClassLocal != null)
+            {
+                // Direct access from arrow body
+                IL.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+            }
+            else if (_ctx.CurrentArrowScopeDCField != null)
+            {
+                // Access from nested arrow body - go through $arrowDC field
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField);
+            }
+            else
+            {
+                IL.Emit(OpCodes.Pop);
+                SetStackUnknown();
+                return;
+            }
+
+            IL.Emit(OpCodes.Ldloc, temp);
+            IL.Emit(OpCodes.Stfld, arrowDCField);
+            SetStackUnknown();
+            return;
+        }
+
         var local = _ctx.Locals.GetLocal(a.Name.Lexeme);
         if (local != null)
         {

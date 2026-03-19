@@ -32,7 +32,7 @@ public class StandaloneDllTests
         "Compilation/RuntimeEmitter.AbortController.cs", // AbortSignal.any() via RuntimeTypes.AbortSignalAnyCompiled
         "Compilation/RuntimeEmitter.ChildProcessHelpers.cs", // exec/spawn async delegation to interpreter module
         "Compilation/RuntimeEmitter.ProcessHelpers.cs",      // ProcessEventEmitterCall and ProcessEmitExit fallback
-        "Compilation/RuntimeEmitter.Net.cs",                 // Net module createServer/createConnection via interpreter types
+        // "Compilation/RuntimeEmitter.Net.cs" — now uses emitted $NetServer/$NetSocket directly (no reflection)
         "Compilation/RuntimeEmitter.ZlibHelpers.cs",           // Zlib streaming createGzip/etc. via interpreter types
         // RuntimeEmitter.ClusterHelpers.cs — pure IL, no reflection needed
     };

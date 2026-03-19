@@ -194,6 +194,26 @@ public partial class ILEmitter
             }
         }
 
+        // Populate $arrowDC field if this arrow captures arrow-scope variables
+        if (_ctx.ArrowScopeDCFields?.TryGetValue(af, out var arrowScopeDCField) == true)
+        {
+            if (_ctx.ArrowScopeDisplayClassLocal != null)
+            {
+                // In parent arrow body - use local variable
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+                IL.Emit(OpCodes.Stfld, arrowScopeDCField);
+            }
+            else if (_ctx.CurrentArrowScopeDCField != null)
+            {
+                // In nested arrow body - chain through parent's $arrowDC field
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField);
+                IL.Emit(OpCodes.Stfld, arrowScopeDCField);
+            }
+        }
+
         // Get captured variables for this arrow using the stored field mapping
         if (!_ctx.DisplayClassFields.TryGetValue(af, out var fieldMap))
         {

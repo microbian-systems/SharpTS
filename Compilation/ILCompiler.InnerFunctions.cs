@@ -223,6 +223,7 @@ public partial class ILCompiler
                 ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
                 EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
                 ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
+                ArrowScopeDCFields = _closures.ArrowScopeDCFields.Count > 0 ? _closures.ArrowScopeDCFields : null,
                 InnerFunctionMethods = _innerFunctionMethods,
                 InnerFunctionDisplayClasses = _innerFunctionDisplayClasses,
                 InnerFunctionDCFields = _innerFunctionDCFields,

@@ -24,6 +24,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _httpResponseFinishedField = null!;
     private FieldBuilder _httpResponseBodyBufferField = null!;
     private MethodBuilder _httpResponseWriteMethod = null!;
+    private MethodBuilder _httpAcceptWorkerMethod = null!;
 
     /// <summary>
     /// Emits all HTTP types for standalone operation.
@@ -620,7 +621,7 @@ public partial class RuntimeEmitter
         runtime.TSHttpServerType = typeBuilder;
 
         // Fields
-        _httpServerCallbackField = typeBuilder.DefineField("_callback", _types.Object, FieldAttributes.Private);
+        _httpServerCallbackField = typeBuilder.DefineField("_callback", _types.Object, FieldAttributes.Assembly);
         _httpServerListenerField = typeBuilder.DefineField("_listener", httpListenerType, FieldAttributes.Private);
         _httpServerIsListeningField = typeBuilder.DefineField("_isListening", _types.Boolean, FieldAttributes.Private);
         _httpServerCtsField = typeBuilder.DefineField("_cts", typeof(CancellationTokenSource), FieldAttributes.Private);
@@ -781,9 +782,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
         il.Emit(OpCodes.Pop);
 
-        // Note: This returns immediately. The server runs in blocking mode -
-        // real request handling would need async/await or Task.Run
-        // For standalone compiled mode, this is a simplified implementation
+        // EventLoop.Ref() to keep process alive
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopRef);
+
+        // Start HTTP accept loop on ThreadPool
+        EmitHttpServerStartAccepting(typeBuilder, il, runtime);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
@@ -843,6 +847,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, _httpServerIsListeningField);
+
+        // EventLoop.Unref()
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopUnref);
 
         // Emit 'close' event
         il.Emit(OpCodes.Ldarg_0);
@@ -981,5 +989,86 @@ public partial class RuntimeEmitter
         il.MarkLabel(defaultLabel);
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits the HTTP accept loop as a private method and queues it on ThreadPool.
+    /// Blocks on HttpListener.GetContext(), schedules request handling via EventLoop.
+    /// </summary>
+    /// <summary>
+    /// Phase 1: Defines the accept worker method stub and wires ThreadPool.QueueUserWorkItem.
+    /// The worker body is deferred to EmitHttpServerAcceptWorkerBody (Phase 2) because it
+    /// needs $HttpAcceptClosure which isn't defined until after EmitRuntimeClass.
+    /// </summary>
+    private void EmitHttpServerStartAccepting(TypeBuilder typeBuilder, ILGenerator callerIl, EmittedRuntime runtime)
+    {
+        // Define method stub (body emitted in Phase 2)
+        _httpAcceptWorkerMethod = typeBuilder.DefineMethod(
+            "_HttpAcceptWorker",
+            MethodAttributes.Private,
+            typeof(void),
+            [_types.Object]
+        );
+
+        // In caller: ThreadPool.QueueUserWorkItem(new WaitCallback(this._HttpAcceptWorker))
+        callerIl.Emit(OpCodes.Ldarg_0);
+        callerIl.Emit(OpCodes.Ldftn, _httpAcceptWorkerMethod);
+        callerIl.Emit(OpCodes.Newobj, typeof(WaitCallback).GetConstructor([_types.Object, typeof(IntPtr)])!);
+        callerIl.Emit(OpCodes.Call, typeof(ThreadPool).GetMethod("QueueUserWorkItem", [typeof(WaitCallback)])!);
+        callerIl.Emit(OpCodes.Pop);
+    }
+
+    /// <summary>
+    /// Phase 2: Emits the HTTP accept worker body using $HttpAcceptClosure.
+    /// Must be called after EmitNetClosureTypes sets _httpAcceptClosureCtor/_httpAcceptClosureRun.
+    /// </summary>
+    private void EmitHttpServerAcceptWorkerBody(EmittedRuntime runtime)
+    {
+        var httpListenerType = typeof(HttpListener);
+        var httpListenerContextType = typeof(HttpListenerContext);
+
+        var wil = _httpAcceptWorkerMethod.GetILGenerator();
+        var ctxLocal = wil.DeclareLocal(httpListenerContextType);
+
+        var loopTop = wil.DefineLabel();
+        var loopExit = wil.DefineLabel();
+
+        wil.MarkLabel(loopTop);
+
+        // Check _isListening
+        wil.Emit(OpCodes.Ldarg_0);
+        wil.Emit(OpCodes.Ldfld, _httpServerIsListeningField);
+        wil.Emit(OpCodes.Brfalse, loopExit);
+
+        // try { ctx = _listener.GetContext() } catch { break }
+        wil.BeginExceptionBlock();
+        wil.Emit(OpCodes.Ldarg_0);
+        wil.Emit(OpCodes.Ldfld, _httpServerListenerField);
+        wil.Emit(OpCodes.Callvirt, httpListenerType.GetMethod("GetContext")!);
+        wil.Emit(OpCodes.Stloc, ctxLocal);
+
+        var afterAccept = wil.DefineLabel();
+        wil.Emit(OpCodes.Leave, afterAccept);
+
+        wil.BeginCatchBlock(_types.Exception);
+        wil.Emit(OpCodes.Pop);
+        wil.Emit(OpCodes.Leave, loopExit);
+        wil.EndExceptionBlock();
+
+        wil.MarkLabel(afterAccept);
+
+        // EventLoop.Schedule(new Action(new $HttpAcceptClosure(this, ctx).Run))
+        wil.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        wil.Emit(OpCodes.Ldarg_0);
+        wil.Emit(OpCodes.Ldloc, ctxLocal);
+        wil.Emit(OpCodes.Newobj, _httpAcceptClosureCtor);
+        wil.Emit(OpCodes.Ldftn, _httpAcceptClosureRun);
+        wil.Emit(OpCodes.Newobj, typeof(Action).GetConstructor([_types.Object, typeof(IntPtr)])!);
+        wil.Emit(OpCodes.Call, runtime.EventLoopSchedule);
+
+        wil.Emit(OpCodes.Br, loopTop);
+
+        wil.MarkLabel(loopExit);
+        wil.Emit(OpCodes.Ret);
     }
 }

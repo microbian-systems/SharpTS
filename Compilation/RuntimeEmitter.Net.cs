@@ -24,7 +24,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object NetCreateServer(object? callback)
-    /// Creates a SharpTSNetServer via reflection for standalone DLL support.
+    /// Creates a $NetServer directly (no reflection needed — standalone DLL support).
     /// </summary>
     private void EmitNetCreateServer(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -38,40 +38,15 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Use reflection to create SharpTSNetServer
-        // Type.GetType("SharpTS.Runtime.Types.SharpTSNetServer, SharpTS")
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSNetServer, SharpTS");
-        il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetType", [_types.String])!);
-
-        var typeLocal = il.DeclareLocal(typeof(Type));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // Check if type was found
-        var typeFoundLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Brtrue, typeFoundLabel);
-
-        // Type not found (standalone mode without SharpTS) - return null
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(typeFoundLabel);
-
-        // Activator.CreateInstance(type, new object[] { callback })
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
+        // return new $NetServer(callback)
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Call, typeof(Activator).GetMethod("CreateInstance", [typeof(Type), typeof(object[])])!);
+        il.Emit(OpCodes.Newobj, runtime.NetServerCtor);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
     /// Emits: public static object NetCreateConnection(object? options, object? callback)
-    /// Creates a socket and connects via reflection.
+    /// Creates a $NetSocket directly and calls Connect (no reflection needed).
     /// </summary>
     private void EmitNetCreateConnection(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -85,25 +60,27 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Use reflection to create SharpTSSocket
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSSocket, SharpTS");
-        il.Emit(OpCodes.Call, typeof(Type).GetMethod("GetType", [_types.String])!);
+        // var socket = new $NetSocket()
+        var socketLocal = il.DeclareLocal(runtime.NetSocketType);
+        il.Emit(OpCodes.Newobj, runtime.NetSocketCtor);
+        il.Emit(OpCodes.Stloc, socketLocal);
 
-        var typeLocal = il.DeclareLocal(typeof(Type));
-        il.Emit(OpCodes.Stloc, typeLocal);
+        // socket.Connect(options, callback, null)
+        var noOptions = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, noOptions);
 
-        var typeFoundLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Brtrue, typeFoundLabel);
+        il.Emit(OpCodes.Ldloc, socketLocal);
+        il.Emit(OpCodes.Ldarg_0); // options
+        il.Emit(OpCodes.Ldarg_1); // callback
+        il.Emit(OpCodes.Ldnull);  // third arg
+        il.Emit(OpCodes.Callvirt, runtime.NetSocketConnect);
+        il.Emit(OpCodes.Pop);
 
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+        il.MarkLabel(noOptions);
 
-        il.MarkLabel(typeFoundLabel);
-
-        // Create socket instance (parameterless ctor)
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Call, typeof(Activator).GetMethod("CreateInstance", [typeof(Type)])!);
+        // return socket
+        il.Emit(OpCodes.Ldloc, socketLocal);
         il.Emit(OpCodes.Ret);
     }
 

@@ -128,6 +128,33 @@ public partial class ILEmitter
             return;
         }
 
+        // Check if this is an arrow-scope captured variable - use arrow scope display class
+        if (_ctx.CapturedArrowLocals?.Contains(v.Name.Lexeme) == true &&
+            _ctx.ArrowScopeDisplayClassFields?.TryGetValue(v.Name.Lexeme, out var arrowDisplayField) == true &&
+            _ctx.ArrowScopeDisplayClassLocal != null)
+        {
+            // Store initializer (or default) in arrow scope display class field
+            IL.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+
+            if (v.Initializer != null)
+            {
+                EmitExpression(v.Initializer);
+                EmitBoxIfNeeded(v.Initializer);
+            }
+            else if (v.TypeAnnotation == "number")
+            {
+                // Typed number without initializer defaults to 0
+                IL.Emit(OpCodes.Ldc_R8, 0.0);
+                IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            }
+            else
+            {
+                IL.Emit(OpCodes.Ldnull);
+            }
+            IL.Emit(OpCodes.Stfld, arrowDisplayField);
+            return;
+        }
+
         // Determine if this local can use unboxed double type
         Type localType = CanUseUnboxedLocal(v) ? _ctx.Types.Double : _ctx.Types.Object;
         var local = _ctx.Locals.DeclareLocal(v.Name.Lexeme, localType);

@@ -104,8 +104,8 @@ public class TimerTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    public void SetTimeout_KeepsEventLoopAlive_Interpreted(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SetTimeout_KeepsEventLoopAlive(ExecutionMode mode)
     {
         // In interpreted mode, the event loop should stay alive for timers by default
         var source = @"

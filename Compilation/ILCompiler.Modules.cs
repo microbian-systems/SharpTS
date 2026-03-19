@@ -608,6 +608,10 @@ public partial class ILCompiler
             }
         }
 
+        // Run the event loop — no-op if no handles are active
+        il.Emit(OpCodes.Call, _runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, _runtime.EventLoopRun);
+
         il.Emit(OpCodes.Ret);
     }
 

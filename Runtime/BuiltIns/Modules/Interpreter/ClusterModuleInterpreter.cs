@@ -27,8 +27,8 @@ public static class ClusterModuleInterpreter
             // Tests that need live workers dict should access it via cluster.fork() return values.
             ["workers"] = singleton.GetWorkersObject(),
 
-            // Current worker reference
-            ["worker"] = null,
+            // Current worker reference (non-null in worker context)
+            ["worker"] = ClusterContext.CurrentWorker,
 
             // Settings
             ["settings"] = singleton.GetSettings(),

@@ -360,4 +360,221 @@ public class ClusterModuleTests : IDisposable
     }
 
     #endregion
+
+    #region Cluster Port Sharing
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Fork_WorkersShareNetPort(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as cluster from 'cluster';
+                import * as net from 'net';
+
+                if (cluster.isPrimary) {
+                    const w1 = cluster.fork();
+                    const w2 = cluster.fork();
+                    let readyCount = 0;
+                    let responseCount = 0;
+
+                    const checkReady = () => {
+                        readyCount++;
+                        if (readyCount === 2) {
+                            // Both workers are listening, connect multiple times
+                            for (let i = 0; i < 4; i++) {
+                                const client = net.createConnection({ port: 9876, host: '127.0.0.1' });
+                                client.setEncoding('utf8');
+                                client.on('data', (data: string) => {
+                                    responseCount++;
+                                    client.destroy();
+                                    if (responseCount === 4) {
+                                        console.log('responses: ' + responseCount);
+                                        w1.kill();
+                                        w2.kill();
+                                    }
+                                });
+                            }
+                        }
+                    };
+
+                    w1.on('message', (msg: any) => {
+                        if (msg === 'ready') checkReady();
+                    });
+                    w2.on('message', (msg: any) => {
+                        if (msg === 'ready') checkReady();
+                    });
+                } else {
+                    const server = net.createServer((socket) => {
+                        socket.write('worker-' + cluster.worker.id);
+                        socket.end();
+                    });
+                    server.listen(9876, () => {
+                        process.send('ready');
+                    });
+                    setTimeout(() => {}, 10000);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("responses: 4", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Fork_WorkerExitReleasesSlot(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as cluster from 'cluster';
+                import * as net from 'net';
+
+                if (cluster.isPrimary) {
+                    const w1 = cluster.fork();
+                    const w2 = cluster.fork();
+                    let readyCount = 0;
+
+                    const checkReady = () => {
+                        readyCount++;
+                        if (readyCount === 2) {
+                            // Kill w1, then verify w2 still serves
+                            w1.kill();
+                            setTimeout(() => {
+                                const client = net.createConnection({ port: 9877, host: '127.0.0.1' });
+                                client.setEncoding('utf8');
+                                client.on('data', (data: string) => {
+                                    console.log('after kill: ' + data);
+                                    client.destroy();
+                                    w2.kill();
+                                });
+                            }, 200);
+                        }
+                    };
+
+                    w1.on('message', (msg: any) => {
+                        if (msg === 'ready') checkReady();
+                    });
+                    w2.on('message', (msg: any) => {
+                        if (msg === 'ready') checkReady();
+                    });
+                } else {
+                    const server = net.createServer((socket) => {
+                        socket.write('worker-' + cluster.worker.id);
+                        socket.end();
+                    });
+                    server.listen(9877, () => {
+                        process.send('ready');
+                    });
+                    setTimeout(() => {}, 10000);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("after kill: worker-", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Fork_LastWorkerExitStopsListener(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as cluster from 'cluster';
+                import * as net from 'net';
+
+                if (cluster.isPrimary) {
+                    const w1 = cluster.fork();
+
+                    w1.on('message', (msg: any) => {
+                        if (msg === 'ready') {
+                            // First verify the port works
+                            const probe = net.createConnection({ port: 9878, host: '127.0.0.1' });
+                            probe.setEncoding('utf8');
+                            probe.on('data', () => {
+                                probe.destroy();
+                                console.log('port was working');
+                                // Now kill the worker
+                                w1.kill();
+                            });
+                        }
+                    });
+
+                    w1.on('exit', () => {
+                        console.log('worker exited');
+                    });
+                } else {
+                    const server = net.createServer((socket) => {
+                        socket.write('hello');
+                        socket.end();
+                    });
+                    server.listen(9878, () => {
+                        process.send('ready');
+                    });
+                    setTimeout(() => {}, 10000);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("port was working", output);
+        Assert.Contains("worker exited", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Fork_WorkersShareHttpPort(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as cluster from 'cluster';
+                import * as http from 'http';
+
+                if (cluster.isPrimary) {
+                    const w1 = cluster.fork();
+                    const w2 = cluster.fork();
+                    let readyCount = 0;
+
+                    const checkReady = () => {
+                        readyCount++;
+                        if (readyCount === 2) {
+                            // Both workers listening on same port — send an HTTP request
+                            fetch('http://localhost:9879/').then(async (res) => {
+                                const text = await res.text();
+                                console.log('http response: ' + text);
+                                w1.kill();
+                                w2.kill();
+                            });
+                        }
+                    };
+
+                    w1.on('message', (msg: any) => {
+                        if (msg === 'ready') checkReady();
+                    });
+                    w2.on('message', (msg: any) => {
+                        if (msg === 'ready') checkReady();
+                    });
+                } else {
+                    const server = http.createServer((req: any, res: any) => {
+                        res.writeHead(200);
+                        res.end('worker-' + cluster.worker.id);
+                    });
+                    server.listen(9879, () => {
+                        process.send('ready');
+                    });
+                    setTimeout(() => {}, 10000);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("http response: worker-", output);
+    }
+
+    #endregion
 }

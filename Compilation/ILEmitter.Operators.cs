@@ -711,6 +711,37 @@ public partial class ILEmitter
                 return;
             }
 
+            // Check arrow scope display class (captured arrow-local vars)
+            if (_ctx.CapturedArrowLocals?.Contains(v.Name.Lexeme) == true &&
+                _ctx.ArrowScopeDisplayClassFields?.TryGetValue(v.Name.Lexeme, out var arrowDCField) == true)
+            {
+                // Store to arrow scope display class field (always boxed)
+                if (isTypedDouble)
+                {
+                    IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                }
+                var temp = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Stloc, temp);
+                if (_ctx.ArrowScopeDisplayClassLocal != null)
+                {
+                    IL.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+                }
+                else if (_ctx.CurrentArrowScopeDCField != null)
+                {
+                    IL.Emit(OpCodes.Ldarg_0);
+                    IL.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField);
+                }
+                IL.Emit(OpCodes.Ldloc, temp);
+                IL.Emit(OpCodes.Stfld, arrowDCField);
+                // Box result if needed
+                if (isTypedDouble)
+                {
+                    IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                }
+                SetStackUnknown();
+                return;
+            }
+
             // Check entry-point display class (captured top-level vars)
             if (_ctx.CapturedTopLevelVars?.Contains(v.Name.Lexeme) == true &&
                 _ctx.EntryPointDisplayClassFields?.TryGetValue(v.Name.Lexeme, out var entryPointField) == true)
@@ -913,6 +944,36 @@ public partial class ILEmitter
                 }
                 IL.Emit(OpCodes.Ldloc, temp);
                 IL.Emit(OpCodes.Stfld, funcDCField);
+
+                // Original value is still on stack, box it
+                IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                SetStackUnknown();
+                return;
+            }
+
+            // Check arrow scope display class (captured arrow-local vars)
+            if (_ctx.CapturedArrowLocals?.Contains(v.Name.Lexeme) == true &&
+                _ctx.ArrowScopeDisplayClassFields?.TryGetValue(v.Name.Lexeme, out var arrowDCField) == true)
+            {
+                // Store to arrow scope display class field (always boxed)
+                if (isTypedDouble)
+                {
+                    // Need to box for field storage
+                    IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                }
+                var temp = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Stloc, temp);
+                if (_ctx.ArrowScopeDisplayClassLocal != null)
+                {
+                    IL.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+                }
+                else if (_ctx.CurrentArrowScopeDCField != null)
+                {
+                    IL.Emit(OpCodes.Ldarg_0);
+                    IL.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField);
+                }
+                IL.Emit(OpCodes.Ldloc, temp);
+                IL.Emit(OpCodes.Stfld, arrowDCField);
 
                 // Original value is still on stack, box it
                 IL.Emit(OpCodes.Box, _ctx.Types.Double);

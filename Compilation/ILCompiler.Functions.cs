@@ -245,6 +245,7 @@ public partial class ILCompiler
             FunctionDisplayClassFields = hasFunctionDC ? _closures.FunctionDisplayClassFields[qualifiedFunctionName] : null,
             CapturedFunctionLocals = capturedLocals,
             ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
+            ArrowScopeDCFields = _closures.ArrowScopeDCFields.Count > 0 ? _closures.ArrowScopeDCFields : null,
             // Inner function support
             InnerFunctionMethods = _innerFunctionMethods,
             InnerFunctionDisplayClasses = _innerFunctionDisplayClasses,
@@ -610,6 +611,10 @@ public partial class ILCompiler
             }
         }
 
+        // Run the event loop — no-op if no handles are active
+        il.Emit(OpCodes.Call, _runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, _runtime.EventLoopRun);
+
         il.Emit(OpCodes.Ret);
     }
 
@@ -801,6 +806,9 @@ public partial class ILCompiler
             {
                 il.Emit(OpCodes.Pop);  // Discard the result
             }
+            // Run the event loop — no-op if no handles are active
+            il.Emit(OpCodes.Call, _runtime.EventLoopGetInstance);
+            il.Emit(OpCodes.Call, _runtime.EventLoopRun);
             il.Emit(OpCodes.Ret);
         }
         else
@@ -817,6 +825,9 @@ public partial class ILCompiler
                 // Sync main returns object, but we expect void behavior - just pop
                 il.Emit(OpCodes.Pop);
             }
+            // Run the event loop — no-op if no handles are active
+            il.Emit(OpCodes.Call, _runtime.EventLoopGetInstance);
+            il.Emit(OpCodes.Call, _runtime.EventLoopRun);
             il.Emit(OpCodes.Ret);
         }
     }

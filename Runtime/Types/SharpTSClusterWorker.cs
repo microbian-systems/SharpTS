@@ -104,6 +104,9 @@ public class SharpTSClusterWorker : SharpTSEventEmitter, IDisposable
             try { _primaryToWorkerQueue.CompleteAdding(); } catch { }
             try { _workerToParentQueue.CompleteAdding(); } catch { }
 
+            // Clean up shared listeners for this worker
+            ClusterSingleton.Instance.SharedListeners.UnregisterAllForWorker(Id);
+
             // Clean up thread-local state
             ClusterContext.IsWorker = false;
             ClusterContext.PrimaryToWorkerQueue = null;

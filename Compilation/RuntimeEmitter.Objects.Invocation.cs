@@ -168,6 +168,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.FuncObjectArrayToObject);
         il.Emit(OpCodes.Brtrue, funcDelegateLabel);
 
+        // Handle $MethodCallable
+        var methodCallableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.MethodCallableType);
+        il.Emit(OpCodes.Brtrue, methodCallableLabel);
+
         // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
         var notProxyLabel = il.DefineLabel();
         EmitProxyInvokeCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), notProxyLabel);
@@ -286,6 +292,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, _types.FuncObjectArrayToObject);
         il.Emit(OpCodes.Ldarg_1);  // args
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.FuncObjectArrayToObject, "Invoke", _types.ObjectArray));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(methodCallableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.MethodCallableType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.MethodCallableInvoke);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(nullLabel);
@@ -497,8 +510,20 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notBoundArrayMethodLabel);
 
-        // Handle Func<object?[], object?> (from CreateBoundMethod in RuntimeTypes.Methods)
+        // Handle $MethodCallable (wraps BuiltInMethod from GetMember)
         il.MarkLabel(nullLabel);
+        var notMethodCallableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.MethodCallableType);
+        il.Emit(OpCodes.Brfalse, notMethodCallableLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.MethodCallableType);
+        il.Emit(OpCodes.Ldarg_2);  // args
+        il.Emit(OpCodes.Callvirt, runtime.MethodCallableInvoke);
+        il.Emit(OpCodes.Ret);
+
+        // Handle Func<object?[], object?> (from CreateBoundMethod in RuntimeTypes.Methods)
+        il.MarkLabel(notMethodCallableLabel);
         var notFuncLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.FuncObjectArrayToObject);

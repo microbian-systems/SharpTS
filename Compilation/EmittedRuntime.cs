@@ -271,6 +271,12 @@ public class EmittedRuntime
     public FieldBuilder BoundArrayMethodListField { get; set; } = null!;
     public FieldBuilder BoundArrayMethodNameField { get; set; } = null!;
 
+    // Method callable wrapper for GetMember results (BuiltInMethod etc.)
+    public TypeBuilder MethodCallableType { get; set; } = null!;
+    public ConstructorBuilder MethodCallableCtor { get; set; } = null!;
+    public MethodBuilder MethodCallableInvoke { get; set; } = null!;
+    public FieldBuilder MethodCallableField { get; set; } = null!;
+
     // Template strings list for tagged template literals
     public Type TemplateStringsListType { get; set; } = null!;
     public ConstructorInfo TemplateStringsListCtor { get; set; } = null!;
@@ -418,6 +424,7 @@ public class EmittedRuntime
     public FieldBuilder VirtualTimerIsCancelled { get; set; } = null!;
     public FieldBuilder VirtualTimerIsInterval { get; set; } = null!;
     public FieldBuilder VirtualTimerIntervalMs { get; set; } = null!;
+    public FieldBuilder VirtualTimerHasRef { get; set; } = null!;
     public FieldBuilder TimerQueue { get; set; } = null!;
     public FieldBuilder TimerStartTicks { get; set; } = null!;
     public FieldBuilder TimerInitialized { get; set; } = null!;
@@ -2047,4 +2054,45 @@ public class EmittedRuntime
     // Convenience statics on $Runtime (delegate to emitted types)
     public MethodBuilder ClusterIsPrimary { get; set; } = null!;
     public MethodBuilder ClusterIsWorker { get; set; } = null!;
+
+    // ============================================================
+    // $EventLoop — singleton event loop for compiled mode
+    // ============================================================
+    public TypeBuilder EventLoopType { get; set; } = null!;
+    public FieldBuilder EventLoopInstanceField { get; set; } = null!;
+    public MethodBuilder EventLoopGetInstance { get; set; } = null!;
+    public MethodBuilder EventLoopRef { get; set; } = null!;
+    public MethodBuilder EventLoopUnref { get; set; } = null!;
+    public MethodBuilder EventLoopSchedule { get; set; } = null!;
+    public MethodBuilder EventLoopRun { get; set; } = null!;
+    public MethodBuilder EventLoopWake { get; set; } = null!;
+    public FieldBuilder EventLoopTimerProcessorField { get; set; } = null!;
+
+    // ============================================================
+    // $NetServer — emitted TCP server (extends $EventEmitter)
+    // ============================================================
+    public TypeBuilder NetServerType { get; set; } = null!;
+    public ConstructorBuilder NetServerCtor { get; set; } = null!;
+    public MethodBuilder NetServerListen { get; set; } = null!;
+    public MethodBuilder NetServerClose { get; set; } = null!;
+    public MethodBuilder NetServerAddress { get; set; } = null!;
+    public MethodBuilder NetServerGetConnections { get; set; } = null!;
+    public MethodBuilder NetServerGetMember { get; set; } = null!;
+    public MethodBuilder NetServerSetMember { get; set; } = null!;
+    public FieldBuilder NetServerIsListeningField { get; set; } = null!;
+
+    // ============================================================
+    // $NetSocket — emitted TCP socket (extends $EventEmitter)
+    // ============================================================
+    public TypeBuilder NetSocketType { get; set; } = null!;
+    public ConstructorBuilder NetSocketCtor { get; set; } = null!;
+    public ConstructorBuilder NetSocketCtorTcpClient { get; set; } = null!;
+    public ConstructorBuilder NetSocketCtorStream { get; set; } = null!;
+    public MethodBuilder NetSocketConnect { get; set; } = null!;
+    public MethodBuilder NetSocketWrite { get; set; } = null!;
+    public MethodBuilder NetSocketEnd { get; set; } = null!;
+    public MethodBuilder NetSocketDestroy { get; set; } = null!;
+    public MethodBuilder NetSocketStartReading { get; set; } = null!;
+    public MethodBuilder NetSocketSetEncoding { get; set; } = null!;
+    public MethodBuilder NetSocketGetMember { get; set; } = null!;
 }

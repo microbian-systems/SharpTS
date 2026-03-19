@@ -546,6 +546,12 @@ public partial class ILCompiler
             tb.CreateType();
         }
 
+        // Finalize arrow scope display classes
+        foreach (var tb in _closures.ArrowScopeDisplayClasses.Values)
+        {
+            tb.CreateType();
+        }
+
         // Finalize inner function display classes
         FinalizeInnerFunctionDisplayClasses();
 
@@ -879,6 +885,12 @@ public partial class ILCompiler
 
         // Finalize function-level display classes
         foreach (var tb in _closures.FunctionDisplayClasses.Values)
+        {
+            tb.CreateType();
+        }
+
+        // Finalize arrow scope display classes
+        foreach (var tb in _closures.ArrowScopeDisplayClasses.Values)
         {
             tb.CreateType();
         }

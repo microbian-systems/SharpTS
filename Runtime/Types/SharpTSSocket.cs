@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -24,6 +25,8 @@ public class SharpTSSocket : SharpTSEventEmitter
     private CancellationTokenSource? _readCts;
     protected internal string _encoding = "utf8";
     protected internal bool _readingStarted;
+    internal bool _isIpc;
+    internal string? _pipePath;
 
     /// <summary>
     /// Creates a new Socket wrapping an existing TcpClient (server-side).
@@ -39,6 +42,16 @@ public class SharpTSSocket : SharpTSEventEmitter
     /// </summary>
     public SharpTSSocket()
     {
+    }
+
+    /// <summary>
+    /// Creates a new Socket wrapping an IPC pipe stream (server-accepted IPC sockets).
+    /// </summary>
+    public SharpTSSocket(Stream pipeStream, string pipePath)
+    {
+        _stream = pipeStream ?? throw new ArgumentNullException(nameof(pipeStream));
+        _isIpc = true;
+        _pipePath = pipePath;
     }
 
     /// <summary>
@@ -65,11 +78,11 @@ public class SharpTSSocket : SharpTSEventEmitter
             "pipe" => new BuiltInMethod("pipe", 1, 2, Pipe),
 
             // Properties
-            "remoteAddress" => _client?.Client?.RemoteEndPoint is IPEndPoint rep ? rep.Address.ToString() : (object?)null,
-            "remotePort" => _client?.Client?.RemoteEndPoint is IPEndPoint rep2 ? (double)rep2.Port : (object?)null,
-            "remoteFamily" => _client?.Client?.RemoteEndPoint is IPEndPoint rep3 ? (rep3.AddressFamily == AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4") : (object?)null,
-            "localAddress" => _client?.Client?.LocalEndPoint is IPEndPoint lep ? lep.Address.ToString() : (object?)null,
-            "localPort" => _client?.Client?.LocalEndPoint is IPEndPoint lep2 ? (double)lep2.Port : (object?)null,
+            "remoteAddress" => _isIpc ? (object?)null : (_client?.Client?.RemoteEndPoint is IPEndPoint rep ? rep.Address.ToString() : null),
+            "remotePort" => _isIpc ? (object?)null : (_client?.Client?.RemoteEndPoint is IPEndPoint rep2 ? (double)rep2.Port : null),
+            "remoteFamily" => _isIpc ? "pipe" : (_client?.Client?.RemoteEndPoint is IPEndPoint rep3 ? (rep3.AddressFamily == AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4") : null),
+            "localAddress" => _isIpc ? (object?)null : (_client?.Client?.LocalEndPoint is IPEndPoint lep ? lep.Address.ToString() : null),
+            "localPort" => _isIpc ? (object?)null : (_client?.Client?.LocalEndPoint is IPEndPoint lep2 ? (double)lep2.Port : null),
             "bytesRead" => (double)_bytesRead,
             "bytesWritten" => (double)_bytesWritten,
             "connecting" => _connecting,
@@ -85,37 +98,57 @@ public class SharpTSSocket : SharpTSEventEmitter
     {
         if (_connecting) return "opening";
         if (_destroyed) return "closed";
+        if (_isIpc) return _stream != null ? "open" : "closed";
         if (_client?.Connected == true) return "open";
         return "closed";
     }
 
     /// <summary>
-    /// Connects to a remote host.
+    /// Connects to a remote host or IPC pipe.
     /// </summary>
     private object? Connect(Interp interpreter, object? receiver, List<object?> args)
     {
         _interpreter = interpreter;
 
-        int port;
-        string host = "localhost";
+        // Detect IPC path: string first arg or options.path
+        string? ipcPath = null;
         ISharpTSCallable? callback = null;
 
-        if (args[0] is SharpTSObject options)
+        if (args[0] is string pathArg)
         {
-            port = (int)(double)(options.GetProperty("port") ?? throw new Exception("Runtime Error: port is required"));
-            if (options.GetProperty("host") is string h) host = h;
-            if (args.Count > 1 && args[1] is ISharpTSCallable cb) callback = cb;
+            ipcPath = pathArg;
+            callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
+        }
+        else if (args[0] is SharpTSObject options && options.GetProperty("path") is string optPath)
+        {
+            ipcPath = optPath;
+            callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
+        }
+
+        if (ipcPath != null)
+        {
+            return ConnectIpc(interpreter, ipcPath, callback);
+        }
+
+        int port;
+        string host = "localhost";
+
+        if (args[0] is SharpTSObject opts)
+        {
+            port = (int)(double)(opts.GetProperty("port") ?? throw new Exception("Runtime Error: port is required"));
+            if (opts.GetProperty("host") is string h) host = h;
+            callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
         }
         else if (args[0] is double portNum)
         {
             port = (int)portNum;
             if (args.Count > 1 && args[1] is string h) host = h;
-            if (args.Count > 1 && args[1] is ISharpTSCallable cb1) callback = cb1;
-            if (args.Count > 2 && args[2] is ISharpTSCallable cb2) callback = cb2;
+            if (args.Count > 1) callback = WrapCallbackArg(args[1]);
+            if (args.Count > 2) callback = WrapCallbackArg(args[2]) ?? callback;
         }
         else
         {
-            throw new Exception("Runtime Error: connect requires port number or options object");
+            throw new Exception("Runtime Error: connect requires port number, path string, or options object");
         }
 
         if (callback != null)
@@ -156,6 +189,75 @@ public class SharpTSSocket : SharpTSEventEmitter
     }
 
     /// <summary>
+    /// Connects to an IPC pipe/Unix domain socket.
+    /// </summary>
+    private object? ConnectIpc(Interp interpreter, string path, ISharpTSCallable? callback)
+    {
+        if (callback != null)
+        {
+            AddListenerDirect("connect", callback);
+        }
+
+        _connecting = true;
+        _isIpc = true;
+        _pipePath = path;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (OperatingSystem.IsWindows())
+                {
+                    var pipeName = ConvertToWindowsPipeName(path);
+                    var pipeClient = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                    await pipeClient.ConnectAsync();
+                    _stream = pipeClient;
+                }
+                else
+                {
+                    var unixSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                    await unixSocket.ConnectAsync(new UnixDomainSocketEndPoint(path));
+                    _stream = new NetworkStream(unixSocket, ownsSocket: true);
+                }
+
+                _connecting = false;
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    // For IPC: start reading BEFORE emitting 'connect' so the
+                    // server can write immediately (Windows InOut pipe requirement)
+                    var readReady = new ManualResetEventSlim(false);
+                    StartReading(interpreter, readReady);
+                    readReady.Wait(5000);
+                    EmitEvent(interpreter, "connect", []);
+                }, isInterval: false);
+            }
+            catch (Exception ex)
+            {
+                _connecting = false;
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
+                }, isInterval: false);
+            }
+        });
+
+        return this;
+    }
+
+    /// <summary>
+    /// Converts a path to a Windows named pipe name.
+    /// If already in \\.\pipe\name format, extracts the pipe name.
+    /// Otherwise uses the filename portion of the path.
+    /// </summary>
+    internal static string ConvertToWindowsPipeName(string path)
+    {
+        if (path.StartsWith(@"\\.\pipe\", StringComparison.OrdinalIgnoreCase))
+            return path.Substring(@"\\.\pipe\".Length);
+        // Use just the filename
+        return Path.GetFileName(path);
+    }
+
+    /// <summary>
     /// Writes data to the socket.
     /// </summary>
     private object? Write(Interp interpreter, object? receiver, List<object?> args)
@@ -179,6 +281,32 @@ public class SharpTSSocket : SharpTSEventEmitter
 
         byte[] data = ChunkToBytes(chunk, encoding ?? _encoding);
         _interpreter = interpreter;
+
+        if (_isIpc)
+        {
+            // IPC pipes (Windows InOut) deadlock when sync Write blocks the event loop
+            // because the reader may not have started yet. Write asynchronously.
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    _stream!.Write(data, 0, data.Length);
+                    _bytesWritten += data.Length;
+                    if (callback != null)
+                    {
+                        interpreter.ScheduleTimer(0, 0, () => callback.Call(interpreter, []), false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    interpreter.ScheduleTimer(0, 0, () =>
+                    {
+                        EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
+                    }, false);
+                }
+            });
+            return true;
+        }
 
         try
         {
@@ -209,13 +337,29 @@ public class SharpTSSocket : SharpTSEventEmitter
 
         _ended = true;
 
-        try
+        if (_isIpc)
         {
-            _client?.Client?.Shutdown(SocketShutdown.Send);
+            // Named pipes don't support half-close; close the stream entirely
+            try
+            {
+                _stream?.Close();
+                _stream = null;
+            }
+            catch
+            {
+                // May already be closed
+            }
         }
-        catch
+        else
         {
-            // May already be disconnected
+            try
+            {
+                _client?.Client?.Shutdown(SocketShutdown.Send);
+            }
+            catch
+            {
+                // May already be disconnected
+            }
         }
 
         ISharpTSCallable? callback = null;
@@ -287,6 +431,7 @@ public class SharpTSSocket : SharpTSEventEmitter
 
     private object? SetNoDelay(Interp interpreter, object? receiver, List<object?> args)
     {
+        if (_isIpc) return this; // No-op for IPC sockets
         var noDelay = args.Count == 0 || (args[0] is bool b && b) || (args[0] is not bool);
         _client?.Client?.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.NoDelay, noDelay);
         return this;
@@ -294,6 +439,7 @@ public class SharpTSSocket : SharpTSEventEmitter
 
     private object? SetKeepAlive(Interp interpreter, object? receiver, List<object?> args)
     {
+        if (_isIpc) return this; // No-op for IPC sockets
         var enable = args.Count > 0 && args[0] is bool b && b;
         _client?.Client?.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, enable);
         return this;
@@ -346,8 +492,11 @@ public class SharpTSSocket : SharpTSEventEmitter
     /// <summary>
     /// Starts reading from the socket asynchronously.
     /// Called after connection is established.
+    /// For IPC sockets, if readReady is provided, it is signaled right before
+    /// the first ReadAsync call to indicate that a reader is pending (required
+    /// because Windows InOut pipes block writes until a reader is active).
     /// </summary>
-    internal virtual void StartReading(Interp interpreter)
+    internal virtual void StartReading(Interp interpreter, ManualResetEventSlim? readReady = null)
     {
         if (_destroyed || _stream == null) return;
 
@@ -362,6 +511,8 @@ public class SharpTSSocket : SharpTSEventEmitter
         _ = Task.Run(async () =>
         {
             var buffer = new byte[65536];
+            // Signal that we're about to start reading (IPC needs this)
+            readReady?.Set();
             try
             {
                 while (!token.IsCancellationRequested && _stream != null)
@@ -458,6 +609,17 @@ public class SharpTSSocket : SharpTSEventEmitter
             "utf16le" or "ucs2" => Encoding.Unicode,
             _ => Encoding.UTF8
         };
+    }
+
+    /// <summary>
+    /// Wraps a callback argument that may be a compiled-mode $TSFunction into ISharpTSCallable.
+    /// Returns null if the argument is not callable (e.g. a string or number).
+    /// </summary>
+    private static ISharpTSCallable? WrapCallbackArg(object? arg)
+    {
+        if (arg == null || arg is string || arg is double || arg is bool) return null;
+        if (arg is ISharpTSCallable callable) return callable;
+        return TSFunctionCallableAdapter.WrapCallback(arg);
     }
 
     public override string ToString() => $"Socket {{ connecting: {_connecting}, destroyed: {_destroyed} }}";

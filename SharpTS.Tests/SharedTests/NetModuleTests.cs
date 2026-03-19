@@ -80,7 +80,7 @@ public class NetModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NetCreateServerReturnsServer(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -100,7 +100,7 @@ public class NetModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NetServerListenAndClose(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -125,7 +125,7 @@ public class NetModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NetServerListeningEvent(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -149,7 +149,7 @@ public class NetModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NetServerConnectionEvent(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -174,7 +174,7 @@ public class NetModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NetSocketWriteAndReceive(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -206,7 +206,7 @@ public class NetModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NetSocketProperties(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -234,7 +234,7 @@ public class NetModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NetServerGetConnections(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -257,6 +257,158 @@ public class NetModuleTests
         var output = TestHarness.RunModules(files, "./main.ts", mode);
         Assert.Contains("connections: 1", output);
     }
+
+    #region IPC Socket Tests
+
+    private static string GetIpcPath()
+    {
+        var pipeName = $"sharpts_test_{Guid.NewGuid():N}";
+        // Use simple name on Windows (ConvertToWindowsPipeName handles it),
+        // full path on Unix
+        return OperatingSystem.IsWindows() ? pipeName : $"/tmp/{pipeName}.sock";
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void IpcSocket_PipeBasic(ExecutionMode mode)
+    {
+        var pipePath = GetIpcPath();
+
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as net from 'net';
+                const server = net.createServer((socket) => {
+                    socket.on('data', (data: string) => {
+                        socket.write('pong');
+                    });
+                });
+                server.listen('{{pipePath}}', () => {
+                    const client = net.createConnection({ path: '{{pipePath}}' });
+                    client.setEncoding('utf8');
+                    client.on('connect', () => {
+                        client.write('ping');
+                    });
+                    client.on('data', (data: string) => {
+                        console.log('received: ' + data);
+                        client.destroy();
+                        server.close();
+                    });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("received: pong", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void IpcSocket_ConnectionEvent(ExecutionMode mode)
+    {
+        var pipePath = GetIpcPath();
+
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as net from 'net';
+                const server = net.createServer();
+                server.on('connection', (socket) => {
+                    console.log('connection event fired');
+                    socket.destroy();
+                    server.close();
+                });
+                server.listen('{{pipePath}}', () => {
+                    const client = net.createConnection('{{pipePath}}');
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("connection event fired", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void IpcSocket_MultipleClients(ExecutionMode mode)
+    {
+        var pipePath = GetIpcPath();
+
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as net from 'net';
+                let connectionCount = 0;
+                const server = net.createServer((socket) => {
+                    connectionCount++;
+                    console.log('connection ' + connectionCount);
+                    socket.destroy();
+                    if (connectionCount >= 2) {
+                        server.close();
+                    }
+                });
+                server.listen('{{pipePath}}', () => {
+                    net.createConnection('{{pipePath}}');
+                    setTimeout(() => {
+                        net.createConnection('{{pipePath}}');
+                    }, 100);
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("connection 1", output);
+        Assert.Contains("connection 2", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void IpcSocket_OptionsObject(ExecutionMode mode)
+    {
+        var pipePath = GetIpcPath();
+
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as net from 'net';
+                const server = net.createServer((socket) => {
+                    console.log('connected via options');
+                    socket.destroy();
+                    server.close();
+                });
+                server.listen({ path: '{{pipePath}}' }, () => {
+                    net.createConnection({ path: '{{pipePath}}' });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("connected via options", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void IpcSocket_Properties(ExecutionMode mode)
+    {
+        var pipePath = GetIpcPath();
+
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as net from 'net';
+                const server = net.createServer((socket) => {
+                    console.log('remoteFamily: ' + socket.remoteFamily);
+                    console.log('readyState: ' + socket.readyState);
+                    socket.destroy();
+                    server.close();
+                });
+                server.listen('{{pipePath}}', () => {
+                    net.createConnection('{{pipePath}}');
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("remoteFamily: pipe", output);
+        Assert.Contains("readyState: open", output);
+    }
+
+    #endregion
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
