@@ -422,6 +422,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _tsWritableFinishedField);
 
+        // emit 'prefinish' event
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "prefinish");
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
+
         // emit 'finish' event
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "finish");

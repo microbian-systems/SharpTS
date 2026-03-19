@@ -1,3 +1,4 @@
+using SharpTS.Runtime.BuiltIns;
 using Interp = SharpTS.Execution.Interpreter;
 
 namespace SharpTS.Runtime.Types;
@@ -51,8 +52,11 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
                 stream.ObjectMode = true;
             }
 
-            // highWaterMark is typically used for async backpressure
-            // In sync mode we don't need it, but accept it for compatibility
+            // highWaterMark option
+            if (options.GetProperty("highWaterMark") is double hwm)
+            {
+                stream.HighWaterMark = (int)hwm;
+            }
         }
 
         return stream;
@@ -65,8 +69,60 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
     {
         return name switch
         {
+            "from" => new BuiltInMethod("from", 1, 2, ReadableFrom),
+            "isReadable" => new BuiltInMethod("isReadable", 1, IsReadable),
             _ => null
         };
+    }
+
+    /// <summary>
+    /// Readable.from(iterable, options?) — creates a Readable from an iterable in object mode.
+    /// </summary>
+    private static object? ReadableFrom(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var iterable = args.Count > 0 ? args[0] : null;
+        var stream = new SharpTSReadable();
+        stream.ObjectMode = true;
+
+        // Extract options
+        if (args.Count > 1 && args[1] is SharpTSObject options)
+        {
+            if (options.GetProperty("objectMode") is false)
+                stream.ObjectMode = false;
+        }
+
+        // Push items from iterable
+        if (iterable is SharpTSArray arr)
+        {
+            foreach (var item in arr.Elements)
+            {
+                var pushMethod = stream.GetMember("push") as BuiltInMethod;
+                pushMethod?.Bind(stream).Call(interpreter, [item]);
+            }
+        }
+        else if (iterable is List<object?> list)
+        {
+            foreach (var item in list)
+            {
+                var pushMethod = stream.GetMember("push") as BuiltInMethod;
+                pushMethod?.Bind(stream).Call(interpreter, [item]);
+            }
+        }
+
+        // Push null to signal EOF
+        var pushEnd = stream.GetMember("push") as BuiltInMethod;
+        pushEnd?.Bind(stream).Call(interpreter, [null]);
+
+        return stream;
+    }
+
+    /// <summary>
+    /// Readable.isReadable(stream) — checks if stream is a readable stream.
+    /// </summary>
+    private static object? IsReadable(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var obj = args.Count > 0 ? args[0] : null;
+        return obj is SharpTSReadable;
     }
 
     /// <summary>

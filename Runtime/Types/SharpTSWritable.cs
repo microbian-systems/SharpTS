@@ -25,11 +25,17 @@ public class SharpTSWritable : SharpTSEventEmitter
     private int _pendingWrites;
     private bool _needDrain;
     private bool _objectMode;
+    private bool _autoDestroy;
 
     /// <summary>
     /// Gets or sets whether this stream operates in object mode.
     /// </summary>
     public bool ObjectMode { get => _objectMode; set => _objectMode = value; }
+
+    /// <summary>
+    /// Gets or sets whether the stream auto-destroys after finishing.
+    /// </summary>
+    public bool AutoDestroy { get => _autoDestroy; set => _autoDestroy = value; }
 
     /// <summary>
     /// Sets the custom write callback (from constructor options).
@@ -346,7 +352,12 @@ public class SharpTSWritable : SharpTSEventEmitter
 
     private void EmitFinish(Interp interpreter)
     {
+        EmitEvent(interpreter, "prefinish", []);
         EmitEvent(interpreter, "finish", []);
+        if (_autoDestroy)
+        {
+            Destroy(interpreter, this, []);
+        }
     }
 
     private void EmitClose(Interp interpreter)
@@ -383,7 +394,7 @@ public class SharpTSWritable : SharpTSEventEmitter
             _stream = stream;
         }
 
-        public int Arity() => 1;
+        public int Arity() => 0;
 
         public object? Call(Interp interpreter, List<object?> arguments)
         {
@@ -413,7 +424,7 @@ public class SharpTSWritable : SharpTSEventEmitter
             _stream = stream;
         }
 
-        public int Arity() => 1;
+        public int Arity() => 0;
 
         public object? Call(Interp interpreter, List<object?> arguments)
         {

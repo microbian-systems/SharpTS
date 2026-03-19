@@ -39,6 +39,7 @@ public static class BuiltInModuleValues
             "string_decoder" => StringDecoderModuleInterpreter.GetExports(),
             "perf_hooks" => PerfHooksModuleInterpreter.GetExports(),
             "stream" => StreamModuleInterpreter.GetExports(),
+            "stream/promises" => StreamPromisesModuleInterpreter.GetExports(),
             "http" => HttpModuleInterpreter.GetExports(),
             "worker_threads" => WorkerThreadsModuleInterpreter.GetExports(),
             "dns" => DnsModuleInterpreter.GetExports(),
@@ -61,7 +62,7 @@ public static class BuiltInModuleValues
     {
         return moduleName is "fs" or "fs/promises" or "path" or "os" or "querystring" or "assert" or "url"
             or "process" or "crypto" or "util" or "readline" or "child_process" or "buffer"
-            or "zlib" or "events" or "timers" or "string_decoder" or "perf_hooks" or "stream"
+            or "zlib" or "events" or "timers" or "string_decoder" or "perf_hooks" or "stream" or "stream/promises"
             or "http" or "worker_threads" or "dns" or "dns/promises" or "net" or "https" or "tls"
             or "dgram" or "cluster" or "vm" or "async_hooks";
     }

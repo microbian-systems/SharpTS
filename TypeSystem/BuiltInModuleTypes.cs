@@ -1465,6 +1465,7 @@ public static class BuiltInModuleTypes
             "string_decoder" => GetStringDecoderModuleTypes(),
             "perf_hooks" => GetPerfHooksModuleTypes(),
             "stream" => GetStreamModuleTypes(),
+            "stream/promises" => GetStreamPromisesModuleTypes(),
             "http" => GetHttpModuleTypes(),
             "https" => GetHttpModuleTypes(),
             "dns" => GetDnsModuleTypes(),
@@ -2139,13 +2140,23 @@ public static class BuiltInModuleTypes
             // Stream path properties (for ReadStream/WriteStream)
             ["path"] = stringType,
             ["bytesRead"] = numberType,
-            ["bytesWritten"] = numberType
+            ["bytesWritten"] = numberType,
+
+            // Stream utility methods
+            ["toArray"] = new TypeInfo.Function([], new TypeInfo.Array(anyType)),
+            ["forEach"] = new TypeInfo.Function([anyType], voidType),
+            ["map"] = new TypeInfo.Function([anyType], anyType),
+            ["filter"] = new TypeInfo.Function([anyType], anyType)
         }.ToFrozenDictionary());
 
-        // Readable constructor
+        // Readable constructor with static methods
         var readableConstructorType = new TypeInfo.Interface(
             Name: "Readable",
-            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
+            Members: new Dictionary<string, TypeInfo>
+            {
+                ["from"] = new TypeInfo.Function([anyType, anyType], streamInstanceType, RequiredParams: 1),
+                ["isReadable"] = new TypeInfo.Function([anyType], boolType)
+            }.ToFrozenDictionary(),
             OptionalMembers: FrozenSet<string>.Empty,
             ConstructorSignatures:
             [
@@ -2160,10 +2171,13 @@ public static class BuiltInModuleTypes
             ]
         );
 
-        // Writable constructor
+        // Writable constructor with static methods
         var writableConstructorType = new TypeInfo.Interface(
             Name: "Writable",
-            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
+            Members: new Dictionary<string, TypeInfo>
+            {
+                ["isWritable"] = new TypeInfo.Function([anyType], boolType)
+            }.ToFrozenDictionary(),
             OptionalMembers: FrozenSet<string>.Empty,
             ConstructorSignatures:
             [
@@ -2232,13 +2246,48 @@ public static class BuiltInModuleTypes
             ]
         );
 
+        // finished function type
+        var finishedType = new TypeInfo.Function([anyType, anyType, anyType], anyType, RequiredParams: 1);
+
+        // pipeline function type (rest params)
+        var pipelineType = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 2, HasRestParam: true);
+
+        // addAbortSignal function type
+        var addAbortSignalType = new TypeInfo.Function([anyType, anyType], anyType);
+
+        // promises sub-module
+        var promisesType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["pipeline"] = new TypeInfo.Function([anyType, anyType], new TypeInfo.Promise(voidType), RequiredParams: 2, HasRestParam: true),
+            ["finished"] = new TypeInfo.Function([anyType, anyType], new TypeInfo.Promise(voidType), RequiredParams: 1)
+        }.ToFrozenDictionary());
+
         return new Dictionary<string, TypeInfo>
         {
             ["Readable"] = readableConstructorType,
             ["Writable"] = writableConstructorType,
             ["Duplex"] = duplexConstructorType,
             ["Transform"] = transformConstructorType,
-            ["PassThrough"] = passThroughConstructorType
+            ["PassThrough"] = passThroughConstructorType,
+            ["finished"] = finishedType,
+            ["pipeline"] = pipelineType,
+            ["addAbortSignal"] = addAbortSignalType,
+            ["promises"] = promisesType
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the stream/promises module.
+    /// </summary>
+    public static Dictionary<string, TypeInfo> GetStreamPromisesModuleTypes()
+    {
+        var anyType = new TypeInfo.Any();
+        var voidType = new TypeInfo.Void();
+
+        return new Dictionary<string, TypeInfo>
+        {
+            ["pipeline"] = new TypeInfo.Function([anyType, anyType], new TypeInfo.Promise(voidType), RequiredParams: 2, HasRestParam: true),
+            ["finished"] = new TypeInfo.Function([anyType, anyType], new TypeInfo.Promise(voidType), RequiredParams: 1)
         };
     }
 

@@ -654,6 +654,7 @@ public partial class ILCompiler
         _builtInModuleEmitterRegistry.Register(new StringDecoderModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new PerfHooksModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new StreamModuleEmitter());
+        _builtInModuleEmitterRegistry.Register(new StreamPromisesModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new HttpModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new WorkerThreadsModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new DnsModuleEmitter());

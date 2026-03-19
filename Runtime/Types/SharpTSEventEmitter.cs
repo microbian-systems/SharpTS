@@ -437,4 +437,24 @@ public class SharpTSEventEmitter
     {
         AddListenerInternal(eventName, listener, once, prepend: false);
     }
+
+    /// <summary>
+    /// Removes a listener programmatically (for internal use).
+    /// </summary>
+    public void RemoveListenerDirect(string eventName, object listener)
+    {
+        if (_events.TryGetValue(eventName, out var listeners))
+        {
+            for (var node = listeners.First; node != null; node = node.Next)
+            {
+                if (ReferenceEquals(node.Value.Listener, listener))
+                {
+                    listeners.Remove(node);
+                    if (listeners.Count == 0)
+                        _events.Remove(eventName);
+                    break;
+                }
+            }
+        }
+    }
 }

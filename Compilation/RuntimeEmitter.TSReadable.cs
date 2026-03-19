@@ -256,6 +256,7 @@ public partial class RuntimeEmitter
             _types.Void,
             [_types.Boolean]
         );
+        runtime.TSReadableSetObjectMode = method;
 
         var il = method.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
@@ -633,6 +634,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, _tsReadableFlowingField);
+
+        // Emit 'pause' event
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "pause");
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
     }
@@ -657,6 +667,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _tsReadableFlowingField);
+
+        // Emit 'resume' event
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "resume");
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
 
         // Drain buffer: while (_readBuffer.Count > 0) emit('data', _readBuffer.Dequeue())
         var loopStart = il.DefineLabel();

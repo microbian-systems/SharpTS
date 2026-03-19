@@ -1719,6 +1719,15 @@ public class EmittedRuntime
     public Type TSPassThroughType { get; set; } = null!;
     public ConstructorBuilder TSPassThroughCtor { get; set; } = null!;
 
+    public MethodBuilder TSReadableSetObjectMode { get; set; } = null!;
+
+    // Stream utility methods
+    public MethodBuilder StreamFinished { get; set; } = null!;
+    public MethodBuilder StreamPipeline { get; set; } = null!;
+    public MethodBuilder StreamReadableFrom { get; set; } = null!;
+    public MethodBuilder StreamPromisePipeline { get; set; } = null!;
+    public MethodBuilder StreamPromiseFinished { get; set; } = null!;
+
     // Built-in module methods (module name -> method name -> MethodBuilder)
     // Used for creating TSFunction wrappers when importing named exports
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _builtInModuleMethods = new();

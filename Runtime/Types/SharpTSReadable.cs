@@ -14,19 +14,34 @@ namespace SharpTS.Runtime.Types;
 public class SharpTSReadable : SharpTSEventEmitter
 {
     private readonly Queue<object?> _readBuffer = new();
-    private readonly List<SharpTSWritable> _pipeDestinations = [];
+    private readonly List<object> _pipeDestinations = [];
     private bool _ended;
     private bool _destroyed;
     private string _encoding = "utf8";
     private bool _readable = true;
     private bool? _flowing; // null=initial, true=flowing, false=paused
     private bool _objectMode;
+    private int _highWaterMark = 16384; // bytes for binary mode, 16 for object mode
 
     /// <summary>
     /// Gets or sets whether this stream operates in object mode.
     /// In object mode, chunks can be any JavaScript value (not just strings/Buffers).
     /// </summary>
-    public bool ObjectMode { get => _objectMode; set => _objectMode = value; }
+    public bool ObjectMode
+    {
+        get => _objectMode;
+        set
+        {
+            _objectMode = value;
+            if (value && _highWaterMark == 16384)
+                _highWaterMark = 16; // object mode default
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the high water mark for this stream.
+    /// </summary>
+    public int HighWaterMark { get => _highWaterMark; set => _highWaterMark = value; }
 
     /// <summary>
     /// Gets a member (method or property) by name for interpreter dispatch.
@@ -46,6 +61,10 @@ public class SharpTSReadable : SharpTSEventEmitter
             "pause" => new BuiltInMethod("pause", 0, Pause),
             "resume" => new BuiltInMethod("resume", 0, Resume),
             "isPaused" => new BuiltInMethod("isPaused", 0, IsPaused),
+            "toArray" => new BuiltInMethod("toArray", 0, ToArray),
+            "forEach" => new BuiltInMethod("forEach", 1, ForEach),
+            "map" => new BuiltInMethod("map", 1, Map),
+            "filter" => new BuiltInMethod("filter", 1, Filter),
 
             // Wrap event methods to drain buffer after 'data' listener is added
             "on" or "addListener" => new BuiltInMethod(name, 2, WrapOnForFlowing),
@@ -323,7 +342,8 @@ public class SharpTSReadable : SharpTSEventEmitter
             FlushToPipes(interpreter, chunk);
         }
 
-        return true;
+        // Return false when buffer exceeds highWaterMark (backpressure signal)
+        return GetBufferSize() < _highWaterMark;
     }
 
     /// <summary>
@@ -371,10 +391,10 @@ public class SharpTSReadable : SharpTSEventEmitter
             throw new Exception("pipe() destination must be a Writable stream");
         }
 
-        // Store the destination for piping (only SharpTSWritable, not Duplex - handled separately)
-        if (destObj is SharpTSWritable writable)
+        // Store the destination for piping
+        if (destObj is SharpTSWritable or SharpTSDuplex)
         {
-            _pipeDestinations.Add(writable);
+            _pipeDestinations.Add(destObj);
         }
 
         // Check options for end: false
@@ -467,9 +487,9 @@ public class SharpTSReadable : SharpTSEventEmitter
     /// </summary>
     private object? Unpipe(Interp interpreter, object? receiver, List<object?> args)
     {
-        if (args.Count > 0 && args[0] is SharpTSWritable dest)
+        if (args.Count > 0 && args[0] != null)
         {
-            _pipeDestinations.Remove(dest);
+            _pipeDestinations.Remove(args[0]);
         }
         else
         {
@@ -519,12 +539,14 @@ public class SharpTSReadable : SharpTSEventEmitter
     private object? Pause(Interp interpreter, object? receiver, List<object?> args)
     {
         _flowing = false;
+        EmitEvent(interpreter, "pause", []);
         return this;
     }
 
     private object? Resume(Interp interpreter, object? receiver, List<object?> args)
     {
         _flowing = true;
+        EmitEvent(interpreter, "resume", []);
 
         // Drain existing buffer by emitting 'data' for each queued chunk
         while (_readBuffer.Count > 0)
@@ -554,16 +576,9 @@ public class SharpTSReadable : SharpTSEventEmitter
 
     private void FlushToPipes(Interp interpreter, object? chunk)
     {
-        foreach (var dest in _pipeDestinations)
+        foreach (var dest in _pipeDestinations.ToList())
         {
-            var ok = dest.WriteInternal(interpreter, chunk, _encoding);
-            if (!ok)
-            {
-                // Backpressure: pause self, resume on drain
-                _flowing = false;
-                var self = this;
-                dest.AddListenerDirect("drain", new DrainResumeListener(self));
-            }
+            WriteToDestination(interpreter, dest, chunk, _encoding);
         }
     }
 
@@ -598,9 +613,9 @@ public class SharpTSReadable : SharpTSEventEmitter
 
     private void FlushPipes(Interp interpreter)
     {
-        foreach (var dest in _pipeDestinations)
+        foreach (var dest in _pipeDestinations.ToList())
         {
-            dest.EndInternal(interpreter, null, null);
+            EndDestination(interpreter, dest);
         }
     }
 
@@ -641,6 +656,130 @@ public class SharpTSReadable : SharpTSEventEmitter
             var chunk = _readBuffer.Dequeue();
             EmitEvent(interpreter, "data", [chunk]);
         }
+    }
+
+    /// <summary>
+    /// Collects all chunks from the stream into an array.
+    /// </summary>
+    private object? ToArray(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var elements = new SharpTS.Runtime.Deque<object?>();
+        while (_readBuffer.Count > 0)
+        {
+            elements.AddLast(_readBuffer.Dequeue());
+        }
+        return new SharpTSArray(elements);
+    }
+
+    /// <summary>
+    /// Calls fn for each chunk in the stream.
+    /// </summary>
+    private object? ForEach(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var fn = args.Count > 0 ? args[0] as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("forEach() requires a function argument");
+
+        while (_readBuffer.Count > 0)
+        {
+            var chunk = _readBuffer.Dequeue();
+            fn.Call(interpreter, [chunk]);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Creates a Transform that applies fn to each chunk.
+    /// </summary>
+    private object? Map(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var fn = args.Count > 0 ? args[0] as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("map() requires a function argument");
+
+        var transform = new SharpTSTransform();
+        transform.ObjectMode = _objectMode;
+        transform.SetTransformCallback(new MapTransformCallable(fn));
+
+        // Pipe self to the transform
+        var pipeMethod = GetMember("pipe") as BuiltInMethod;
+        pipeMethod?.Bind(this).Call(interpreter, [transform]);
+
+        return transform;
+    }
+
+    /// <summary>
+    /// Creates a Transform that filters chunks by predicate.
+    /// </summary>
+    private object? Filter(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var fn = args.Count > 0 ? args[0] as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("filter() requires a function argument");
+
+        var transform = new SharpTSTransform();
+        transform.ObjectMode = _objectMode;
+        transform.SetTransformCallback(new FilterTransformCallable(fn));
+
+        var pipeMethod = GetMember("pipe") as BuiltInMethod;
+        pipeMethod?.Bind(this).Call(interpreter, [transform]);
+
+        return transform;
+    }
+
+    /// <summary>
+    /// Transform callable that applies a map function to each chunk.
+    /// </summary>
+    private class MapTransformCallable : ISharpTSCallable
+    {
+        private readonly ISharpTSCallable _fn;
+        public MapTransformCallable(ISharpTSCallable fn) => _fn = fn;
+        public int Arity() => 3;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            var chunk = arguments.Count > 0 ? arguments[0] : null;
+            var callback = arguments.Count > 2 ? arguments[2] as ISharpTSCallable : null;
+            var result = _fn.Call(interpreter, [chunk]);
+            callback?.Call(interpreter, [null, result]);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Transform callable that filters chunks by predicate.
+    /// </summary>
+    private class FilterTransformCallable : ISharpTSCallable
+    {
+        private readonly ISharpTSCallable _fn;
+        public FilterTransformCallable(ISharpTSCallable fn) => _fn = fn;
+        public int Arity() => 3;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            var chunk = arguments.Count > 0 ? arguments[0] : null;
+            var callback = arguments.Count > 2 ? arguments[2] as ISharpTSCallable : null;
+            var result = _fn.Call(interpreter, [chunk]);
+            if (result is true || (result is double d && d != 0))
+                callback?.Call(interpreter, [null, chunk]);
+            else
+                callback?.Call(interpreter, [null]);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Gets the current buffer size in bytes (or count for object mode).
+    /// </summary>
+    private int GetBufferSize()
+    {
+        if (_objectMode)
+            return _readBuffer.Count;
+
+        int size = 0;
+        foreach (var chunk in _readBuffer)
+        {
+            size += GetChunkLength(chunk);
+        }
+        return size;
     }
 
     public override string ToString() => "Readable {}";

@@ -852,4 +852,596 @@ public class StreamModuleTests
     }
 
     #endregion
+
+    #region stream.finished()
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Finished_CallsCallbackAfterReadableEnds(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, finished } from 'stream';
+                const r = new Readable();
+                finished(r, (err: any) => {
+                    console.log('finished', err === null || err === undefined ? 'ok' : 'err');
+                });
+                r.push('data');
+                r.push(null);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("finished ok", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Finished_CallsCallbackAfterWritableFinishes(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Writable, finished } from 'stream';
+                const w = new Writable({
+                    write(chunk: any, enc: any, cb: any) { cb(); }
+                });
+                finished(w, (err: any) => {
+                    console.log('finished', err === null || err === undefined ? 'ok' : 'err');
+                });
+                w.end();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("finished ok", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Finished_CallsCallbackWithErrorOnStreamError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, finished } from 'stream';
+                const r = new Readable();
+                finished(r, (err: any) => {
+                    console.log('error:', err !== null && err !== undefined);
+                });
+                r.destroy(new Error('boom'));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("error: true", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Finished_CleanupRemovesListeners(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, finished } from 'stream';
+                const r = new Readable();
+                const cleanup = finished(r, (err: any) => {
+                    console.log('should not fire');
+                });
+                cleanup();
+                r.push(null);
+                console.log('done');
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.DoesNotContain("should not fire", output);
+        Assert.Contains("done", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Finished_OptionsReadableFalse(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, finished } from 'stream';
+                const r = new Readable();
+                let called = false;
+                finished(r, { readable: false }, (err: any) => {
+                    called = true;
+                });
+                r.push(null);
+                console.log('called:', called);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        // With readable: false, it should NOT fire on 'end'
+        Assert.Contains("called: false", output);
+    }
+
+    #endregion
+
+    #region stream.pipeline()
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Pipeline_ReadableToWritable(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, Writable, pipeline } from 'stream';
+                const chunks: string[] = [];
+                const r = new Readable();
+                const w = new Writable({
+                    write(chunk: any, enc: any, cb: any) {
+                        chunks.push(chunk);
+                        cb();
+                    }
+                });
+                pipeline(r, w, (err: any) => {
+                    console.log('callback:', err === null || err === undefined ? 'ok' : 'err');
+                });
+                r.push('hello');
+                r.push('world');
+                r.push(null);
+                console.log('chunks:', chunks.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("chunks: hello,world", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Pipeline_ReadableTransformWritable(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, Transform, Writable, pipeline } from 'stream';
+                const results: string[] = [];
+                const r = new Readable();
+                const t = new Transform({
+                    transform(chunk: any, enc: any, cb: any) {
+                        cb(null, chunk.toUpperCase());
+                    }
+                });
+                const w = new Writable({
+                    write(chunk: any, enc: any, cb: any) {
+                        results.push(chunk);
+                        cb();
+                    }
+                });
+                pipeline(r, t, w, (err: any) => {
+                    console.log('done:', err === null || err === undefined ? 'ok' : 'err');
+                    console.log('results:', results.join(','));
+                });
+                r.push('hello');
+                r.push(null);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("done: ok", output);
+        Assert.Contains("results: HELLO", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Pipeline_ReturnsDestinationStream(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, Writable, pipeline } from 'stream';
+                const r = new Readable();
+                const w = new Writable();
+                const result = pipeline(r, w, (err: any) => {});
+                console.log(result === w);
+                r.push(null);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
+
+    #region Readable.from()
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_ReadableFrom_ArrayObjectMode(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = Readable.from([1, 2, 3]);
+                console.log(r.readableObjectMode);
+                const a = r.read();
+                const b = r.read();
+                const c = r.read();
+                console.log(a, b, c);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("true", output);
+        Assert.Contains("1 2 3", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_ReadableFrom_StringArray(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = Readable.from(['a', 'b']);
+                const x = r.read();
+                const y = r.read();
+                console.log(x, y);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("a b", output);
+    }
+
+    #endregion
+
+    #region Missing Events
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_PauseEvent_FiresOnPause(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = new Readable();
+                r.on('pause', () => console.log('paused'));
+                r.pause();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("paused", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_ResumeEvent_FiresOnResume(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = new Readable();
+                r.on('resume', () => console.log('resumed'));
+                r.pause();
+                r.resume();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("resumed", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_PrefinishEvent_FiresBeforeFinish(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Writable } from 'stream';
+                const events: string[] = [];
+                const w = new Writable({
+                    write(chunk: any, enc: any, cb: any) { cb(); }
+                });
+                w.on('prefinish', () => events.push('prefinish'));
+                w.on('finish', () => events.push('finish'));
+                w.end();
+                console.log(events.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("prefinish,finish", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_AutoDestroy_DestroysAfterEnd(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Writable } from 'stream';
+                const events: string[] = [];
+                const w = new Writable({
+                    write(chunk: any, enc: any, cb: any) { cb(); },
+                    autoDestroy: true
+                });
+                w.on('close', () => events.push('close'));
+                w.on('finish', () => events.push('finish'));
+                w.end();
+                console.log(events.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("finish", output);
+        Assert.Contains("close", output);
+    }
+
+    #endregion
+
+    #region highWaterMark
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_HighWaterMark_PushReturnsFalse(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = new Readable({ highWaterMark: 5 });
+                const r1 = r.push('abc');
+                const r2 = r.push('def');
+                console.log(r1, r2);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("true false", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_HighWaterMark_CustomValue(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = new Readable({ highWaterMark: 100 });
+                let allTrue = true;
+                for (let i = 0; i < 10; i++) {
+                    if (!r.push('data')) { allTrue = false; break; }
+                }
+                console.log(allTrue);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("true", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_HighWaterMark_ObjectModeDefault16(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = new Readable({ objectMode: true });
+                let count = 0;
+                for (let i = 0; i < 20; i++) {
+                    const ok = r.push(i);
+                    count++;
+                    if (!ok) break;
+                }
+                console.log(count);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("16", output);
+    }
+
+    #endregion
+
+    #region toArray, forEach, isReadable, isWritable
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Readable_ToArray(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = new Readable({ objectMode: true });
+                r.push(1);
+                r.push(2);
+                r.push(3);
+                const arr = r.toArray();
+                console.log(arr.length, arr[0], arr[1], arr[2]);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("3 1 2 3", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Readable_ForEach(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = new Readable({ objectMode: true });
+                r.push('a');
+                r.push('b');
+                const items: string[] = [];
+                r.forEach((chunk: any) => items.push(chunk));
+                console.log(items.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("a,b", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_IsReadable_IsWritable(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, Writable } from 'stream';
+                const r = new Readable();
+                const w = new Writable();
+                console.log(Readable.isReadable(r));
+                console.log(Readable.isReadable(w));
+                console.log(Writable.isWritable(w));
+                console.log(Writable.isWritable(r));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\nfalse\ntrue\nfalse\n", output);
+    }
+
+    #endregion
+
+    #region map/filter
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Readable_Map(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, Writable } from 'stream';
+                const r = new Readable({ objectMode: true });
+                const mapped = r.map((x: any) => x * 2);
+                const results: number[] = [];
+                const w = new Writable({
+                    objectMode: true,
+                    write(chunk: any, enc: any, cb: any) {
+                        results.push(chunk);
+                        cb();
+                    }
+                });
+                mapped.pipe(w);
+                r.push(1);
+                r.push(2);
+                r.push(3);
+                r.push(null);
+                console.log(results.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("2,4,6", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Readable_Filter(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, Writable } from 'stream';
+                const r = new Readable({ objectMode: true });
+                const filtered = r.filter((x: any) => x > 2);
+                const results: number[] = [];
+                const w = new Writable({
+                    objectMode: true,
+                    write(chunk: any, enc: any, cb: any) {
+                        results.push(chunk);
+                        cb();
+                    }
+                });
+                filtered.pipe(w);
+                r.push(1);
+                r.push(2);
+                r.push(3);
+                r.push(4);
+                r.push(null);
+                console.log(results.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("3,4", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Readable_MapFilter_Chaining(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, Writable } from 'stream';
+                const r = new Readable({ objectMode: true });
+                const result = r.map((x: any) => x * 2).filter((x: any) => x > 4);
+                const results: number[] = [];
+                const w = new Writable({
+                    objectMode: true,
+                    write(chunk: any, enc: any, cb: any) {
+                        results.push(chunk);
+                        cb();
+                    }
+                });
+                result.pipe(w);
+                r.push(1);
+                r.push(2);
+                r.push(3);
+                r.push(4);
+                r.push(null);
+                console.log(results.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("6,8", output);
+    }
+
+    #endregion
+
+    #region addAbortSignal
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_AddAbortSignal_ReturnsStream(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, addAbortSignal } from 'stream';
+                const r = new Readable();
+                const ac = new AbortController();
+                const result = addAbortSignal(ac.signal, r);
+                console.log(result === r);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
 }

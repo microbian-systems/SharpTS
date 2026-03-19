@@ -28,6 +28,7 @@ public static class BuiltInModuleRegistry
         "string_decoder",
         "perf_hooks",
         "stream",
+        "stream/promises",
         "http",
         "worker_threads",
         "dns",

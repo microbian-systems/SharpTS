@@ -4,25 +4,17 @@ using SharpTS.Parsing;
 namespace SharpTS.Compilation.Emitters.Modules;
 
 /// <summary>
-/// Emits IL code for the Node.js 'stream' module.
-/// Exports Readable, Writable, Duplex, Transform, PassThrough stream constructors,
-/// plus utility functions finished(), pipeline(), and addAbortSignal().
+/// Emits IL code for the Node.js 'stream/promises' module.
+/// Promise-based versions of pipeline and finished.
 /// </summary>
-public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
+public sealed class StreamPromisesModuleEmitter : IBuiltInModuleEmitter
 {
-    public string ModuleName => "stream";
+    public string ModuleName => "stream/promises";
 
     private static readonly string[] _exportedMembers =
     [
-        "Readable",
-        "Writable",
-        "Duplex",
-        "Transform",
-        "PassThrough",
-        "finished",
         "pipeline",
-        "addAbortSignal",
-        "promises"
+        "finished"
     ];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
@@ -31,14 +23,11 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
     {
         switch (methodName)
         {
-            case "finished":
-                EmitFinishedCall(emitter, arguments);
-                return true;
             case "pipeline":
-                EmitPipelineCall(emitter, arguments);
+                EmitPromisePipelineCall(emitter, arguments);
                 return true;
-            case "addAbortSignal":
-                EmitAddAbortSignalCall(emitter, arguments);
+            case "finished":
+                EmitPromiseFinishedCall(emitter, arguments);
                 return true;
             default:
                 return false;
@@ -52,40 +41,11 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
 
         var ctx = emitter.Context;
         var il = ctx.IL;
-
-        if (propertyName == "promises")
-        {
-            il.Emit(OpCodes.Ldstr, "[stream/promises]");
-            return true;
-        }
-
-        // Emit a placeholder value for the stream constructor or function.
-        il.Emit(OpCodes.Ldstr, $"[{propertyName}]");
+        il.Emit(OpCodes.Ldstr, $"[stream/promises/{propertyName}]");
         return true;
     }
 
-    private static void EmitFinishedCall(IEmitterContext emitter, List<Expr> arguments)
-    {
-        var ctx = emitter.Context;
-        var il = ctx.IL;
-
-        // Pack args into object[]
-        il.Emit(OpCodes.Ldc_I4, arguments.Count);
-        il.Emit(OpCodes.Newarr, typeof(object));
-
-        for (int i = 0; i < arguments.Count; i++)
-        {
-            il.Emit(OpCodes.Dup);
-            il.Emit(OpCodes.Ldc_I4, i);
-            emitter.EmitExpression(arguments[i]);
-            emitter.EmitBoxIfNeeded(arguments[i]);
-            il.Emit(OpCodes.Stelem_Ref);
-        }
-
-        il.Emit(OpCodes.Call, ctx.Runtime!.StreamFinished);
-    }
-
-    private static void EmitPipelineCall(IEmitterContext emitter, List<Expr> arguments)
+    private static void EmitPromisePipelineCall(IEmitterContext emitter, List<Expr> arguments)
     {
         var ctx = emitter.Context;
         var il = ctx.IL;
@@ -102,22 +62,26 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
             il.Emit(OpCodes.Stelem_Ref);
         }
 
-        il.Emit(OpCodes.Call, ctx.Runtime!.StreamPipeline);
+        il.Emit(OpCodes.Call, ctx.Runtime!.StreamPromisePipeline);
     }
 
-    private static void EmitAddAbortSignalCall(IEmitterContext emitter, List<Expr> arguments)
+    private static void EmitPromiseFinishedCall(IEmitterContext emitter, List<Expr> arguments)
     {
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Simply return the stream (second argument)
-        if (arguments.Count >= 2)
+        il.Emit(OpCodes.Ldc_I4, arguments.Count);
+        il.Emit(OpCodes.Newarr, typeof(object));
+
+        for (int i = 0; i < arguments.Count; i++)
         {
-            emitter.EmitExpression(arguments[1]);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4, i);
+            emitter.EmitExpression(arguments[i]);
+            emitter.EmitBoxIfNeeded(arguments[i]);
+            il.Emit(OpCodes.Stelem_Ref);
         }
-        else
-        {
-            il.Emit(OpCodes.Ldnull);
-        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.StreamPromiseFinished);
     }
 }

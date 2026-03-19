@@ -1,3 +1,4 @@
+using SharpTS.Runtime.BuiltIns;
 using Interp = SharpTS.Execution.Interpreter;
 
 namespace SharpTS.Runtime.Types;
@@ -55,7 +56,11 @@ public sealed class SharpTSWritableConstructor : ISharpTSCallable
                 stream.ObjectMode = true;
             }
 
-            // highWaterMark and other options accepted for compatibility
+            // autoDestroy option (default: true in Node.js, but false here for backward compatibility)
+            if (options.GetProperty("autoDestroy") is true)
+            {
+                stream.AutoDestroy = true;
+            }
         }
 
         return stream;
@@ -68,8 +73,15 @@ public sealed class SharpTSWritableConstructor : ISharpTSCallable
     {
         return name switch
         {
+            "isWritable" => new BuiltInMethod("isWritable", 1, IsWritable),
             _ => null
         };
+    }
+
+    private static object? IsWritable(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var obj = args.Count > 0 ? args[0] : null;
+        return obj is SharpTSWritable or SharpTSDuplex;
     }
 
     /// <summary>
