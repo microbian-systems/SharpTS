@@ -139,39 +139,23 @@ public static class TestHarness
         // This catches infinite loop bugs (e.g., Promise double-wrapping in async iterators).
         var task = Task.Run(() =>
         {
-            lock (ConsoleLock)
-            {
-                var sw = new StringWriter();
-                var originalOut = Console.Out;
-                var originalError = Console.Error;
-                Console.SetOut(sw);
-                // Redirect stderr to suppress console.error/warn/assert output during tests
-                Console.SetError(TextWriter.Null);
+            var sw = new StringWriter();
 
-                try
-                {
-                    var lexer = new Lexer(source);
-                    var tokens = lexer.ScanTokens();
-                    var parser = new Parser(tokens, decoratorMode);
-                    var statements = parser.ParseOrThrow();
+            var lexer = new Lexer(source);
+            var tokens = lexer.ScanTokens();
+            var parser = new Parser(tokens, decoratorMode);
+            var statements = parser.ParseOrThrow();
 
-                    var checker = new TypeChecker();
-                    checker.SetDecoratorMode(decoratorMode);
-                    var typeMap = checker.Check(statements);
+            var checker = new TypeChecker();
+            checker.SetDecoratorMode(decoratorMode);
+            var typeMap = checker.Check(statements);
 
-                    using var interpreter = new Interpreter();
-                    interpreter.SetDecoratorMode(decoratorMode);
-                    interpreter.Interpret(statements, typeMap);
+            using var interpreter = new Interpreter(stdout: sw, stderr: TextWriter.Null);
+            interpreter.SetDecoratorMode(decoratorMode);
+            interpreter.Interpret(statements, typeMap);
 
-                    // Normalize line endings for cross-platform test consistency
-                    return sw.ToString().Replace("\r\n", "\n");
-                }
-                finally
-                {
-                    Console.SetOut(originalOut);
-                    Console.SetError(originalError);
-                }
-            }
+            // Normalize line endings for cross-platform test consistency
+            return sw.ToString().Replace("\r\n", "\n");
         });
 
         try
@@ -552,35 +536,19 @@ public static class TestHarness
 
             string entryPath = Path.Combine(tempDir, entryPoint.TrimStart('.', '/', '\\'));
 
-            lock (ConsoleLock)
-            {
-                var sw = new StringWriter();
-                var originalOut = Console.Out;
-                var originalError = Console.Error;
-                Console.SetOut(sw);
-                // Redirect stderr to suppress console.error/warn/assert output during tests
-                Console.SetError(TextWriter.Null);
+            var sw = new StringWriter();
 
-                try
-                {
-                    var resolver = new ModuleResolver(entryPath);
-                    var entryModule = resolver.LoadModule(entryPath);
-                    var allModules = resolver.GetModulesInOrder(entryModule);
+            var resolver = new ModuleResolver(entryPath);
+            var entryModule = resolver.LoadModule(entryPath);
+            var allModules = resolver.GetModulesInOrder(entryModule);
 
-                    var checker = new TypeChecker();
-                    var typeMap = checker.CheckModules(allModules, resolver);
+            var checker = new TypeChecker();
+            var typeMap = checker.CheckModules(allModules, resolver);
 
-                    var interpreter = new Interpreter();
-                    interpreter.InterpretModules(allModules, resolver, typeMap);
+            using var interpreter = new Interpreter(stdout: sw, stderr: TextWriter.Null);
+            interpreter.InterpretModules(allModules, resolver, typeMap);
 
-                    return sw.ToString().Replace("\r\n", "\n");
-                }
-                finally
-                {
-                    Console.SetOut(originalOut);
-                    Console.SetError(originalError);
-                }
-            }
+            return sw.ToString().Replace("\r\n", "\n");
         }
         finally
         {

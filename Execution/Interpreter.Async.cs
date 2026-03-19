@@ -435,7 +435,7 @@ public partial class Interpreter
 
     internal async ValueTask<ExecutionResult> ExecutePrintAsyncVT(Stmt.Print printStmt)
     {
-        Console.WriteLine(Stringify(await EvaluateAsync(printStmt.Expr)));
+        Out.WriteLine(Stringify(await EvaluateAsync(printStmt.Expr)));
         return ExecutionResult.Success();
     }
 

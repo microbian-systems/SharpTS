@@ -40,7 +40,7 @@ public class SharpTSDeprecatedFunction : ISharpTSCallable
         if (!_warned)
         {
             _warned = true;
-            Console.Error.WriteLine($"DeprecationWarning: {_message}");
+            interpreter.Error.WriteLine($"DeprecationWarning: {_message}");
         }
         return _wrapped.Call(interpreter, arguments);
     }

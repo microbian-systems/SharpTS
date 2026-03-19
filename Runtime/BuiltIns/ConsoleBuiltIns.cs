@@ -295,35 +295,35 @@ public static class ConsoleBuiltIns
     /// <summary>
     /// Writes output to stdout with group indentation.
     /// </summary>
-    private static void WriteOutput(string message)
+    private static void WriteOutput(TextWriter writer, string message)
     {
-        Console.WriteLine(GetIndent() + message);
+        writer.WriteLine(GetIndent() + message);
     }
 
     /// <summary>
     /// Writes output to stderr with group indentation.
     /// </summary>
-    private static void WriteError(string message)
+    private static void WriteError(TextWriter writer, string message)
     {
-        Console.Error.WriteLine(GetIndent() + message);
+        writer.WriteLine(GetIndent() + message);
     }
 
     // ===================== Phase 1 Methods =====================
 
-    private static object? Log(Interpreter _, List<object?> args)
+    private static object? Log(Interpreter i, List<object?> args)
     {
         if (args.Count == 0)
         {
-            WriteOutput("");
+            WriteOutput(i.Out, "");
         }
         else if (args.Count >= 1 && args[0] is string format && HasFormatSpecifiers(format))
         {
             // First argument is a format string with specifiers
-            WriteOutput(FormatString(format, args, 1));
+            WriteOutput(i.Out, FormatString(format, args, 1));
         }
         else
         {
-            WriteOutput(string.Join(" ", args.Select(Stringify)));
+            WriteOutput(i.Out, string.Join(" ", args.Select(Stringify)));
         }
         return null;
     }
@@ -334,15 +334,15 @@ public static class ConsoleBuiltIns
     private static object? Debug(Interpreter interp, List<object?> args)
         => Log(interp, args);
 
-    private static object? Error(Interpreter _, List<object?> args)
+    private static object? Error(Interpreter i, List<object?> args)
     {
         if (args.Count == 0)
         {
-            WriteError("");
+            WriteError(i.Error, "");
         }
         else
         {
-            WriteError(string.Join(" ", args.Select(Stringify)));
+            WriteError(i.Error, string.Join(" ", args.Select(Stringify)));
         }
         return null;
     }
@@ -370,19 +370,19 @@ public static class ConsoleBuiltIns
         return null;
     }
 
-    private static object? TimeEnd(Interpreter _, List<object?> args)
+    private static object? TimeEnd(Interpreter i, List<object?> args)
     {
         string label = args.Count > 0 && args[0] != null ? Stringify(args[0]) : "default";
         if (_timers.TryGetValue(label, out var sw))
         {
             sw.Stop();
-            WriteOutput($"{label}: {sw.Elapsed.TotalMilliseconds}ms");
+            WriteOutput(i.Out, $"{label}: {sw.Elapsed.TotalMilliseconds}ms");
             _timers.Remove(label);
         }
         return null;
     }
 
-    private static object? TimeLog(Interpreter _, List<object?> args)
+    private static object? TimeLog(Interpreter i, List<object?> args)
     {
         string label = args.Count > 0 && args[0] != null ? Stringify(args[0]) : "default";
         if (_timers.TryGetValue(label, out var sw))
@@ -392,11 +392,11 @@ public static class ConsoleBuiltIns
             {
                 // Additional arguments are logged after the time
                 var extraArgs = args.Skip(1).Select(Stringify);
-                WriteOutput($"{label}: {elapsed}ms {string.Join(" ", extraArgs)}");
+                WriteOutput(i.Out, $"{label}: {elapsed}ms {string.Join(" ", extraArgs)}");
             }
             else
             {
-                WriteOutput($"{label}: {elapsed}ms");
+                WriteOutput(i.Out, $"{label}: {elapsed}ms");
             }
         }
         return null;
@@ -404,7 +404,7 @@ public static class ConsoleBuiltIns
 
     // ===================== Phase 2 Methods =====================
 
-    private static object? Assert(Interpreter _, List<object?> args)
+    private static object? Assert(Interpreter i, List<object?> args)
     {
         // No condition provided or condition is falsy
         bool condition = args.Count > 0 && IsTruthy(args[0]);
@@ -414,17 +414,17 @@ public static class ConsoleBuiltIns
             {
                 // Additional arguments are the assertion message
                 var messageArgs = args.Skip(1).Select(Stringify);
-                WriteError("Assertion failed: " + string.Join(" ", messageArgs));
+                WriteError(i.Error, "Assertion failed: " + string.Join(" ", messageArgs));
             }
             else
             {
-                WriteError("Assertion failed");
+                WriteError(i.Error, "Assertion failed");
             }
         }
         return null;
     }
 
-    private static object? Count(Interpreter _, List<object?> args)
+    private static object? Count(Interpreter i, List<object?> args)
     {
         string label = args.Count > 0 && args[0] != null ? Stringify(args[0]) : "default";
         if (!_counts.TryGetValue(label, out var count))
@@ -433,7 +433,7 @@ public static class ConsoleBuiltIns
         }
         count++;
         _counts[label] = count;
-        WriteOutput($"{label}: {count}");
+        WriteOutput(i.Out, $"{label}: {count}");
         return null;
     }
 
@@ -444,7 +444,7 @@ public static class ConsoleBuiltIns
         return null;
     }
 
-    private static object? Table(Interpreter _, List<object?> args)
+    private static object? Table(Interpreter i, List<object?> args)
     {
         if (args.Count == 0) return null;
 
@@ -458,25 +458,25 @@ public static class ConsoleBuiltIns
         // Handle array of objects
         if (data is SharpTSArray arr)
         {
-            RenderArrayTable(arr, columns);
+            RenderArrayTable(i.Out, arr, columns);
         }
         else if (data is SharpTSObject obj)
         {
-            RenderObjectTable(obj, columns);
+            RenderObjectTable(i.Out, obj, columns);
         }
         else
         {
             // For primitives, just log the value
-            WriteOutput(Stringify(data));
+            WriteOutput(i.Out, Stringify(data));
         }
         return null;
     }
 
-    private static void RenderArrayTable(SharpTSArray arr, List<string>? columnFilter)
+    private static void RenderArrayTable(TextWriter writer, SharpTSArray arr, List<string>? columnFilter)
     {
         if (arr.Elements.Count == 0)
         {
-            WriteOutput("(empty array)");
+            WriteOutput(writer, "(empty array)");
             return;
         }
 
@@ -519,14 +519,14 @@ public static class ConsoleBuiltIns
             columnList.AddRange(allColumns.Where(c => c != "(index)").OrderBy(c => c));
         }
 
-        RenderTable(columnList, rows);
+        RenderTable(writer, columnList, rows);
     }
 
-    private static void RenderObjectTable(SharpTSObject obj, List<string>? columnFilter)
+    private static void RenderObjectTable(TextWriter writer, SharpTSObject obj, List<string>? columnFilter)
     {
         if (obj.Fields.Count == 0)
         {
-            WriteOutput("(empty object)");
+            WriteOutput(writer, "(empty object)");
             return;
         }
 
@@ -549,10 +549,10 @@ public static class ConsoleBuiltIns
             ? new List<string> { "(index)" }.Concat(columnFilter.Where(c => allColumns.Contains(c))).ToList()
             : new List<string> { "(index)", "Values" };
 
-        RenderTable(columnList, rows);
+        RenderTable(writer, columnList, rows);
     }
 
-    private static void RenderTable(List<string> columns, List<Dictionary<string, string>> rows)
+    private static void RenderTable(TextWriter writer, List<string> columns, List<Dictionary<string, string>> rows)
     {
         // Calculate column widths
         var widths = columns.ToDictionary(c => c, c => c.Length);
@@ -571,12 +571,12 @@ public static class ConsoleBuiltIns
 
         // Header separator
         var separator = "+" + string.Join("+", columns.Select(c => new string('-', widths[c] + 2))) + "+";
-        Console.WriteLine(indent + separator);
+        writer.WriteLine(indent + separator);
 
         // Header row
         var header = "|" + string.Join("|", columns.Select(c => $" {c.PadRight(widths[c])} ")) + "|";
-        Console.WriteLine(indent + header);
-        Console.WriteLine(indent + separator);
+        writer.WriteLine(indent + header);
+        writer.WriteLine(indent + separator);
 
         // Data rows
         foreach (var row in rows)
@@ -586,9 +586,9 @@ public static class ConsoleBuiltIns
                 var val = row.TryGetValue(c, out var v) ? v : "";
                 return $" {val.PadRight(widths[c])} ";
             })) + "|";
-            Console.WriteLine(indent + rowStr);
+            writer.WriteLine(indent + rowStr);
         }
-        Console.WriteLine(indent + separator);
+        writer.WriteLine(indent + separator);
     }
 
     private static string TruncateColumn(string value)
@@ -598,13 +598,13 @@ public static class ConsoleBuiltIns
         return value[..(maxWidth - 3)] + "...";
     }
 
-    private static object? Dir(Interpreter _, List<object?> args)
+    private static object? Dir(Interpreter i, List<object?> args)
     {
         if (args.Count == 0) return null;
 
         var obj = args[0];
         // Options (depth, colors, etc.) are largely ignored for simplicity
-        WriteOutput(InspectObject(obj, 0));
+        WriteOutput(i.Out, InspectObject(obj, 0));
         return null;
     }
 
@@ -648,11 +648,11 @@ public static class ConsoleBuiltIns
         return Stringify(obj);
     }
 
-    private static object? Group(Interpreter _, List<object?> args)
+    private static object? Group(Interpreter i, List<object?> args)
     {
         if (args.Count > 0)
         {
-            WriteOutput(string.Join(" ", args.Select(Stringify)));
+            WriteOutput(i.Out, string.Join(" ", args.Select(Stringify)));
         }
         _groupIndentLevel++;
         return null;
@@ -673,10 +673,10 @@ public static class ConsoleBuiltIns
         return null;
     }
 
-    private static object? Trace(Interpreter _, List<object?> args)
+    private static object? Trace(Interpreter i, List<object?> args)
     {
         var message = args.Count > 0 ? string.Join(" ", args.Select(Stringify)) : "";
-        WriteOutput("Trace: " + message);
+        WriteOutput(i.Out, "Trace: " + message);
 
         // Print C# stack trace (TypeScript source mapping not available)
         var stackTrace = new StackTrace(true);
@@ -692,11 +692,11 @@ public static class ConsoleBuiltIns
 
             if (fileName != null)
             {
-                WriteOutput($"    at {className}.{methodName} ({fileName}:{lineNumber})");
+                WriteOutput(i.Out, $"    at {className}.{methodName} ({fileName}:{lineNumber})");
             }
             else
             {
-                WriteOutput($"    at {className}.{methodName}");
+                WriteOutput(i.Out, $"    at {className}.{methodName}");
             }
         }
         return null;

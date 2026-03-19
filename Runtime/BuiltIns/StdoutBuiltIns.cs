@@ -35,7 +35,7 @@ public static class StdoutBuiltIns
         if (args.Count > 0)
         {
             var data = args[0]?.ToString() ?? "";
-            Console.Write(data);
+            i.Out.Write(data);
         }
         return true;
     }

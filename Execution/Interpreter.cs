@@ -107,6 +107,18 @@ public partial class Interpreter : IDisposable
     private readonly AsyncEvaluationContext _asyncContext;
 
     /// <summary>
+    /// The TextWriter used for stdout output (console.log, process.stdout.write, etc.).
+    /// Defaults to Console.Out when not explicitly provided.
+    /// </summary>
+    internal TextWriter Out { get; }
+
+    /// <summary>
+    /// The TextWriter used for stderr output (console.error, console.warn, etc.).
+    /// Defaults to Console.Error when not explicitly provided.
+    /// </summary>
+    internal TextWriter Error { get; }
+
+    /// <summary>
     /// Gets the sync evaluation context for use in unified core methods.
     /// </summary>
     internal SyncEvaluationContext SyncContext => _syncContext;
@@ -117,10 +129,21 @@ public partial class Interpreter : IDisposable
     internal AsyncEvaluationContext AsyncContext => _asyncContext;
 
     /// <summary>
-    /// Initializes a new instance of the Interpreter with evaluation contexts.
+    /// Initializes a new instance of the Interpreter with default Console output.
     /// </summary>
-    public Interpreter()
+    public Interpreter() : this(Console.Out, Console.Error)
     {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the Interpreter with custom output writers.
+    /// </summary>
+    /// <param name="stdout">TextWriter for stdout output. Used by console.log, process.stdout.write, etc.</param>
+    /// <param name="stderr">TextWriter for stderr output. Used by console.error, console.warn, etc.</param>
+    public Interpreter(TextWriter stdout, TextWriter stderr)
+    {
+        Out = stdout ?? throw new ArgumentNullException(nameof(stdout));
+        Error = stderr ?? throw new ArgumentNullException(nameof(stderr));
         _syncContext = new SyncEvaluationContext(this);
         _asyncContext = new AsyncEvaluationContext(this);
     }
@@ -301,7 +324,7 @@ public partial class Interpreter : IDisposable
                     catch (Exception ex)
                     {
                         // Log uncaught exceptions from microtasks but don't crash
-                        Console.Error.WriteLine($"Uncaught exception in microtask: {ex.Message}");
+                        Error.WriteLine($"Uncaught exception in microtask: {ex.Message}");
                     }
                 }
             });
@@ -429,7 +452,7 @@ public partial class Interpreter : IDisposable
             try { action(); }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Uncaught exception in callback: {ex.Message}");
+                Error.WriteLine($"Uncaught exception in callback: {ex.Message}");
             }
             ProcessMicrotasks();
         }
@@ -477,7 +500,7 @@ public partial class Interpreter : IDisposable
                     catch (Exception ex)
                     {
                         // Log uncaught exceptions but don't crash the event loop
-                        Console.Error.WriteLine($"Uncaught exception in event loop callback: {ex.Message}");
+                        Error.WriteLine($"Uncaught exception in event loop callback: {ex.Message}");
                     }
                 }
 
@@ -531,7 +554,7 @@ public partial class Interpreter : IDisposable
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Uncaught exception during event loop drain: {ex.Message}");
+                Error.WriteLine($"Uncaught exception during event loop drain: {ex.Message}");
             }
         }
 
@@ -734,7 +757,7 @@ public partial class Interpreter : IDisposable
                     var result = Execute(statement);
                     if (result.Type == ExecutionResult.ResultType.Throw)
                     {
-                        Console.WriteLine($"Runtime Error: {Stringify(result.Value)}");
+                        Out.WriteLine($"Runtime Error: {Stringify(result.Value)}");
                         return;
                     }
                     if (result.IsAbrupt)
@@ -754,7 +777,7 @@ public partial class Interpreter : IDisposable
         }
         catch (Exception error)
         {
-            Console.WriteLine($"Runtime Error: {error.Message}");
+            Out.WriteLine($"Runtime Error: {error.Message}");
             throw;
         }
     }
@@ -851,7 +874,7 @@ public partial class Interpreter : IDisposable
         }
         catch (Exception error)
         {
-            Console.WriteLine($"Runtime Error: {error.Message}");
+            Out.WriteLine($"Runtime Error: {error.Message}");
             throw;
         }
     }
@@ -1857,7 +1880,7 @@ public partial class Interpreter : IDisposable
 
     internal ExecutionResult VisitPrint(Stmt.Print printStmt)
     {
-        Console.WriteLine(Stringify(Evaluate(printStmt.Expr)));
+        Out.WriteLine(Stringify(Evaluate(printStmt.Expr)));
         return ExecutionResult.Success();
     }
 

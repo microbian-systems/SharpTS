@@ -38,7 +38,7 @@ public static class VmModuleInterpreter
             throw new Exception("vm.runInNewContext requires a code string");
 
         var contextObject = args.Count > 1 ? args[1] : null;
-        return ExecuteInNewContext(code, contextObject);
+        return ExecuteInNewContext(code, contextObject, interpreter);
     }
 
     /// <summary>
@@ -74,7 +74,7 @@ public static class VmModuleInterpreter
     /// Executes code in a fresh interpreter with context object properties seeded as variables.
     /// Mutations to context variables are written back to the context object.
     /// </summary>
-    internal static object? ExecuteInNewContext(string code, object? contextObject)
+    internal static object? ExecuteInNewContext(string code, object? contextObject, Interp? parentInterpreter = null)
     {
         // Parse the code
         var statements = ParseCode(code);
@@ -82,8 +82,10 @@ public static class VmModuleInterpreter
         // Extract context properties
         var contextProps = VmContext.ExtractProperties(contextObject);
 
-        // Create fresh interpreter and seed environment
-        var subInterpreter = new Interp();
+        // Create fresh interpreter inheriting parent's output writers
+        var subInterpreter = parentInterpreter != null
+            ? new Interp(parentInterpreter.Out, parentInterpreter.Error)
+            : new Interp();
         var env = subInterpreter.Environment;
 
         foreach (var (key, value) in contextProps)
@@ -119,11 +121,13 @@ public static class VmModuleInterpreter
     /// Executes pre-parsed statements in a new context.
     /// Used by Script.runInNewContext and Script.runInContext.
     /// </summary>
-    internal static object? ExecuteParsedInNewContext(List<Stmt> statements, object? contextObject)
+    internal static object? ExecuteParsedInNewContext(List<Stmt> statements, object? contextObject, Interp? parentInterpreter = null)
     {
         var contextProps = VmContext.ExtractProperties(contextObject);
 
-        var subInterpreter = new Interp();
+        var subInterpreter = parentInterpreter != null
+            ? new Interp(parentInterpreter.Out, parentInterpreter.Error)
+            : new Interp();
         var env = subInterpreter.Environment;
 
         foreach (var (key, value) in contextProps)
@@ -223,7 +227,7 @@ public static class VmModuleInterpreter
         var compiledFn = new BuiltInMethod("compiledFunction", 0, paramNames.Count,
             (interp, recv, callArgs) =>
             {
-                return ExecuteCompiledFunction(funcDeclStatements, paramNames, callArgs, parsingContext, contextExtensions);
+                return ExecuteCompiledFunction(funcDeclStatements, paramNames, callArgs, parsingContext, contextExtensions, interp);
             });
 
         return compiledFn;
@@ -238,9 +242,12 @@ public static class VmModuleInterpreter
         List<string> paramNames,
         List<object?> callArgs,
         object? parsingContext,
-        List<object?>? contextExtensions)
+        List<object?>? contextExtensions,
+        Interp? parentInterpreter = null)
     {
-        var subInterpreter = new Interp();
+        var subInterpreter = parentInterpreter != null
+            ? new Interp(parentInterpreter.Out, parentInterpreter.Error)
+            : new Interp();
         var env = subInterpreter.Environment;
 
         // Seed parsingContext variables
@@ -359,7 +366,7 @@ public sealed class VmScriptConstructor : ISharpTSCallable
             (interp, recv, methodArgs) =>
             {
                 var contextObject = methodArgs.Count > 0 ? methodArgs[0] : null;
-                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, contextObject);
+                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, contextObject, interp);
             });
 
         var runInThisCtx = new BuiltInMethod("runInThisContext", 0, 1,
@@ -368,14 +375,14 @@ public sealed class VmScriptConstructor : ISharpTSCallable
                 if (interp != null)
                     return VmModuleInterpreter.ExecuteParsedInCurrentContext(statements, interp);
                 // Compiled mode: no interpreter available, fall back to new context
-                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, null);
+                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, null, interp);
             });
 
         var runInCtx = new BuiltInMethod("runInContext", 1, 2,
             (interp, recv, methodArgs) =>
             {
                 var context = methodArgs.Count > 0 ? methodArgs[0] : null;
-                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, context);
+                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, context, interp);
             });
 
         // Return as SharpTSObject for interpreter (ISharpTSCallable dispatch)

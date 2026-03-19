@@ -35,7 +35,7 @@ public static class StderrBuiltIns
         if (args.Count > 0)
         {
             var data = args[0]?.ToString() ?? "";
-            Console.Error.Write(data);
+            i.Error.Write(data);
         }
         return true;
     }
