@@ -1479,6 +1479,9 @@ public class EmittedRuntime
     public MethodBuilder ChildProcessSpawnSync { get; set; } = null!;
     public MethodBuilder ChildProcessExec { get; set; } = null!;
     public MethodBuilder ChildProcessSpawn { get; set; } = null!;
+    public MethodBuilder ChildProcessExecFileSync { get; set; } = null!;
+    public MethodBuilder ChildProcessExecFile { get; set; } = null!;
+    public MethodBuilder ChildProcessFork { get; set; } = null!;
 
     // Querystring module methods
     public MethodBuilder QuerystringParse { get; set; } = null!;

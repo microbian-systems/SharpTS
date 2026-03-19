@@ -12,7 +12,8 @@ public sealed class ChildProcessModuleEmitter : IBuiltInModuleEmitter
 
     private static readonly string[] _exportedMembers =
     [
-        "execSync", "spawnSync", "exec", "spawn"
+        "execSync", "spawnSync", "exec", "spawn",
+        "execFileSync", "execFile", "fork"
     ];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
@@ -25,6 +26,9 @@ public sealed class ChildProcessModuleEmitter : IBuiltInModuleEmitter
             "spawnSync" => EmitSpawnSync(emitter, arguments),
             "exec" => EmitExec(emitter, arguments),
             "spawn" => EmitSpawn(emitter, arguments),
+            "execFileSync" => EmitExecFileSync(emitter, arguments),
+            "execFile" => EmitExecFile(emitter, arguments),
+            "fork" => EmitFork(emitter, arguments),
             _ => false
         };
     }
@@ -196,6 +200,149 @@ public sealed class ChildProcessModuleEmitter : IBuiltInModuleEmitter
 
         // Call runtime helper
         il.Emit(OpCodes.Call, ctx.Runtime!.ChildProcessSpawn);
+        return true;
+    }
+
+    private static bool EmitExecFileSync(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // Emit file path string
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+            il.Emit(OpCodes.Callvirt, ctx.Types.GetMethodNoParams(ctx.Types.Object, "ToString"));
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldstr, "");
+        }
+
+        // Emit args array (or null)
+        if (arguments.Count > 1)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // Emit options (or null)
+        if (arguments.Count > 2)
+        {
+            emitter.EmitExpression(arguments[2]);
+            emitter.EmitBoxIfNeeded(arguments[2]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // Call runtime helper
+        il.Emit(OpCodes.Call, ctx.Runtime!.ChildProcessExecFileSync);
+        return true;
+    }
+
+    private static bool EmitExecFile(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // Emit file path
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+            il.Emit(OpCodes.Callvirt, ctx.Types.GetMethodNoParams(ctx.Types.Object, "ToString"));
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldstr, "");
+        }
+
+        // Emit args (or null)
+        if (arguments.Count > 1)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // Emit options (or null)
+        if (arguments.Count > 2)
+        {
+            emitter.EmitExpression(arguments[2]);
+            emitter.EmitBoxIfNeeded(arguments[2]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // Emit callback (or null)
+        if (arguments.Count > 3)
+        {
+            emitter.EmitExpression(arguments[3]);
+            emitter.EmitBoxIfNeeded(arguments[3]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // Call runtime helper
+        il.Emit(OpCodes.Call, ctx.Runtime!.ChildProcessExecFile);
+        return true;
+    }
+
+    private static bool EmitFork(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // Emit module path
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+            il.Emit(OpCodes.Callvirt, ctx.Types.GetMethodNoParams(ctx.Types.Object, "ToString"));
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldstr, "");
+        }
+
+        // Emit args (or null)
+        if (arguments.Count > 1)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // Emit options (or null)
+        if (arguments.Count > 2)
+        {
+            emitter.EmitExpression(arguments[2]);
+            emitter.EmitBoxIfNeeded(arguments[2]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // Call runtime helper
+        il.Emit(OpCodes.Call, ctx.Runtime!.ChildProcessFork);
         return true;
     }
 }

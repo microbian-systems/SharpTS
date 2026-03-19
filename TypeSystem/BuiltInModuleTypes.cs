@@ -1179,16 +1179,25 @@ public static class BuiltInModuleTypes
             ["signal"] = new TypeInfo.Union([stringType, new TypeInfo.Null()])
         }.ToFrozenDictionary());
 
+        var boolType = new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
+
         var childProcessType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
         {
             ["pid"] = numberType,
             ["exitCode"] = new TypeInfo.Union([numberType, new TypeInfo.Null()]),
-            ["killed"] = new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN),
+            ["killed"] = boolType,
             ["stdout"] = anyType,
             ["stderr"] = anyType,
+            ["stdin"] = anyType,
+            ["connected"] = boolType,
+            ["signalCode"] = new TypeInfo.Union([stringType, new TypeInfo.Null()]),
             ["on"] = new TypeInfo.Function([stringType, anyType], anyType),
             ["once"] = new TypeInfo.Function([stringType, anyType], anyType),
-            ["kill"] = new TypeInfo.Function([stringType], new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN), RequiredParams: 0)
+            ["kill"] = new TypeInfo.Function([stringType], boolType, RequiredParams: 0),
+            ["send"] = new TypeInfo.Function([anyType], boolType),
+            ["disconnect"] = new TypeInfo.Function([], new TypeInfo.Void()),
+            ["ref"] = new TypeInfo.Function([], anyType),
+            ["unref"] = new TypeInfo.Function([], anyType)
         }.ToFrozenDictionary());
 
         return new Dictionary<string, TypeInfo>
@@ -1200,6 +1209,11 @@ public static class BuiltInModuleTypes
                 spawnResultType,
                 RequiredParams: 1
             ),
+            ["execFileSync"] = new TypeInfo.Function(
+                [stringType, new TypeInfo.Array(stringType), anyType],
+                stringType,
+                RequiredParams: 1
+            ),
             // Async methods
             ["exec"] = new TypeInfo.Function(
                 [stringType, anyType, anyType],
@@ -1207,6 +1221,16 @@ public static class BuiltInModuleTypes
                 RequiredParams: 1
             ),
             ["spawn"] = new TypeInfo.Function(
+                [stringType, new TypeInfo.Array(stringType), anyType],
+                childProcessType,
+                RequiredParams: 1
+            ),
+            ["execFile"] = new TypeInfo.Function(
+                [stringType, new TypeInfo.Array(stringType), anyType, anyType],
+                childProcessType,
+                RequiredParams: 1
+            ),
+            ["fork"] = new TypeInfo.Function(
                 [stringType, new TypeInfo.Array(stringType), anyType],
                 childProcessType,
                 RequiredParams: 1

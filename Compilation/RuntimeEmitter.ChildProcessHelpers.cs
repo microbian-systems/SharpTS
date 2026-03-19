@@ -16,6 +16,9 @@ public partial class RuntimeEmitter
         EmitChildProcessSpawnSync(typeBuilder, runtime);
         EmitChildProcessExec(typeBuilder, runtime);
         EmitChildProcessSpawn(typeBuilder, runtime);
+        EmitChildProcessExecFileSync(typeBuilder, runtime);
+        EmitChildProcessExecFile(typeBuilder, runtime);
+        EmitChildProcessFork(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -668,5 +671,252 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static string ChildProcessExecFileSync(string file, object args, object options)
+    /// Executes a file synchronously without a shell and returns stdout.
+    /// Uses same pattern as SpawnSync but throws on non-zero exit code.
+    /// </summary>
+    private void EmitChildProcessExecFileSync(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ChildProcessExecFileSync",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.String, _types.Object, _types.Object]);
+        runtime.ChildProcessExecFileSync = method;
+        runtime.RegisterBuiltInModuleMethod("child_process", "execFileSync", method);
+
+        var il = method.GetILGenerator();
+
+        var startInfoLocal = il.DeclareLocal(_types.ProcessStartInfo);
+        var processLocal = il.DeclareLocal(_types.Process);
+        var stdoutLocal = il.DeclareLocal(_types.String);
+        var stderrLocal = il.DeclareLocal(_types.String);
+        var exitCodeLocal = il.DeclareLocal(_types.Int32);
+        var argsListLocal = il.DeclareLocal(_types.ListOfObject);
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var tempObjLocal = il.DeclareLocal(_types.Object);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var argListLocal = il.DeclareLocal(typeof(System.Collections.ObjectModel.Collection<string>));
+
+        // Initialize
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Stloc, stdoutLocal);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Stloc, stderrLocal);
+
+        // var startInfo = new ProcessStartInfo(file)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Newobj, _types.ProcessStartInfo.GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Stloc, startInfoLocal);
+
+        // startInfo.UseShellExecute = false
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("UseShellExecute")!.GetSetMethod()!);
+
+        // startInfo.RedirectStandardOutput = true
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("RedirectStandardOutput")!.GetSetMethod()!);
+
+        // startInfo.RedirectStandardError = true
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("RedirectStandardError")!.GetSetMethod()!);
+
+        // startInfo.CreateNoWindow = true
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("CreateNoWindow")!.GetSetMethod()!);
+
+        // Extract args if provided (args is List<object?>)
+        var noArgsLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, noArgsLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brfalse, noArgsLabel);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Stloc, argsListLocal);
+
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("ArgumentList")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, argListLocal);
+
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        var argsLoopStart = il.DefineLabel();
+        var argsLoopEnd = il.DefineLabel();
+
+        il.MarkLabel(argsLoopStart);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Bge, argsLoopEnd);
+
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("get_Item", [_types.Int32])!);
+        il.Emit(OpCodes.Stloc, tempObjLocal);
+
+        il.Emit(OpCodes.Ldloc, argListLocal);
+        var argNullLabel = il.DefineLabel();
+        var argAddLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tempObjLocal);
+        il.Emit(OpCodes.Brfalse, argNullLabel);
+        il.Emit(OpCodes.Ldloc, tempObjLocal);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
+        il.Emit(OpCodes.Br, argAddLabel);
+        il.MarkLabel(argNullLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.MarkLabel(argAddLabel);
+        il.Emit(OpCodes.Callvirt, typeof(System.Collections.ObjectModel.Collection<string>).GetMethod("Add", [_types.String])!);
+
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, argsLoopStart);
+
+        il.MarkLabel(argsLoopEnd);
+        il.MarkLabel(noArgsLabel);
+
+        // Extract cwd from options
+        var noCwdLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, noCwdLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, noCwdLabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, dictLocal);
+
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "cwd");
+        il.Emit(OpCodes.Ldloca, tempObjLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue", [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, noCwdLabel);
+        il.Emit(OpCodes.Ldloc, tempObjLocal);
+        il.Emit(OpCodes.Brfalse, noCwdLabel);
+
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Ldloc, tempObjLocal);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
+        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("WorkingDirectory")!.GetSetMethod()!);
+
+        il.MarkLabel(noCwdLabel);
+
+        // try { run process } finally { dispose }
+        var afterTryLabel = il.DefineLabel();
+
+        il.BeginExceptionBlock();
+
+        il.Emit(OpCodes.Newobj, _types.Process.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, processLocal);
+
+        il.Emit(OpCodes.Ldloc, processLocal);
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Callvirt, _types.Process.GetProperty("StartInfo")!.GetSetMethod()!);
+
+        il.Emit(OpCodes.Ldloc, processLocal);
+        il.Emit(OpCodes.Callvirt, _types.Process.GetMethod("Start", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Pop);
+
+        il.Emit(OpCodes.Ldloc, processLocal);
+        il.Emit(OpCodes.Callvirt, _types.Process.GetProperty("StandardOutput")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.TextReader.GetMethod("ReadToEnd")!);
+        il.Emit(OpCodes.Stloc, stdoutLocal);
+
+        il.Emit(OpCodes.Ldloc, processLocal);
+        il.Emit(OpCodes.Callvirt, _types.Process.GetProperty("StandardError")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.TextReader.GetMethod("ReadToEnd")!);
+        il.Emit(OpCodes.Stloc, stderrLocal);
+
+        il.Emit(OpCodes.Ldloc, processLocal);
+        il.Emit(OpCodes.Callvirt, _types.Process.GetMethod("WaitForExit", Type.EmptyTypes)!);
+
+        il.Emit(OpCodes.Ldloc, processLocal);
+        il.Emit(OpCodes.Callvirt, _types.Process.GetProperty("ExitCode")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, exitCodeLocal);
+
+        il.Emit(OpCodes.Leave, afterTryLabel);
+
+        // finally { process?.Dispose() }
+        il.BeginFinallyBlock();
+        var skipDisposeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, processLocal);
+        il.Emit(OpCodes.Brfalse, skipDisposeLabel);
+        il.Emit(OpCodes.Ldloc, processLocal);
+        il.Emit(OpCodes.Callvirt, _types.IDisposable.GetMethod("Dispose")!);
+        il.MarkLabel(skipDisposeLabel);
+        il.Emit(OpCodes.Endfinally);
+
+        il.EndExceptionBlock();
+
+        il.MarkLabel(afterTryLabel);
+
+        // if (exitCode != 0) throw
+        var noErrorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, exitCodeLocal);
+        il.Emit(OpCodes.Brfalse, noErrorLabel);
+
+        il.Emit(OpCodes.Ldstr, "Command failed with exit code ");
+        il.Emit(OpCodes.Ldloca, exitCodeLocal);
+        il.Emit(OpCodes.Call, _types.Int32.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ldstr, ": ");
+        il.Emit(OpCodes.Ldloc, stderrLocal);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.String, _types.String, _types.String])!);
+        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(noErrorLabel);
+        il.Emit(OpCodes.Ldloc, stdoutLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static object ChildProcessExecFile(string file, object args, object options, object callback)
+    /// Delegates to ChildProcessModuleInterpreter.GetExports()["execFile"] via reflection.
+    /// </summary>
+    private void EmitChildProcessExecFile(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ChildProcessExecFile",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.String, _types.Object, _types.Object, _types.Object]);
+        runtime.ChildProcessExecFile = method;
+        runtime.RegisterBuiltInModuleMethod("child_process", "execFile", method);
+
+        var il = method.GetILGenerator();
+        EmitChildProcessReflectionCall(il, "execFile", 4);
+    }
+
+    /// <summary>
+    /// Emits: public static object ChildProcessFork(string modulePath, object args, object options)
+    /// Delegates to ChildProcessModuleInterpreter.GetExports()["fork"] via reflection.
+    /// </summary>
+    private void EmitChildProcessFork(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ChildProcessFork",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.String, _types.Object, _types.Object]);
+        runtime.ChildProcessFork = method;
+        runtime.RegisterBuiltInModuleMethod("child_process", "fork", method);
+
+        var il = method.GetILGenerator();
+        EmitChildProcessReflectionCall(il, "fork", 3);
     }
 }

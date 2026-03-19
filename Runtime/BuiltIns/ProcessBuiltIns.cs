@@ -88,6 +88,20 @@ public static class ProcessBuiltIns
             }),
             "connected" when ClusterContext.IsWorker => !ClusterContext.CancellationToken.IsCancellationRequested,
 
+            // Fork IPC methods (child side of child_process.fork())
+            "send" when ForkIpcClient.IsForkedChild => new BuiltInMethod("send", 1, (interp, recv, args) =>
+            {
+                if (args.Count == 0)
+                    throw new Exception("process.send() requires at least one argument");
+                return ForkIpcClient.Instance!.Send(args[0]);
+            }),
+            "disconnect" when ForkIpcClient.IsForkedChild => new BuiltInMethod("disconnect", 0, (interp, recv, args) =>
+            {
+                ForkIpcClient.Instance?.Disconnect();
+                return null;
+            }),
+            "connected" when ForkIpcClient.IsForkedChild => ForkIpcClient.Instance?.Connected ?? false,
+
             // EventEmitter methods - delegate to the process singleton
             "on" or "addListener" or "once" or "off" or "removeListener"
                 or "emit" or "removeAllListeners" or "listeners" or "rawListeners"

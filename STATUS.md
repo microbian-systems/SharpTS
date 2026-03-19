@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-03-17 (Added cluster module: fork, IPC messaging, worker lifecycle events)
+**Last Updated:** 2026-03-18 (Completed child_process module: fork with IPC, execFile, execFileSync, ChildProcess improvements)
 
 ## Legend
 - ✅ Implemented
@@ -429,7 +429,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `tls` | ✅ | createServer, connect, createSecureContext, TLSSocket (extends Socket), Server; DEFAULT_MIN_VERSION/MAX_VERSION; ALPNProtocols, SNICallback, servername; secureConnect/secureConnection/tlsClientError events |
 | `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; connect, disconnect, remoteAddress, get/setRecvBufferSize, get/setSendBufferSize; message/listening/close/error/connect events |
 | `cluster` | ✅ | isPrimary/isWorker/isMaster, fork, worker.send/disconnect/kill/isDead/isConnected, process.send/on('message') IPC, cluster events, disconnect, setupPrimary |
-| `child_process` | ✅ | execSync, spawnSync, exec, spawn with ChildProcess EventEmitter |
+| `child_process` | ✅ | execSync, spawnSync, exec, spawn, execFileSync, execFile, fork (IPC via named pipes); ChildProcess: pid, exitCode, killed, stdout, stderr, stdin, connected, kill, send, disconnect |
 | `url` | ✅ | URL, URLSearchParams, fileURLToPath, pathToFileURL, format, parse |
 | `util` | ✅ | promisify, deprecate, types (isDate, isRegExp, isMap, isSet, etc.), format, inspect, TextEncoder, TextDecoder |
 | `querystring` | ✅ | parse, stringify, escape, unescape |

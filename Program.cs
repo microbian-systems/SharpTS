@@ -48,6 +48,9 @@ using SharpTS.Packaging;
 using SharpTS.Parsing;
 using SharpTS.TypeSystem;
 
+// Initialize fork IPC if this process was spawned via child_process.fork()
+SharpTS.Runtime.Types.ForkIpcClient.TryInitialize();
+
 // Parse command-line arguments
 var parser = new CommandLineParser();
 var command = parser.Parse(args);

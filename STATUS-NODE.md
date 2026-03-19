@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-17 (Consistency fixes: dgram connected mode ✅, AbortController/Headers ✅, updated recommended next steps)
+**Last Updated:** 2026-03-18 (Completed child_process module: fork with IPC, execFile, execFileSync, ChildProcess improvements)
 
 ## Legend
 - ✅ Implemented
@@ -23,7 +23,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `url` | ✅ | WHATWG URL + legacy parse/format/resolve |
 | `querystring` | ✅ | parse, stringify, escape, unescape |
 | `assert` | ✅ | Full testing utilities |
-| `child_process` | ✅ | execSync, spawnSync, exec, spawn with ChildProcess EventEmitter |
+| `child_process` | ✅ | execSync, spawnSync, exec, spawn, execFileSync, execFile, fork (IPC via named pipes); ChildProcess EventEmitter with kill, send, disconnect, stdin |
 | `util` | ✅ | format, inspect, isDeepStrictEqual, parseArgs, toUSVString, stripVTControlCharacters, getSystemErrorName, getSystemErrorMap, promisify, types helpers, deprecate, callbackify, inherits, TextEncoder/TextDecoder |
 | `console` | ✅ | log, error, warn, info, debug, clear, time/timeEnd/timeLog, assert, count/countReset, table, dir, group/groupEnd, trace |
 | `readline` | ✅ | questionSync, createInterface (extends EventEmitter), question, close, prompt, pause, resume, write, setPrompt, getPrompt |
@@ -254,12 +254,27 @@ This document tracks Node.js module and API implementation status in SharpTS.
 
 | Feature | Status | Notes |
 |---------|--------|-------|
+| **Sync Methods** | | |
 | `execSync` | ✅ | With cwd, timeout, env, shell options |
 | `spawnSync` | ✅ | With cwd, timeout, env options |
+| `execFileSync` | ✅ | Execute file directly (no shell); with cwd, timeout, env |
+| **Async Methods** | | |
 | `exec` | ✅ | Async with callback(error, stdout, stderr); returns ChildProcess EventEmitter |
-| `spawn` | ✅ | Async; returns ChildProcess with stdout/stderr streams and events |
-| `fork` | ❌ | |
-| ChildProcess events | ✅ | close, exit, error events via EventEmitter |
+| `spawn` | ✅ | Async; returns ChildProcess with stdout/stderr/stdin streams and events |
+| `execFile` | ✅ | Execute file directly (no shell); async with callback; returns ChildProcess |
+| `fork` | ✅ | Spawns new SharpTS process with IPC channel via named pipes; parent/child send/on('message') |
+| **ChildProcess** | | |
+| `pid` | ✅ | Process ID |
+| `exitCode` | ✅ | Exit code (null until exit) |
+| `killed` | ✅ | Whether process was killed |
+| `stdout` / `stderr` | ✅ | Readable streams (spawn/fork) |
+| `stdin` | ✅ | Writable stream (spawn) |
+| `kill(signal?)` | ✅ | Actually kills the process (with entireProcessTree) |
+| `send(message)` | ✅ | IPC messaging (fork only) |
+| `disconnect()` | ✅ | Close IPC channel (fork only) |
+| `connected` | ✅ | IPC connection status (fork only) |
+| `on`/`once`/`off` | ✅ | EventEmitter: close, exit, error, message, disconnect events |
+| `ref()` / `unref()` | ✅ | Event loop ref counting (basic) |
 
 ---
 
@@ -855,4 +870,3 @@ Priority features to implement for broader Node.js compatibility:
 2. **AsyncLocalStorage / async_hooks** - Request-scoped context propagation for frameworks (medium effort)
 3. **IPC sockets** - Named pipes / Unix domain socket support in net module (medium effort)
 4. **cluster HTTP port sharing** - Round-robin load balancing (medium effort)
-5. **child_process.fork()** - Complete the child_process module (low effort)
