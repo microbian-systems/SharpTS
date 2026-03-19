@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-18 (Completed child_process module: fork with IPC, execFile, execFileSync, ChildProcess improvements)
+**Last Updated:** 2026-03-19 (Implemented package.json exports/imports resolution: subpath exports, conditional exports, wildcard patterns, self-referencing, #-prefixed subpath imports)
 
 ## Legend
 - ✅ Implemented
@@ -357,8 +357,11 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | Extension inference | ✅ | Adds `.ts` automatically |
 | Circular detection | ✅ | With error reporting |
 | `/// <reference>` | ✅ | Triple-slash references |
-| `package.json` exports | ❌ | |
-| Conditional exports | ❌ | |
+| `package.json` exports | ✅ | Subpath exports, wildcard patterns, `main`/`types`/`typings` fallback, .js→.ts extension mapping |
+| Conditional exports | ✅ | Conditions: `types`, `import`, `default`; nested conditions; array fallbacks; null restrictions |
+| Subpath imports (`#`) | ✅ | `"imports"` field in package.json with `#`-prefixed specifiers |
+| Self-referencing | ✅ | Package imports itself by name through its own `exports` |
+| Scoped packages | ✅ | `@scope/pkg` and `@scope/pkg/subpath` resolution |
 
 ---
 
@@ -889,7 +892,7 @@ SharpTS provides comprehensive support for file system operations (sync, callbac
 
 Priority features to implement for broader Node.js compatibility:
 
-1. **package.json exports** - Modern npm package resolution (medium effort)
+1. ~~**package.json exports**~~ ✅ Implemented: subpath exports, conditional exports, wildcard patterns, self-referencing, subpath imports
 2. **AsyncLocalStorage / async_hooks** - Request-scoped context propagation for frameworks (medium effort)
 3. **IPC sockets** - Named pipes / Unix domain socket support in net module (medium effort)
 4. **cluster HTTP port sharing** - Round-robin load balancing (medium effort)

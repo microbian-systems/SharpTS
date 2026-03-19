@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-03-18 (Completed child_process module: fork with IPC, execFile, execFileSync, ChildProcess improvements)
+**Last Updated:** 2026-03-19 (Implemented package.json exports/imports resolution for modern npm package support)
 
 ## Legend
 - ✅ Implemented
@@ -137,6 +137,9 @@ This document tracks TypeScript language features and their implementation statu
 | Ambient module declarations | ✅ | `declare module 'x' { }` - type-only declarations for external packages |
 | Module augmentation | ✅ | `declare module './path' { }` extends existing modules, `declare global { }` extends global types |
 | Triple-slash references | ✅ | `/// <reference path="...">` for script-style file merging |
+| `package.json` exports | ✅ | Subpath exports, conditional exports (`types`/`import`/`default`), wildcard patterns, null restrictions, array fallbacks |
+| Subpath imports (`#`) | ✅ | `"imports"` field in package.json with `#`-prefixed specifiers |
+| Self-referencing | ✅ | Package imports itself by name through its own `exports` |
 
 ---
 

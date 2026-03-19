@@ -20,6 +20,7 @@ public class ModuleResolver
     private readonly Dictionary<string, ParsedModule> _moduleCache = [];
     private readonly HashSet<string> _loadingModules = [];  // For circular detection
     private readonly HashSet<string> _loadingScriptRefs = [];  // For circular script reference detection
+    private readonly Dictionary<string, ModulePackageJson?> _packageJsonCache = [];
 
     /// <summary>
     /// Creates a new module resolver rooted at the given path.
@@ -53,6 +54,15 @@ public class ModuleResolver
             // Absolute path
             return AddExtensionIfNeeded(specifier);
         }
+        else if (specifier.StartsWith('#'))
+        {
+            // Subpath imports (#-prefixed) — resolve through nearest package.json "imports" field
+            string? result = TryResolveSubpathImport(specifier, currentDir);
+            if (result != null)
+                return result;
+            throw new Exception($"Module Error: Cannot resolve subpath import '{specifier}'. " +
+                                "No matching entry found in the nearest package.json \"imports\" field.");
+        }
         else
         {
             // Strip 'node:' prefix (e.g., 'node:fs' -> 'fs')
@@ -63,6 +73,11 @@ public class ModuleResolver
             {
                 return BuiltInModuleRegistry.GetBuiltInPath(bareSpecifier);
             }
+
+            // Try self-referencing: if nearest package.json has "name" matching the specifier
+            string? selfRef = TryResolveSelfReference(specifier, currentDir);
+            if (selfRef != null)
+                return selfRef;
 
             // Bare specifier (e.g., 'lodash')
             // Look in node_modules directories
@@ -78,27 +93,30 @@ public class ModuleResolver
 
     /// <summary>
     /// Tries to resolve a bare specifier by looking in node_modules directories.
+    /// Supports package.json "exports" field, "main"/"types" fallback, and legacy index.ts.
     /// </summary>
     private string? TryResolveNodeModule(string specifier, string startDir)
     {
+        var (packageName, subpath) = ParsePackageSpecifier(specifier);
         string? currentDir = startDir;
 
         while (currentDir != null)
         {
-            string nodeModulesPath = Path.Combine(currentDir, "node_modules", specifier);
+            string packageDir = Path.Combine(currentDir, "node_modules", packageName);
 
-            // Try index.ts
-            string indexPath = Path.Combine(nodeModulesPath, "index.ts");
-            if (File.Exists(indexPath))
+            if (Directory.Exists(packageDir))
             {
-                return indexPath;
+                var result = TryResolveInPackageDir(packageDir, subpath);
+                if (result != null)
+                    return result;
             }
 
-            // Try package.json main field (simplified - just check for index)
-            string directPath = nodeModulesPath + ".ts";
-            if (File.Exists(directPath))
+            // Also try as a direct .ts file (e.g., node_modules/foo.ts)
+            if (subpath == ".")
             {
-                return directPath;
+                string directPath = Path.Combine(currentDir, "node_modules", packageName + ".ts");
+                if (File.Exists(directPath))
+                    return directPath;
             }
 
             // Move up one directory
@@ -106,6 +124,217 @@ public class ModuleResolver
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Attempts to resolve a subpath within a specific package directory.
+    /// </summary>
+    private string? TryResolveInPackageDir(string packageDir, string subpath)
+    {
+        string packageJsonPath = Path.Combine(packageDir, "package.json");
+        var pkg = LoadPackageJson(packageJsonPath);
+
+        if (pkg?.Exports != null)
+        {
+            // Use exports field
+            var resolved = ExportsResolver.ResolvePackageExports(
+                pkg.Exports.Value, subpath, ExportsResolver.DefaultConditions);
+            if (resolved != null)
+                return ResolveExportsPath(resolved, packageDir);
+            // Exports field exists but no match — per spec, this blocks resolution
+            return null;
+        }
+
+        if (pkg != null && subpath == ".")
+        {
+            // No exports field — try types/typings, then main, then module
+            string? entryPath = pkg.Types ?? pkg.Typings ?? pkg.Main ?? pkg.Module;
+            if (entryPath != null)
+            {
+                var mapped = ResolveExportsPath(
+                    entryPath.StartsWith("./") ? entryPath : "./" + entryPath, packageDir);
+                if (mapped != null)
+                    return mapped;
+            }
+        }
+
+        if (subpath != ".")
+        {
+            // No exports — resolve subpath directly against package dir
+            string subFile = Path.Combine(packageDir, subpath.TrimStart('.', '/'));
+            return TryAddExtension(subFile);
+        }
+
+        // Legacy fallback: try index.ts
+        string indexPath = Path.Combine(packageDir, "index.ts");
+        if (File.Exists(indexPath))
+            return indexPath;
+
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves a path from the exports algorithm, applying extension mapping (.js → .ts, etc.).
+    /// </summary>
+    private static string? ResolveExportsPath(string resolvedRelative, string packageDir)
+    {
+        // Strip leading "./" and combine with package dir
+        string relPath = resolvedRelative.StartsWith("./") ? resolvedRelative[2..] : resolvedRelative;
+        string fullPath = Path.GetFullPath(Path.Combine(packageDir, relPath));
+
+        // If path exists as-is, use it
+        if (File.Exists(fullPath))
+            return fullPath;
+
+        // Extension mapping: .js → .ts, .tsx
+        if (fullPath.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
+        {
+            string tsPath = fullPath[..^3] + ".ts";
+            if (File.Exists(tsPath)) return tsPath;
+            string tsxPath = fullPath[..^3] + ".tsx";
+            if (File.Exists(tsxPath)) return tsxPath;
+        }
+        else if (fullPath.EndsWith(".mjs", StringComparison.OrdinalIgnoreCase))
+        {
+            string mtsPath = fullPath[..^4] + ".mts";
+            if (File.Exists(mtsPath)) return mtsPath;
+        }
+        else if (fullPath.EndsWith(".cjs", StringComparison.OrdinalIgnoreCase))
+        {
+            string ctsPath = fullPath[..^4] + ".cts";
+            if (File.Exists(ctsPath)) return ctsPath;
+        }
+
+        // Try appending .ts
+        string withTs = fullPath + ".ts";
+        if (File.Exists(withTs))
+            return withTs;
+
+        // Try as directory with index.ts
+        string indexTs = Path.Combine(fullPath, "index.ts");
+        if (Directory.Exists(fullPath) && File.Exists(indexTs))
+            return indexTs;
+
+        return null;
+    }
+
+    /// <summary>
+    /// Tries to add a file extension to a path, returning null if nothing resolves.
+    /// </summary>
+    private static string? TryAddExtension(string path)
+    {
+        if (File.Exists(path))
+            return path;
+
+        string withTs = path + ".ts";
+        if (File.Exists(withTs))
+            return withTs;
+
+        if (path.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
+        {
+            string tsPath = path[..^3] + ".ts";
+            if (File.Exists(tsPath)) return tsPath;
+        }
+
+        string indexTs = Path.Combine(path, "index.ts");
+        if (Directory.Exists(path) && File.Exists(indexTs))
+            return indexTs;
+
+        return null;
+    }
+
+    /// <summary>
+    /// Parses a bare specifier into (packageName, subpath).
+    /// </summary>
+    public static (string packageName, string subpath) ParsePackageSpecifier(string specifier)
+    {
+        if (specifier.StartsWith('@'))
+        {
+            // Scoped package: @scope/pkg or @scope/pkg/utils
+            int firstSlash = specifier.IndexOf('/');
+            if (firstSlash < 0)
+                return (specifier, ".");
+
+            int secondSlash = specifier.IndexOf('/', firstSlash + 1);
+            if (secondSlash < 0)
+                return (specifier, ".");
+
+            return (specifier[..secondSlash], "./" + specifier[(secondSlash + 1)..]);
+        }
+        else
+        {
+            // Unscoped package: lodash or lodash/fp
+            int firstSlash = specifier.IndexOf('/');
+            if (firstSlash < 0)
+                return (specifier, ".");
+
+            return (specifier[..firstSlash], "./" + specifier[(firstSlash + 1)..]);
+        }
+    }
+
+    /// <summary>
+    /// Resolves #-prefixed subpath imports through the nearest package.json "imports" field.
+    /// </summary>
+    private string? TryResolveSubpathImport(string specifier, string startDir)
+    {
+        string? dir = startDir;
+        while (dir != null)
+        {
+            string pkgPath = Path.Combine(dir, "package.json");
+            var pkg = LoadPackageJson(pkgPath);
+            if (pkg != null)
+            {
+                if (pkg.Imports != null)
+                {
+                    var resolved = ExportsResolver.ResolvePackageImports(
+                        pkg.Imports.Value, specifier, ExportsResolver.DefaultConditions);
+                    if (resolved != null)
+                        return ResolveExportsPath(resolved, dir);
+                }
+                // Found a package.json but no matching import — stop walking
+                return null;
+            }
+            dir = Path.GetDirectoryName(dir);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves self-referencing imports (when a package imports itself by name through its own exports).
+    /// </summary>
+    private string? TryResolveSelfReference(string specifier, string startDir)
+    {
+        var (packageName, subpath) = ParsePackageSpecifier(specifier);
+
+        string? dir = startDir;
+        while (dir != null)
+        {
+            string pkgPath = Path.Combine(dir, "package.json");
+            var pkg = LoadPackageJson(pkgPath);
+            if (pkg?.Name == packageName && pkg.Exports != null)
+            {
+                var resolved = ExportsResolver.ResolvePackageExports(
+                    pkg.Exports.Value, subpath, ExportsResolver.DefaultConditions);
+                if (resolved != null)
+                    return ResolveExportsPath(resolved, dir);
+                return null;
+            }
+            dir = Path.GetDirectoryName(dir);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Loads a package.json with caching.
+    /// </summary>
+    private ModulePackageJson? LoadPackageJson(string path)
+    {
+        if (_packageJsonCache.TryGetValue(path, out var cached))
+            return cached;
+
+        var pkg = ModulePackageJson.TryLoad(path);
+        _packageJsonCache[path] = pkg;
+        return pkg;
     }
 
     private string AddExtensionIfNeeded(string path)
