@@ -23,6 +23,7 @@ public static class VmModuleInterpreter
             ["runInThisContext"] = new BuiltInMethod("runInThisContext", 1, 2, RunInThisContext),
             ["createContext"] = new BuiltInMethod("createContext", 0, 1, CreateContext),
             ["isContext"] = new BuiltInMethod("isContext", 1, 1, IsContext),
+            ["compileFunction"] = new BuiltInMethod("compileFunction", 1, 3, CompileFunction),
             ["Script"] = new VmScriptConstructor()
         };
     }
@@ -148,6 +149,160 @@ public static class VmModuleInterpreter
         var resolver = new VariableResolver(interpreter);
         resolver.Resolve(statements);
         return interpreter.InterpretRepl(statements);
+    }
+
+    /// <summary>
+    /// vm.compileFunction(code, params?, options?) — compiles a function body with named parameters.
+    /// Returns a callable function. Equivalent to new Function(params, code) with vm context control.
+    /// </summary>
+    private static object? CompileFunction(Interp interpreter, object? receiver, List<object?> args)
+    {
+        if (args.Count == 0 || args[0] is not string code)
+            throw new Exception("vm.compileFunction requires a code string");
+
+        // Extract params array (string[])
+        var paramNames = new List<string>();
+        if (args.Count > 1 && args[1] != null)
+        {
+            IEnumerable<object?> items;
+            if (args[1] is List<object?> paramList)
+                items = paramList;
+            else if (args[1] is SharpTSArray paramArray)
+                items = paramArray.Elements;
+            else
+                items = [];
+
+            foreach (var p in items)
+            {
+                if (p is string name)
+                    paramNames.Add(name);
+                else
+                    throw new Exception("SyntaxError: Invalid parameter name");
+            }
+        }
+
+        // Validate parameter names are valid identifiers
+        foreach (var name in paramNames)
+        {
+            if (string.IsNullOrEmpty(name) || !IsValidIdentifier(name))
+                throw new Exception($"SyntaxError: Invalid parameter name '{name}'");
+        }
+
+        // Extract options
+        object? parsingContext = null;
+        List<object?>? contextExtensions = null;
+
+        if (args.Count > 2 && args[2] != null)
+        {
+            var options = VmContext.ExtractProperties(args[2]);
+            if (options.TryGetValue("parsingContext", out var ctx))
+            {
+                if (ctx != null && !VmContext.IsContext(ctx))
+                    throw new Exception("TypeError: parsingContext must be a vm.createContext()-ed object");
+                parsingContext = ctx;
+            }
+            if (options.TryGetValue("contextExtensions", out var ext))
+            {
+                if (ext is List<object?> extList)
+                    contextExtensions = extList;
+                else if (ext is SharpTSArray extArray)
+                    contextExtensions = extArray.Elements.ToList();
+            }
+        }
+
+        // Wrap code as function body and parse
+        // Ensure code ends with semicolon since the parser requires them
+        var trimmedCode = code.TrimEnd();
+        if (trimmedCode.Length > 0 && !trimmedCode.EndsWith(';') && !trimmedCode.EndsWith('}'))
+            trimmedCode += ";";
+        var paramsStr = string.Join(", ", paramNames);
+        var wrappedCode = $"function __vmfn__({paramsStr}) {{ {trimmedCode} }}";
+        var funcDeclStatements = ParseCode(wrappedCode);
+
+        // Return a callable that executes the function body in a fresh interpreter
+        var compiledFn = new BuiltInMethod("compiledFunction", 0, paramNames.Count,
+            (interp, recv, callArgs) =>
+            {
+                return ExecuteCompiledFunction(funcDeclStatements, paramNames, callArgs, parsingContext, contextExtensions);
+            });
+
+        return compiledFn;
+    }
+
+    /// <summary>
+    /// Executes a compiled function by creating a fresh interpreter,
+    /// seeding context/extensions/params, and running the function body.
+    /// </summary>
+    private static object? ExecuteCompiledFunction(
+        List<Stmt> funcDeclStatements,
+        List<string> paramNames,
+        List<object?> callArgs,
+        object? parsingContext,
+        List<object?>? contextExtensions)
+    {
+        var subInterpreter = new Interp();
+        var env = subInterpreter.Environment;
+
+        // Seed parsingContext variables
+        if (parsingContext != null)
+        {
+            var contextProps = VmContext.ExtractProperties(parsingContext);
+            foreach (var (key, value) in contextProps)
+                env.Define(key, value);
+        }
+
+        // Seed contextExtensions (layered, in order)
+        if (contextExtensions != null)
+        {
+            foreach (var ext in contextExtensions)
+            {
+                if (ext != null)
+                {
+                    var extProps = VmContext.ExtractProperties(ext);
+                    foreach (var (key, value) in extProps)
+                        env.Define(key, value);
+                }
+            }
+        }
+
+        // Define temporary arg variables and build the call expression
+        var argPlaceholders = new List<string>();
+        for (int i = 0; i < paramNames.Count; i++)
+        {
+            var placeholder = $"__vmarg{i}__";
+            argPlaceholders.Add(placeholder);
+            var argVal = i < callArgs.Count ? callArgs[i] : null;
+            env.Define(placeholder, argVal);
+        }
+
+        // Build code: define function then call it
+        // The funcDeclStatements contain the function declaration; we combine it with a call
+        var callCode = $"__vmfn__({string.Join(", ", argPlaceholders)});";
+        var callStatements = ParseCode(callCode);
+
+        var allStatements = new List<Stmt>(funcDeclStatements);
+        allStatements.AddRange(callStatements);
+
+        var resolver = new VariableResolver(subInterpreter);
+        resolver.Resolve(allStatements);
+        var result = subInterpreter.InterpretRepl(allStatements);
+
+        subInterpreter.Dispose();
+        return result;
+    }
+
+    /// <summary>
+    /// Validates that a string is a valid JavaScript identifier.
+    /// </summary>
+    private static bool IsValidIdentifier(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        if (!char.IsLetter(name[0]) && name[0] != '_' && name[0] != '$') return false;
+        for (int i = 1; i < name.Length; i++)
+        {
+            if (!char.IsLetterOrDigit(name[i]) && name[i] != '_' && name[i] != '$') return false;
+        }
+        return true;
     }
 
     /// <summary>

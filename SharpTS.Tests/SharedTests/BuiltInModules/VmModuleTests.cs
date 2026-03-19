@@ -406,4 +406,205 @@ public class VmModuleTests
     }
 
     #endregion
+
+    #region compileFunction Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_BasicReturn(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction } from 'vm';
+                const fn = compileFunction('return 42');
+                console.log(fn());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_WithParams(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction } from 'vm';
+                const add = compileFunction('return a + b', ['a', 'b']);
+                console.log(add(3, 4));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("7\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_NoParams(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction } from 'vm';
+                const greet = compileFunction('return "hello"');
+                console.log(greet());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("hello\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_MultiStatement(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction } from 'vm';
+                const fn = compileFunction('let x = 10; let y = 20; return x + y;');
+                console.log(fn());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("30\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_Reusable(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction } from 'vm';
+                const square = compileFunction('return n * n', ['n']);
+                console.log(square(3));
+                console.log(square(5));
+                console.log(square(7));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("9\n25\n49\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_ConsoleLog(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction } from 'vm';
+                const fn = compileFunction('console.log("from compiled fn")');
+                fn();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("from compiled fn\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_SyntaxError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction } from 'vm';
+                try {
+                    compileFunction('return ;; @@');
+                    console.log('no error');
+                } catch (e) {
+                    console.log('caught error');
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("caught error\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_NamespaceImport(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const fn = vm.compileFunction('return x * 2', ['x']);
+                console.log(fn(21));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_ParsingContext(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction, createContext } from 'vm';
+                const ctx = createContext({ multiplier: 10 });
+                const fn = compileFunction('return x * multiplier', ['x'], { parsingContext: ctx });
+                console.log(fn(5));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("50\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_ContextExtensions(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction } from 'vm';
+                const fn = compileFunction('return greeting + " " + name', [], {
+                    contextExtensions: [{ greeting: "hello", name: "world" }]
+                });
+                console.log(fn());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("hello world\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_ContextWithFunction(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction, createContext } from 'vm';
+                const ctx = createContext({ double: (n: number) => n * 2 });
+                const fn = compileFunction('return double(x)', ['x'], { parsingContext: ctx });
+                console.log(fn(7));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("14\n", output);
+    }
+
+    #endregion
 }

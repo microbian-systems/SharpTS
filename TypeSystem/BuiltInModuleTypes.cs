@@ -2368,12 +2368,15 @@ public static class BuiltInModuleTypes
             ["runInContext"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
         }.ToFrozenDictionary());
 
+        var stringArrayType = new TypeInfo.Array(stringType);
+
         return new Dictionary<string, TypeInfo>
         {
             ["runInNewContext"] = new TypeInfo.Function([stringType, anyType, anyType], anyType, RequiredParams: 1),
             ["runInThisContext"] = new TypeInfo.Function([stringType, anyType], anyType, RequiredParams: 1),
             ["createContext"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
             ["isContext"] = new TypeInfo.Function([anyType], boolType),
+            ["compileFunction"] = new TypeInfo.Function([stringType, stringArrayType, anyType], anyType, RequiredParams: 1),
             ["Script"] = new TypeInfo.Function([stringType, anyType], scriptType, RequiredParams: 1),
         };
     }

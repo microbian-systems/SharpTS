@@ -2106,4 +2106,5 @@ public class EmittedRuntime
     public MethodBuilder VmIsContext { get; set; } = null!;
     public MethodBuilder VmGetScriptConstructor { get; set; } = null!;
     public MethodBuilder VmNewScript { get; set; } = null!;
+    public MethodBuilder VmCompileFunction { get; set; } = null!;
 }

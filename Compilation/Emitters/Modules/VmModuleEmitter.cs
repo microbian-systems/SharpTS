@@ -14,7 +14,7 @@ public sealed class VmModuleEmitter : IBuiltInModuleEmitter
 
     private static readonly string[] _exportedMembers =
     [
-        "runInNewContext", "runInThisContext", "createContext", "isContext", "Script"
+        "runInNewContext", "runInThisContext", "createContext", "isContext", "compileFunction", "Script"
     ];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
@@ -27,6 +27,7 @@ public sealed class VmModuleEmitter : IBuiltInModuleEmitter
             "runInThisContext" => EmitRunInThisContext(emitter, arguments),
             "createContext" => EmitCreateContext(emitter, arguments),
             "isContext" => EmitIsContext(emitter, arguments),
+            "compileFunction" => EmitCompileFunction(emitter, arguments),
             _ => false
         };
     }
@@ -43,7 +44,7 @@ public sealed class VmModuleEmitter : IBuiltInModuleEmitter
         }
 
         // Methods emitted as null for namespace dict — actual calls go through TryEmitMethodCall
-        if (propertyName is "runInNewContext" or "runInThisContext" or "createContext" or "isContext")
+        if (propertyName is "runInNewContext" or "runInThisContext" or "createContext" or "isContext" or "compileFunction")
         {
             emitter.Context.IL.Emit(OpCodes.Ldnull);
             return true;
@@ -165,6 +166,49 @@ public sealed class VmModuleEmitter : IBuiltInModuleEmitter
         }
 
         il.Emit(OpCodes.Call, ctx.Runtime!.VmIsContext);
+        emitter.SetStackUnknown();
+        return true;
+    }
+
+    private static bool EmitCompileFunction(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // code (string)
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // params (string[] - optional)
+        if (arguments.Count > 1)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // options (optional)
+        if (arguments.Count > 2)
+        {
+            emitter.EmitExpression(arguments[2]);
+            emitter.EmitBoxIfNeeded(arguments[2]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.VmCompileFunction);
         emitter.SetStackUnknown();
         return true;
     }

@@ -41,7 +41,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `worker_threads` | ⚠️ | Worker, MessageChannel, parentPort, workerData, isMainThread |
 | `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; connect, disconnect, remoteAddress, get/setRecvBufferSize, get/setSendBufferSize; message/listening/close/error/connect events |
 | `cluster` | ✅ | isPrimary/isWorker/isMaster, fork, worker.send/disconnect/kill/isDead/isConnected, process.send (IPC), cluster events (fork/online/disconnect/exit/message), cluster.disconnect, setupPrimary, workers dict |
-| `vm` | ✅ | runInNewContext, runInThisContext, createContext, isContext, Script class |
+| `vm` | ✅ | runInNewContext, runInThisContext, createContext, isContext, compileFunction, Script class |
 
 ---
 
@@ -862,9 +862,9 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `script.runInNewContext(ctx?, opts?)` | ✅ | Runs pre-parsed script in fresh context (interpreter mode) |
 | `script.runInThisContext(opts?)` | ✅ | Runs pre-parsed script in caller's scope (interpreter mode) |
 | `script.runInContext(ctx, opts?)` | ✅ | Runs pre-parsed script in given context (interpreter mode) |
+| `vm.compileFunction(code, params?, opts?)` | ✅ | Compiles function body with named params; parsingContext, contextExtensions options |
 | **Not Implemented** | | |
 | `vm.Module` / `vm.SourceTextModule` | ❌ | Experimental in Node.js |
-| `vm.compileFunction` | ❌ | |
 | `timeout` option | ❌ | Can be added later with CancellationToken |
 | `vm.measureMemory` | ❌ | |
 

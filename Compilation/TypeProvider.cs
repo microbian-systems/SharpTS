@@ -710,12 +710,20 @@ public class TypeProvider
 
     // List constructors
     private ConstructorInfo? _listObjectNullableDefaultCtor;
+    private ConstructorInfo? _listObjectNullableCtor_IEnumerable;
 
     /// <summary>
     /// Gets the List&lt;object?&gt;() default constructor.
     /// </summary>
     public ConstructorInfo ListObjectNullableDefaultCtor =>
         _listObjectNullableDefaultCtor ??= GetDefaultConstructor(ListOfObjectNullable);
+
+    /// <summary>
+    /// Gets the List&lt;object?&gt;(IEnumerable&lt;object?&gt;) constructor.
+    /// Used to convert object[] to List&lt;object?&gt; for BuiltInMethod.Call dispatch.
+    /// </summary>
+    public ConstructorInfo ListObjectNullableCtor_IEnumerable =>
+        _listObjectNullableCtor_IEnumerable ??= ListOfObjectNullable.GetConstructor([typeof(IEnumerable<object>)])!;
 
     #endregion
 

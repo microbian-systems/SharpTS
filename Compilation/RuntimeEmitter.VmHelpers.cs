@@ -16,6 +16,7 @@ public partial class RuntimeEmitter
         EmitVmRunInThisContext(typeBuilder, runtime);
         EmitVmCreateContext(typeBuilder, runtime);
         EmitVmIsContext(typeBuilder, runtime);
+        EmitVmCompileFunction(typeBuilder, runtime);
         EmitVmGetScriptConstructor(typeBuilder, runtime);
         EmitVmNewScript(typeBuilder, runtime);
     }
@@ -90,6 +91,25 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         EmitVmReflectionCall(il, "isContext", 1);
+    }
+
+    /// <summary>
+    /// Emits: public static object VmCompileFunction(object code, object params, object options)
+    /// Delegates to VmModuleInterpreter.GetExports()["compileFunction"] via reflection.
+    /// Returns a BuiltInMethod that InvokeMethodValue dispatches via reflection fallback.
+    /// </summary>
+    private void EmitVmCompileFunction(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "VmCompileFunction",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]);
+        runtime.VmCompileFunction = method;
+        runtime.RegisterBuiltInModuleMethod("vm", "compileFunction", method);
+
+        var il = method.GetILGenerator();
+        EmitVmReflectionCall(il, "compileFunction", 3);
     }
 
     /// <summary>

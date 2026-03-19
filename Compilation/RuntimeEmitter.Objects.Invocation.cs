@@ -545,6 +545,40 @@ public partial class RuntimeEmitter
         }, notProxyLabel2);
 
         il.MarkLabel(notProxyLabel2);
+
+        // Fallback: reflection-based dispatch for SharpTS runtime callables (e.g., BuiltInMethod from vm.compileFunction).
+        // Check if function has a "Call" method matching (Interpreter, List<object?>) signature.
+        var noCallMethodLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, noCallMethodLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "Call");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        var callMiLocal = il.DeclareLocal(typeof(MethodInfo));
+        il.Emit(OpCodes.Stloc, callMiLocal);
+        il.Emit(OpCodes.Ldloc, callMiLocal);
+        il.Emit(OpCodes.Brfalse, noCallMethodLabel);
+
+        // Call(interpreter=null, args=new List<object?>(object[]))
+        il.Emit(OpCodes.Ldloc, callMiLocal);
+        il.Emit(OpCodes.Ldarg_1); // the callable object
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull); // interpreter = null
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        // Convert object[] to List<object?>
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Newobj, _types.ListObjectNullableCtor_IEnumerable);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(noCallMethodLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
     }
