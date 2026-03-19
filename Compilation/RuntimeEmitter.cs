@@ -162,6 +162,10 @@ public partial class RuntimeEmitter
         // Must come after TSFunction (uses TSFunctionType, TSFunctionInvokeWithThis)
         EmitBoundTSFunctionClass(moduleBuilder, runtime);
 
+        // Emit $AsyncLocalStorage class for async context propagation
+        // Must come after TSFunction (Run/Exit invoke callbacks via TSFunctionInvoke)
+        EmitAsyncLocalStorageClass(moduleBuilder, runtime);
+
         // Emit $EventEmitter class for standalone event emitter support
         // NOTE: Must come after BoundTSFunction (uses TSFunctionType, BoundTSFunctionType)
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSEventEmitter

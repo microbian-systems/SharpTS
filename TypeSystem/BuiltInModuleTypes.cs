@@ -1474,6 +1474,7 @@ public static class BuiltInModuleTypes
             "dgram" => GetDgramModuleTypes(),
             "cluster" => GetClusterModuleTypes(),
             "vm" => GetVmModuleTypes(),
+            "async_hooks" => GetAsyncHooksModuleTypes(),
             _ => null
         };
     }
@@ -2354,6 +2355,40 @@ public static class BuiltInModuleTypes
     /// <summary>
     /// Gets the exported types for the vm module.
     /// </summary>
+    public static Dictionary<string, TypeInfo> GetAsyncHooksModuleTypes()
+    {
+        var anyType = new TypeInfo.Any();
+
+        // AsyncLocalStorage instance type with methods
+        var asyncLocalStorageInstanceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["run"] = new TypeInfo.Function([anyType, anyType, anyType], anyType, RequiredParams: 2, HasRestParam: true),
+            ["getStore"] = new TypeInfo.Function([], anyType),
+            ["enterWith"] = new TypeInfo.Function([anyType], new TypeInfo.Void()),
+            ["exit"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1, HasRestParam: true),
+            ["disable"] = new TypeInfo.Function([], new TypeInfo.Void()),
+        }.ToFrozenDictionary());
+
+        // AsyncLocalStorage constructor type
+        var asyncLocalStorageConstructorType = new TypeInfo.Interface(
+            Name: "AsyncLocalStorage",
+            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
+            OptionalMembers: FrozenSet<string>.Empty,
+            ConstructorSignatures:
+            [
+                new TypeInfo.ConstructorSignature(
+                    TypeParams: null,
+                    ParamTypes: [],
+                    ReturnType: asyncLocalStorageInstanceType)
+            ]
+        );
+
+        return new Dictionary<string, TypeInfo>
+        {
+            ["AsyncLocalStorage"] = asyncLocalStorageConstructorType
+        };
+    }
+
     public static Dictionary<string, TypeInfo> GetVmModuleTypes()
     {
         var anyType = new TypeInfo.Any();

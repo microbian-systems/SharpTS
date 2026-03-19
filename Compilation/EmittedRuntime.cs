@@ -1534,6 +1534,10 @@ public class EmittedRuntime
     public MethodBuilder TSEventEmitterAddListenerInternal { get; set; } = null!;
     public MethodBuilder TSEventEmitterOnListenerAdded { get; set; } = null!;
 
+    // $AsyncLocalStorage support
+    public Type TSAsyncLocalStorageType { get; set; } = null!;
+    public ConstructorBuilder TSAsyncLocalStorageCtor { get; set; } = null!;
+
     // $AbortController / $AbortSignal support
     public MethodBuilder FireAbortEvent { get; set; } = null!;
     public MethodBuilder CreateAbortController { get; set; } = null!;

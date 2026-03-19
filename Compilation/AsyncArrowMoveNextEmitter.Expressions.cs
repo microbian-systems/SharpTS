@@ -605,6 +605,14 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
+        // Special case: new AsyncLocalStorage() constructor
+        if (isSimpleName && className == "AsyncLocalStorage")
+        {
+            _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSAsyncLocalStorageCtor);
+            SetStackUnknown();
+            return;
+        }
+
         // Special case: new Headers(...) constructor
         if (isSimpleName && className == "Headers")
         {

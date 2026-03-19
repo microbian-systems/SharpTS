@@ -37,7 +37,8 @@ public static class BuiltInModuleRegistry
         "tls",
         "dgram",
         "cluster",
-        "vm"
+        "vm",
+        "async_hooks"
     ];
 
     /// <summary>

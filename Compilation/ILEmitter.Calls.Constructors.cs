@@ -142,6 +142,14 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new AsyncLocalStorage() constructor
+        if (isSimpleName && simpleClassName == "AsyncLocalStorage")
+        {
+            IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSAsyncLocalStorageCtor);
+            SetStackUnknown();
+            return;
+        }
+
         // Special case: new AbortController() constructor
         if (isSimpleName && simpleClassName == "AbortController")
         {

@@ -200,6 +200,7 @@ public sealed class BuiltInRegistry
         RegisterIntlListFormatType(registry);
         RegisterIntlSegmenterType(registry);
         RegisterIntlDisplayNamesType(registry);
+        RegisterAsyncLocalStorageType(registry);
 
         return registry;
     }
@@ -1143,6 +1144,12 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterInstanceType(typeof(SharpTSIntlDisplayNames), (instance, name) =>
             ((SharpTSIntlDisplayNames)instance).GetMember(name));
+    }
+
+    private static void RegisterAsyncLocalStorageType(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSAsyncLocalStorage), (instance, name) =>
+            ((SharpTSAsyncLocalStorage)instance).GetMember(name));
     }
 
     private static string Stringify(object? obj)
