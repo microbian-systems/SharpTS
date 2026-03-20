@@ -685,31 +685,37 @@ public partial class Interpreter : IDisposable
         _locals[expr] = depth;
     }
 
-    private object? LookupVariable(Token name, Expr expr)
+    private object? LookupVariable(Token name, Expr expr) => LookupVariableRV(name, expr).ToObject();
+
+    /// <summary>
+    /// Looks up a variable and returns its value as RuntimeValue without boxing.
+    /// This is the fast path for variable access in expressions.
+    /// </summary>
+    private RuntimeValue LookupVariableRV(Token name, Expr expr)
     {
         // Fast path: resolved locals with known depth
         if (_locals.TryGetValue(expr, out int distance))
         {
-            return _environment.GetAt(distance, name.Lexeme).ToObject();
+            return _environment.GetAt(distance, name.Lexeme);
         }
 
         // Scope chain traversal for user-defined variables
         // User variables can shadow built-in globals, so check environment first
         if (_environment.TryGet(name.Lexeme, out RuntimeValue rv))
         {
-            return rv.ToObject();
+            return rv;
         }
 
         // Check global constants and built-in singletons (single frozen dictionary lookup)
         // This handles: NaN, Infinity, undefined, Math, JSON, Object, console, process, etc.
         if (_globalConstants.TryGetValue(name.Lexeme, out var constant))
         {
-            return constant;
+            return RuntimeValue.FromBoxed(constant);
         }
 
         // Check for Node.js module globals (__dirname, __filename)
-        if (name.Lexeme == "__filename") return _currentModule?.Path ?? "";
-        if (name.Lexeme == "__dirname") return Path.GetDirectoryName(_currentModule?.Path) ?? "";
+        if (name.Lexeme == "__filename") return RuntimeValue.FromString(_currentModule?.Path ?? "");
+        if (name.Lexeme == "__dirname") return RuntimeValue.FromString(Path.GetDirectoryName(_currentModule?.Path) ?? "");
 
         throw new InterpreterException($"Undefined variable '{name.Lexeme}'.");
     }

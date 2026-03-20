@@ -56,7 +56,7 @@ public partial class Interpreter
     internal RuntimeValue VisitLiteral(Expr.Literal literal) => EvaluateLiteral(literal);
     internal RuntimeValue VisitUnary(Expr.Unary unary) => EvaluateUnary(unary);
     internal RuntimeValue VisitDelete(Expr.Delete delete) => RuntimeValue.FromBoxed(EvaluateDelete(delete));
-    internal RuntimeValue VisitVariable(Expr.Variable variable) => RuntimeValue.FromBoxed(EvaluateVariable(variable));
+    internal RuntimeValue VisitVariable(Expr.Variable variable) => LookupVariableRV(variable.Name, variable);
     internal RuntimeValue VisitAssign(Expr.Assign assign) => RuntimeValue.FromBoxed(EvaluateAssign(assign));
     internal RuntimeValue VisitCall(Expr.Call call) => RuntimeValue.FromBoxed(EvaluateCall(call));
     internal RuntimeValue VisitGet(Expr.Get get) => RuntimeValue.FromBoxed(EvaluateGet(get));
