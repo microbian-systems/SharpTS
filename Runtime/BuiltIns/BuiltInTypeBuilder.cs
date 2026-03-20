@@ -165,6 +165,31 @@ public sealed class BuiltInStaticBuilder
     }
 
     /// <summary>
+    /// Registers a V2 static method with fixed arity using RuntimeValue (no boxing).
+    /// </summary>
+    public BuiltInStaticBuilder MethodV2(
+        string name,
+        int arity,
+        Func<Interpreter, RuntimeValue, ReadOnlySpan<RuntimeValue>, RuntimeValue> implementation)
+    {
+        _methods[name] = BuiltInMethod.CreateV2(name, arity, implementation);
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a V2 static method with variable arity using RuntimeValue (no boxing).
+    /// </summary>
+    public BuiltInStaticBuilder MethodV2(
+        string name,
+        int minArity,
+        int maxArity,
+        Func<Interpreter, RuntimeValue, ReadOnlySpan<RuntimeValue>, RuntimeValue> implementation)
+    {
+        _methods[name] = BuiltInMethod.CreateV2(name, minArity, maxArity, implementation);
+        return this;
+    }
+
+    /// <summary>
     /// Builds the static member lookup.
     /// </summary>
     public BuiltInStaticMemberLookup Build()

@@ -34,13 +34,25 @@ public static class NumberBuiltIns
             .CallableConstant("MAX_SAFE_INTEGER", MAX_SAFE_INTEGER)
             .CallableConstant("MIN_SAFE_INTEGER", MIN_SAFE_INTEGER)
             .CallableConstant("EPSILON", EPSILON)
-            // Static methods
-            .Method("parseInt", 1, 2, ParseIntMethod)
-            .Method("parseFloat", 1, ParseFloatMethod)
-            .Method("isNaN", 1, IsNaNMethod)
-            .Method("isFinite", 1, IsFiniteMethod)
-            .Method("isInteger", 1, IsIntegerMethod)
-            .Method("isSafeInteger", 1, IsSafeIntegerMethod)
+            // Static methods (V2 — no boxing)
+            .MethodV2("parseInt", 1, 2, ParseIntV2)
+            .MethodV2("parseFloat", 1, ParseFloatV2)
+            .MethodV2("isNaN", 1, (_, _, args) =>
+                RuntimeValue.FromBoolean(args[0].Kind == ValueKind.Number && double.IsNaN(args[0].AsNumber())))
+            .MethodV2("isFinite", 1, (_, _, args) =>
+                RuntimeValue.FromBoolean(args[0].Kind == ValueKind.Number && double.IsFinite(args[0].AsNumber())))
+            .MethodV2("isInteger", 1, (_, _, args) =>
+            {
+                if (args[0].Kind != ValueKind.Number) return RuntimeValue.False;
+                double d = args[0].AsNumber();
+                return RuntimeValue.FromBoolean(double.IsFinite(d) && Math.Truncate(d) == d);
+            })
+            .MethodV2("isSafeInteger", 1, (_, _, args) =>
+            {
+                if (args[0].Kind != ValueKind.Number) return RuntimeValue.False;
+                double d = args[0].AsNumber();
+                return RuntimeValue.FromBoolean(double.IsFinite(d) && Math.Truncate(d) == d && Math.Abs(d) <= MAX_SAFE_INTEGER);
+            })
             .Build();
 
     // Instance member lookup for number values
@@ -64,46 +76,24 @@ public static class NumberBuiltIns
     public static object? GetInstanceMember(double receiver, string name)
         => _instanceLookup.GetMember(receiver, name);
 
-    // Static method implementations
-    private static object? ParseIntMethod(Interpreter _, List<object?> args)
+    // Static method implementations (V2)
+    private static RuntimeValue ParseIntV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var str = args[0]?.ToString() ?? "";
-        var radix = args.Count > 1 && args[1] != null ? (int)(double)args[1]! : 10;
-        return ParseInt(str, radix);
+        var str = args[0].Kind == ValueKind.String
+            ? args[0].AsString()
+            : args[0].ToObject()?.ToString() ?? "";
+        var radix = args.Length > 1 && args[1].Kind == ValueKind.Number
+            ? (int)args[1].AsNumber()
+            : 10;
+        return RuntimeValue.FromNumber(ParseInt(str, radix));
     }
 
-    private static object? ParseFloatMethod(Interpreter _, List<object?> args)
+    private static RuntimeValue ParseFloatV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var str = args[0]?.ToString() ?? "";
-        return ParseFloat(str);
-    }
-
-    private static object? IsNaNMethod(Interpreter _, List<object?> args)
-    {
-        // Number.isNaN only returns true for actual NaN values (stricter than global isNaN)
-        if (args[0] is not double d) return false;
-        return double.IsNaN(d);
-    }
-
-    private static object? IsFiniteMethod(Interpreter _, List<object?> args)
-    {
-        // Number.isFinite only returns true for finite numbers (stricter than global isFinite)
-        if (args[0] is not double d) return false;
-        return double.IsFinite(d);
-    }
-
-    private static object? IsIntegerMethod(Interpreter _, List<object?> args)
-    {
-        if (args[0] is not double d) return false;
-        return double.IsFinite(d) && Math.Truncate(d) == d;
-    }
-
-    private static object? IsSafeIntegerMethod(Interpreter _, List<object?> args)
-    {
-        if (args[0] is not double d) return false;
-        return double.IsFinite(d) &&
-               Math.Truncate(d) == d &&
-               Math.Abs(d) <= MAX_SAFE_INTEGER;
+        var str = args[0].Kind == ValueKind.String
+            ? args[0].AsString()
+            : args[0].ToObject()?.ToString() ?? "";
+        return RuntimeValue.FromNumber(ParseFloat(str));
     }
 
     // Instance method implementations
