@@ -294,7 +294,7 @@ public partial class ILEmitter
         }
     }
 
-    public void EmitExpressionAsDouble(Expr expr)
+    public override void EmitExpressionAsDouble(Expr expr)
     {
         // Emit expression and ensure result is a double on the stack
         if (expr is Expr.Literal lit && lit.Value is double d)

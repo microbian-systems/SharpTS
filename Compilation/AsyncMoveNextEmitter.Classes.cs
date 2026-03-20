@@ -7,190 +7,22 @@ namespace SharpTS.Compilation;
 
 public partial class AsyncMoveNextEmitter
 {
-    /// <summary>
-    /// Extracts a qualified class name from a callee expression.
-    /// </summary>
-    private static (List<string> namespaceParts, string className) ExtractQualifiedNameFromCallee(Expr callee)
-    {
-        List<string> parts = [];
-        CollectGetChainParts(callee, parts);
-
-        if (parts.Count == 0)
-            return ([], "");
-
-        var namespaceParts = parts.Count > 1 ? parts.Take(parts.Count - 1).ToList() : [];
-        var className = parts[^1];
-        return (namespaceParts, className);
-    }
-
-    private static void CollectGetChainParts(Expr expr, List<string> parts)
-    {
-        switch (expr)
-        {
-            case Expr.Variable v:
-                parts.Add(v.Name.Lexeme);
-                break;
-            case Expr.Get g:
-                CollectGetChainParts(g.Object, parts);
-                parts.Add(g.Name.Lexeme);
-                break;
-        }
-    }
-
     protected override void EmitNew(Expr.New n)
     {
         // Extract qualified name from callee expression
         var (namespaceParts, className) = ExtractQualifiedNameFromCallee(n.Callee);
 
-        // Handle built-in type constructors first
-        bool isSimpleName = namespaceParts.Count == 0 && n.Callee is Expr.Variable;
-
-        // Special case: new Promise((resolve, reject) => { ... }) constructor
-        if (isSimpleName && className == "Promise")
-        {
-            EmitNewPromise(n.Arguments);
+        // Handle built-in type constructors (simple name)
+        if (namespaceParts.Count == 0 && n.Callee is Expr.Variable && TryEmitBuiltInConstructor(className, n.Arguments))
             return;
-        }
 
-        // Special case: new AbortController() constructor
-        if (isSimpleName && className == "AbortController")
-        {
-            _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateAbortController);
-            SetStackUnknown();
+        // Handle Intl.* constructors
+        if (TryEmitIntlConstructor(namespaceParts, className, n.Arguments))
             return;
-        }
 
-        // Special case: new AsyncLocalStorage() constructor
-        if (isSimpleName && className == "AsyncLocalStorage")
-        {
-            _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSAsyncLocalStorageCtor);
-            SetStackUnknown();
+        // Handle module-qualified constructors (e.g., new util.TextEncoder())
+        if (TryEmitModuleQualifiedConstructor(namespaceParts, className, n.Arguments))
             return;
-        }
-
-        // Special case: new Date(...) constructor
-        if (isSimpleName && className == "Date")
-        {
-            switch (n.Arguments.Count)
-            {
-                case 0:
-                    _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateDateNoArgs);
-                    break;
-                case 1:
-                    EmitExpression(n.Arguments[0]);
-                    EnsureBoxed();
-                    _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateDateFromValue);
-                    break;
-                default:
-                    // new Date(year, month, day?, hours?, minutes?, seconds?, ms?)
-                    for (int i = 0; i < 7; i++)
-                    {
-                        if (i < n.Arguments.Count)
-                        {
-                            EmitExpressionAsDouble(n.Arguments[i]);
-                        }
-                        else
-                        {
-                            _il.Emit(OpCodes.Ldc_R8, i == 2 ? 1.0 : 0.0);
-                        }
-                    }
-                    _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateDateFromComponents);
-                    break;
-            }
-            SetStackUnknown();
-            return;
-        }
-
-        // Special case: new Headers(...) constructor
-        if (isSimpleName && className == "Headers")
-        {
-            if (n.Arguments.Count > 0)
-            {
-                EmitExpression(n.Arguments[0]);
-                EnsureBoxed();
-            }
-            else
-            {
-                _il.Emit(OpCodes.Ldnull);
-            }
-            _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSHeadersCtor);
-            SetStackUnknown();
-            return;
-        }
-
-        // Special case: new Request(...) constructor
-        if (isSimpleName && className == "Request")
-        {
-            if (n.Arguments.Count > 0) { EmitExpression(n.Arguments[0]); EnsureBoxed(); }
-            else _il.Emit(OpCodes.Ldnull);
-            if (n.Arguments.Count > 1) { EmitExpression(n.Arguments[1]); EnsureBoxed(); }
-            else _il.Emit(OpCodes.Ldnull);
-            _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSRequestCtor);
-            SetStackUnknown();
-            return;
-        }
-
-        // Special case: new Response(...) constructor
-        if (isSimpleName && className == "Response")
-        {
-            if (n.Arguments.Count > 0) { EmitExpression(n.Arguments[0]); EnsureBoxed(); }
-            else _il.Emit(OpCodes.Ldnull);
-            if (n.Arguments.Count > 1) { EmitExpression(n.Arguments[1]); EnsureBoxed(); }
-            else _il.Emit(OpCodes.Ldnull);
-            _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSResponseCtor);
-            SetStackUnknown();
-            return;
-        }
-
-        // Special case: new Intl.NumberFormat(locale?, options?) constructor
-        if (namespaceParts is ["Intl"] && className == "NumberFormat")
-        {
-            EmitNewIntlNumberFormat(n.Arguments);
-            return;
-        }
-
-        // Special case: new Intl.DateTimeFormat(locale?, options?) constructor
-        if (namespaceParts is ["Intl"] && className == "DateTimeFormat")
-        {
-            EmitNewIntlDateTimeFormat(n.Arguments);
-            return;
-        }
-
-        if (namespaceParts is ["Intl"] && className == "Collator")
-        {
-            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlCollator);
-            return;
-        }
-
-        if (namespaceParts is ["Intl"] && className == "PluralRules")
-        {
-            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlPluralRules);
-            return;
-        }
-
-        if (namespaceParts is ["Intl"] && className == "RelativeTimeFormat")
-        {
-            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlRelativeTimeFormat);
-            return;
-        }
-
-        if (namespaceParts is ["Intl"] && className == "ListFormat")
-        {
-            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlListFormat);
-            return;
-        }
-
-        if (namespaceParts is ["Intl"] && className == "Segmenter")
-        {
-            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlSegmenter);
-            return;
-        }
-
-        if (namespaceParts is ["Intl"] && className == "DisplayNames")
-        {
-            EmitNewIntlConstructor(n.Arguments, _ctx!.Runtime!.CreateIntlDisplayNames);
-            return;
-        }
 
         // Resolve class name (may be qualified for namespace classes or multi-module compilation)
         string resolvedClassName;
@@ -311,86 +143,6 @@ public partial class AsyncMoveNextEmitter
         }
     }
 
-    private void EmitNewIntlNumberFormat(List<Expr> arguments)
-    {
-        // Emit locale argument (or null)
-        if (arguments.Count > 0)
-        {
-            EmitExpression(arguments[0]);
-            EnsureBoxed();
-        }
-        else
-        {
-            _il.Emit(OpCodes.Ldnull);
-        }
-
-        // Emit options argument (or null)
-        if (arguments.Count > 1)
-        {
-            EmitExpression(arguments[1]);
-            EnsureBoxed();
-        }
-        else
-        {
-            _il.Emit(OpCodes.Ldnull);
-        }
-
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateIntlNumberFormat);
-        SetStackUnknown();
-    }
-
-    private void EmitNewIntlDateTimeFormat(List<Expr> arguments)
-    {
-        if (arguments.Count > 0)
-        {
-            EmitExpression(arguments[0]);
-            EnsureBoxed();
-        }
-        else
-        {
-            _il.Emit(OpCodes.Ldnull);
-        }
-
-        if (arguments.Count > 1)
-        {
-            EmitExpression(arguments[1]);
-            EnsureBoxed();
-        }
-        else
-        {
-            _il.Emit(OpCodes.Ldnull);
-        }
-
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateIntlDateTimeFormat);
-        SetStackUnknown();
-    }
-
-    private void EmitNewIntlConstructor(List<Expr> arguments, System.Reflection.Emit.MethodBuilder createMethod)
-    {
-        if (arguments.Count > 0)
-        {
-            EmitExpression(arguments[0]);
-            EnsureBoxed();
-        }
-        else
-        {
-            _il.Emit(OpCodes.Ldnull);
-        }
-
-        if (arguments.Count > 1)
-        {
-            EmitExpression(arguments[1]);
-            EnsureBoxed();
-        }
-        else
-        {
-            _il.Emit(OpCodes.Ldnull);
-        }
-
-        _il.Emit(OpCodes.Call, createMethod);
-        SetStackUnknown();
-    }
-
     private Type ResolveTypeArg(string typeArg)
     {
         // Simple type argument resolution - similar to ILEmitter
@@ -419,24 +171,5 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Ldnull);
             SetStackType(StackType.Null);
         }
-    }
-
-    /// <summary>
-    /// Emits code for new Promise((resolve, reject) => { ... }) construction in async context.
-    /// </summary>
-    private void EmitNewPromise(List<Expr> arguments)
-    {
-        if (arguments.Count != 1)
-        {
-            throw new CompileException("Promise constructor requires exactly 1 argument (executor function).");
-        }
-
-        // Emit the executor argument
-        EmitExpression(arguments[0]);
-        EnsureBoxed();
-
-        // Call runtime PromiseFromExecutor(executor)
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.PromiseFromExecutor);
-        SetStackUnknown();
     }
 }

@@ -22,9 +22,4 @@ public partial class GeneratorMoveNextEmitter
         }
     }
 
-    private void EmitCompoundOperation(TokenType opType)
-    {
-        // Use centralized helper for compound operations
-        _helpers.EmitCompoundOperation(opType, _ctx!.Runtime!.Add);
-    }
 }

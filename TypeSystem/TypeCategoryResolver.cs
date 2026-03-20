@@ -138,6 +138,7 @@ public static class TypeCategoryResolver
         TypeCategory.AbortSignal => true,
         TypeCategory.Iterator => true,
         TypeCategory.Generator => true,
+        TypeCategory.AsyncGenerator => true,
         _ => false
     };
 

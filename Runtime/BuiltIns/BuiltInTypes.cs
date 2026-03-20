@@ -938,6 +938,7 @@ public static class BuiltInTypes
         {
             "next" => new TypeInfo.Function([], AnyType),
             "return" => new TypeInfo.Function([AnyType], AnyType, RequiredParams: 0),
+            "throw" => new TypeInfo.Function([AnyType], AnyType, RequiredParams: 0),
             "map" => new TypeInfo.Function(
                 [new TypeInfo.Function([elementType, NumberType], AnyType)],
                 new TypeInfo.Iterator(AnyType)),

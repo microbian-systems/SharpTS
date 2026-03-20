@@ -18,7 +18,7 @@ namespace SharpTS.Compilation;
 /// EmitAwait and EmitYield are virtual and throw by default; async/generator
 /// emitters override them with their implementations.
 /// </remarks>
-public abstract class ExpressionEmitterBase
+public abstract partial class ExpressionEmitterBase
 {
     protected readonly StateMachineEmitHelpers _helpers;
 
@@ -26,6 +26,12 @@ public abstract class ExpressionEmitterBase
     protected abstract CompilationContext Ctx { get; }
     protected abstract TypeProvider Types { get; }
     protected abstract IVariableResolver Resolver { get; }
+
+    /// <summary>
+    /// Gets the hoisted field for a variable name, or null if not hoisted.
+    /// Override in state machine emitters to check the builder's variable fields.
+    /// </summary>
+    protected virtual FieldBuilder? GetHoistedVariableField(string name) => null;
 
     protected ExpressionEmitterBase(StateMachineEmitHelpers helpers)
     {
@@ -272,17 +278,10 @@ public abstract class ExpressionEmitterBase
     protected abstract void EmitNew(Expr.New n);
     protected abstract void EmitThis();
     protected abstract void EmitSuper(Expr.Super s);
-    protected abstract void EmitCompoundAssign(Expr.CompoundAssign ca);
-    protected abstract void EmitCompoundSet(Expr.CompoundSet cs);
-    protected abstract void EmitCompoundSetIndex(Expr.CompoundSetIndex csi);
-    protected abstract void EmitLogicalAssign(Expr.LogicalAssign la);
-    protected abstract void EmitLogicalSet(Expr.LogicalSet ls);
-    protected abstract void EmitLogicalSetIndex(Expr.LogicalSetIndex lsi);
-    protected abstract void EmitPrefixIncrement(Expr.PrefixIncrement pi);
-    protected abstract void EmitPostfixIncrement(Expr.PostfixIncrement poi);
+    // EmitCompoundAssign, EmitLogicalAssign, EmitPrefixIncrement, EmitPostfixIncrement
+    // are implemented in ExpressionEmitterBase.Operators.cs as virtual methods.
+    // ILEmitter and AsyncArrowMoveNextEmitter override with their own implementations.
     protected abstract void EmitArrowFunction(Expr.ArrowFunction af);
-    protected abstract void EmitDynamicImport(Expr.DynamicImport di);
-    protected abstract void EmitImportMeta(Expr.ImportMeta im);
     protected abstract void EmitClassExpression(Expr.ClassExpr ce);
     protected abstract void EmitDelete(Expr.Delete del);
     #endregion

@@ -50,11 +50,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
 
     #region Virtual Methods - Variable Declaration
 
-    /// <summary>
-    /// Gets the hoisted field for a variable name, or null if not hoisted.
-    /// Override in state machine emitters to check the builder's variable fields.
-    /// </summary>
-    protected virtual FieldBuilder? GetHoistedVariableField(string name) => null;
+    // GetHoistedVariableField moved to ExpressionEmitterBase for EmitStoreVariable access.
 
     /// <summary>
     /// Declares and initializes a variable.

@@ -53,6 +53,8 @@ public partial class TypeChecker
                 BuiltInTypes.GetIteratorMemberType(memberName, iter.ElementType),
             TypeCategory.Generator when objType is TypeInfo.Generator gen =>
                 BuiltInTypes.GetIteratorMemberType(memberName, gen.YieldType),
+            TypeCategory.AsyncGenerator when objType is TypeInfo.AsyncGenerator asyncGen =>
+                BuiltInTypes.GetIteratorMemberType(memberName, asyncGen.YieldType),
             _ => null
         };
     }

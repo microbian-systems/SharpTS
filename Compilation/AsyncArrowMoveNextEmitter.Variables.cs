@@ -91,6 +91,8 @@ public partial class AsyncArrowMoveNextEmitter
         SetStackUnknown();
     }
 
+    protected override void EmitStoreVariable(string name) => StoreVariable(name);
+
     private void LoadVariable(string name)
     {
         // Check if it's a parameter of this arrow

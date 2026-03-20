@@ -64,7 +64,7 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
     /// <summary>
     /// Emits an expression and ensures the result is an unboxed double on the stack.
     /// </summary>
-    public void EmitExpressionAsDouble(Expr expr)
+    public override void EmitExpressionAsDouble(Expr expr)
     {
         if (expr is Expr.Literal lit && lit.Value is double d)
         {
