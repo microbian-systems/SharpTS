@@ -305,11 +305,11 @@ public partial class Interpreter
     /// bitwise (&amp;, |, ^, &lt;&lt;, &gt;&gt;, &gt;&gt;&gt;), and special operators (in, instanceof).
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Expressions_and_operators">MDN Expressions and Operators</seealso>
-    private object? EvaluateBinary(Expr.Binary binary)
+    private RuntimeValue EvaluateBinary(Expr.Binary binary)
     {
         object? left = Evaluate(binary.Left);
         object? right = Evaluate(binary.Right);
-        return EvaluateBinaryOperation(binary.Operator, left, right);
+        return RuntimeValue.FromBoxed(EvaluateBinaryOperation(binary.Operator, left, right));
     }
 
     /// <summary>

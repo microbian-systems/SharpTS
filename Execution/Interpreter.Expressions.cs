@@ -48,12 +48,12 @@ public partial class Interpreter
     // the FromBoxed() wrapping can be removed.
 
     internal RuntimeValue VisitComma(Expr.Comma comma) { Evaluate(comma.Left); return RuntimeValue.FromBoxed(Evaluate(comma.Right)); }
-    internal RuntimeValue VisitBinary(Expr.Binary binary) => RuntimeValue.FromBoxed(EvaluateBinary(binary));
+    internal RuntimeValue VisitBinary(Expr.Binary binary) => EvaluateBinary(binary);
     internal RuntimeValue VisitLogical(Expr.Logical logical) => RuntimeValue.FromBoxed(EvaluateLogical(logical));
     internal RuntimeValue VisitNullishCoalescing(Expr.NullishCoalescing nc) => RuntimeValue.FromBoxed(EvaluateNullishCoalescing(nc));
     internal RuntimeValue VisitTernary(Expr.Ternary ternary) => RuntimeValue.FromBoxed(EvaluateTernary(ternary));
     internal RuntimeValue VisitGrouping(Expr.Grouping grouping) => EvaluateRV(grouping.Expression);
-    internal RuntimeValue VisitLiteral(Expr.Literal literal) => RuntimeValue.FromBoxed(EvaluateLiteral(literal));
+    internal RuntimeValue VisitLiteral(Expr.Literal literal) => EvaluateLiteral(literal);
     internal RuntimeValue VisitUnary(Expr.Unary unary) => RuntimeValue.FromBoxed(EvaluateUnary(unary));
     internal RuntimeValue VisitDelete(Expr.Delete delete) => RuntimeValue.FromBoxed(EvaluateDelete(delete));
     internal RuntimeValue VisitVariable(Expr.Variable variable) => RuntimeValue.FromBoxed(EvaluateVariable(variable));
@@ -116,12 +116,12 @@ public partial class Interpreter
         switch (expr)
         {
             case Expr.Comma comma: await EvaluateAsync(comma.Left); return await EvaluateAsync(comma.Right);
-            case Expr.Binary binary: return await EvaluateBinaryAsync(binary);
+            case Expr.Binary binary: return (await EvaluateBinaryAsync(binary));
             case Expr.Logical logical: return await EvaluateLogicalAsync(logical);
             case Expr.NullishCoalescing nc: return await EvaluateNullishCoalescingAsync(nc);
             case Expr.Ternary ternary: return await EvaluateTernaryAsync(ternary);
             case Expr.Grouping grouping: return await EvaluateAsync(grouping.Expression);
-            case Expr.Literal literal: return EvaluateLiteral(literal);
+            case Expr.Literal literal: return EvaluateLiteral(literal).ToObject();
             case Expr.Unary unary: return await EvaluateUnaryAsync(unary);
             case Expr.Delete delete: return await EvaluateDeleteAsync(delete);
             case Expr.Variable variable: return EvaluateVariable(variable);
@@ -202,14 +202,18 @@ public partial class Interpreter
     /// </summary>
     /// <param name="literal">The literal expression AST node.</param>
     /// <returns>The literal value, with BigInteger wrapped in SharpTSBigInt.</returns>
-    private object? EvaluateLiteral(Expr.Literal literal)
+    private RuntimeValue EvaluateLiteral(Expr.Literal literal)
     {
-        // Wrap BigInteger in SharpTSBigInt for proper toString behavior
-        if (literal.Value is BigInteger bi)
+        return literal.Value switch
         {
-            return new SharpTSBigInt(bi);
-        }
-        return literal.Value;
+            null => RuntimeValue.Null,
+            double d => RuntimeValue.FromNumber(d),
+            int i => RuntimeValue.FromNumber(i),
+            string s => RuntimeValue.FromString(s),
+            bool b => RuntimeValue.FromBoolean(b),
+            BigInteger bi => RuntimeValue.FromObject(new SharpTSBigInt(bi)),
+            _ => RuntimeValue.FromBoxed(literal.Value)
+        };
     }
 
     /// <summary>
