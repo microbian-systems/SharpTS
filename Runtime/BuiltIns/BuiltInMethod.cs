@@ -46,6 +46,12 @@ public class BuiltInMethod : ISharpTSCallable, ISharpTSCallableV2
     /// </summary>
     public string Name => _name;
 
+    /// <summary>
+    /// Returns true if this method has a native V2 (RuntimeValue) implementation,
+    /// meaning CallV2 can bypass the legacy wrapper for better performance.
+    /// </summary>
+    public bool HasV2Implementation => _implementationV2 != null;
+
     /// <inheritdoc />
     int ISharpTSCallableV2.Arity => _minArity;
 

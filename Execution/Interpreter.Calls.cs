@@ -15,13 +15,34 @@ public partial class Interpreter
 {
     /// <summary>
     /// Calls a built-in method with pooled argument list to reduce allocations.
-    /// The pooled list is automatically returned to the pool after the call.
+    /// Uses V2 (RuntimeValue) fast path when the method supports it, avoiding
+    /// the legacy wrapper overhead.
     /// </summary>
     private async ValueTask<object?> CallBuiltInWithPooledArgs(
         IEvaluationContext ctx,
         ISharpTSCallable method,
         IReadOnlyList<Expr> arguments)
     {
+        // V2 fast path: use RuntimeValue span instead of List<object?>
+        if (method is ISharpTSCallableV2 v2 && method is BuiltInMethod bm && bm.HasV2Implementation)
+        {
+            var argCount = arguments.Count;
+            var rented = ArrayPool<RuntimeValue>.Shared.Rent(Math.Max(argCount, 1));
+            try
+            {
+                for (int i = 0; i < argCount; i++)
+                {
+                    rented[i] = RuntimeValue.FromBoxed(await ctx.EvaluateExprAsync(arguments[i]));
+                }
+                return v2.CallV2(this, rented.AsSpan(0, argCount)).ToObject();
+            }
+            finally
+            {
+                ArrayPool<RuntimeValue>.Shared.Return(rented);
+            }
+        }
+
+        // Legacy path
         var pooledList = ArgumentListPool.Rent();
         try
         {
@@ -134,9 +155,30 @@ public partial class Interpreter
 
     /// <summary>
     /// Calls a built-in method with sync evaluation.
+    /// Uses V2 (RuntimeValue) fast path when the method supports it.
     /// </summary>
     private object? CallBuiltInSync(ISharpTSCallable method, IReadOnlyList<Expr> arguments)
     {
+        // V2 fast path
+        if (method is ISharpTSCallableV2 v2 && method is BuiltInMethod bm && bm.HasV2Implementation)
+        {
+            var argCount = arguments.Count;
+            var rented = ArrayPool<RuntimeValue>.Shared.Rent(Math.Max(argCount, 1));
+            try
+            {
+                for (int i = 0; i < argCount; i++)
+                {
+                    rented[i] = RuntimeValue.FromBoxed(Evaluate(arguments[i]));
+                }
+                return v2.CallV2(this, rented.AsSpan(0, argCount)).ToObject();
+            }
+            finally
+            {
+                ArrayPool<RuntimeValue>.Shared.Return(rented);
+            }
+        }
+
+        // Legacy path
         var pooledList = ArgumentListPool.Rent();
         try
         {
