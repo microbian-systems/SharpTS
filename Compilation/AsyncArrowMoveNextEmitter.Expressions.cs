@@ -630,6 +630,30 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
+        // Special case: new Request(...) constructor
+        if (isSimpleName && className == "Request")
+        {
+            if (n.Arguments.Count > 0) { EmitExpression(n.Arguments[0]); EnsureBoxed(); }
+            else _il.Emit(OpCodes.Ldnull);
+            if (n.Arguments.Count > 1) { EmitExpression(n.Arguments[1]); EnsureBoxed(); }
+            else _il.Emit(OpCodes.Ldnull);
+            _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSRequestCtor);
+            SetStackUnknown();
+            return;
+        }
+
+        // Special case: new Response(...) constructor
+        if (isSimpleName && className == "Response")
+        {
+            if (n.Arguments.Count > 0) { EmitExpression(n.Arguments[0]); EnsureBoxed(); }
+            else _il.Emit(OpCodes.Ldnull);
+            if (n.Arguments.Count > 1) { EmitExpression(n.Arguments[1]); EnsureBoxed(); }
+            else _il.Emit(OpCodes.Ldnull);
+            _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSResponseCtor);
+            SetStackUnknown();
+            return;
+        }
+
         // Special case: new Intl.NumberFormat(locale?, options?) constructor
         if (namespaceParts is ["Intl"] && className == "NumberFormat")
         {

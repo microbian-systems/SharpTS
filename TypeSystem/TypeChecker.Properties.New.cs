@@ -363,6 +363,22 @@ public partial class TypeChecker
             return new TypeInfo.Any();
         }
 
+        // Handle new Request(url, init?) constructor
+        if (isSimpleName && simpleClassName == "Request")
+        {
+            foreach (var arg in newExpr.Arguments)
+                CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
+        // Handle new Response(body?, init?) constructor
+        if (isSimpleName && simpleClassName == "Response")
+        {
+            foreach (var arg in newExpr.Arguments)
+                CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
         // Handle new SharedArrayBuffer(byteLength) constructor
         if (isSimpleName && simpleClassName == "SharedArrayBuffer")
         {

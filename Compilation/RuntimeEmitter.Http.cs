@@ -68,6 +68,13 @@ public partial class RuntimeEmitter
         // Emit the $FetchResponse class
         EmitFetchResponseClass(moduleBuilder, runtime);
 
+        // Emit $Request and $Response classes
+        EmitRequestClass(moduleBuilder, runtime);
+        EmitResponseClass(moduleBuilder, runtime);
+
+        // Emit Response static methods
+        EmitResponseStaticMethods(typeBuilder, runtime);
+
         // Emit fetch function
         EmitFetch(typeBuilder, runtime);
 
@@ -457,6 +464,7 @@ public partial class RuntimeEmitter
 
         runtime.TSHeadersType = typeBuilder;
         runtime.TSHeadersCtor = ctor;
+        runtime.TSHeadersSetMethod = _headersSetMethodBuilder;
 
         typeBuilder.CreateType();
     }
@@ -498,9 +506,12 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits: public object set(object name, object value) → undefined
     /// </summary>
+    private MethodBuilder _headersSetMethodBuilder = null!;
+
     private void EmitHeadersSetMethod(TypeBuilder typeBuilder, Type listOfStringType, Type dictType)
     {
         var method = typeBuilder.DefineMethod("set", MethodAttributes.Public, _types.Object, [_types.Object, _types.Object]);
+        _headersSetMethodBuilder = method;
         var il = method.GetILGenerator();
 
         // string name = arg0?.ToString() ?? ""
@@ -2192,6 +2203,735 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Call, runtime.SetProperty);
 
+        il.Emit(OpCodes.Ret);
+    }
+
+    // ===== $Request class fields =====
+    private FieldBuilder _requestMethodField = null!;
+    private FieldBuilder _requestUrlField = null!;
+    private FieldBuilder _requestHeadersField = null!;
+    private FieldBuilder _requestBodyField = null!;
+    private FieldBuilder _requestBodyBytesField = null!;
+    private FieldBuilder _requestBodyConsumedField = null!;
+
+    /// <summary>
+    /// Emits the $Request class for standalone Request constructor support.
+    /// Constructor: (object url, object? init) — parses init for method, headers, body.
+    /// </summary>
+    private void EmitRequestClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$Request",
+            TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.BeforeFieldInit,
+            _types.Object
+        );
+
+        // Fields
+        _requestMethodField = typeBuilder.DefineField("_method", _types.String, FieldAttributes.Private);
+        _requestUrlField = typeBuilder.DefineField("_url", _types.String, FieldAttributes.Private);
+        _requestHeadersField = typeBuilder.DefineField("_headers", _types.Object, FieldAttributes.Private);
+        _requestBodyField = typeBuilder.DefineField("_body", _types.Object, FieldAttributes.Private);
+        _requestBodyBytesField = typeBuilder.DefineField("_bodyBytes", _types.ByteArray, FieldAttributes.Private);
+        _requestBodyConsumedField = typeBuilder.DefineField("_bodyConsumed", _types.Boolean, FieldAttributes.Private);
+
+        // Constructor: (object url, object? init)
+        var ctor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.Object, _types.Object]
+        );
+
+        var il = ctor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _types.Object.GetConstructor(Type.EmptyTypes)!);
+
+        // _url = url?.ToString() ?? ""
+        var urlLocal = il.DeclareLocal(_types.String);
+        EmitArgToString(il, 1, urlLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, urlLocal);
+        il.Emit(OpCodes.Stfld, _requestUrlField);
+
+        // _method = "GET" (default)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "GET");
+        il.Emit(OpCodes.Stfld, _requestMethodField);
+
+        // _headers = new $Headers(null)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Newobj, runtime.TSHeadersCtor);
+        il.Emit(OpCodes.Stfld, _requestHeadersField);
+
+        // if (init != null) parse init properties
+        var endInit = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, endInit);
+
+        // _method = GetProperty(init, "method")?.ToString()?.ToUpperInvariant() ?? "GET"
+        var methodLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldstr, "method");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, methodLocal);
+
+        var skipMethod = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Brfalse, skipMethod);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, methodLocal);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("ToUpperInvariant")!);
+        il.Emit(OpCodes.Stfld, _requestMethodField);
+        il.MarkLabel(skipMethod);
+
+        // headers from init
+        var headersLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldstr, "headers");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, headersLocal);
+
+        var skipHeaders = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, headersLocal);
+        il.Emit(OpCodes.Brfalse, skipHeaders);
+        // _headers = new $Headers(headersObj)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, headersLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSHeadersCtor);
+        il.Emit(OpCodes.Stfld, _requestHeadersField);
+        il.MarkLabel(skipHeaders);
+
+        // body from init
+        var bodyLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldstr, "body");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, bodyLocal);
+
+        var skipBody = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, bodyLocal);
+        il.Emit(OpCodes.Brfalse, skipBody);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, bodyLocal);
+        il.Emit(OpCodes.Stfld, _requestBodyField);
+        il.MarkLabel(skipBody);
+
+        il.MarkLabel(endInit);
+        il.Emit(OpCodes.Ret);
+
+        // Property getters
+        EmitFetchResponsePropertyGetter(typeBuilder, "method", _types.String, _requestMethodField);
+        EmitFetchResponsePropertyGetter(typeBuilder, "url", _types.String, _requestUrlField);
+        EmitFetchResponsePropertyGetter(typeBuilder, "headers", _types.Object, _requestHeadersField);
+        EmitFetchResponsePropertyGetter(typeBuilder, "body", _types.Object, _requestBodyField);
+        EmitFetchResponsePropertyGetter(typeBuilder, "bodyUsed", _types.Boolean, _requestBodyConsumedField);
+
+        // Body reading methods (text, json, arrayBuffer) and clone
+        EmitRequestTextMethod(typeBuilder, runtime);
+        EmitRequestJsonMethod(typeBuilder, runtime);
+        EmitRequestArrayBufferMethod(typeBuilder, runtime);
+        EmitRequestCloneMethod(typeBuilder, runtime, ctor);
+
+        runtime.TSRequestType = typeBuilder;
+        runtime.TSRequestCtor = ctor;
+
+        typeBuilder.CreateType();
+    }
+
+    private void EmitRequestTextMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("text", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+
+        // Get body as string: body?.ToString() ?? ""
+        var bodyLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _requestBodyField);
+        il.Emit(OpCodes.Stloc, bodyLocal);
+
+        var hasBody = il.DefineLabel();
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, bodyLocal);
+        il.Emit(OpCodes.Brtrue, hasBody);
+
+        // No body — return Promise.resolve("")
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Br, done);
+
+        il.MarkLabel(hasBody);
+        il.Emit(OpCodes.Ldloc, bodyLocal);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+
+        il.MarkLabel(done);
+        // Mark consumed
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _requestBodyConsumedField);
+        // Wrap in Promise
+        il.Emit(OpCodes.Call, runtime.TSPromiseResolve);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitRequestJsonMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("json", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+
+        // Get body as string then parse JSON
+        var bodyLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _requestBodyField);
+        il.Emit(OpCodes.Stloc, bodyLocal);
+
+        var hasBody = il.DefineLabel();
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, bodyLocal);
+        il.Emit(OpCodes.Brtrue, hasBody);
+
+        // No body — parse empty string
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Br, done);
+
+        il.MarkLabel(hasBody);
+        il.Emit(OpCodes.Ldloc, bodyLocal);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+
+        il.MarkLabel(done);
+        il.Emit(OpCodes.Call, runtime.JsonParse);
+        // Mark consumed
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _requestBodyConsumedField);
+        il.Emit(OpCodes.Call, runtime.TSPromiseResolve);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitRequestArrayBufferMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("arrayBuffer", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+
+        // Convert body to bytes, create Buffer
+        var bodyLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _requestBodyField);
+        il.Emit(OpCodes.Stloc, bodyLocal);
+
+        var hasBody = il.DefineLabel();
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, bodyLocal);
+        il.Emit(OpCodes.Brtrue, hasBody);
+
+        // No body — empty buffer
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Byte);
+        il.Emit(OpCodes.Br, done);
+
+        il.MarkLabel(hasBody);
+        // Encoding.UTF8.GetBytes(body.ToString())
+        il.Emit(OpCodes.Call, _types.Encoding.GetProperty("UTF8")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, bodyLocal);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Callvirt, _types.Encoding.GetMethod("GetString", [_types.ByteArray])!.DeclaringType!
+            .GetMethod("GetBytes", [_types.String])!);
+
+        il.MarkLabel(done);
+        il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+        // Mark consumed
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _requestBodyConsumedField);
+        il.Emit(OpCodes.Call, runtime.TSPromiseResolve);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitRequestCloneMethod(TypeBuilder typeBuilder, EmittedRuntime runtime, ConstructorBuilder ctor)
+    {
+        var method = typeBuilder.DefineMethod("clone", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+
+        // Build an init object with current properties, call constructor
+        // For simplicity: new $Request(url, null) then copy fields
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _requestUrlField);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Newobj, ctor);
+
+        // Copy _method
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _requestMethodField);
+        il.Emit(OpCodes.Stfld, _requestMethodField);
+
+        // Copy _headers
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _requestHeadersField);
+        il.Emit(OpCodes.Stfld, _requestHeadersField);
+
+        // Copy _body
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _requestBodyField);
+        il.Emit(OpCodes.Stfld, _requestBodyField);
+
+        il.Emit(OpCodes.Ret);
+    }
+
+    // ===== $Response class fields =====
+    private FieldBuilder _responseStatusField = null!;
+    private FieldBuilder _responseStatusTextField = null!;
+    private FieldBuilder _responseOkField = null!;
+    private FieldBuilder _responseHeadersField = null!;
+    private FieldBuilder _responseBodyBytesField = null!;
+    private FieldBuilder _responseBodyConsumedField = null!;
+    private FieldBuilder _responseTypeField = null!;
+
+    /// <summary>
+    /// Emits the $Response class for standalone Response constructor support.
+    /// Constructor: (object? body, object? init) — parses init for status, statusText, headers.
+    /// </summary>
+    private void EmitResponseClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$Response",
+            TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.BeforeFieldInit,
+            _types.Object
+        );
+
+        // Fields
+        _responseStatusField = typeBuilder.DefineField("_status", _types.Double, FieldAttributes.Assembly);
+        _responseStatusTextField = typeBuilder.DefineField("_statusText", _types.String, FieldAttributes.Assembly);
+        _responseOkField = typeBuilder.DefineField("_ok", _types.Boolean, FieldAttributes.Assembly);
+        _responseHeadersField = typeBuilder.DefineField("_headers", _types.Object, FieldAttributes.Assembly);
+        _responseBodyBytesField = typeBuilder.DefineField("_bodyBytes", _types.ByteArray, FieldAttributes.Assembly);
+        _responseBodyConsumedField = typeBuilder.DefineField("_bodyConsumed", _types.Boolean, FieldAttributes.Assembly);
+        _responseTypeField = typeBuilder.DefineField("_type", _types.String, FieldAttributes.Assembly);
+
+        // Constructor: (object? body, object? init)
+        var ctor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.Object, _types.Object]
+        );
+
+        var il = ctor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _types.Object.GetConstructor(Type.EmptyTypes)!);
+
+        // Defaults
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_R8, 200.0);
+        il.Emit(OpCodes.Stfld, _responseStatusField);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Stfld, _responseStatusTextField);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1); // ok = true (200 is in range)
+        il.Emit(OpCodes.Stfld, _responseOkField);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "default");
+        il.Emit(OpCodes.Stfld, _responseTypeField);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Newobj, runtime.TSHeadersCtor);
+        il.Emit(OpCodes.Stfld, _responseHeadersField);
+
+        // Convert body to bytes
+        // if (body == null) _bodyBytes = new byte[0]
+        // else if (body is string) _bodyBytes = Encoding.UTF8.GetBytes(body.ToString())
+        // else _bodyBytes = Encoding.UTF8.GetBytes(body.ToString())
+        var bodyIsNull = il.DefineLabel();
+        var bodyDone = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, bodyIsNull);
+
+        // body != null: Encoding.UTF8.GetBytes(body.ToString())
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _types.Encoding.GetProperty("UTF8")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Callvirt, _types.Encoding.GetMethod("GetBytes", [_types.String])!);
+        il.Emit(OpCodes.Stfld, _responseBodyBytesField);
+        il.Emit(OpCodes.Br, bodyDone);
+
+        il.MarkLabel(bodyIsNull);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Byte);
+        il.Emit(OpCodes.Stfld, _responseBodyBytesField);
+
+        il.MarkLabel(bodyDone);
+
+        // Parse init if present
+        var endInit = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, endInit);
+
+        // status from init
+        var statusLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldstr, "status");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, statusLocal);
+
+        var skipStatus = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, statusLocal);
+        il.Emit(OpCodes.Brfalse, skipStatus);
+        // _status = (double)status
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, statusLocal);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stfld, _responseStatusField);
+        // _ok = status >= 200 && status <= 299
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _responseStatusField);
+        il.Emit(OpCodes.Ldc_R8, 200.0);
+        var notOk = il.DefineLabel();
+        var setOk = il.DefineLabel();
+        il.Emit(OpCodes.Blt, notOk);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _responseStatusField);
+        il.Emit(OpCodes.Ldc_R8, 299.0);
+        il.Emit(OpCodes.Bgt, notOk);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Br, setOk);
+        il.MarkLabel(notOk);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.MarkLabel(setOk);
+        il.Emit(OpCodes.Stfld, _responseOkField);
+        il.MarkLabel(skipStatus);
+
+        // statusText from init
+        var stLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldstr, "statusText");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, stLocal);
+
+        var skipST = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, stLocal);
+        il.Emit(OpCodes.Brfalse, skipST);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, stLocal);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stfld, _responseStatusTextField);
+        il.MarkLabel(skipST);
+
+        // headers from init
+        var hLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldstr, "headers");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, hLocal);
+
+        var skipH = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, hLocal);
+        il.Emit(OpCodes.Brfalse, skipH);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, hLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSHeadersCtor);
+        il.Emit(OpCodes.Stfld, _responseHeadersField);
+        il.MarkLabel(skipH);
+
+        il.MarkLabel(endInit);
+        il.Emit(OpCodes.Ret);
+
+        // Property getters
+        EmitFetchResponsePropertyGetter(typeBuilder, "status", _types.Double, _responseStatusField);
+        EmitFetchResponsePropertyGetter(typeBuilder, "statusText", _types.String, _responseStatusTextField);
+        EmitFetchResponsePropertyGetter(typeBuilder, "ok", _types.Boolean, _responseOkField);
+        EmitFetchResponsePropertyGetter(typeBuilder, "headers", _types.Object, _responseHeadersField);
+        EmitFetchResponsePropertyGetter(typeBuilder, "bodyUsed", _types.Boolean, _responseBodyConsumedField);
+        EmitFetchResponsePropertyGetter(typeBuilder, "type", _types.String, _responseTypeField);
+
+        // Computed properties (url = "", redirected = false)
+        EmitResponseConstantProperty(typeBuilder, "url", _types.String, "");
+        EmitResponseConstantBoolProperty(typeBuilder, "redirected", false);
+
+        // Body reading methods
+        EmitResponseTextMethod(typeBuilder, runtime);
+        EmitResponseJsonMethod(typeBuilder, runtime);
+        EmitResponseArrayBufferMethod(typeBuilder, runtime);
+        EmitResponseCloneMethod(typeBuilder, runtime, ctor);
+
+        runtime.TSResponseType = typeBuilder;
+        runtime.TSResponseCtor = ctor;
+
+        typeBuilder.CreateType();
+    }
+
+    private void EmitResponseConstantProperty(TypeBuilder typeBuilder, string name, Type returnType, string value)
+    {
+        var pascalName = char.ToUpperInvariant(name[0]) + name[1..];
+        var getter = typeBuilder.DefineMethod(
+            $"get_{pascalName}",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig,
+            returnType,
+            Type.EmptyTypes
+        );
+        var il = getter.GetILGenerator();
+        il.Emit(OpCodes.Ldstr, value);
+        il.Emit(OpCodes.Ret);
+
+        var prop = typeBuilder.DefineProperty(name, PropertyAttributes.None, returnType, null);
+        prop.SetGetMethod(getter);
+    }
+
+    private void EmitResponseConstantBoolProperty(TypeBuilder typeBuilder, string name, bool value)
+    {
+        var pascalName = char.ToUpperInvariant(name[0]) + name[1..];
+        var getter = typeBuilder.DefineMethod(
+            $"get_{pascalName}",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig,
+            _types.Boolean,
+            Type.EmptyTypes
+        );
+        var il = getter.GetILGenerator();
+        il.Emit(value ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+
+        var prop = typeBuilder.DefineProperty(name, PropertyAttributes.None, _types.Boolean, null);
+        prop.SetGetMethod(getter);
+    }
+
+    private void EmitResponseTextMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("text", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Call, _types.Encoding.GetProperty("UTF8")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _responseBodyBytesField);
+        il.Emit(OpCodes.Callvirt, _types.Encoding.GetMethod("GetString", [_types.ByteArray])!);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _responseBodyConsumedField);
+
+        il.Emit(OpCodes.Call, runtime.TSPromiseResolve);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitResponseJsonMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("json", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Call, _types.Encoding.GetProperty("UTF8")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _responseBodyBytesField);
+        il.Emit(OpCodes.Callvirt, _types.Encoding.GetMethod("GetString", [_types.ByteArray])!);
+        il.Emit(OpCodes.Call, runtime.JsonParse);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _responseBodyConsumedField);
+
+        il.Emit(OpCodes.Call, runtime.TSPromiseResolve);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitResponseArrayBufferMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("arrayBuffer", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _responseBodyBytesField);
+        il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _responseBodyConsumedField);
+
+        il.Emit(OpCodes.Call, runtime.TSPromiseResolve);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitResponseCloneMethod(TypeBuilder typeBuilder, EmittedRuntime runtime, ConstructorBuilder ctor)
+    {
+        var method = typeBuilder.DefineMethod("clone", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+
+        // new $Response(null, null) then copy all fields
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Newobj, ctor);
+
+        // Copy status
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _responseStatusField);
+        il.Emit(OpCodes.Stfld, _responseStatusField);
+
+        // Copy statusText
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _responseStatusTextField);
+        il.Emit(OpCodes.Stfld, _responseStatusTextField);
+
+        // Copy ok
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _responseOkField);
+        il.Emit(OpCodes.Stfld, _responseOkField);
+
+        // Copy type
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _responseTypeField);
+        il.Emit(OpCodes.Stfld, _responseTypeField);
+
+        // Copy headers
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _responseHeadersField);
+        il.Emit(OpCodes.Stfld, _responseHeadersField);
+
+        // Copy body bytes
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _responseBodyBytesField);
+        il.Emit(OpCodes.Stfld, _responseBodyBytesField);
+
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Response static methods: ResponseJson, ResponseRedirect, ResponseError.
+    /// These are emitted as static methods on $Runtime but access $Response assembly-internal fields.
+    /// Headers are set by calling the $Headers "set" method directly.
+    /// </summary>
+    private void EmitResponseStaticMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // Get the $Headers.set method for calling on headers objects
+        var headersSetMethod = runtime.TSHeadersSetMethod;
+
+        // ResponseJson(object? data, object? init) → $Response
+        var jsonMethod = typeBuilder.DefineMethod(
+            "ResponseJson",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]
+        );
+        runtime.ResponseJsonStatic = jsonMethod;
+
+        var il = jsonMethod.GetILGenerator();
+        // JSON.stringify the data → string body
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.JsonStringify);
+        var bodyLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, bodyLocal);
+
+        // new $Response(body, init)
+        il.Emit(OpCodes.Ldloc, bodyLocal);
+        il.Emit(OpCodes.Ldarg_1); // init
+        il.Emit(OpCodes.Newobj, runtime.TSResponseCtor);
+        var respLocal = il.DeclareLocal(runtime.TSResponseType);
+        il.Emit(OpCodes.Stloc, respLocal);
+
+        // Set content-type on the response's headers via $Headers.set
+        il.Emit(OpCodes.Ldloc, respLocal);
+        il.Emit(OpCodes.Ldfld, _responseHeadersField);
+        il.Emit(OpCodes.Castclass, runtime.TSHeadersType);
+        il.Emit(OpCodes.Ldstr, "content-type");
+        il.Emit(OpCodes.Ldstr, "application/json");
+        il.Emit(OpCodes.Callvirt, headersSetMethod);
+        il.Emit(OpCodes.Pop); // set returns undefined/null
+
+        il.Emit(OpCodes.Ldloc, respLocal);
+        il.Emit(OpCodes.Ret);
+
+        // ResponseRedirect(object url, object? status) → $Response
+        var redirectMethod = typeBuilder.DefineMethod(
+            "ResponseRedirect",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]
+        );
+        runtime.ResponseRedirectStatic = redirectMethod;
+
+        il = redirectMethod.GetILGenerator();
+        il.Emit(OpCodes.Ldnull); // body
+        il.Emit(OpCodes.Ldnull); // init
+        il.Emit(OpCodes.Newobj, runtime.TSResponseCtor);
+        var rLocal = il.DeclareLocal(runtime.TSResponseType);
+        il.Emit(OpCodes.Stloc, rLocal);
+
+        // Set status: default 302, or from arg
+        var useDefault = il.DefineLabel();
+        var statusDone = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, useDefault);
+        // status = ToNumber(arg1)
+        il.Emit(OpCodes.Ldloc, rLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stfld, _responseStatusField);
+        il.Emit(OpCodes.Br, statusDone);
+
+        il.MarkLabel(useDefault);
+        il.Emit(OpCodes.Ldloc, rLocal);
+        il.Emit(OpCodes.Ldc_R8, 302.0);
+        il.Emit(OpCodes.Stfld, _responseStatusField);
+
+        il.MarkLabel(statusDone);
+        // ok = false for all redirects
+        il.Emit(OpCodes.Ldloc, rLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, _responseOkField);
+
+        // Set Location header via $Headers.set
+        il.Emit(OpCodes.Ldloc, rLocal);
+        il.Emit(OpCodes.Ldfld, _responseHeadersField);
+        il.Emit(OpCodes.Castclass, runtime.TSHeadersType);
+        il.Emit(OpCodes.Ldstr, "location");
+        il.Emit(OpCodes.Ldarg_0); // url
+        il.Emit(OpCodes.Callvirt, headersSetMethod);
+        il.Emit(OpCodes.Pop);
+
+        il.Emit(OpCodes.Ldloc, rLocal);
+        il.Emit(OpCodes.Ret);
+
+        // ResponseError() → $Response
+        var errorMethod = typeBuilder.DefineMethod(
+            "ResponseError",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            Type.EmptyTypes
+        );
+        runtime.ResponseErrorStatic = errorMethod;
+
+        il = errorMethod.GetILGenerator();
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Newobj, runtime.TSResponseCtor);
+        var eLocal = il.DeclareLocal(runtime.TSResponseType);
+        il.Emit(OpCodes.Stloc, eLocal);
+
+        // Set status to 0
+        il.Emit(OpCodes.Ldloc, eLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stfld, _responseStatusField);
+
+        // Set ok to false
+        il.Emit(OpCodes.Ldloc, eLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, _responseOkField);
+
+        // Set type to "error"
+        il.Emit(OpCodes.Ldloc, eLocal);
+        il.Emit(OpCodes.Ldstr, "error");
+        il.Emit(OpCodes.Stfld, _responseTypeField);
+
+        il.Emit(OpCodes.Ldloc, eLocal);
         il.Emit(OpCodes.Ret);
     }
 }

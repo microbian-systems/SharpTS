@@ -224,6 +224,16 @@ public partial class TypeChecker
             }
         }
 
+        // Handle Response.json(), Response.redirect(), Response.error()
+        if (call.Callee is Expr.Get responseGet &&
+            responseGet.Object is Expr.Variable responseVar &&
+            responseVar.Name.Lexeme == "Response" &&
+            responseGet.Name.Lexeme is "json" or "redirect" or "error")
+        {
+            foreach (var arg in call.Arguments) CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
         // Handle String.fromCharCode(), String.raw()
         if (call.Callee is Expr.Get stringGet &&
             stringGet.Object is Expr.Variable stringVar &&

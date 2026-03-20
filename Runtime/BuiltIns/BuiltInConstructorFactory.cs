@@ -46,6 +46,8 @@ public static class BuiltInConstructorFactory
                 throw new Exception("Runtime Error: Proxy constructor requires exactly 2 arguments (target, handler).");
             return new SharpTSProxy(args[0]!, args[1]!);
         },
+        [BuiltInNames.Request] = CreateRequest,
+        [BuiltInNames.Response] = CreateResponse,
     };
 
     /// <summary>
@@ -231,6 +233,23 @@ public static class BuiltInConstructorFactory
             return new SharpTSHeaders(obj);
 
         return new SharpTSHeaders();
+    }
+
+    private static object CreateRequest(IReadOnlyList<object?> args)
+    {
+        if (args.Count == 0)
+            throw new Exception("Runtime Error: Request constructor requires at least 1 argument (url)");
+
+        var url = args[0]?.ToString() ?? "";
+        var init = args.Count > 1 ? args[1] as SharpTSObject : null;
+        return new SharpTSRequest(url, init);
+    }
+
+    private static object CreateResponse(IReadOnlyList<object?> args)
+    {
+        var body = args.Count > 0 ? args[0] : null;
+        var init = args.Count > 1 ? args[1] as SharpTSObject : null;
+        return new SharpTSResponse(body, init);
     }
 
     #endregion

@@ -633,6 +633,7 @@ public partial class ILCompiler
         _typeEmitterRegistry.RegisterStatic("Reflect", new ReflectStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("Proxy", new ProxyStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("AbortSignal", new AbortSignalStaticEmitter());
+        _typeEmitterRegistry.RegisterStatic("Response", new ResponseStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("Iterator", new IteratorStaticEmitter());
 
         // Built-in module emitters

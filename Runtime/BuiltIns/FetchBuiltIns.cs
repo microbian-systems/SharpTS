@@ -55,11 +55,37 @@ public static class FetchBuiltIns
                 new SharpTSTypeError("fetch requires a URL argument"));
         }
 
-        var url = args[0]?.ToString() ?? throw new SharpTSPromiseRejectedException(
-            new SharpTSTypeError("fetch: URL must be a string"));
+        // Support fetch(Request, options?) - extract url/options from Request object
+        string url;
+        SharpTSObject? options;
 
-        // Parse options if provided
-        var options = args.Count > 1 ? args[1] as SharpTSObject : null;
+        if (args[0] is SharpTSRequest request)
+        {
+            url = request.Url;
+            // Build options from Request properties
+            var requestInit = new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["method"] = request.Method,
+                ["headers"] = request.Headers,
+            });
+            if (request.Body != null)
+                requestInit.SetProperty("body", request.Body);
+
+            // Merge with explicit options (options override request properties)
+            if (args.Count > 1 && args[1] is SharpTSObject overrideOptions)
+            {
+                foreach (var kvp in overrideOptions.Fields)
+                    requestInit.SetProperty(kvp.Key, kvp.Value);
+            }
+
+            options = requestInit;
+        }
+        else
+        {
+            url = args[0]?.ToString() ?? throw new SharpTSPromiseRejectedException(
+                new SharpTSTypeError("fetch: URL must be a string"));
+            options = args.Count > 1 ? args[1] as SharpTSObject : null;
+        }
 
         try
         {

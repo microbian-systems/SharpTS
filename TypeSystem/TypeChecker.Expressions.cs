@@ -1192,6 +1192,8 @@ public partial class TypeChecker
         if (name.Lexeme == "AbortController") return new TypeInfo.Any(); // AbortController constructor
         if (name.Lexeme == "AbortSignal") return new TypeInfo.Any(); // AbortSignal static namespace
         if (name.Lexeme == "Headers") return new TypeInfo.Any(); // Headers constructor
+        if (name.Lexeme == "Request") return new TypeInfo.Any(); // Request constructor
+        if (name.Lexeme == "Response") return new TypeInfo.Any(); // Response constructor/namespace
         if (name.Lexeme == "Iterator") return new TypeInfo.Any(); // Iterator namespace (ES2025)
         if (name.Lexeme == "Intl") return new TypeInfo.Any(); // Intl namespace
         if (name.Lexeme == "URL") return new TypeInfo.Any(); // URL constructor

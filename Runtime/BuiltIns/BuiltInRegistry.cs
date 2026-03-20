@@ -191,6 +191,8 @@ public sealed class BuiltInRegistry
         RegisterAbortControllerType(registry);
         RegisterAbortSignalType(registry);
         RegisterUrlTypes(registry);
+        RegisterRequestResponseTypes(registry);
+        RegisterResponseNamespace(registry);
         RegisterIntlNamespace(registry);
         RegisterIntlNumberFormatType(registry);
         RegisterIntlDateTimeFormatType(registry);
@@ -1033,6 +1035,24 @@ public sealed class BuiltInRegistry
             ((SharpTSURL)instance).GetMember(name));
         registry.RegisterInstanceType(typeof(SharpTSURLSearchParams), (instance, name) =>
             ((SharpTSURLSearchParams)instance).GetMember(name));
+    }
+
+    private static void RegisterRequestResponseTypes(BuiltInRegistry registry)
+    {
+        registry.RegisterInstanceType(typeof(SharpTSRequest), (instance, name) =>
+            ((SharpTSRequest)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSResponse), (instance, name) =>
+            ((SharpTSResponse)instance).GetMember(name));
+    }
+
+    private static void RegisterResponseNamespace(BuiltInRegistry registry)
+    {
+        registry.RegisterNamespace(new BuiltInNamespace(
+            Name: "Response",
+            IsSingleton: false,
+            SingletonFactory: null,
+            GetMethod: name => ResponseBuiltIns.GetStaticMethod(name) as ISharpTSCallable
+        ));
     }
 
     private static void RegisterIntlNamespace(BuiltInRegistry registry)

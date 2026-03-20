@@ -89,10 +89,13 @@ public static class BuiltInNames
         Array, Object, Number, String, Boolean,
         Promise, ArrayBuffer, SharedArrayBuffer, DataView,
         MessageChannel, EventEmitter, AbortController, Headers,
-        TextEncoder, TextDecoder, URL, URLSearchParams
+        TextEncoder, TextDecoder, URL, URLSearchParams,
+        Request, Response
     ];
 
     // Individual constructor constants
+    public const string Request = "Request";
+    public const string Response = "Response";
     public const string Symbol = "Symbol";
     public const string BigInt = "BigInt";
     public const string Date = "Date";

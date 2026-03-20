@@ -179,6 +179,20 @@ public partial class ILEmitter
             return;
         }
 
+        // Special case: new Request(...) constructor
+        if (isSimpleName && simpleClassName == "Request")
+        {
+            EmitNewRequest(n.Arguments);
+            return;
+        }
+
+        // Special case: new Response(...) constructor
+        if (isSimpleName && simpleClassName == "Response")
+        {
+            EmitNewResponse(n.Arguments);
+            return;
+        }
+
         // Special case: new Promise((resolve, reject) => { ... }) constructor
         if (isSimpleName && simpleClassName == "Promise")
         {
@@ -983,6 +997,68 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSUrlSearchParamsCtor);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits code for new Request(url, init?) construction.
+    /// </summary>
+    private void EmitNewRequest(List<Expr> arguments)
+    {
+        // url argument (required)
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        // init argument (optional)
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSRequestCtor);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits code for new Response(body?, init?) construction.
+    /// </summary>
+    private void EmitNewResponse(List<Expr> arguments)
+    {
+        // body argument (optional)
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        // init argument (optional)
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSResponseCtor);
         SetStackUnknown();
     }
 

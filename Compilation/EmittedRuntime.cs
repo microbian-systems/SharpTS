@@ -1288,6 +1288,7 @@ public class EmittedRuntime
     // $Headers type - emitted for standalone Headers support
     public TypeBuilder TSHeadersType { get; set; } = null!;
     public ConstructorBuilder TSHeadersCtor { get; set; } = null!;
+    public MethodBuilder TSHeadersSetMethod { get; set; } = null!;
 
     // $URL type - emitted for standalone URL support
     public TypeBuilder TSUrlType { get; set; } = null!;
@@ -1300,6 +1301,19 @@ public class EmittedRuntime
     // $FetchResponse type - emitted for standalone fetch support
     public TypeBuilder TSFetchResponseType { get; set; } = null!;
     public ConstructorBuilder TSFetchResponseCtor { get; set; } = null!;
+
+    // $Request type - emitted for standalone Request constructor support
+    public TypeBuilder TSRequestType { get; set; } = null!;
+    public ConstructorBuilder TSRequestCtor { get; set; } = null!;
+
+    // $Response type - emitted for standalone Response constructor support
+    public TypeBuilder TSResponseType { get; set; } = null!;
+    public ConstructorBuilder TSResponseCtor { get; set; } = null!;
+
+    // Response static methods
+    public MethodBuilder ResponseJsonStatic { get; set; } = null!;
+    public MethodBuilder ResponseRedirectStatic { get; set; } = null!;
+    public MethodBuilder ResponseErrorStatic { get; set; } = null!;
 
     // $Buffer type - emitted for standalone buffer support
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSBuffer

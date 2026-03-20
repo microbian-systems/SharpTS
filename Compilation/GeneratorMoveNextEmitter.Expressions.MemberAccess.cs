@@ -928,6 +928,22 @@ public partial class GeneratorMoveNextEmitter
                 _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSHeadersCtor);
                 SetStackUnknown();
                 return true;
+            case "Request":
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); }
+                else _il.Emit(OpCodes.Ldnull);
+                if (arguments.Count > 1) { EmitExpression(arguments[1]); EnsureBoxed(); }
+                else _il.Emit(OpCodes.Ldnull);
+                _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSRequestCtor);
+                SetStackUnknown();
+                return true;
+            case "Response":
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); }
+                else _il.Emit(OpCodes.Ldnull);
+                if (arguments.Count > 1) { EmitExpression(arguments[1]); EnsureBoxed(); }
+                else _il.Emit(OpCodes.Ldnull);
+                _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSResponseCtor);
+                SetStackUnknown();
+                return true;
             default:
                 return false;
         }
