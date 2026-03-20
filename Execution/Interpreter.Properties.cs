@@ -204,7 +204,7 @@ public partial class Interpreter
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/classes.html#this-at-runtime-in-classes">TypeScript this in Classes</seealso>
     private object? EvaluateThis(Expr.This expr)
     {
-        return _environment.Get(expr.Keyword);
+        return _environment.Get(expr.Keyword).ToObject();
     }
 
     /// <summary>

@@ -565,8 +565,8 @@ internal class WorkerMessageHandler
             try
             {
                 // Get the parentPort and emit message event
-                if (_interpreter.Environment.TryGet("parentPort", out var portObj) &&
-                    portObj is WorkerParentPort parentPort)
+                if (_interpreter.Environment.TryGet("parentPort", out var portRV) &&
+                    portRV.ToObject() is WorkerParentPort parentPort)
                 {
                     var eventData = new SharpTSObject(new Dictionary<string, object?>
                     {

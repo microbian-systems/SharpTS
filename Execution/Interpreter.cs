@@ -690,14 +690,14 @@ public partial class Interpreter : IDisposable
         // Fast path: resolved locals with known depth
         if (_locals.TryGetValue(expr, out int distance))
         {
-            return _environment.GetAt(distance, name.Lexeme);
+            return _environment.GetAt(distance, name.Lexeme).ToObject();
         }
 
         // Scope chain traversal for user-defined variables
         // User variables can shadow built-in globals, so check environment first
-        if (_environment.TryGet(name.Lexeme, out object? value))
+        if (_environment.TryGet(name.Lexeme, out RuntimeValue rv))
         {
-            return value;
+            return rv.ToObject();
         }
 
         // Check global constants and built-in singletons (single frozen dictionary lookup)
@@ -961,10 +961,10 @@ public partial class Interpreter : IDisposable
             return;
 
         // Get the main function from the environment (single scope traversal)
-        if (!_environment.TryGet(mainFunc.Name.Lexeme, out object? mainValue))
+        if (!_environment.TryGet(mainFunc.Name.Lexeme, out RuntimeValue mainRV))
             return;
 
-        if (mainValue is not SharpTSFunction mainFn)
+        if (mainRV.ToObject() is not SharpTSFunction mainFn)
             return;
 
         // Call main with process.argv (pass args even if main() doesn't take them - JS allows this)
@@ -1177,7 +1177,7 @@ public partial class Interpreter : IDisposable
             {
                 string localName = spec.LocalName.Lexeme;
                 string exportedName = spec.ExportedName?.Lexeme ?? localName;
-                var value = _environment.Get(spec.LocalName);
+                var value = _environment.Get(spec.LocalName).ToObject();
                 if (_currentModuleInstance != null)
                 {
                     _currentModuleInstance.SetExport(exportedName, value);
@@ -1391,7 +1391,7 @@ public partial class Interpreter : IDisposable
             Stmt.Enum e => e.Name,
             _ => throw new InterpreterException($"Cannot get value of declaration type {decl.GetType().Name}")
         };
-        return _environment.Get(token);
+        return _environment.Get(token).ToObject();
     }
 
     /// <summary>
@@ -1590,7 +1590,7 @@ public partial class Interpreter : IDisposable
         object? superclass = null;
         if (classStmt.Superclass != null)
         {
-            superclass = _environment.Get(classStmt.Superclass);
+            superclass = _environment.Get(classStmt.Superclass).ToObject();
             if (superclass is not SharpTSClass)
             {
                 throw new InterpreterException("Superclass must be a class.");

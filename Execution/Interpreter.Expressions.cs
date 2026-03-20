@@ -286,8 +286,8 @@ public partial class Interpreter
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/classes.html#super-calls">TypeScript super Calls</seealso>
     private object? EvaluateSuper(Expr.Super expr)
     {
-        SharpTSClass superclass = (SharpTSClass)_environment.Get(expr.Keyword)!;
-        SharpTSInstance instance = (SharpTSInstance)_environment.Get(new Token(TokenType.THIS, "this", null, 0))!;
+        SharpTSClass superclass = _environment.Get(expr.Keyword).AsObject<SharpTSClass>()!;
+        SharpTSInstance instance = _environment.Get(new Token(TokenType.THIS, "this", null, 0)).AsObject<SharpTSInstance>()!;
 
         // super() with null Method means constructor call
         string methodName = expr.Method?.Lexeme ?? "constructor";
@@ -910,7 +910,7 @@ public partial class Interpreter
         object? superclass = null;
         if (classExpr.Superclass != null)
         {
-            superclass = _environment.Get(classExpr.Superclass);
+            superclass = _environment.Get(classExpr.Superclass).ToObject();
             if (superclass is not SharpTSClass)
             {
                 throw new InterpreterException("Superclass must be a class.");

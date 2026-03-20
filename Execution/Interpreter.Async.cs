@@ -559,7 +559,7 @@ public partial class Interpreter
 
     private async Task<object?> EvaluateCompoundAssignAsync(Expr.CompoundAssign compound)
     {
-        object? currentValue = _environment.Get(compound.Name);
+        object? currentValue = _environment.Get(compound.Name).ToObject();
         object? operandValue = await EvaluateAsync(compound.Value);
         object? result = ApplyCompoundOperator(compound.Operator.Type, currentValue, operandValue);
         _environment.Assign(compound.Name, result);
@@ -587,7 +587,7 @@ public partial class Interpreter
 
     private async Task<object?> EvaluateLogicalAssignAsync(Expr.LogicalAssign logical)
     {
-        object? currentValue = _environment.Get(logical.Name);
+        object? currentValue = _environment.Get(logical.Name).ToObject();
 
         switch (logical.Operator.Type)
         {

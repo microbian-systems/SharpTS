@@ -116,7 +116,7 @@ public partial class Interpreter
 
                 if (token != null)
                 {
-                    object? value = _environment.Get(token);
+                    object? value = _environment.Get(token).ToObject();
                     nsObj.Set(memberName, value);
                 }
                 else if (member is Stmt.ImportAlias ia)
@@ -125,7 +125,7 @@ public partial class Interpreter
                     // Use try/catch since RuntimeEnvironment throws if undefined
                     try
                     {
-                        object? value = _environment.Get(ia.AliasName);
+                        object? value = _environment.Get(ia.AliasName).ToObject();
                         nsObj.Set(memberName, value);
                     }
                     catch

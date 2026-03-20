@@ -161,9 +161,9 @@ public partial class Interpreter
         {
             case Expr.Variable variable:
             {
-                double current = (double)_environment.Get(variable.Name)!;
+                double current = _environment.Get(variable.Name).AsNumber();
                 double newValue = current + delta;
-                _environment.Assign(variable.Name, newValue);
+                _environment.Assign(variable.Name, RuntimeValue.FromNumber(newValue));
                 return returnOld ? current : newValue;
             }
 

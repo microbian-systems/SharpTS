@@ -23,7 +23,7 @@ public partial class Interpreter
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Addition_assignment">MDN Compound Assignment</seealso>
     private object? EvaluateCompoundAssign(Expr.CompoundAssign compound)
     {
-        object? currentValue = _environment.Get(compound.Name);
+        object? currentValue = _environment.Get(compound.Name).ToObject();
         object? addValue = Evaluate(compound.Value);
         object? newValue = ApplyCompoundOperator(compound.Operator.Type, currentValue, addValue);
         _environment.Assign(compound.Name, newValue);
@@ -96,7 +96,7 @@ public partial class Interpreter
     /// </remarks>
     private object? EvaluateLogicalAssign(Expr.LogicalAssign logical)
     {
-        object? currentValue = _environment.Get(logical.Name);
+        object? currentValue = _environment.Get(logical.Name).ToObject();
 
         switch (logical.Operator.Type)
         {
