@@ -24,58 +24,74 @@ public partial class Interpreter
     /// function calls, property access, and control flow expressions.
     /// For async expressions (await), this will block synchronously. Use EvaluateAsync for fully async evaluation.
     /// </remarks>
+    /// <summary>
+    /// Evaluates an expression, returning a boxed object for compatibility with existing code.
+    /// Prefer EvaluateRV() for new code to avoid boxing overhead.
+    /// </summary>
     internal object? Evaluate(Expr expr)
+    {
+        return _registry.DispatchExpr(expr, this).ToObject();
+    }
+
+    /// <summary>
+    /// Evaluates an expression, returning a RuntimeValue without boxing.
+    /// This is the fast path — use this for new code.
+    /// </summary>
+    internal RuntimeValue EvaluateRV(Expr expr)
     {
         return _registry.DispatchExpr(expr, this);
     }
 
-    // Expression handlers - called by the registry
+    // Expression handlers - called by the registry via RuntimeValue dispatch
+    // Each wraps its Evaluate* result with RuntimeValue.FromBoxed() for now.
+    // As individual Evaluate* methods are migrated to return RuntimeValue,
+    // the FromBoxed() wrapping can be removed.
 
-    internal object? VisitComma(Expr.Comma comma) { Evaluate(comma.Left); return Evaluate(comma.Right); }
-    internal object? VisitBinary(Expr.Binary binary) => EvaluateBinary(binary);
-    internal object? VisitLogical(Expr.Logical logical) => EvaluateLogical(logical);
-    internal object? VisitNullishCoalescing(Expr.NullishCoalescing nc) => EvaluateNullishCoalescing(nc);
-    internal object? VisitTernary(Expr.Ternary ternary) => EvaluateTernary(ternary);
-    internal object? VisitGrouping(Expr.Grouping grouping) => Evaluate(grouping.Expression);
-    internal object? VisitLiteral(Expr.Literal literal) => EvaluateLiteral(literal);
-    internal object? VisitUnary(Expr.Unary unary) => EvaluateUnary(unary);
-    internal object? VisitDelete(Expr.Delete delete) => EvaluateDelete(delete);
-    internal object? VisitVariable(Expr.Variable variable) => EvaluateVariable(variable);
-    internal object? VisitAssign(Expr.Assign assign) => EvaluateAssign(assign);
-    internal object? VisitCall(Expr.Call call) => EvaluateCall(call);
-    internal object? VisitGet(Expr.Get get) => EvaluateGet(get);
-    internal object? VisitSet(Expr.Set set) => EvaluateSet(set);
-    internal object? VisitGetPrivate(Expr.GetPrivate gp) => EvaluateGetPrivate(gp);
-    internal object? VisitSetPrivate(Expr.SetPrivate sp) => EvaluateSetPrivate(sp);
-    internal object? VisitCallPrivate(Expr.CallPrivate cp) => EvaluateCallPrivate(cp);
-    internal object? VisitThis(Expr.This thisExpr) => EvaluateThis(thisExpr);
-    internal object? VisitNew(Expr.New newExpr) => EvaluateNew(newExpr);
-    internal object? VisitArrayLiteral(Expr.ArrayLiteral array) => EvaluateArray(array);
-    internal object? VisitObjectLiteral(Expr.ObjectLiteral obj) => EvaluateObject(obj);
-    internal object? VisitGetIndex(Expr.GetIndex getIndex) => EvaluateGetIndex(getIndex);
-    internal object? VisitSetIndex(Expr.SetIndex setIndex) => EvaluateSetIndex(setIndex);
-    internal object? VisitSuper(Expr.Super super) => EvaluateSuper(super);
-    internal object? VisitCompoundAssign(Expr.CompoundAssign compound) => EvaluateCompoundAssign(compound);
-    internal object? VisitCompoundSet(Expr.CompoundSet compoundSet) => EvaluateCompoundSet(compoundSet);
-    internal object? VisitCompoundSetIndex(Expr.CompoundSetIndex compoundSetIndex) => EvaluateCompoundSetIndex(compoundSetIndex);
-    internal object? VisitLogicalAssign(Expr.LogicalAssign logical) => EvaluateLogicalAssign(logical);
-    internal object? VisitLogicalSet(Expr.LogicalSet logicalSet) => EvaluateLogicalSet(logicalSet);
-    internal object? VisitLogicalSetIndex(Expr.LogicalSetIndex logicalSetIndex) => EvaluateLogicalSetIndex(logicalSetIndex);
-    internal object? VisitPrefixIncrement(Expr.PrefixIncrement prefix) => EvaluatePrefixIncrement(prefix);
-    internal object? VisitPostfixIncrement(Expr.PostfixIncrement postfix) => EvaluatePostfixIncrement(postfix);
-    internal object? VisitArrowFunction(Expr.ArrowFunction arrow) => EvaluateArrowFunction(arrow);
-    internal object? VisitTemplateLiteral(Expr.TemplateLiteral template) => EvaluateTemplateLiteral(template);
-    internal object? VisitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral tagged) => EvaluateTaggedTemplateLiteral(tagged);
-    internal object? VisitSpread(Expr.Spread spread) => Evaluate(spread.Expression); // Spread evaluates to its inner value
-    internal object? VisitTypeAssertion(Expr.TypeAssertion ta) => Evaluate(ta.Expression); // Type assertions are pass-through at runtime
-    internal object? VisitSatisfies(Expr.Satisfies sat) => Evaluate(sat.Expression); // Satisfies is pass-through at runtime
-    internal object? VisitNonNullAssertion(Expr.NonNullAssertion nna) => Evaluate(nna.Expression); // Non-null assertions are pass-through at runtime
-    internal object? VisitAwait(Expr.Await awaitExpr) => throw new InterpreterException("'await' can only be used inside async functions.");
-    internal object? VisitDynamicImport(Expr.DynamicImport di) => EvaluateDynamicImport(di);
-    internal object? VisitImportMeta(Expr.ImportMeta im) => EvaluateImportMeta(im);
-    internal object? VisitYield(Expr.Yield yieldExpr) => EvaluateYield(yieldExpr);
-    internal object? VisitRegexLiteral(Expr.RegexLiteral regex) => new SharpTSRegExp(regex.Pattern, regex.Flags);
-    internal object? VisitClassExpr(Expr.ClassExpr classExpr) => EvaluateClassExpression(classExpr);
+    internal RuntimeValue VisitComma(Expr.Comma comma) { Evaluate(comma.Left); return RuntimeValue.FromBoxed(Evaluate(comma.Right)); }
+    internal RuntimeValue VisitBinary(Expr.Binary binary) => RuntimeValue.FromBoxed(EvaluateBinary(binary));
+    internal RuntimeValue VisitLogical(Expr.Logical logical) => RuntimeValue.FromBoxed(EvaluateLogical(logical));
+    internal RuntimeValue VisitNullishCoalescing(Expr.NullishCoalescing nc) => RuntimeValue.FromBoxed(EvaluateNullishCoalescing(nc));
+    internal RuntimeValue VisitTernary(Expr.Ternary ternary) => RuntimeValue.FromBoxed(EvaluateTernary(ternary));
+    internal RuntimeValue VisitGrouping(Expr.Grouping grouping) => EvaluateRV(grouping.Expression);
+    internal RuntimeValue VisitLiteral(Expr.Literal literal) => RuntimeValue.FromBoxed(EvaluateLiteral(literal));
+    internal RuntimeValue VisitUnary(Expr.Unary unary) => RuntimeValue.FromBoxed(EvaluateUnary(unary));
+    internal RuntimeValue VisitDelete(Expr.Delete delete) => RuntimeValue.FromBoxed(EvaluateDelete(delete));
+    internal RuntimeValue VisitVariable(Expr.Variable variable) => RuntimeValue.FromBoxed(EvaluateVariable(variable));
+    internal RuntimeValue VisitAssign(Expr.Assign assign) => RuntimeValue.FromBoxed(EvaluateAssign(assign));
+    internal RuntimeValue VisitCall(Expr.Call call) => RuntimeValue.FromBoxed(EvaluateCall(call));
+    internal RuntimeValue VisitGet(Expr.Get get) => RuntimeValue.FromBoxed(EvaluateGet(get));
+    internal RuntimeValue VisitSet(Expr.Set set) => RuntimeValue.FromBoxed(EvaluateSet(set));
+    internal RuntimeValue VisitGetPrivate(Expr.GetPrivate gp) => RuntimeValue.FromBoxed(EvaluateGetPrivate(gp));
+    internal RuntimeValue VisitSetPrivate(Expr.SetPrivate sp) => RuntimeValue.FromBoxed(EvaluateSetPrivate(sp));
+    internal RuntimeValue VisitCallPrivate(Expr.CallPrivate cp) => RuntimeValue.FromBoxed(EvaluateCallPrivate(cp));
+    internal RuntimeValue VisitThis(Expr.This thisExpr) => RuntimeValue.FromBoxed(EvaluateThis(thisExpr));
+    internal RuntimeValue VisitNew(Expr.New newExpr) => RuntimeValue.FromBoxed(EvaluateNew(newExpr));
+    internal RuntimeValue VisitArrayLiteral(Expr.ArrayLiteral array) => RuntimeValue.FromBoxed(EvaluateArray(array));
+    internal RuntimeValue VisitObjectLiteral(Expr.ObjectLiteral obj) => RuntimeValue.FromBoxed(EvaluateObject(obj));
+    internal RuntimeValue VisitGetIndex(Expr.GetIndex getIndex) => RuntimeValue.FromBoxed(EvaluateGetIndex(getIndex));
+    internal RuntimeValue VisitSetIndex(Expr.SetIndex setIndex) => RuntimeValue.FromBoxed(EvaluateSetIndex(setIndex));
+    internal RuntimeValue VisitSuper(Expr.Super super) => RuntimeValue.FromBoxed(EvaluateSuper(super));
+    internal RuntimeValue VisitCompoundAssign(Expr.CompoundAssign compound) => RuntimeValue.FromBoxed(EvaluateCompoundAssign(compound));
+    internal RuntimeValue VisitCompoundSet(Expr.CompoundSet compoundSet) => RuntimeValue.FromBoxed(EvaluateCompoundSet(compoundSet));
+    internal RuntimeValue VisitCompoundSetIndex(Expr.CompoundSetIndex compoundSetIndex) => RuntimeValue.FromBoxed(EvaluateCompoundSetIndex(compoundSetIndex));
+    internal RuntimeValue VisitLogicalAssign(Expr.LogicalAssign logical) => RuntimeValue.FromBoxed(EvaluateLogicalAssign(logical));
+    internal RuntimeValue VisitLogicalSet(Expr.LogicalSet logicalSet) => RuntimeValue.FromBoxed(EvaluateLogicalSet(logicalSet));
+    internal RuntimeValue VisitLogicalSetIndex(Expr.LogicalSetIndex logicalSetIndex) => RuntimeValue.FromBoxed(EvaluateLogicalSetIndex(logicalSetIndex));
+    internal RuntimeValue VisitPrefixIncrement(Expr.PrefixIncrement prefix) => RuntimeValue.FromBoxed(EvaluatePrefixIncrement(prefix));
+    internal RuntimeValue VisitPostfixIncrement(Expr.PostfixIncrement postfix) => RuntimeValue.FromBoxed(EvaluatePostfixIncrement(postfix));
+    internal RuntimeValue VisitArrowFunction(Expr.ArrowFunction arrow) => RuntimeValue.FromBoxed(EvaluateArrowFunction(arrow));
+    internal RuntimeValue VisitTemplateLiteral(Expr.TemplateLiteral template) => RuntimeValue.FromBoxed(EvaluateTemplateLiteral(template));
+    internal RuntimeValue VisitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral tagged) => RuntimeValue.FromBoxed(EvaluateTaggedTemplateLiteral(tagged));
+    internal RuntimeValue VisitSpread(Expr.Spread spread) => EvaluateRV(spread.Expression);
+    internal RuntimeValue VisitTypeAssertion(Expr.TypeAssertion ta) => EvaluateRV(ta.Expression);
+    internal RuntimeValue VisitSatisfies(Expr.Satisfies sat) => EvaluateRV(sat.Expression);
+    internal RuntimeValue VisitNonNullAssertion(Expr.NonNullAssertion nna) => EvaluateRV(nna.Expression);
+    internal RuntimeValue VisitAwait(Expr.Await awaitExpr) => throw new InterpreterException("'await' can only be used inside async functions.");
+    internal RuntimeValue VisitDynamicImport(Expr.DynamicImport di) => RuntimeValue.FromBoxed(EvaluateDynamicImport(di));
+    internal RuntimeValue VisitImportMeta(Expr.ImportMeta im) => RuntimeValue.FromBoxed(EvaluateImportMeta(im));
+    internal RuntimeValue VisitYield(Expr.Yield yieldExpr) => RuntimeValue.FromBoxed(EvaluateYield(yieldExpr));
+    internal RuntimeValue VisitRegexLiteral(Expr.RegexLiteral regex) => RuntimeValue.FromObject(new SharpTSRegExp(regex.Pattern, regex.Flags));
+    internal RuntimeValue VisitClassExpr(Expr.ClassExpr classExpr) => RuntimeValue.FromBoxed(EvaluateClassExpression(classExpr));
 
     /// <summary>
     /// Asynchronously dispatches an expression to the appropriate evaluator.

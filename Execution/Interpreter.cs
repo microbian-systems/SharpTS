@@ -42,7 +42,7 @@ public partial class Interpreter : IDisposable
     /// Static registry containing handlers for all AST node types.
     /// Initialized once at startup and validated for exhaustiveness.
     /// </summary>
-    private static readonly NodeRegistry<Interpreter, object?, ExecutionResult> _registry =
+    private static readonly NodeRegistry<Interpreter, RuntimeValue, ExecutionResult> _registry =
         InterpreterRegistry.Create();
 
     /// <summary>

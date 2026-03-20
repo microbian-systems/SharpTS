@@ -32,6 +32,7 @@ public partial class Interpreter
             {
                 for (int i = 0; i < argCount; i++)
                 {
+                    // TODO: When EvaluateExprAsync returns RuntimeValue, remove FromBoxed
                     rented[i] = RuntimeValue.FromBoxed(await ctx.EvaluateExprAsync(arguments[i]));
                 }
                 return v2.CallV2(this, rented.AsSpan(0, argCount)).ToObject();
@@ -168,7 +169,7 @@ public partial class Interpreter
             {
                 for (int i = 0; i < argCount; i++)
                 {
-                    rented[i] = RuntimeValue.FromBoxed(Evaluate(arguments[i]));
+                    rented[i] = EvaluateRV(arguments[i]);
                 }
                 return v2.CallV2(this, rented.AsSpan(0, argCount)).ToObject();
             }

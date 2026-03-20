@@ -1,5 +1,6 @@
 using SharpTS.Parsing;
 using SharpTS.Parsing.Visitors;
+using SharpTS.Runtime;
 
 namespace SharpTS.Execution;
 
@@ -20,9 +21,9 @@ public static class InterpreterRegistry
     /// with async support enabled for statement dispatch.
     /// </summary>
     /// <returns>A frozen registry ready for dispatch.</returns>
-    public static NodeRegistry<Interpreter, object?, ExecutionResult> Create()
+    public static NodeRegistry<Interpreter, RuntimeValue, ExecutionResult> Create()
     {
-        return new NodeRegistry<Interpreter, object?, ExecutionResult>(supportAsync: true)
+        return new NodeRegistry<Interpreter, RuntimeValue, ExecutionResult>(supportAsync: true)
             .AutoRegister()
             // Register async statement handlers for statements that need async behavior.
             // These handlers use EvaluateAsync and ExecuteAsync internally.
