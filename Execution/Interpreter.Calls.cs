@@ -307,8 +307,39 @@ public partial class Interpreter
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Expressions_and_operators">MDN Expressions and Operators</seealso>
     private RuntimeValue EvaluateBinary(Expr.Binary binary)
     {
-        object? left = Evaluate(binary.Left);
-        object? right = Evaluate(binary.Right);
+        var leftRV = EvaluateRV(binary.Left);
+        var rightRV = EvaluateRV(binary.Right);
+
+        // Fast path: both operands are numbers — avoid boxing entirely
+        if (leftRV.IsNumber && rightRV.IsNumber)
+        {
+            double l = leftRV.AsNumber(), r = rightRV.AsNumber();
+            var desc = SemanticOperatorResolver.Resolve(binary.Operator.Type);
+            switch (desc)
+            {
+                case OperatorDescriptor.Plus:
+                    return RuntimeValue.FromNumber(l + r);
+                case OperatorDescriptor.Arithmetic:
+                    return RuntimeValue.FromNumber(EvaluateArithmetic(binary.Operator.Type, l, r));
+                case OperatorDescriptor.Power:
+                    return RuntimeValue.FromNumber(Math.Pow(l, r));
+                case OperatorDescriptor.Comparison:
+                    return RuntimeValue.FromBoolean(EvaluateComparison(binary.Operator.Type, l, r));
+                case OperatorDescriptor.Equality eq:
+                    // Use Equals() not == for NaN consistency: double.NaN.Equals(NaN) is true in C#
+                    // (matches existing interpreter behavior where NaN === NaN is true)
+                    bool equal = l.Equals(r);
+                    return RuntimeValue.FromBoolean(eq.IsNegated ? !equal : equal);
+                case OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift:
+                    return RuntimeValue.FromNumber(EvaluateBitwise(binary.Operator.Type, (int)l, (int)r));
+                case OperatorDescriptor.UnsignedRightShift:
+                    return RuntimeValue.FromNumber((double)((uint)(int)l >> ((int)r & 0x1F)));
+            }
+        }
+
+        // Slow path: BigInt, string concatenation, mixed types, in, instanceof
+        object? left = leftRV.ToObject();
+        object? right = rightRV.ToObject();
         return RuntimeValue.FromBoxed(EvaluateBinaryOperation(binary.Operator, left, right));
     }
 
@@ -472,63 +503,47 @@ public partial class Interpreter
 
     /// <summary>
     /// Evaluates a logical operator expression (AND/OR) with short-circuit evaluation.
+    /// Uses RuntimeValue throughout to avoid boxing on the fast path.
     /// </summary>
-    /// <param name="logical">The logical expression AST node.</param>
-    /// <returns>The value that determined the result (not necessarily a boolean).</returns>
-    /// <remarks>
-    /// Implements JavaScript short-circuit semantics: OR (<c>||</c>) returns the first truthy value
-    /// or the last value; AND (<c>&amp;&amp;</c>) returns the first falsy value or the last value.
-    /// </remarks>
-    /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Logical_AND">MDN Logical AND</seealso>
-    /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Logical_OR">MDN Logical OR</seealso>
-    private object? EvaluateLogical(Expr.Logical logical) =>
-        EvaluateLogicalCore(logical.Operator.Type, Evaluate(logical.Left), () => Evaluate(logical.Right));
+    private RuntimeValue EvaluateLogical(Expr.Logical logical)
+    {
+        var left = EvaluateRV(logical.Left);
+        if (logical.Operator.Type == TokenType.OR_OR)
+            return IsTruthy(left) ? left : EvaluateRV(logical.Right);
+        return !IsTruthy(left) ? left : EvaluateRV(logical.Right);
+    }
 
     /// <summary>
     /// Core nullish coalescing logic, shared between sync and async evaluation.
-    /// Uses lazy evaluation via Func delegate to preserve short-circuit semantics.
     /// </summary>
-    /// <param name="left">The already-evaluated left operand.</param>
-    /// <param name="evaluateRight">A function to evaluate the right operand (only called if left is nullish).</param>
-    /// <returns>The left value if not nullish; otherwise the right value.</returns>
     private object? EvaluateNullishCoalescingCore(object? left, Func<object?> evaluateRight) =>
         (left == null || left is Runtime.Types.SharpTSUndefined) ? evaluateRight() : left;
 
     /// <summary>
     /// Evaluates the nullish coalescing operator (<c>??</c>).
+    /// Uses RuntimeValue throughout — IsNullish check avoids boxing.
     /// </summary>
-    /// <param name="nc">The nullish coalescing expression AST node.</param>
-    /// <returns>The left value if not null; otherwise the right value.</returns>
-    /// <remarks>
-    /// Unlike OR (<c>||</c>), nullish coalescing only falls back for <c>null</c>,
-    /// not for other falsy values like <c>0</c>, <c>""</c>, or <c>false</c>.
-    /// </remarks>
-    /// <seealso href="https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-7.html#nullish-coalescing">TypeScript Nullish Coalescing</seealso>
-    private object? EvaluateNullishCoalescing(Expr.NullishCoalescing nc) =>
-        EvaluateNullishCoalescingCore(Evaluate(nc.Left), () => Evaluate(nc.Right));
+    private RuntimeValue EvaluateNullishCoalescing(Expr.NullishCoalescing nc)
+    {
+        var left = EvaluateRV(nc.Left);
+        return left.IsNullish ? EvaluateRV(nc.Right) : left;
+    }
 
     /// <summary>
     /// Core ternary operation logic, shared between sync and async evaluation.
-    /// Uses lazy evaluation via Func delegates to ensure only one branch is evaluated.
     /// </summary>
-    /// <param name="condition">The already-evaluated condition.</param>
-    /// <param name="evalThen">A function to evaluate the then branch (only called if condition is truthy).</param>
-    /// <param name="evalElse">A function to evaluate the else branch (only called if condition is falsy).</param>
-    /// <returns>The result of evaluating the appropriate branch.</returns>
     private object? EvaluateTernaryCore(object? condition, Func<object?> evalThen, Func<object?> evalElse) =>
         IsTruthy(condition) ? evalThen() : evalElse();
 
     /// <summary>
     /// Evaluates a ternary conditional expression (<c>?:</c>).
+    /// Uses RuntimeValue — IsTruthy check on condition avoids boxing.
     /// </summary>
-    /// <param name="ternary">The ternary expression AST node.</param>
-    /// <returns>The then-branch value if condition is truthy; otherwise the else-branch value.</returns>
-    /// <remarks>
-    /// Only evaluates one branch based on the truthiness of the condition.
-    /// </remarks>
-    /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Conditional_operator">MDN Conditional Operator</seealso>
-    private object? EvaluateTernary(Expr.Ternary ternary) =>
-        EvaluateTernaryCore(Evaluate(ternary.Condition), () => Evaluate(ternary.ThenBranch), () => Evaluate(ternary.ElseBranch));
+    private RuntimeValue EvaluateTernary(Expr.Ternary ternary)
+    {
+        var condition = EvaluateRV(ternary.Condition);
+        return IsTruthy(condition) ? EvaluateRV(ternary.ThenBranch) : EvaluateRV(ternary.ElseBranch);
+    }
 
     // ===================== Async Core Methods =====================
 

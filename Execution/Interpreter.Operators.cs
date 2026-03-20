@@ -252,7 +252,7 @@ public partial class Interpreter
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/typeof">MDN typeof</seealso>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Logical_NOT">MDN Logical NOT</seealso>
-    private object? EvaluateUnary(Expr.Unary unary)
+    private RuntimeValue EvaluateUnary(Expr.Unary unary)
     {
         // typeof never throws on undeclared variables - it returns "undefined"
         if (unary.Operator.Type == TokenType.TYPEOF && unary.Right is Expr.Variable)
@@ -260,11 +260,27 @@ public partial class Interpreter
             object? right;
             try { right = Evaluate(unary.Right); }
             catch (InterpreterException) { right = SharpTSUndefined.Instance; }
-            return EvaluateUnaryOperation(unary.Operator, right);
+            return RuntimeValue.FromBoxed(EvaluateUnaryOperation(unary.Operator, right));
         }
 
-        object? val = Evaluate(unary.Right);
-        return EvaluateUnaryOperation(unary.Operator, val);
+        // Fast path for common unary operations on RuntimeValue
+        var rv = EvaluateRV(unary.Right);
+        switch (unary.Operator.Type)
+        {
+            case TokenType.BANG:
+                return RuntimeValue.FromBoolean(!rv.IsTruthy());
+            case TokenType.MINUS when rv.IsNumber:
+                return RuntimeValue.FromNumber(-rv.AsNumber());
+            case TokenType.TYPEOF:
+                return RuntimeValue.FromString(rv.TypeofString());
+            case TokenType.VOID:
+                return RuntimeValue.Undefined;
+            case TokenType.TILDE when rv.IsNumber:
+                return RuntimeValue.FromNumber(~(int)rv.AsNumber());
+            default:
+                // Fall back to object-based path for BigInt and other cases
+                return RuntimeValue.FromBoxed(EvaluateUnaryOperation(unary.Operator, rv.ToObject()));
+        }
     }
 
     /// <summary>
@@ -486,6 +502,7 @@ public partial class Interpreter
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Glossary/Truthy">MDN Truthy</seealso>
     private static bool IsTruthy(object? obj) => RuntimeTypes.IsTruthy(obj);
+    private static bool IsTruthy(RuntimeValue rv) => rv.IsTruthy();
 
     /// <summary>
     /// Determines if two values are equal using loose equality (<c>==</c>).

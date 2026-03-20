@@ -47,14 +47,14 @@ public partial class Interpreter
     // As individual Evaluate* methods are migrated to return RuntimeValue,
     // the FromBoxed() wrapping can be removed.
 
-    internal RuntimeValue VisitComma(Expr.Comma comma) { Evaluate(comma.Left); return RuntimeValue.FromBoxed(Evaluate(comma.Right)); }
+    internal RuntimeValue VisitComma(Expr.Comma comma) { Evaluate(comma.Left); return EvaluateRV(comma.Right); }
     internal RuntimeValue VisitBinary(Expr.Binary binary) => EvaluateBinary(binary);
-    internal RuntimeValue VisitLogical(Expr.Logical logical) => RuntimeValue.FromBoxed(EvaluateLogical(logical));
-    internal RuntimeValue VisitNullishCoalescing(Expr.NullishCoalescing nc) => RuntimeValue.FromBoxed(EvaluateNullishCoalescing(nc));
-    internal RuntimeValue VisitTernary(Expr.Ternary ternary) => RuntimeValue.FromBoxed(EvaluateTernary(ternary));
+    internal RuntimeValue VisitLogical(Expr.Logical logical) => EvaluateLogical(logical);
+    internal RuntimeValue VisitNullishCoalescing(Expr.NullishCoalescing nc) => EvaluateNullishCoalescing(nc);
+    internal RuntimeValue VisitTernary(Expr.Ternary ternary) => EvaluateTernary(ternary);
     internal RuntimeValue VisitGrouping(Expr.Grouping grouping) => EvaluateRV(grouping.Expression);
     internal RuntimeValue VisitLiteral(Expr.Literal literal) => EvaluateLiteral(literal);
-    internal RuntimeValue VisitUnary(Expr.Unary unary) => RuntimeValue.FromBoxed(EvaluateUnary(unary));
+    internal RuntimeValue VisitUnary(Expr.Unary unary) => EvaluateUnary(unary);
     internal RuntimeValue VisitDelete(Expr.Delete delete) => RuntimeValue.FromBoxed(EvaluateDelete(delete));
     internal RuntimeValue VisitVariable(Expr.Variable variable) => RuntimeValue.FromBoxed(EvaluateVariable(variable));
     internal RuntimeValue VisitAssign(Expr.Assign assign) => RuntimeValue.FromBoxed(EvaluateAssign(assign));
