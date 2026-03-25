@@ -704,6 +704,12 @@ public partial class Interpreter : IDisposable
         try { _shutdownCts.Dispose(); }
         catch (ObjectDisposedException) { }
 
+        // Reset process stream singletons to prevent listener/state leakage
+        // across interpreter runs (e.g., in test suites or REPL restarts).
+        Runtime.Types.SharpTSStdin.Instance.ResetReadableState();
+        Runtime.Types.SharpTSStdout.Instance.ResetWritableState();
+        Runtime.Types.SharpTSStderr.Instance.ResetWritableState();
+
         GC.SuppressFinalize(this);
     }
 

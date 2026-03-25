@@ -148,17 +148,17 @@ public sealed class ProcessStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
 
-            // Stream objects - return marker strings that can be detected in method calls
+            // Stream objects - return cached $Writable/$Readable singleton instances
             case "stdin":
-                il.Emit(OpCodes.Ldstr, "__$stdin$__");
+                il.Emit(OpCodes.Call, ctx.Runtime!.GetStdin);
                 return true;
 
             case "stdout":
-                il.Emit(OpCodes.Ldstr, "__$stdout$__");
+                il.Emit(OpCodes.Call, ctx.Runtime!.GetStdout);
                 return true;
 
             case "stderr":
-                il.Emit(OpCodes.Ldstr, "__$stderr$__");
+                il.Emit(OpCodes.Call, ctx.Runtime!.GetStderr);
                 return true;
 
             // Methods accessible as properties (for typeof checks)

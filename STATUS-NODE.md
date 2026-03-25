@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-24 (AsyncLocalStorage: full async context propagation with run/getStore/enterWith/exit/disable; fixed module-level async arrow compilation)
+**Last Updated:** 2026-03-24 (process.stdin/stdout/stderr: full Readable/Writable stream support with EventEmitter, background stdin reader)
 
 ## Legend
 - ✅ Implemented
@@ -419,9 +419,9 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | **PassThrough** | | |
 | `new PassThrough()` | ✅ | Transform that passes data unchanged |
 | **Process Streams** | | |
-| `process.stdout.write()` | ✅ | Basic only |
-| `process.stderr.write()` | ✅ | Basic only |
-| `process.stdin` events | ❌ | No event-based input |
+| `process.stdout` | ✅ | Full Writable stream: write(), end(), cork(), uncork(), on/once/off events, writable/writableEnded/writableFinished properties, isTTY |
+| `process.stderr` | ✅ | Full Writable stream: write(), end(), cork(), uncork(), on/once/off events, writable/writableEnded/writableFinished properties, isTTY |
+| `process.stdin` | ✅ | Full Readable stream: on('data'), on('end'), read(), pause(), resume(), pipe(), setEncoding(), readable/readableEnded properties, isTTY; background Console.In reader thread |
 | **Flowing Mode** | | |
 | Auto-flowing on `data` listener | ✅ | Enters flowing mode when 'data' listener added |
 | `pause()` / `resume()` | ✅ | Flow control with buffer draining on resume |

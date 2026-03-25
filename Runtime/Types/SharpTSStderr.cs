@@ -1,26 +1,24 @@
+using SharpTS.Runtime.BuiltIns;
+using Interp = SharpTS.Execution.Interpreter;
+
 namespace SharpTS.Runtime.Types;
 
 /// <summary>
-/// Singleton marker for the process.stderr stream object.
+/// Singleton Writable stream for process.stderr.
+/// Writes to the interpreter's Error writer (or Console.Error in compiled mode)
+/// and emits Writable stream events.
 /// </summary>
 /// <remarks>
-/// Provides synchronous writing to standard error and TTY detection.
-/// The singleton pattern ensures only one stderr object exists, consistent with Node.js semantics.
+/// In Node.js, process.stderr is a special never-ending Writable stream.
+/// end() and destroy() are no-ops to prevent corrupting the singleton state.
 /// </remarks>
-public class SharpTSStderr
+public class SharpTSStderr : SharpTSWritable
 {
     public static readonly SharpTSStderr Instance = new();
-    private SharpTSStderr() { }
 
-    /// <summary>
-    /// Writes data to standard error without a trailing newline.
-    /// </summary>
-    /// <param name="data">The string to write.</param>
-    /// <returns>True on success.</returns>
-    public bool Write(string data)
+    private SharpTSStderr()
     {
-        Console.Error.Write(data);
-        return true;
+        SetWriteCallback(new StderrWriteCallback());
     }
 
     /// <summary>
@@ -28,5 +26,42 @@ public class SharpTSStderr
     /// </summary>
     public bool IsTTY => !Console.IsErrorRedirected;
 
+    /// <summary>
+    /// Gets a member by name, adding stderr-specific properties on top of Writable.
+    /// Overrides end/destroy to be no-ops (process.stderr never ends in Node.js).
+    /// </summary>
+    public new object? GetMember(string name)
+    {
+        return name switch
+        {
+            "isTTY" => IsTTY,
+            // process.stderr never ends or destroys — no-op to protect singleton state
+            "end" => new BuiltInMethod("end", 0, 3, (_, _, _) => this),
+            "destroy" => new BuiltInMethod("destroy", 0, 1, (_, _, _) => this),
+            _ => base.GetMember(name)
+        };
+    }
+
     public override string ToString() => "[object stderr]";
+
+    private sealed class StderrWriteCallback : ISharpTSCallable
+    {
+        public int Arity() => 3;
+
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            var chunk = arguments.Count > 0 ? arguments[0] : null;
+            var callback = arguments.Count > 2 ? arguments[2] as ISharpTSCallable : null;
+
+            var data = chunk?.ToString() ?? "";
+
+            if (interpreter != null)
+                interpreter.Error.Write(data);
+            else
+                Console.Error.Write(data);
+
+            callback?.Call(interpreter!, []);
+            return null;
+        }
+    }
 }

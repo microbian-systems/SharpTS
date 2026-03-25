@@ -645,6 +645,20 @@ public class SharpTSReadable : SharpTSEventEmitter
     }
 
     /// <summary>
+    /// Resets mutable state for singleton reuse (e.g., process.stdin between interpreter runs).
+    /// </summary>
+    internal void ResetReadableState()
+    {
+        _readBuffer.Clear();
+        _pipeDestinations.Clear();
+        _ended = false;
+        _destroyed = false;
+        _readable = true;
+        _flowing = null;
+        ClearAllListenersInternal();
+    }
+
+    /// <summary>
     /// Drains the existing read buffer by emitting 'data' events for each queued chunk.
     /// Called after a 'data' listener is added, when the interpreter is available.
     /// Does NOT emit 'end' — that's handled separately when the 'end' listener is added.

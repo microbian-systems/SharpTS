@@ -1288,9 +1288,8 @@ public partial class ILEmitter
     /// </summary>
     private bool TryEmitProcessStreamProperty(Expr.Get g)
     {
-        // Pattern: process.stdin.isTTY, process.stdout.isTTY, process.stderr.isTTY
+        // Pattern: process.stdin.X, process.stdout.X, process.stderr.X
         // g.Object is Expr.Get { Object: Expr.Variable("process"), Name: "stdin/stdout/stderr" }
-        // g.Name.Lexeme is "isTTY"
 
         if (g.Object is not Expr.Get streamGet)
             return false;
@@ -1301,29 +1300,66 @@ public partial class ILEmitter
         string streamName = streamGet.Name.Lexeme;
         string propertyName = g.Name.Lexeme;
 
-        if (propertyName != "isTTY")
-            return false;
-
-        switch (streamName)
+        // Handle isTTY for all streams
+        if (propertyName == "isTTY")
         {
-            case "stdin":
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.StdinIsTTY);
-                SetStackUnknown();
-                return true;
-
-            case "stdout":
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.StdoutIsTTY);
-                SetStackUnknown();
-                return true;
-
-            case "stderr":
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.StderrIsTTY);
-                SetStackUnknown();
-                return true;
-
-            default:
-                return false;
+            switch (streamName)
+            {
+                case "stdin":
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.StdinIsTTY);
+                    SetStackUnknown();
+                    return true;
+                case "stdout":
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.StdoutIsTTY);
+                    SetStackUnknown();
+                    return true;
+                case "stderr":
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.StderrIsTTY);
+                    SetStackUnknown();
+                    return true;
+            }
         }
+
+        // Handle writable stream properties for stdout/stderr
+        if (streamName is "stdout" or "stderr")
+        {
+            switch (propertyName)
+            {
+                case "writable":
+                    IL.Emit(OpCodes.Ldc_I4_1);
+                    IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
+                    SetStackUnknown();
+                    return true;
+                case "writableEnded":
+                case "writableFinished":
+                case "destroyed":
+                    IL.Emit(OpCodes.Ldc_I4_0);
+                    IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
+                    SetStackUnknown();
+                    return true;
+            }
+        }
+
+        // Handle readable stream properties for stdin
+        if (streamName == "stdin")
+        {
+            switch (propertyName)
+            {
+                case "readable":
+                    IL.Emit(OpCodes.Ldc_I4_1);
+                    IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
+                    SetStackUnknown();
+                    return true;
+                case "readableEnded":
+                case "destroyed":
+                    IL.Emit(OpCodes.Ldc_I4_0);
+                    IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
+                    SetStackUnknown();
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

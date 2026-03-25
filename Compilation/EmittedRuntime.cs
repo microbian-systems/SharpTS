@@ -1037,6 +1037,14 @@ public class EmittedRuntime
     public MethodBuilder StderrWrite { get; set; } = null!;
     public MethodBuilder StderrIsTTY { get; set; } = null!;
 
+    // Process stream singleton getters (return cached $Writable/$Readable instances)
+    public MethodBuilder GetStdout { get; set; } = null!;
+    public MethodBuilder GetStderr { get; set; } = null!;
+    public MethodBuilder GetStdin { get; set; } = null!;
+    public FieldBuilder StdoutInstance { get; set; } = null!;
+    public FieldBuilder StderrInstance { get; set; } = null!;
+    public FieldBuilder StdinInstance { get; set; } = null!;
+
     // globalThis methods (ES2020)
     public MethodBuilder GlobalThisGetProperty { get; set; } = null!;
     public MethodBuilder GlobalThisSetProperty { get; set; } = null!;

@@ -282,6 +282,11 @@ public partial class ILEmitter
                     // Built-in module methods and static type methods are functions
                     IL.Emit(OpCodes.Ldstr, "function");
                 }
+                else if (IsTypeofOnProcessStream(u.Right))
+                {
+                    // process.stdin/stdout/stderr are stream objects
+                    IL.Emit(OpCodes.Ldstr, "object");
+                }
                 else
                 {
                     EmitExpression(u.Right);
@@ -1540,6 +1545,22 @@ public partial class ILEmitter
             if (staticStrategy != null && !staticStrategy.HasStaticProperty(memberName))
                 return true;
         }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Checks if an expression is process.stdin, process.stdout, or process.stderr,
+    /// which are represented as marker strings in compiled mode but should return "object" for typeof.
+    /// </summary>
+    private static bool IsTypeofOnProcessStream(Expr expr)
+    {
+        if (expr is not Expr.Get g)
+            return false;
+
+        if (g.Object is Expr.Variable v && v.Name.Lexeme == "process" &&
+            g.Name.Lexeme is "stdin" or "stdout" or "stderr")
+            return true;
 
         return false;
     }

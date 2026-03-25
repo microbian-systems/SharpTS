@@ -297,21 +297,21 @@ public sealed class ProcessModuleEmitter : IBuiltInModuleEmitter
     private static bool EmitStdin(IEmitterContext emitter)
     {
         var il = emitter.Context.IL;
-        il.Emit(OpCodes.Ldstr, "__$stdin$__");
+        il.Emit(OpCodes.Call, emitter.Context.Runtime!.GetStdin);
         return true;
     }
 
     private static bool EmitStdout(IEmitterContext emitter)
     {
         var il = emitter.Context.IL;
-        il.Emit(OpCodes.Ldstr, "__$stdout$__");
+        il.Emit(OpCodes.Call, emitter.Context.Runtime!.GetStdout);
         return true;
     }
 
     private static bool EmitStderr(IEmitterContext emitter)
     {
         var il = emitter.Context.IL;
-        il.Emit(OpCodes.Ldstr, "__$stderr$__");
+        il.Emit(OpCodes.Call, emitter.Context.Runtime!.GetStderr);
         return true;
     }
 
@@ -325,4 +325,8 @@ public sealed class ProcessModuleEmitter : IBuiltInModuleEmitter
     }
 
     #endregion
+
+    public bool IsExportedProperty(string memberName) => memberName is
+        "platform" or "arch" or "pid" or "version" or "env" or "argv" or "exitCode" or
+        "stdin" or "stdout" or "stderr";
 }

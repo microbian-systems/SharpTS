@@ -200,6 +200,11 @@ public class SharpTSEventEmitter
     }
 
     /// <summary>
+    /// Clears all event listeners. Used internally to reset singleton stream state.
+    /// </summary>
+    internal void ClearAllListenersInternal() => _events.Clear();
+
+    /// <summary>
     /// Returns an array of listener functions for the specified event.
     /// </summary>
     private object? Listeners(Interp interpreter, object? receiver, List<object?> args)

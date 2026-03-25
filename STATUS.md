@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-03-24 (AsyncLocalStorage: full async context propagation; fixed module-level async arrow compilation)
+**Last Updated:** 2026-03-24 (process.stdin/stdout/stderr: full Readable/Writable stream support with EventEmitter integration)
 
 ## Legend
 - ✅ Implemented

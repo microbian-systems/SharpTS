@@ -365,6 +365,22 @@ public class SharpTSWritable : SharpTSEventEmitter
         EmitEvent(interpreter, "close", []);
     }
 
+    /// <summary>
+    /// Resets mutable state for singleton reuse (e.g., process.stdout between interpreter runs).
+    /// </summary>
+    internal void ResetWritableState()
+    {
+        _writable = true;
+        _ended = false;
+        _finished = false;
+        _destroyed = false;
+        _corked = false;
+        _corkBuffer.Clear();
+        _pendingWrites = 0;
+        _needDrain = false;
+        ClearAllListenersInternal();
+    }
+
     internal void EmitEvent(Interp interpreter, string eventName, List<object?> args)
     {
         var emit = base.GetMember("emit") as BuiltInMethod;

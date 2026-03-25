@@ -384,6 +384,13 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     _helpers.IL.Emit(OpCodes.Ldstr, "undefined");
                     _helpers.SetStackUnknown();
                 }
+                // process.stdin/stdout/stderr are marker strings in compiled mode but should return "object"
+                else if (u.Right is Expr.Get tg && tg.Object is Expr.Variable tgv
+                    && tgv.Name.Lexeme == "process" && tg.Name.Lexeme is "stdin" or "stdout" or "stderr")
+                {
+                    _helpers.IL.Emit(OpCodes.Ldstr, "object");
+                    _helpers.SetStackUnknown();
+                }
                 else
                 {
                     _helpers.EmitUnaryTypeOf(() => EmitExpression(u.Right), Ctx.Runtime!.TypeOf);

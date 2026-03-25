@@ -22,6 +22,7 @@ public partial class RuntimeEmitter
         EmitStdinMethods(typeBuilder, runtime);
         EmitStdoutMethods(typeBuilder, runtime);
         EmitStderrMethods(typeBuilder, runtime);
+        EmitProcessStreamSingletons(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -578,6 +579,166 @@ public partial class RuntimeEmitter
         isTtyIl.Emit(OpCodes.Ceq); // Negate
         isTtyIl.Emit(OpCodes.Box, _types.Boolean);
         isTtyIl.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits singleton cached $Writable/$Readable instances for process.stdout/stderr/stdin.
+    /// Each getter creates the instance on first call and caches it in a static field.
+    /// stdout/stderr get a write callback that writes to Console.Out/Console.Error.
+    /// </summary>
+    private void EmitProcessStreamSingletons(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // --- stdout write callback: static method that writes to Console.Out ---
+        var stdoutWriteImpl = typeBuilder.DefineMethod(
+            "StdoutWriteImpl",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object] // chunk, encoding, doneCallback
+        );
+        {
+            var il = stdoutWriteImpl.GetILGenerator();
+            // Console.Write(chunk?.ToString() ?? "")
+            il.Emit(OpCodes.Ldarg_0); // chunk
+            var chunkNullLabel = il.DefineLabel();
+            var afterChunkLabel = il.DefineLabel();
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Brfalse, chunkNullLabel);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+            il.Emit(OpCodes.Br, afterChunkLabel);
+            il.MarkLabel(chunkNullLabel);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ldstr, "");
+            il.MarkLabel(afterChunkLabel);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Console, "Write", _types.String));
+            // Call doneCallback if not null (it's a $WriteCallbackWrapper)
+            var noDoneLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_2); // doneCallback
+            il.Emit(OpCodes.Brfalse, noDoneLabel);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+            il.Emit(OpCodes.Brfalse, noDoneLabel);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+            il.Emit(OpCodes.Ldnull); // this
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
+            il.Emit(OpCodes.Pop);
+            il.MarkLabel(noDoneLabel);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // --- stderr write callback: static method that writes to Console.Error ---
+        var stderrWriteImpl = typeBuilder.DefineMethod(
+            "StderrWriteImpl",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]
+        );
+        {
+            var il = stderrWriteImpl.GetILGenerator();
+            il.Emit(OpCodes.Call, _types.GetPropertyGetter(_types.Console, "Error"));
+            il.Emit(OpCodes.Ldarg_0);
+            var chunkNullLabel = il.DefineLabel();
+            var afterChunkLabel = il.DefineLabel();
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Brfalse, chunkNullLabel);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+            il.Emit(OpCodes.Br, afterChunkLabel);
+            il.MarkLabel(chunkNullLabel);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ldstr, "");
+            il.MarkLabel(afterChunkLabel);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.TextWriter, "Write", _types.String));
+            // Call doneCallback if not null
+            var noDoneLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Brfalse, noDoneLabel);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+            il.Emit(OpCodes.Brfalse, noDoneLabel);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
+            il.Emit(OpCodes.Pop);
+            il.MarkLabel(noDoneLabel);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // --- Static cache fields ---
+        runtime.StdoutInstance = typeBuilder.DefineField("_stdoutInstance", _types.Object, FieldAttributes.Private | FieldAttributes.Static);
+        runtime.StderrInstance = typeBuilder.DefineField("_stderrInstance", _types.Object, FieldAttributes.Private | FieldAttributes.Static);
+        runtime.StdinInstance = typeBuilder.DefineField("_stdinInstance", _types.Object, FieldAttributes.Private | FieldAttributes.Static);
+
+        // --- GetStdout: create $Writable with Console.Write callback, cache in static field ---
+        runtime.GetStdout = EmitStreamSingletonGetter(typeBuilder, runtime, "GetStdout",
+            runtime.StdoutInstance, runtime.TSWritableCtor, stdoutWriteImpl);
+
+        // --- GetStderr: create $Writable with Console.Error.Write callback ---
+        runtime.GetStderr = EmitStreamSingletonGetter(typeBuilder, runtime, "GetStderr",
+            runtime.StderrInstance, runtime.TSWritableCtor, stderrWriteImpl);
+
+        // --- GetStdin: create $Readable (no write callback needed) ---
+        runtime.GetStdin = EmitStreamSingletonGetter(typeBuilder, runtime, "GetStdin",
+            runtime.StdinInstance, runtime.TSReadableCtor, null);
+    }
+
+    private MethodBuilder EmitStreamSingletonGetter(
+        TypeBuilder typeBuilder, EmittedRuntime runtime,
+        string methodName, FieldBuilder cacheField,
+        ConstructorBuilder streamCtor,
+        MethodBuilder? writeImpl)
+    {
+        var method = typeBuilder.DefineMethod(
+            methodName,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            Type.EmptyTypes
+        );
+
+        var il = method.GetILGenerator();
+
+        // if (_instance != null) return _instance;
+        var createLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, cacheField);
+        il.Emit(OpCodes.Brfalse, createLabel);
+        il.Emit(OpCodes.Ldsfld, cacheField);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(createLabel);
+
+        // var stream = new $Writable() or new $Readable()
+        il.Emit(OpCodes.Newobj, streamCtor);
+
+        // If write callback provided, set it
+        if (writeImpl != null)
+        {
+            il.Emit(OpCodes.Dup); // keep stream on stack
+
+            // Create $TSFunction wrapping the write impl method
+            il.Emit(OpCodes.Ldnull); // target (static method, no instance)
+            il.Emit(OpCodes.Ldtoken, writeImpl);
+            il.Emit(OpCodes.Call, _types.GetMethod(
+                _types.MethodBase, "GetMethodFromHandle", _types.RuntimeMethodHandle));
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+
+            // Call stream.SetWriteCallback(tsFunction)
+            il.Emit(OpCodes.Callvirt, runtime.TSWritableType.GetMethod("SetWriteCallback")!);
+        }
+
+        // Cache: _instance = stream
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stsfld, cacheField);
+
+        il.Emit(OpCodes.Ret);
+
+        return method;
     }
 
     /// <summary>
