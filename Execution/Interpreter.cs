@@ -189,6 +189,7 @@ public partial class Interpreter : IDisposable
     // Event loop infrastructure - BlockingCollection for efficient waiting (no polling)
     // SynchronizationContext routes async/await continuations back to the main thread
     private readonly System.Collections.Concurrent.BlockingCollection<Action> _callbackQueue = new();
+    private readonly CancellationTokenSource _shutdownCts = new();
     private InterpreterSynchronizationContext? _eventLoopSyncContext;
 
     /// <summary>
@@ -429,6 +430,18 @@ public partial class Interpreter : IDisposable
     }
 
     /// <summary>
+    /// Signals the event loop to shut down promptly.
+    /// Unlike Dispose, this uses cooperative cancellation — the event loop exits
+    /// at its next blocking point (TryTake) rather than waiting for handles to drain.
+    /// Used by cluster worker Kill/Disconnect to implement Node.js-style prompt termination.
+    /// </summary>
+    internal void Shutdown()
+    {
+        try { _shutdownCts.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>
     /// Gets whether there are active handles keeping the event loop alive.
     /// Thread-safe - reads volatile int which is atomic on all .NET platforms.
     /// </summary>
@@ -477,6 +490,8 @@ public partial class Interpreter : IDisposable
 
         try
         {
+            var shutdownToken = _shutdownCts.Token;
+
             while (!_isDisposed)
             {
                 // Exit immediately if there's no work keeping the loop alive
@@ -488,9 +503,9 @@ public partial class Interpreter : IDisposable
                 // Calculate timeout until next timer fires
                 var timeout = GetNextTimerTimeout();
 
-                // Efficient wait: blocks until callback arrives OR timeout expires
-                // This uses no CPU while waiting (unlike Thread.Sleep polling)
-                if (_callbackQueue.TryTake(out var action, timeout))
+                // Efficient wait: blocks until callback arrives, timeout expires,
+                // or shutdown is requested (via CancellationToken from Shutdown())
+                if (_callbackQueue.TryTake(out var action, (int)timeout.TotalMilliseconds, shutdownToken))
                 {
                     // Execute the queued callback (HTTP request handler, async continuation, etc.)
                     try
@@ -518,6 +533,11 @@ public partial class Interpreter : IDisposable
                     break;
                 }
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown() was called — exit the event loop promptly.
+            // This is the cooperative cancellation path used by cluster worker Kill/Disconnect.
         }
         finally
         {
@@ -647,6 +667,10 @@ public partial class Interpreter : IDisposable
 
         _isDisposed = true;
 
+        // Signal the event loop to exit via cooperative cancellation
+        try { _shutdownCts.Cancel(); }
+        catch (ObjectDisposedException) { }
+
         // Complete the callback queue to unblock any waiting TryTake
         try { _callbackQueue.CompleteAdding(); }
         catch (ObjectDisposedException)
@@ -676,6 +700,9 @@ public partial class Interpreter : IDisposable
             // Queue was already disposed - safe to ignore as we're cleaning up anyway.
             System.Diagnostics.Debug.WriteLine("Dispose: Queue already disposed during Dispose call.");
         }
+
+        try { _shutdownCts.Dispose(); }
+        catch (ObjectDisposedException) { }
 
         GC.SuppressFinalize(this);
     }
@@ -1010,15 +1037,12 @@ public partial class Interpreter : IDisposable
     /// </summary>
     private void ExecuteModule(ParsedModule module)
     {
-        // Skip if already executed
-        if (_loadedModules.ContainsKey(module.Path))
+        // Create module instance to track exports (TryAdd returns false if already executed)
+        var moduleInstance = new ModuleInstance();
+        if (!_loadedModules.TryAdd(module.Path, moduleInstance))
         {
             return;
         }
-
-        // Create module instance to track exports
-        var moduleInstance = new ModuleInstance();
-        _loadedModules[module.Path] = moduleInstance;
 
         // Handle built-in modules specially - populate exports from interpreter implementations
         if (module.IsBuiltIn)

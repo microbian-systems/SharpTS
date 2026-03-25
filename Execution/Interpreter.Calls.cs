@@ -69,7 +69,7 @@ public partial class Interpreter
     private async ValueTask<object?> EvaluateCallCore(IEvaluationContext ctx, Expr.Call call)
     {
         // Handle console.* methods
-        if (call.Callee is Expr.Variable v && v.Name.Lexeme.StartsWith(BuiltInNames.Console + "."))
+        if (call.Callee is Expr.Variable v && v.Name.Lexeme.StartsWith(BuiltInNames.ConsolePrefix, StringComparison.Ordinal))
         {
             var methodName = v.Name.Lexeme[(BuiltInNames.Console.Length + 1)..];
             var method = BuiltInRegistry.Instance.GetStaticMethod(BuiltInNames.Console, methodName);
@@ -209,7 +209,7 @@ public partial class Interpreter
     private object? EvaluateCall(Expr.Call call)
     {
         // Handle console.* methods
-        if (call.Callee is Expr.Variable v && v.Name.Lexeme.StartsWith(BuiltInNames.Console + "."))
+        if (call.Callee is Expr.Variable v && v.Name.Lexeme.StartsWith(BuiltInNames.ConsolePrefix, StringComparison.Ordinal))
         {
             var methodName = v.Name.Lexeme[(BuiltInNames.Console.Length + 1)..];
             var method = BuiltInRegistry.Instance.GetStaticMethod(BuiltInNames.Console, methodName);

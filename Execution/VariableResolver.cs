@@ -85,7 +85,7 @@ public class VariableResolver : AstVisitorBase
         int i = 0;
         foreach (var scope in _scopes)
         {
-            if (scope.ContainsKey(name))
+            if (scope.TryGetValue(name, out _))
             {
                 _interpreter.Resolve(expr, i);
                 return;

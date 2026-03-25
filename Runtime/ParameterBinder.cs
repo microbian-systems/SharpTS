@@ -61,7 +61,7 @@ internal static class ParameterBinder
             }
             else
             {
-                throw new Exception($"Missing required argument for parameter '{param.Name.Lexeme}'.");
+                throw new Exception($"Runtime Error: Missing required argument for parameter '{param.Name.Lexeme}'.");
             }
             environment.Define(param.Name.Lexeme, value);
         }
@@ -118,7 +118,7 @@ internal static class ParameterBinder
             }
             else
             {
-                throw new Exception($"Missing required argument for parameter '{param.Name.Lexeme}'.");
+                throw new Exception($"Runtime Error: Missing required argument for parameter '{param.Name.Lexeme}'.");
             }
             environment.Define(param.Name.Lexeme, value);
         }

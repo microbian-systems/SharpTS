@@ -33,7 +33,7 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
 
         if (Enclosing != null) return Enclosing.Get(name);
 
-        throw new Exception($"Undefined variable '{name.Lexeme}'.");
+        throw new Exception($"Runtime Error: Undefined variable '{name.Lexeme}'.");
     }
 
     /// <summary>
@@ -75,7 +75,7 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
             return;
         }
 
-        throw new Exception($"Undefined variable '{name.Lexeme}'.");
+        throw new Exception($"Runtime Error: Undefined variable '{name.Lexeme}'.");
     }
 
     /// <summary>

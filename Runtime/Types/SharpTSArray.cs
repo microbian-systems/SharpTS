@@ -76,7 +76,7 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
     {
         if (index < 0 || index >= Elements.Count)
         {
-            throw new Exception("Index out of bounds.");
+            throw new Exception("RangeError: Index out of bounds.");
         }
         return Elements[index];
     }
@@ -94,7 +94,7 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
             // Simplified: TS usually expands array, but let's be strict or expandable?
             // List<T> supports expansion via Add, but index access throws if OOB.
             // Let's allow strict bounds for now.
-            throw new Exception("Index out of bounds.");
+            throw new Exception("RangeError: Index out of bounds.");
         }
         Elements[index] = value;
     }
@@ -116,7 +116,7 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
 
         if (index < 0 || index >= Elements.Count)
         {
-            throw new Exception("Index out of bounds.");
+            throw new Exception("RangeError: Index out of bounds.");
         }
         Elements[index] = value;
     }
