@@ -132,16 +132,5 @@ public class SharpTSReadlineInterface : SharpTSEventEmitter
         return _prompt;
     }
 
-    private void EmitEvent(Interpreter interpreter, string eventName, List<object?> args)
-    {
-        var emit = base.GetMember("emit") as BuiltInMethod;
-        if (emit != null)
-        {
-            var fullArgs = new List<object?> { eventName };
-            fullArgs.AddRange(args);
-            emit.Bind(this).Call(interpreter, fullArgs);
-        }
-    }
-
     public override string ToString() => "Interface {}";
 }

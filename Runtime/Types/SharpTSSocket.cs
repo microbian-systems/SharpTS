@@ -578,17 +578,6 @@ public class SharpTSSocket : SharpTSEventEmitter
         }, token);
     }
 
-    protected internal void EmitEvent(Interp interpreter, string eventName, List<object?> args)
-    {
-        var emit = base.GetMember("emit") as BuiltInMethod;
-        if (emit != null)
-        {
-            var fullArgs = new List<object?> { eventName };
-            fullArgs.AddRange(args);
-            emit.Bind(this).Call(interpreter, fullArgs);
-        }
-    }
-
     protected internal static byte[] ChunkToBytes(object? chunk, string encoding)
     {
         return chunk switch

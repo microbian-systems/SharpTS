@@ -269,10 +269,12 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
                     if (_connections.Count >= _maxConnections)
                     {
                         currentPipe.Dispose();
+                        currentPipe = null;
                         continue;
                     }
 
                     var acceptedPipe = currentPipe;
+                    currentPipe = null; // Ownership transferred to the socket
                     interpreter.ScheduleTimer(0, 0, () =>
                     {
                         var socket = new SharpTSSocket(acceptedPipe, _pipePath!);
@@ -289,6 +291,12 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
                 catch (OperationCanceledException) { break; }
                 catch (ObjectDisposedException) { break; }
                 catch (IOException) { break; }
+                finally
+                {
+                    // Dispose pipe if ownership was not transferred
+                    currentPipe?.Dispose();
+                    currentPipe = null;
+                }
             }
         }, token);
     }
@@ -304,19 +312,23 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
         {
             while (!token.IsCancellationRequested && _unixSocket != null)
             {
+                Socket? clientSocket = null;
                 try
                 {
-                    var clientSocket = await _unixSocket.AcceptAsync(token);
+                    clientSocket = await _unixSocket.AcceptAsync(token);
 
                     if (_connections.Count >= _maxConnections)
                     {
                         clientSocket.Close();
+                        clientSocket = null;
                         continue;
                     }
 
+                    var accepted = clientSocket;
+                    clientSocket = null; // Ownership transferred to the closure
                     interpreter.ScheduleTimer(0, 0, () =>
                     {
-                        var stream = new NetworkStream(clientSocket, ownsSocket: true);
+                        var stream = new NetworkStream(accepted, ownsSocket: true);
                         var socket = new SharpTSSocket(stream, _pipePath!);
                         _connections.Add(socket);
                         socket.StartReading(interpreter);
@@ -327,6 +339,11 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
                 catch (OperationCanceledException) { break; }
                 catch (ObjectDisposedException) { break; }
                 catch (SocketException) { break; }
+                finally
+                {
+                    // Dispose socket if ownership was not transferred
+                    clientSocket?.Dispose();
+                }
             }
         }, token);
     }
@@ -521,17 +538,6 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
         if (arg == null || arg is string || arg is double || arg is bool) return null;
         if (arg is ISharpTSCallable callable) return callable;
         return TSFunctionCallableAdapter.WrapCallback(arg);
-    }
-
-    internal void EmitEvent(Interp interpreter, string eventName, List<object?> args)
-    {
-        var emit = base.GetMember("emit") as BuiltInMethod;
-        if (emit != null)
-        {
-            var fullArgs = new List<object?> { eventName };
-            fullArgs.AddRange(args);
-            emit.Bind(this).Call(interpreter, fullArgs);
-        }
     }
 
     public void Dispose()

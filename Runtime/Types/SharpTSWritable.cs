@@ -381,17 +381,6 @@ public class SharpTSWritable : SharpTSEventEmitter
         ClearAllListenersInternal();
     }
 
-    internal void EmitEvent(Interp interpreter, string eventName, List<object?> args)
-    {
-        var emit = base.GetMember("emit") as BuiltInMethod;
-        if (emit != null)
-        {
-            var fullArgs = new List<object?> { eventName };
-            fullArgs.AddRange(args);
-            emit.Bind(this).Call(interpreter, fullArgs);
-        }
-    }
-
     public override string ToString() => "Writable {}";
 
     /// <summary>

@@ -27,6 +27,7 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]
         );
         runtime.DgramCreateSocket = method;
+        runtime.RegisterBuiltInModuleMethod("dgram", "createSocket", method);
 
         var il = method.GetILGenerator();
 

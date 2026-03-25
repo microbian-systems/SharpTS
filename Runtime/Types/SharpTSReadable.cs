@@ -619,18 +619,6 @@ public class SharpTSReadable : SharpTSEventEmitter
         }
     }
 
-    internal void EmitEvent(Interp interpreter, string eventName, List<object?> args)
-    {
-        // Call the emit method from the base EventEmitter
-        var emit = base.GetMember("emit") as BuiltInMethod;
-        if (emit != null)
-        {
-            var fullArgs = new List<object?> { eventName };
-            fullArgs.AddRange(args);
-            emit.Bind(this).Call(interpreter, fullArgs);
-        }
-    }
-
     /// <summary>
     /// When a 'data' listener is added, enter flowing mode automatically.
     /// The actual buffer drain happens in the wrapped on/addListener methods

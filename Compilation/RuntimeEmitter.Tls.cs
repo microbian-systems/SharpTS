@@ -35,6 +35,8 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]
         );
         runtime.TlsCreateServer = method;
+        runtime.RegisterBuiltInModuleMethod("tls", "createServer", method);
+        runtime.RegisterBuiltInModuleMethod("tls", "Server", method); // alias
 
         var il = method.GetILGenerator();
 
@@ -59,6 +61,7 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object, _types.Object, _types.Object]
         );
         runtime.TlsConnect = method;
+        runtime.RegisterBuiltInModuleMethod("tls", "connect", method);
 
         var il = method.GetILGenerator();
 
@@ -80,6 +83,7 @@ public partial class RuntimeEmitter
             Type.EmptyTypes
         );
         runtime.TlsCreateSocket = method;
+        runtime.RegisterBuiltInModuleMethod("tls", "TLSSocket", method);
 
         var il = method.GetILGenerator();
 
@@ -101,6 +105,7 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
         runtime.TlsCreateSecureContext = method;
+        runtime.RegisterBuiltInModuleMethod("tls", "createSecureContext", method);
 
         var il = method.GetILGenerator();
 

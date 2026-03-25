@@ -534,17 +534,6 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
         }, token);
     }
 
-    protected internal void EmitEvent(Interp interpreter, string eventName, List<object?> args)
-    {
-        var emit = base.GetMember("emit") as BuiltInMethod;
-        if (emit != null)
-        {
-            var fullArgs = new List<object?> { eventName };
-            fullArgs.AddRange(args);
-            emit.Bind(this).Call(interpreter, fullArgs);
-        }
-    }
-
     private void Once(string eventName, ISharpTSCallable callback)
     {
         var onceMethod = base.GetMember("once") as BuiltInMethod;

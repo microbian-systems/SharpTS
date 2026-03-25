@@ -35,6 +35,8 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
         runtime.NetCreateServer = method;
+        runtime.RegisterBuiltInModuleMethod("net", "createServer", method);
+        runtime.RegisterBuiltInModuleMethod("net", "Server", method); // alias
 
         var il = method.GetILGenerator();
 
@@ -57,6 +59,8 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]
         );
         runtime.NetCreateConnection = method;
+        runtime.RegisterBuiltInModuleMethod("net", "createConnection", method);
+        runtime.RegisterBuiltInModuleMethod("net", "connect", method); // alias
 
         var il = method.GetILGenerator();
 
@@ -97,6 +101,7 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
         runtime.NetIsIP = method;
+        runtime.RegisterBuiltInModuleMethod("net", "isIP", method);
 
         var il = method.GetILGenerator();
 
@@ -160,6 +165,7 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
         runtime.NetIsIPv4 = method;
+        runtime.RegisterBuiltInModuleMethod("net", "isIPv4", method);
 
         var il = method.GetILGenerator();
 
@@ -209,6 +215,7 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
         runtime.NetIsIPv6 = method;
+        runtime.RegisterBuiltInModuleMethod("net", "isIPv6", method);
 
         var il = method.GetILGenerator();
 

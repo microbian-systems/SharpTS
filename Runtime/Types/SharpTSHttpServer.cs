@@ -207,17 +207,12 @@ public class SharpTSHttpServer : SharpTSEventEmitter, ITypeCategorized, IDisposa
     }
 
     /// <summary>
-    /// Emits an event using the inherited EventEmitter mechanism.
+    /// Emits an event using the stored interpreter.
     /// </summary>
     private void EmitEvent(string eventName, List<object?> eventArgs)
     {
         if (_interpreter == null) return;
-
-        // Use the inherited EventEmitter emit method
-        var emitMethod = base.GetMember("emit") as BuiltInMethod;
-        var args = new List<object?> { eventName };
-        args.AddRange(eventArgs);
-        emitMethod?.Call(_interpreter, args);
+        base.EmitEvent(_interpreter, eventName, eventArgs);
     }
 
     /// <summary>

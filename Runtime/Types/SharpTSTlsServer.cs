@@ -330,17 +330,6 @@ public class SharpTSTlsServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
         return this;
     }
 
-    internal void EmitEvent(Interp interpreter, string eventName, List<object?> args)
-    {
-        var emit = base.GetMember("emit") as BuiltInMethod;
-        if (emit != null)
-        {
-            var fullArgs = new List<object?> { eventName };
-            fullArgs.AddRange(args);
-            emit.Bind(this).Call(interpreter, fullArgs);
-        }
-    }
-
     public void Dispose()
     {
         _cts?.Cancel();

@@ -166,6 +166,21 @@ public class SharpTSEventEmitter
     }
 
     /// <summary>
+    /// Emits an event from subclass code using the interpreter.
+    /// Shared helper to avoid duplicating event dispatch logic in every EventEmitter subclass.
+    /// </summary>
+    protected internal void EmitEvent(Interp interpreter, string eventName, List<object?> args)
+    {
+        var emit = GetMember("emit") as BuiltInMethod;
+        if (emit != null)
+        {
+            var fullArgs = new List<object?> { eventName };
+            fullArgs.AddRange(args);
+            emit.Bind(this).Call(interpreter, fullArgs);
+        }
+    }
+
+    /// <summary>
     /// Invokes a listener supporting multiple listener types (ISharpTSCallable, TSFunction, Action, BuiltInMethod).
     /// </summary>
     private static void InvokeListener(object listener, Interp? interpreter, List<object?> eventArgs)

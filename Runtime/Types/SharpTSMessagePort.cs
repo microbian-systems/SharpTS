@@ -171,10 +171,7 @@ public class SharpTSMessagePort : SharpTSEventEmitter, ITypeCategorized
     {
         if (OwnerInterpreter == null)
             return;
-
-        // Call emit through the base EventEmitter
-        var emitMethod = GetMember("emit") as BuiltInMethod;
-        emitMethod?.Call(OwnerInterpreter, [eventName, ..args]);
+        base.EmitEvent(OwnerInterpreter, eventName, args);
     }
 
     /// <summary>

@@ -682,11 +682,224 @@ public partial class AsyncGeneratorMoveNextEmitter
             return;
         }
 
+        // Special case: super.method() call — emit non-virtual Call to base method
+        if (c.Callee is Expr.Super superMethodExpr && superMethodExpr.Method != null && superMethodExpr.Method.Lexeme != "constructor")
+        {
+            if (TryEmitSuperMethodCall(superMethodExpr.Method.Lexeme, c.Arguments))
+                return;
+        }
+
+        // Handle fetch() - global async HTTP function
+        Expr fetchCallee = c.Callee;
+        bool unwrapped = true;
+        while (unwrapped)
+        {
+            unwrapped = false;
+            if (fetchCallee is Expr.TypeAssertion ta2) { fetchCallee = ta2.Expression; unwrapped = true; }
+            if (fetchCallee is Expr.Grouping g2) { fetchCallee = g2.Expression; unwrapped = true; }
+        }
+        if (fetchCallee is Expr.Variable fetchVar && fetchVar.Name.Lexeme == "fetch")
+        {
+            EmitFetchCall(c.Arguments);
+            return;
+        }
+
+        // Static type dispatch via registry (Math, JSON, Object, Array, Number, Promise, Symbol)
+        if (c.Callee is Expr.Get staticGet &&
+            staticGet.Object is Expr.Variable staticVar &&
+            _ctx?.TypeEmitterRegistry != null)
+        {
+            var staticStrategy = _ctx.TypeEmitterRegistry.GetStaticStrategy(staticVar.Name.Lexeme);
+            if (staticStrategy != null && staticStrategy.TryEmitStaticCall(this, staticGet.Name.Lexeme, c.Arguments))
+            {
+                SetStackUnknown();
+                return;
+            }
+        }
+
+        // Built-in module method calls (fs.readFileSync, path.join, etc.)
+        if (c.Callee is Expr.Get builtInGet &&
+            builtInGet.Object is Expr.Variable builtInModuleVar &&
+            _ctx!.BuiltInModuleNamespaces != null &&
+            _ctx.BuiltInModuleNamespaces.TryGetValue(builtInModuleVar.Name.Lexeme, out var builtInModuleName) &&
+            _ctx.BuiltInModuleEmitterRegistry?.GetEmitter(builtInModuleName) is { } builtInModuleEmitter)
+        {
+            if (builtInModuleEmitter.TryEmitMethodCall(this, builtInGet.Name.Lexeme, c.Arguments))
+            {
+                SetStackUnknown();
+                return;
+            }
+        }
+
+        // Special case: fs.promises.methodName()
+        if (c.Callee is Expr.Get fsPromisesMethodGet &&
+            fsPromisesMethodGet.Object is Expr.Get fsPromisesGet &&
+            fsPromisesGet.Name.Lexeme == "promises" &&
+            fsPromisesGet.Object is Expr.Variable fsVar &&
+            _ctx!.BuiltInModuleNamespaces != null &&
+            _ctx.BuiltInModuleNamespaces.TryGetValue(fsVar.Name.Lexeme, out var fsModuleName) &&
+            fsModuleName == "fs" &&
+            _ctx.BuiltInModuleEmitterRegistry?.GetEmitter("fs/promises") is { } fsPromisesEmitter)
+        {
+            if (fsPromisesEmitter.TryEmitMethodCall(this, fsPromisesMethodGet.Name.Lexeme, c.Arguments))
+            {
+                SetStackUnknown();
+                return;
+            }
+        }
+
+        // Handle Class.staticMethod() calls
+        if (c.Callee is Expr.Get classStaticGet &&
+            classStaticGet.Object is Expr.Variable classVar &&
+            _ctx!.Classes.TryGetValue(_ctx.ResolveClassName(classVar.Name.Lexeme), out var classBuilder))
+        {
+            string resolvedClassName = _ctx.ResolveClassName(classVar.Name.Lexeme);
+            if (_ctx.ClassRegistry!.TryGetStaticMethod(resolvedClassName, classStaticGet.Name.Lexeme, out var staticMethod))
+            {
+                var staticMethodParams = staticMethod!.GetParameters();
+                var paramCount = staticMethodParams.Length;
+
+                List<LocalBuilder> staticArgTemps = [];
+                for (int i = 0; i < c.Arguments.Count; i++)
+                {
+                    EmitExpression(c.Arguments[i]);
+                    EnsureBoxed();
+                    var temp = _il.DeclareLocal(typeof(object));
+                    _il.Emit(OpCodes.Stloc, temp);
+                    staticArgTemps.Add(temp);
+                }
+
+                for (int i = 0; i < staticArgTemps.Count; i++)
+                {
+                    _il.Emit(OpCodes.Ldloc, staticArgTemps[i]);
+                    if (i < staticMethodParams.Length)
+                    {
+                        var targetType = staticMethodParams[i].ParameterType;
+                        if (targetType.IsValueType && targetType != typeof(object))
+                        {
+                            _il.Emit(OpCodes.Unbox_Any, targetType);
+                        }
+                    }
+                }
+
+                for (int i = c.Arguments.Count; i < paramCount; i++)
+                {
+                    EmitDefaultForType(staticMethodParams[i].ParameterType);
+                }
+
+                _il.Emit(OpCodes.Call, staticMethod);
+                SetStackUnknown();
+                return;
+            }
+        }
+
+        // Handle Promise instance methods: promise.then/catch/finally
+        if (c.Callee is Expr.Get methodGet)
+        {
+            string methodName = methodGet.Name.Lexeme;
+            if (methodName is "then" or "catch" or "finally")
+            {
+                EmitPromiseInstanceMethodCall(methodGet.Object, methodName, c.Arguments);
+                return;
+            }
+
+            // Try direct dispatch for known class instance methods
+            if (TryEmitDirectMethodCall(methodGet.Object, methodName, c.Arguments))
+                return;
+
+            // Type-first dispatch: Use TypeEmitterRegistry if we have type information
+            var objType = _ctx?.TypeMap?.Get(methodGet.Object);
+            if (objType != null && _ctx?.TypeEmitterRegistry != null)
+            {
+                var strategy = _ctx.TypeEmitterRegistry.GetStrategy(objType);
+                if (strategy != null && strategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                    return;
+
+                // Handle union types
+                if (objType is TypeSystem.TypeInfo.Union union)
+                {
+                    bool hasBufferMember = union.Types.Any(t => t is TypeSystem.TypeInfo.Buffer);
+                    bool hasStringMember = union.Types.Any(t => t is TypeSystem.TypeInfo.String or TypeSystem.TypeInfo.StringLiteral);
+                    bool hasArrayMember = union.Types.Any(t => t is TypeSystem.TypeInfo.Array);
+
+                    bool isAmbiguousMethod = methodName is "slice" or "concat" or "includes" or "indexOf" or "toString";
+                    int typesWithMethod = 0;
+                    if (hasBufferMember && isAmbiguousMethod) typesWithMethod++;
+                    if (hasStringMember && isAmbiguousMethod) typesWithMethod++;
+                    if (hasArrayMember && isAmbiguousMethod) typesWithMethod++;
+
+                    if (typesWithMethod <= 1)
+                    {
+                        if (hasBufferMember)
+                        {
+                            var bufferStrategy = _ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Buffer());
+                            if (bufferStrategy != null && bufferStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                                return;
+                        }
+                        if (hasStringMember)
+                        {
+                            var stringStrategy = _ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.String());
+                            if (stringStrategy != null && stringStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                                return;
+                        }
+                        if (hasArrayMember)
+                        {
+                            var arrayStrategy = _ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Array(new TypeSystem.TypeInfo.Any()));
+                            if (arrayStrategy != null && arrayStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                                return;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: Method name-based dispatch for known built-in methods
+            if (_ctx?.TypeEmitterRegistry != null)
+            {
+                if (methodName is "charAt" or "substring" or "toUpperCase" or "toLowerCase"
+                    or "trim" or "replace" or "split" or "startsWith" or "endsWith"
+                    or "repeat" or "padStart" or "padEnd" or "charCodeAt" or "lastIndexOf"
+                    or "trimStart" or "trimEnd" or "replaceAll" or "at" or "match" or "search")
+                {
+                    var stringStrategy = _ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.String());
+                    if (stringStrategy != null && stringStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                        return;
+                }
+
+                if (methodName is "pop" or "shift" or "unshift" or "map" or "filter"
+                    or "push" or "find" or "findIndex" or "some" or "every" or "reduce" or "join"
+                    or "reverse" or "fill")
+                {
+                    var arrayStrategy = _ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Array(new TypeSystem.TypeInfo.Any()));
+                    if (arrayStrategy != null && arrayStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                        return;
+                }
+            }
+
+            // Handle ambiguous methods (slice, concat, includes, indexOf)
+            if (methodName is "slice" or "concat" or "includes" or "indexOf")
+            {
+                EmitAmbiguousMethodCall(methodGet.Object, methodName, c.Arguments);
+                return;
+            }
+        }
+
+        // Check if it's a built-in module method binding (e.g., import { readFile } from 'fs/promises')
+        if (c.Callee is Expr.Variable builtInVar &&
+            _ctx!.BuiltInModuleMethodBindings?.TryGetValue(builtInVar.Name.Lexeme, out var binding) == true)
+        {
+            var builtInEmitter = _ctx.BuiltInModuleEmitterRegistry?.GetEmitter(binding.ModuleName);
+            if (builtInEmitter != null && builtInEmitter.TryEmitMethodCall(this, binding.MethodName, c.Arguments))
+            {
+                SetStackUnknown();
+                return;
+            }
+        }
+
         // Check if it's a direct function call
         if (c.Callee is Expr.Variable funcVar && _ctx!.Functions.TryGetValue(_ctx.ResolveFunctionName(funcVar.Name.Lexeme), out var funcMethod))
         {
             var parameters = funcMethod.GetParameters();
-            List<LocalBuilder> argTemps = [];
+            List<LocalBuilder> directArgTemps = [];
 
             for (int i = 0; i < parameters.Length; i++)
             {
@@ -701,14 +914,32 @@ public partial class AsyncGeneratorMoveNextEmitter
                 }
                 var temp = _il.DeclareLocal(typeof(object));
                 _il.Emit(OpCodes.Stloc, temp);
-                argTemps.Add(temp);
+                directArgTemps.Add(temp);
             }
 
-            foreach (var temp in argTemps)
+            for (int i = 0; i < directArgTemps.Count; i++)
             {
-                _il.Emit(OpCodes.Ldloc, temp);
+                _il.Emit(OpCodes.Ldloc, directArgTemps[i]);
+                if (i < parameters.Length)
+                {
+                    var targetType = parameters[i].ParameterType;
+                    if (targetType.IsValueType && targetType != typeof(object))
+                    {
+                        _il.Emit(OpCodes.Unbox_Any, targetType);
+                    }
+                }
             }
             _il.Emit(OpCodes.Call, funcMethod);
+
+            var returnType = funcMethod.ReturnType;
+            if (returnType.IsValueType && returnType != typeof(void))
+            {
+                _il.Emit(OpCodes.Box, returnType);
+            }
+            else if (returnType == typeof(void))
+            {
+                _il.Emit(OpCodes.Ldnull);
+            }
             SetStackUnknown();
             return;
         }
@@ -719,30 +950,358 @@ public partial class AsyncGeneratorMoveNextEmitter
         var calleeTemp = _il.DeclareLocal(typeof(object));
         _il.Emit(OpCodes.Stloc, calleeTemp);
 
-        List<LocalBuilder> genericArgTemps = [];
+        List<LocalBuilder> argTemps = [];
         foreach (var arg in c.Arguments)
         {
             EmitExpression(arg);
             EnsureBoxed();
             var temp = _il.DeclareLocal(typeof(object));
             _il.Emit(OpCodes.Stloc, temp);
-            genericArgTemps.Add(temp);
+            argTemps.Add(temp);
         }
 
         _il.Emit(OpCodes.Ldloc, calleeTemp);
 
         _il.Emit(OpCodes.Ldc_I4, c.Arguments.Count);
         _il.Emit(OpCodes.Newarr, typeof(object));
-        for (int i = 0; i < genericArgTemps.Count; i++)
+        for (int i = 0; i < argTemps.Count; i++)
         {
             _il.Emit(OpCodes.Dup);
             _il.Emit(OpCodes.Ldc_I4, i);
-            _il.Emit(OpCodes.Ldloc, genericArgTemps[i]);
+            _il.Emit(OpCodes.Ldloc, argTemps[i]);
             _il.Emit(OpCodes.Stelem_Ref);
         }
 
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.InvokeValue);
         SetStackUnknown();
+    }
+
+    #endregion
+
+    #region Call Helpers
+
+    private bool TryEmitDirectMethodCall(Expr receiver, string methodName, List<Expr> arguments)
+    {
+        var receiverType = _ctx?.TypeMap?.Get(receiver);
+        if (receiverType is not TypeSystem.TypeInfo.Instance instance)
+            return false;
+
+        string? simpleClassName = instance.ClassType switch
+        {
+            TypeSystem.TypeInfo.Class classType => classType.Name,
+            _ => null
+        };
+        if (simpleClassName == null)
+            return false;
+
+        string className = _ctx!.ResolveClassName(simpleClassName);
+        var methodBuilder = _ctx.ResolveInstanceMethod(className, methodName);
+        if (methodBuilder == null)
+            return false;
+
+        if (!_ctx.Classes.TryGetValue(className, out var classType2))
+            return false;
+
+        var methodParams = methodBuilder.GetParameters();
+        int expectedParamCount = methodParams.Length;
+
+        List<LocalBuilder> argTemps = [];
+        foreach (var arg in arguments)
+        {
+            EmitExpression(arg);
+            EnsureBoxed();
+            var temp = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Stloc, temp);
+            argTemps.Add(temp);
+        }
+
+        EmitExpression(receiver);
+        EnsureBoxed();
+        _il.Emit(OpCodes.Castclass, classType2);
+
+        for (int i = 0; i < argTemps.Count; i++)
+        {
+            _il.Emit(OpCodes.Ldloc, argTemps[i]);
+            if (i < methodParams.Length)
+            {
+                var targetType = methodParams[i].ParameterType;
+                if (targetType.IsValueType && targetType != typeof(object))
+                {
+                    _il.Emit(OpCodes.Unbox_Any, targetType);
+                }
+            }
+        }
+
+        for (int i = arguments.Count; i < expectedParamCount; i++)
+        {
+            EmitDefaultForType(methodParams[i].ParameterType);
+        }
+
+        _il.Emit(OpCodes.Callvirt, methodBuilder);
+        SetStackUnknown();
+        return true;
+    }
+
+    private bool TryEmitSuperMethodCall(string methodName, List<Expr> arguments)
+    {
+        string? superclassName = _ctx?.CurrentSuperclassName;
+
+        if (superclassName == null && _ctx?.CurrentClassName != null)
+        {
+            superclassName = _ctx.ClassRegistry?.GetSuperclass(
+                _ctx.CurrentClassBuilder?.FullName ?? _ctx.CurrentClassName)
+                ?? _ctx.ClassRegistry?.GetSuperclass(_ctx.CurrentClassName);
+        }
+
+        if (superclassName == null && _ctx?.CurrentClassExpr != null)
+        {
+            _ctx.ClassExprSuperclass?.TryGetValue(_ctx.CurrentClassExpr, out superclassName);
+        }
+
+        if (superclassName == null)
+            return false;
+
+        string resolvedSuperName = _ctx!.ResolveClassName(superclassName);
+        var methodBuilder = _ctx.ResolveInstanceMethod(resolvedSuperName, methodName);
+        if (methodBuilder == null)
+            return false;
+
+        var methodParams = methodBuilder.GetParameters();
+
+        List<LocalBuilder> argTemps = [];
+        foreach (var arg in arguments)
+        {
+            EmitExpression(arg);
+            EnsureBoxed();
+            var temp = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Stloc, temp);
+            argTemps.Add(temp);
+        }
+
+        // Load hoisted 'this' from state machine
+        if (_builder.ThisField != null)
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.ThisField);
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldnull);
+        }
+
+        for (int i = 0; i < argTemps.Count; i++)
+        {
+            _il.Emit(OpCodes.Ldloc, argTemps[i]);
+            if (i < methodParams.Length)
+            {
+                var targetType = methodParams[i].ParameterType;
+                if (targetType.IsValueType && targetType != typeof(object))
+                {
+                    _il.Emit(OpCodes.Unbox_Any, targetType);
+                }
+            }
+        }
+
+        for (int i = arguments.Count; i < methodParams.Length; i++)
+        {
+            EmitDefaultForType(methodParams[i].ParameterType);
+        }
+
+        _il.Emit(OpCodes.Call, methodBuilder);
+        SetStackUnknown();
+        return true;
+    }
+
+    private void EmitFetchCall(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EnsureBoxed();
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldnull);
+        }
+
+        if (arguments.Count > 1)
+        {
+            EmitExpression(arguments[1]);
+            EnsureBoxed();
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldnull);
+        }
+
+        _il.Emit(OpCodes.Call, _ctx!.Runtime!.Fetch);
+        SetStackUnknown();
+    }
+
+    private void EmitPromiseInstanceMethodCall(Expr promise, string methodName, List<Expr> arguments)
+    {
+        EmitExpression(promise);
+        EnsureBoxed();
+        _il.Emit(OpCodes.Castclass, typeof(Task<object?>));
+
+        switch (methodName)
+        {
+            case "then":
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { _il.Emit(OpCodes.Ldnull); }
+                if (arguments.Count > 1) { EmitExpression(arguments[1]); EnsureBoxed(); } else { _il.Emit(OpCodes.Ldnull); }
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.PromiseThen);
+                break;
+            case "catch":
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { _il.Emit(OpCodes.Ldnull); }
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.PromiseCatch);
+                break;
+            case "finally":
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { _il.Emit(OpCodes.Ldnull); }
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.PromiseFinally);
+                break;
+        }
+
+        SetStackUnknown();
+    }
+
+    private void EmitAmbiguousMethodCall(Expr obj, string methodName, List<Expr> arguments)
+    {
+        EmitExpression(obj);
+        EnsureBoxed();
+        var objLocal = _il.DeclareLocal(typeof(object));
+        _il.Emit(OpCodes.Stloc, objLocal);
+
+        var isStringLabel = _il.DefineLabel();
+        var isListLabel = _il.DefineLabel();
+        var doneLabel = _il.DefineLabel();
+
+        _il.Emit(OpCodes.Ldloc, objLocal);
+        _il.Emit(OpCodes.Isinst, typeof(string));
+        _il.Emit(OpCodes.Brtrue, isStringLabel);
+        _il.Emit(OpCodes.Br, isListLabel);
+
+        // String path
+        _il.MarkLabel(isStringLabel);
+        _il.Emit(OpCodes.Ldloc, objLocal);
+        _il.Emit(OpCodes.Castclass, typeof(string));
+
+        switch (methodName)
+        {
+            case "includes":
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); _il.Emit(OpCodes.Castclass, typeof(string)); }
+                else { _il.Emit(OpCodes.Ldstr, ""); }
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.StringIncludes);
+                _il.Emit(OpCodes.Box, typeof(bool));
+                break;
+            case "indexOf":
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); _il.Emit(OpCodes.Castclass, typeof(string)); }
+                else { _il.Emit(OpCodes.Ldstr, ""); }
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.StringIndexOf);
+                _il.Emit(OpCodes.Box, typeof(double));
+                break;
+            case "slice":
+                _il.Emit(OpCodes.Ldc_I4, arguments.Count);
+                _il.Emit(OpCodes.Ldc_I4, arguments.Count);
+                _il.Emit(OpCodes.Newarr, typeof(object));
+                for (int i = 0; i < arguments.Count; i++)
+                {
+                    _il.Emit(OpCodes.Dup);
+                    _il.Emit(OpCodes.Ldc_I4, i);
+                    EmitExpression(arguments[i]);
+                    EnsureBoxed();
+                    _il.Emit(OpCodes.Stelem_Ref);
+                }
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.StringSlice);
+                break;
+            case "concat":
+                _il.Emit(OpCodes.Ldc_I4, arguments.Count);
+                _il.Emit(OpCodes.Newarr, typeof(object));
+                for (int i = 0; i < arguments.Count; i++)
+                {
+                    _il.Emit(OpCodes.Dup);
+                    _il.Emit(OpCodes.Ldc_I4, i);
+                    EmitExpression(arguments[i]);
+                    EnsureBoxed();
+                    _il.Emit(OpCodes.Stelem_Ref);
+                }
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.StringConcat);
+                break;
+        }
+        _il.Emit(OpCodes.Br, doneLabel);
+
+        // List path
+        _il.MarkLabel(isListLabel);
+        _il.Emit(OpCodes.Ldloc, objLocal);
+        _il.Emit(OpCodes.Castclass, typeof(List<object>));
+
+        switch (methodName)
+        {
+            case "includes":
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { _il.Emit(OpCodes.Ldnull); }
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.ArrayIncludes);
+                _il.Emit(OpCodes.Box, typeof(bool));
+                break;
+            case "indexOf":
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { _il.Emit(OpCodes.Ldnull); }
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.ArrayIndexOf);
+                _il.Emit(OpCodes.Box, typeof(double));
+                break;
+            case "slice":
+                _il.Emit(OpCodes.Ldc_I4, arguments.Count);
+                _il.Emit(OpCodes.Newarr, typeof(object));
+                for (int i = 0; i < arguments.Count; i++)
+                {
+                    _il.Emit(OpCodes.Dup);
+                    _il.Emit(OpCodes.Ldc_I4, i);
+                    EmitExpression(arguments[i]);
+                    EnsureBoxed();
+                    _il.Emit(OpCodes.Stelem_Ref);
+                }
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.ArraySlice);
+                break;
+            case "concat":
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { _il.Emit(OpCodes.Ldnull); }
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.ArrayConcat);
+                break;
+        }
+
+        _il.MarkLabel(doneLabel);
+        SetStackUnknown();
+    }
+
+    private void EmitDefaultForType(Type type)
+    {
+        if (type == typeof(double))
+        {
+            _il.Emit(OpCodes.Ldc_R8, 0.0);
+        }
+        else if (type == typeof(int))
+        {
+            _il.Emit(OpCodes.Ldc_I4_0);
+        }
+        else if (type == typeof(bool))
+        {
+            _il.Emit(OpCodes.Ldc_I4_0);
+        }
+        else if (type == typeof(float))
+        {
+            _il.Emit(OpCodes.Ldc_R4, 0.0f);
+        }
+        else if (type == typeof(long))
+        {
+            _il.Emit(OpCodes.Ldc_I8, 0L);
+        }
+        else if (type.IsValueType)
+        {
+            var local = _il.DeclareLocal(type);
+            _il.Emit(OpCodes.Ldloca, local);
+            _il.Emit(OpCodes.Initobj, type);
+            _il.Emit(OpCodes.Ldloc, local);
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldnull);
+        }
     }
 
     #endregion

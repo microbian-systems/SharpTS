@@ -366,6 +366,7 @@ public partial class RuntimeEmitter
             _types.String,
             [_types.String]);
         runtime.ReadlineQuestionSync = method;
+        runtime.RegisterBuiltInModuleMethod("readline", "questionSync", method);
 
         var il = method.GetILGenerator();
 
@@ -402,6 +403,7 @@ public partial class RuntimeEmitter
             _types.Object,
             [_types.Object]);
         runtime.ReadlineCreateInterface = method;
+        runtime.RegisterBuiltInModuleMethod("readline", "createInterface", method);
 
         var il = method.GetILGenerator();
 
