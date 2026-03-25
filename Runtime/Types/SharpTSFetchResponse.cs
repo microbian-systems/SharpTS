@@ -22,6 +22,7 @@ public class SharpTSFetchResponse : ITypeCategorized
 
     private readonly HttpResponseMessage _response;
     private readonly string _url;
+    private readonly bool _redirected;
     private byte[]? _bodyBytes;
     private bool _bodyConsumed;
     private SharpTSReadable? _bodyStream;
@@ -31,10 +32,12 @@ public class SharpTSFetchResponse : ITypeCategorized
     /// </summary>
     /// <param name="response">The HTTP response to wrap.</param>
     /// <param name="url">The final URL after any redirects.</param>
-    public SharpTSFetchResponse(HttpResponseMessage response, string url)
+    /// <param name="redirected">Whether the request was redirected.</param>
+    public SharpTSFetchResponse(HttpResponseMessage response, string url, bool redirected = false)
     {
         _response = response ?? throw new ArgumentNullException(nameof(response));
         _url = url ?? throw new ArgumentNullException(nameof(url));
+        _redirected = redirected;
     }
 
     /// <summary>
@@ -68,6 +71,8 @@ public class SharpTSFetchResponse : ITypeCategorized
             "statusText" => StatusText,
             "ok" => Ok,
             "url" => Url,
+            "redirected" => _redirected,
+            "type" => "basic",
             "headers" => GetHeadersObject(),
             "json" => new BuiltInAsyncMethod("json", 0, JsonImpl).Bind(this),
             "text" => new BuiltInAsyncMethod("text", 0, TextImpl).Bind(this),

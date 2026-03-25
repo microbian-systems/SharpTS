@@ -19,16 +19,16 @@ namespace SharpTS.Runtime.BuiltIns;
 /// </remarks>
 public static class FetchBuiltIns
 {
-    // Shared HttpClient instance (best practice for .NET)
-    // Use a handler with automatic decompression and cookie handling
-    private static readonly HttpClient _httpClient = CreateHttpClient();
+    // Shared HttpClient instances (best practice for .NET - reuse to benefit from connection pooling)
+    private static readonly HttpClient _httpClientFollow = CreateHttpClient(allowAutoRedirect: true);
+    private static readonly HttpClient _httpClientNoRedirect = CreateHttpClient(allowAutoRedirect: false);
 
-    private static HttpClient CreateHttpClient()
+    private static HttpClient CreateHttpClient(bool allowAutoRedirect)
     {
         var handler = new HttpClientHandler
         {
             AutomaticDecompression = System.Net.DecompressionMethods.All,
-            AllowAutoRedirect = true,
+            AllowAutoRedirect = allowAutoRedirect,
             MaxAutomaticRedirections = 20
         };
         var client = new HttpClient(handler)
@@ -155,21 +155,36 @@ public static class FetchBuiltIns
             cancellationToken = abortSignal.Token;
         }
 
-        // Handle redirect option (follow, error, manual)
-        // Note: We use the default HttpClient redirect behavior (follow)
-        // For "manual" or "error", we'd need a different HttpClient configuration
-        // This is a simplified implementation
+        // Handle redirect option: "follow" (default), "error", "manual"
+        string redirectMode = "follow";
+        if (options?.Fields.TryGetValue("redirect", out var redirectObj) == true && redirectObj is string rm)
+        {
+            redirectMode = rm;
+        }
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        var client = redirectMode is "manual" or "error" ? _httpClientNoRedirect : _httpClientFollow;
+        var response = await client.SendAsync(request, cancellationToken);
+
+        // For "error" mode, throw on redirect responses
+        if (redirectMode == "error" && (int)response.StatusCode >= 300 && (int)response.StatusCode < 400)
+        {
+            response.Dispose();
+            throw new HttpRequestException("fetch failed: redirect mode is set to 'error'");
+        }
 
         // Get the final URL (after any redirects)
         var finalUrl = request.RequestUri?.ToString() ?? url;
+        bool redirected = false;
         if (response.RequestMessage?.RequestUri != null)
         {
             finalUrl = response.RequestMessage.RequestUri.ToString();
+            // Detect if a redirect occurred by comparing request URIs
+            redirected = !string.Equals(
+                request.RequestUri?.ToString(), response.RequestMessage.RequestUri.ToString(),
+                StringComparison.Ordinal);
         }
 
-        return new SharpTSFetchResponse(response, finalUrl);
+        return new SharpTSFetchResponse(response, finalUrl, redirected);
     }
 
     /// <summary>

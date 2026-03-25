@@ -149,6 +149,19 @@ public class MockHttpServer : IDisposable
     }
 
     /// <summary>
+    /// Adds a route that redirects to another path.
+    /// </summary>
+    public void AddRedirectRoute(string path, string targetPath, int statusCode = 302)
+    {
+        _routes[path] = _ => (statusCode, "text/plain", Array.Empty<byte>());
+        // We need to set the Location header in the response handler, so use a custom handler
+        _routes.Remove(path);
+        _redirectRoutes[path] = (targetPath, statusCode);
+    }
+
+    private readonly Dictionary<string, (string TargetPath, int StatusCode)> _redirectRoutes = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Adds a route with a specific status code.
     /// </summary>
     public void AddStatusRoute(string path, int statusCode, string body = "")
@@ -218,7 +231,14 @@ public class MockHttpServer : IDisposable
         {
             var path = context.Request.Url?.AbsolutePath ?? "/";
 
-            if (_routes.TryGetValue(path, out var handler))
+            // Check redirect routes first
+            if (_redirectRoutes.TryGetValue(path, out var redirect))
+            {
+                context.Response.StatusCode = redirect.StatusCode;
+                context.Response.RedirectLocation = $"http://localhost:{Port}{redirect.TargetPath}";
+                context.Response.ContentLength64 = 0;
+            }
+            else if (_routes.TryGetValue(path, out var handler))
             {
                 var (statusCode, contentType, body) = handler(context.Request);
                 context.Response.StatusCode = statusCode;

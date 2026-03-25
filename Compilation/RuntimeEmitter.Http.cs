@@ -918,6 +918,10 @@ public partial class RuntimeEmitter
         EmitFetchResponsePropertyGetter(typeBuilder, "headers", _types.Object, _fetchResponseHeadersField);
         EmitFetchResponsePropertyGetter(typeBuilder, "bodyUsed", _types.Boolean, _fetchResponseBodyConsumedField);
 
+        // Constant properties
+        EmitResponseConstantProperty(typeBuilder, "type", _types.String, "basic");
+        EmitResponseConstantBoolProperty(typeBuilder, "redirected", false);
+
         // Method: json() - returns Promise
         EmitFetchResponseJsonMethod(typeBuilder, runtime);
 
@@ -1372,8 +1376,44 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Stloc, urlLocal);
 
-        // var client = new HttpClient()
-        var httpClientCtor = _httpClientType!.GetConstructor(Type.EmptyTypes)!;
+        // Extract redirect option from options (default: "follow")
+        var redirectLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldstr, "follow");
+        il.Emit(OpCodes.Stloc, redirectLocal);
+
+        var skipRedirectExtract = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, skipRedirectExtract);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "redirect");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        var redirectValLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, redirectValLocal);
+        il.Emit(OpCodes.Ldloc, redirectValLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, skipRedirectExtract);
+        il.Emit(OpCodes.Ldloc, redirectValLocal);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, redirectLocal);
+        il.MarkLabel(skipRedirectExtract);
+
+        // var handler = new HttpClientHandler()
+        var handlerCtor = _httpClientHandlerType!.GetConstructor(Type.EmptyTypes)!;
+        var handlerLocal = il.DeclareLocal(_httpClientHandlerType);
+        il.Emit(OpCodes.Newobj, handlerCtor);
+        il.Emit(OpCodes.Stloc, handlerLocal);
+
+        // handler.AllowAutoRedirect = (redirect == "follow")
+        var allowAutoRedirectProp = _httpClientHandlerType.GetProperty("AllowAutoRedirect")!;
+        il.Emit(OpCodes.Ldloc, handlerLocal);
+        il.Emit(OpCodes.Ldloc, redirectLocal);
+        il.Emit(OpCodes.Ldstr, "follow");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Callvirt, allowAutoRedirectProp.GetSetMethod()!);
+
+        // var client = new HttpClient(handler)
+        var httpClientCtor = _httpClientType!.GetConstructor([typeof(System.Net.Http.HttpMessageHandler)])!;
+        il.Emit(OpCodes.Ldloc, handlerLocal);
         il.Emit(OpCodes.Newobj, httpClientCtor);
         il.Emit(OpCodes.Stloc, clientLocal);
 
@@ -1530,6 +1570,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, sendAsyncMethod);
         il.Emit(OpCodes.Callvirt, getResultMethod);
         il.Emit(OpCodes.Stloc, responseLocal);
+
+        // If redirect mode is "error" and status is 3xx, throw
+        var statusCodeProperty2 = _httpResponseMessageType!.GetProperty("StatusCode")!;
+        var skipRedirectError = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, redirectLocal);
+        il.Emit(OpCodes.Ldstr, "error");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, skipRedirectError);
+        // Check status >= 300 && status < 400
+        il.Emit(OpCodes.Ldloc, responseLocal);
+        il.Emit(OpCodes.Callvirt, statusCodeProperty2.GetGetMethod()!);
+        il.Emit(OpCodes.Conv_I4);
+        var notRedirectStatus = il.DefineLabel();
+        var redirectStatusLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Stloc, redirectStatusLocal);
+        il.Emit(OpCodes.Ldloc, redirectStatusLocal);
+        il.Emit(OpCodes.Ldc_I4, 300);
+        il.Emit(OpCodes.Blt, notRedirectStatus);
+        il.Emit(OpCodes.Ldloc, redirectStatusLocal);
+        il.Emit(OpCodes.Ldc_I4, 400);
+        il.Emit(OpCodes.Bge, notRedirectStatus);
+        // It's a redirect in error mode — throw
+        il.Emit(OpCodes.Ldstr, "fetch failed: redirect mode is set to 'error'");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notRedirectStatus);
+        il.MarkLabel(skipRedirectError);
 
         // byte[] bodyBytes = response.Content.ReadAsByteArrayAsync().Result
         var contentProperty = _httpResponseMessageType!.GetProperty("Content")!;

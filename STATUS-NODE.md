@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-24 (http.Agent: full constructor, globalAgent, destroy, getName, properties; process.stdin/stdout/stderr stream support)
+**Last Updated:** 2026-03-25 (fetch redirect option: follow/manual/error; http.Agent; process.stdin/stdout/stderr stream support)
 
 ## Legend
 - ✅ Implemented
@@ -642,10 +642,10 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `Headers` class | ✅ | Constructable `new Headers(init?)` with get/set/has/delete/append/forEach/entries/keys/values |
 | `AbortController` / `signal` option | ✅ | `new AbortController()`, `signal.aborted`, `abort(reason?)`, `throwIfAborted()`, `AbortSignal.abort()`/`timeout()`/`any()`; fetch `signal` option with pre-abort check and cancellation |
 | **Not Implemented** | | |
-| `Request` class | ❌ | Use options object |
-| `Response` class | ❌ | Only from fetch() return |
+| `Request` class | ✅ | `new Request(url, init?)` with method, headers, body, clone(); json(), text(), arrayBuffer() |
+| `Response` class | ✅ | `new Response(body?, init?)` with status, statusText, ok, headers, clone(); json(), text(), arrayBuffer(); static json(), redirect(), error() |
 | `credentials` option | ❌ | No cookie handling |
-| `redirect` option | ❌ | Auto-follows redirects |
+| `redirect` option | ✅ | `follow` (default), `manual` (return 3xx), `error` (throw on redirect) |
 
 ---
 
