@@ -253,14 +253,6 @@ public static class TestHarness
             {
                 File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
 
-                // Copy transitive dependencies needed by SharpTS runtime helpers
-                var sharpTsDir = Path.GetDirectoryName(sharpTsDll)!;
-                foreach (var dep in new[] { "DnsClient.dll" })
-                {
-                    var depPath = Path.Combine(sharpTsDir, dep);
-                    if (File.Exists(depPath))
-                        File.Copy(depPath, Path.Combine(tempDir, dep), overwrite: true);
-                }
             }
 
             // Write runtimeconfig.json
@@ -293,8 +285,8 @@ public static class TestHarness
             }
 
             using var process = Process.Start(psi)!;
-            var output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
 
             // Use timeout to catch infinite loop bugs
             if (!process.WaitForExit((int)timeout.TotalMilliseconds))
@@ -304,6 +296,9 @@ public static class TestHarness
                     $"Compiled program execution exceeded {timeout.TotalSeconds}s timeout. " +
                     "This likely indicates an infinite loop bug (e.g., Promise double-wrapping in async iterators).");
             }
+
+            var output = outputTask.Result;
+            var error = errorTask.Result;
 
             if (process.ExitCode != 0)
             {
@@ -453,14 +448,6 @@ public static class TestHarness
         {
             File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
 
-            // Copy transitive dependencies needed by SharpTS runtime helpers
-            var sharpTsDir = Path.GetDirectoryName(sharpTsDll)!;
-            foreach (var dep in new[] { "DnsClient.dll" })
-            {
-                var depPath = Path.Combine(sharpTsDir, dep);
-                if (File.Exists(depPath))
-                    File.Copy(depPath, Path.Combine(tempDir, dep), overwrite: true);
-            }
         }
 
         // Write runtimeconfig.json
@@ -497,9 +484,18 @@ public static class TestHarness
         };
 
         using var process = Process.Start(psi)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var errorTask = process.StandardError.ReadToEndAsync();
+
+        if (!process.WaitForExit((int)DefaultTimeout.TotalMilliseconds))
+        {
+            process.Kill();
+            throw new TimeoutException(
+                $"Compiled DLL execution exceeded {DefaultTimeout.TotalSeconds}s timeout.");
+        }
+
+        var output = outputTask.Result;
+        var error = errorTask.Result;
 
         if (process.ExitCode != 0)
         {
@@ -616,14 +612,6 @@ public static class TestHarness
             {
                 File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
 
-                // Copy transitive dependencies needed by SharpTS runtime helpers
-                var sharpTsDir = Path.GetDirectoryName(sharpTsDll)!;
-                foreach (var dep in new[] { "DnsClient.dll" })
-                {
-                    var depPath = Path.Combine(sharpTsDir, dep);
-                    if (File.Exists(depPath))
-                        File.Copy(depPath, Path.Combine(tempDir, dep), overwrite: true);
-                }
             }
 
             // Write runtimeconfig.json
@@ -650,9 +638,18 @@ public static class TestHarness
             };
 
             using var process = Process.Start(psi)!;
-            var output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
-            process.WaitForExit();
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+
+            if (!process.WaitForExit((int)DefaultTimeout.TotalMilliseconds))
+            {
+                process.Kill();
+                throw new TimeoutException(
+                    $"Compiled module execution exceeded {DefaultTimeout.TotalSeconds}s timeout.");
+            }
+
+            var output = outputTask.Result;
+            var error = errorTask.Result;
 
             if (process.ExitCode != 0)
             {
@@ -788,14 +785,6 @@ public static class TestHarness
             {
                 File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
 
-                // Copy transitive dependencies needed by SharpTS runtime helpers
-                var sharpTsDir = Path.GetDirectoryName(sharpTsDll)!;
-                foreach (var dep in new[] { "DnsClient.dll" })
-                {
-                    var depPath = Path.Combine(sharpTsDir, dep);
-                    if (File.Exists(depPath))
-                        File.Copy(depPath, Path.Combine(tempDir, dep), overwrite: true);
-                }
             }
 
             // Write runtimeconfig.json

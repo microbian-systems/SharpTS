@@ -41,8 +41,8 @@ public static class CliTestHelper
         };
 
         using var process = Process.Start(psi)!;
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
 
         if (!process.WaitForExit((int)effectiveTimeout.TotalMilliseconds))
         {
@@ -51,6 +51,9 @@ public static class CliTestHelper
                 $"CLI execution exceeded {effectiveTimeout.TotalSeconds}s timeout. " +
                 $"Arguments: {arguments}");
         }
+
+        var stdout = stdoutTask.Result;
+        var stderr = stderrTask.Result;
 
         return new CliResult(process.ExitCode, NormalizeOutput(stdout), NormalizeOutput(stderr));
     }

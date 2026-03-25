@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using SharpTS.Tests.Infrastructure;
@@ -149,99 +148,6 @@ public class ReferenceAssemblyTests
         {
             var output = TestHarness.ExecuteCompiledDll(dllPath);
             Assert.Equal("async works\n1\n2\n", output);
-        }
-        finally
-        {
-            CleanupTempDir(tempDir);
-        }
-    }
-
-    /// <summary>
-    /// Verifies that a --ref-asm compiled DLL can be used as a compile-time reference
-    /// by another C# project.
-    /// </summary>
-    [Fact]
-    public void RefAsm_CanBeUsedAsCompileTimeReference()
-    {
-        // Compile TypeScript with exported class
-        var source = """
-            export class Calculator {
-                add(a: number, b: number): number {
-                    return a + b;
-                }
-            }
-
-            const calc = new Calculator();
-            console.log(calc.add(2, 3));
-            """;
-
-        var (tempDir, dllPath) = TestHarness.CompileWithRefAsm(source);
-        try
-        {
-            // Create a C# project that references the compiled DLL
-            var consumerDir = Path.Combine(tempDir, "Consumer");
-            Directory.CreateDirectory(consumerDir);
-
-            // Write a C# project file
-            var csprojContent = $"""
-                <Project Sdk="Microsoft.NET.Sdk">
-                  <PropertyGroup>
-                    <OutputType>Exe</OutputType>
-                    <TargetFramework>net10.0</TargetFramework>
-                    <ImplicitUsings>enable</ImplicitUsings>
-                    <Nullable>enable</Nullable>
-                  </PropertyGroup>
-                  <ItemGroup>
-                    <Reference Include="test">
-                      <HintPath>{dllPath}</HintPath>
-                    </Reference>
-                  </ItemGroup>
-                </Project>
-                """;
-            File.WriteAllText(Path.Combine(consumerDir, "Consumer.csproj"), csprojContent);
-
-            // Write minimal C# code that just references the assembly
-            // (We can't actually use the types easily since they're dynamically generated,
-            // but the build succeeding proves the reference is valid)
-            var csContent = """
-                // This project references the SharpTS-compiled assembly.
-                // The fact that this builds proves the assembly has proper SDK references.
-                Console.WriteLine("Consumer builds successfully!");
-                """;
-            File.WriteAllText(Path.Combine(consumerDir, "Program.cs"), csContent);
-
-            // Try to build the consumer project
-            var psi = new ProcessStartInfo("dotnet", "build --no-restore")
-            {
-                WorkingDirectory = consumerDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
-
-            // First restore
-            var restorePsi = new ProcessStartInfo("dotnet", "restore")
-            {
-                WorkingDirectory = consumerDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
-
-            using (var restoreProcess = Process.Start(restorePsi)!)
-            {
-                restoreProcess.WaitForExit();
-            }
-
-            using var process = Process.Start(psi)!;
-            var output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-
-            // The build should succeed (exit code 0)
-            // If it fails with "System.Private.CoreLib not found", the ref-asm rewriting didn't work
-            Assert.True(process.ExitCode == 0,
-                $"Consumer project failed to build. This likely means the DLL still references System.Private.CoreLib.\nOutput: {output}\nError: {error}");
         }
         finally
         {

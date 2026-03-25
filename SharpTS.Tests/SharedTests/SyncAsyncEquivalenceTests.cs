@@ -873,6 +873,64 @@ public class SyncAsyncEquivalenceTests
         Assert.Equal("default value default\n", output);
     }
 
+    // ===================== Compound/Logical Assignment on Captured Top-Level Vars =====================
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CompoundAssign_CapturedTopLevel_AsyncArrow(ExecutionMode mode)
+    {
+        var source = """
+            let counter = 10;
+            const inc = async () => {
+                counter += 5;
+                counter -= 2;
+                counter *= 3;
+            };
+            inc();
+            console.log(counter);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("39\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void LogicalAssign_CapturedTopLevel_AsyncArrow(ExecutionMode mode)
+    {
+        var source = """
+            let a: any = null;
+            let b: any = "existing";
+            const update = async () => {
+                a ??= "filled";
+                b ??= "ignored";
+            };
+            update();
+            console.log(a, b);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("filled existing\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CompoundAssign_CapturedTopLevel_AsyncFunction(ExecutionMode mode)
+    {
+        var source = """
+            let total = 100;
+            async function adjust() {
+                total += 50;
+                total -= 25;
+            }
+            adjust();
+            console.log(total);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("125\n", output);
+    }
+
     // ===================== Template Literals =====================
 
     [Theory]

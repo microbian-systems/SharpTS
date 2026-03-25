@@ -162,7 +162,7 @@ public class TlsModuleTests
     }
 
     [Fact]
-    public void TlsServerAndClientHandshake()
+    public async Task TlsServerAndClientHandshake()
     {
         // Pure C# test to verify TLS handshake works at the .NET level
         var (certPem, keyPem) = GenerateSelfSignedCert();
@@ -176,44 +176,45 @@ public class TlsModuleTests
         listener.Start();
         var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
 
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         var serverTask = Task.Run(async () =>
         {
-            var tcpClient = await listener.AcceptTcpClientAsync();
+            var tcpClient = await listener.AcceptTcpClientAsync(cts.Token);
             var sslStream = new System.Net.Security.SslStream(tcpClient.GetStream(), false);
             await sslStream.AuthenticateAsServerAsync(new System.Net.Security.SslServerAuthenticationOptions
             {
                 ServerCertificate = certObj,
-            });
+            }, cts.Token);
             var writer = new System.IO.StreamWriter(sslStream);
             await writer.WriteAsync("hello from server");
             await writer.FlushAsync();
             sslStream.Close();
             tcpClient.Close();
-        });
+        }, cts.Token);
 
         var clientTask = Task.Run(async () =>
         {
             var tcpClient = new System.Net.Sockets.TcpClient();
-            await tcpClient.ConnectAsync(System.Net.IPAddress.Loopback, port);
+            await tcpClient.ConnectAsync(System.Net.IPAddress.Loopback, port, cts.Token);
             var sslStream = new System.Net.Security.SslStream(tcpClient.GetStream(), false,
                 (_, _, _, _) => true);
             await sslStream.AuthenticateAsClientAsync("localhost");
             var reader = new System.IO.StreamReader(sslStream);
-            var data = await reader.ReadToEndAsync();
+            var data = await reader.ReadToEndAsync(cts.Token);
             sslStream.Close();
             tcpClient.Close();
             return data;
-        });
+        }, cts.Token);
 
-        Assert.True(Task.WaitAll([serverTask, clientTask], TimeSpan.FromSeconds(10)),
-            "TLS handshake timed out at .NET level");
-        Assert.Equal("hello from server", clientTask.Result);
+        await Task.WhenAll(serverTask, clientTask);
+        Assert.Equal("hello from server", await clientTask);
         listener.Stop();
         certObj.Dispose();
     }
 
     [Fact]
-    public void TlsServerAndClientHandshake_Interpreted()
+    public async Task TlsServerAndClientHandshake_Interpreted()
     {
         // Generate self-signed cert programmatically
         var (certPem, keyPem) = GenerateSelfSignedCert();
@@ -268,7 +269,7 @@ public class TlsModuleTests
         var files = new Dictionary<string, string> { ["./main.ts"] = source };
         string? output = null;
         var task = Task.Run(() => output = TestHarness.RunModules(files, "./main.ts", ExecutionMode.Interpreted));
-        if (!task.Wait(TimeSpan.FromSeconds(15)))
+        if (!await task.WaitAsync(TimeSpan.FromSeconds(15)).ContinueWith(t => t.IsCompletedSuccessfully))
         {
             Assert.Fail("TLS handshake test timed out");
         }
@@ -278,7 +279,7 @@ public class TlsModuleTests
     }
 
     [Fact]
-    public void TlsRejectUnauthorized_Interpreted()
+    public async Task TlsRejectUnauthorized_Interpreted()
     {
         // Generate self-signed cert
         var (certPem, keyPem) = GenerateSelfSignedCert();
@@ -319,7 +320,8 @@ public class TlsModuleTests
         var files = new Dictionary<string, string> { ["./main.ts"] = source };
         string? output = null;
         var task = Task.Run(() => output = TestHarness.RunModules(files, "./main.ts", ExecutionMode.Interpreted));
-        Assert.True(task.Wait(TimeSpan.FromSeconds(15)), $"TLS reject test timed out. Partial output: [{output ?? "null"}]");
+        var completed = await task.WaitAsync(TimeSpan.FromSeconds(15)).ContinueWith(t => t.IsCompletedSuccessfully);
+        Assert.True(completed, $"TLS reject test timed out. Partial output: [{output ?? "null"}]");
         Assert.Contains("error caught", output!);
     }
 

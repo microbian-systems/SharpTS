@@ -151,7 +151,7 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
     {
         var emittedType = FindEmittedType(emittedNameSuffix);
         Assert.NotNull(emittedType);
-        _output.WriteLine($"Found {emittedType!.Name} ({emittedType.GetMethods().Length} methods)");
+        _output.WriteLine($"Found emitted type for {runtimeTypeName}: {emittedType!.Name} ({emittedType.GetMethods().Length} methods)");
     }
 
     [Theory]
@@ -204,10 +204,10 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
     public void EmittedType_HasConstructors(string runtimeTypeName, string emittedNameSuffix)
     {
         var emittedType = FindEmittedType(emittedNameSuffix);
-        if (emittedType == null) return;
+        Assert.NotNull(emittedType);
 
-        var ctors = emittedType.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
-        _output.WriteLine($"{emittedType.Name}: {ctors.Length} public constructors");
+        var ctors = emittedType!.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
+        _output.WriteLine($"{runtimeTypeName} → {emittedType.Name}: {ctors.Length} public constructors");
         foreach (var ctor in ctors)
         {
             var sig = string.Join(", ", ctor.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"));
@@ -215,7 +215,7 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
         }
 
         Assert.True(ctors.Length >= 1,
-            $"Emitted type {emittedType.Name} has no public constructors");
+            $"Emitted type for {runtimeTypeName} ({emittedType.Name}) has no public constructors");
     }
 
     [Fact]
