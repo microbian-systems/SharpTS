@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Reflection.Emit;
+using SharpTS.Compilation.Emitters;
 using SharpTS.Diagnostics.Exceptions;
 using SharpTS.Parsing;
 
@@ -18,8 +19,20 @@ namespace SharpTS.Compilation;
 /// EmitAwait and EmitYield are virtual and throw by default; async/generator
 /// emitters override them with their implementations.
 /// </remarks>
-public abstract partial class ExpressionEmitterBase
+public abstract partial class ExpressionEmitterBase : IEmitterContext
 {
+    #region IEmitterContext Implementation
+
+    CompilationContext IEmitterContext.Context => Ctx;
+    ILGenerator IEmitterContext.IL => IL;
+    void IEmitterContext.EmitExpression(Expr expr) => EmitExpression(expr);
+    void IEmitterContext.EmitBoxIfNeeded(Expr expr) => EnsureBoxed();
+    void IEmitterContext.EmitExpressionAsDouble(Expr expr) => EmitExpressionAsDouble(expr);
+    void IEmitterContext.SetStackUnknown() => SetStackUnknown();
+    void IEmitterContext.SetStackType(StackType type) => SetStackType(type);
+
+    #endregion
+
     protected readonly StateMachineEmitHelpers _helpers;
 
     protected abstract ILGenerator IL { get; }
@@ -478,6 +491,26 @@ public abstract partial class ExpressionEmitterBase
     protected virtual bool TryEmitStaticFieldAccess(Expr.Get g) => false;
 
     /// <summary>
+    /// Attempts to emit a property set via TypeEmitterRegistry strategy dispatch.
+    /// Call from EmitSet before falling through to dynamic SetProperty.
+    /// </summary>
+    protected bool TryEmitTypeRegistryPropertySet(Expr.Set s)
+    {
+        var objType = Ctx.TypeMap?.Get(s.Object);
+        if (objType != null && Ctx.TypeEmitterRegistry != null)
+        {
+            var ctx = (IEmitterContext)this;
+            var strategy = Ctx.TypeEmitterRegistry.GetStrategy(objType);
+            if (strategy != null && strategy.TryEmitPropertySet(ctx, s.Object, s.Name.Lexeme, s.Value))
+            {
+                SetStackUnknown();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Emits a property access expression (obj.prop).
     /// Default implementation handles Symbol well-known properties, static field access,
     /// and falls back to dynamic property access via GetProperty.
@@ -486,6 +519,30 @@ public abstract partial class ExpressionEmitterBase
     {
         if (TryEmitSymbolWellKnown(g)) return;
         if (TryEmitStaticFieldAccess(g)) return;
+
+        // Static type property dispatch via registry (Math.PI, Number.MAX_VALUE, Symbol.iterator, etc.)
+        var ctx = (IEmitterContext)this;
+        if (g.Object is Expr.Variable staticVar && Ctx.TypeEmitterRegistry != null)
+        {
+            var staticStrategy = Ctx.TypeEmitterRegistry.GetStaticStrategy(staticVar.Name.Lexeme);
+            if (staticStrategy != null && staticStrategy.TryEmitStaticPropertyGet(ctx, g.Name.Lexeme))
+            {
+                SetStackUnknown();
+                return;
+            }
+        }
+
+        // Type-first dispatch: Use TypeEmitterRegistry for property getters (AbortController.signal, etc.)
+        var objType = Ctx.TypeMap?.Get(g.Object);
+        if (objType != null && Ctx.TypeEmitterRegistry != null)
+        {
+            var strategy = Ctx.TypeEmitterRegistry.GetStrategy(objType);
+            if (strategy != null && strategy.TryEmitPropertyGet(ctx, g.Object, g.Name.Lexeme))
+            {
+                SetStackUnknown();
+                return;
+            }
+        }
 
         // Dynamic property access fallback
         EmitExpression(g.Object);

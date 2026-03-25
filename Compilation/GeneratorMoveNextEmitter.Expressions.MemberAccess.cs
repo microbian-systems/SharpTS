@@ -480,6 +480,26 @@ public partial class GeneratorMoveNextEmitter
 
     protected override void EmitSet(Expr.Set s)
     {
+        // Handle static field assignment: Class.field = value
+        if (s.Object is Expr.Variable classVar &&
+            _ctx!.Classes.TryGetValue(_ctx.ResolveClassName(classVar.Name.Lexeme), out var classBuilder))
+        {
+            string resolvedClassName = _ctx.ResolveClassName(classVar.Name.Lexeme);
+            if (_ctx.ClassRegistry!.TryGetStaticField(resolvedClassName, s.Name.Lexeme, out var staticField))
+            {
+                EmitExpression(s.Value);
+                EnsureBoxed();
+                _il.Emit(OpCodes.Dup);
+                _il.Emit(OpCodes.Stsfld, staticField!);
+                SetStackUnknown();
+                return;
+            }
+        }
+
+        // Type-first dispatch: property setter via TypeEmitterRegistry
+        if (TryEmitTypeRegistryPropertySet(s)) return;
+
+        // Default: dynamic property assignment
         EmitExpression(s.Object);
         EnsureBoxed();
         _il.Emit(OpCodes.Ldstr, s.Name.Lexeme);
@@ -934,13 +954,21 @@ public partial class GeneratorMoveNextEmitter
 
     protected override void EmitSetIndex(Expr.SetIndex si)
     {
+        // Save value to local first (SetIndex is void, but the expression evaluates to the assigned value)
+        EmitExpression(si.Value);
+        EnsureBoxed();
+        var valueLocal = _il.DeclareLocal(typeof(object));
+        _il.Emit(OpCodes.Stloc, valueLocal);
+
         EmitExpression(si.Object);
         EnsureBoxed();
         EmitExpression(si.Index);
         EnsureBoxed();
-        EmitExpression(si.Value);
-        EnsureBoxed();
+        _il.Emit(OpCodes.Ldloc, valueLocal);
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.SetIndex);
+
+        // Push value back as the expression result (arr[i] = v evaluates to v)
+        _il.Emit(OpCodes.Ldloc, valueLocal);
         SetStackUnknown();
     }
 

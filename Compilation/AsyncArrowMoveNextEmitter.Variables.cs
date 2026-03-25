@@ -234,6 +234,26 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
+        // Check if it's a captured top-level variable in entry-point display class
+        if (_ctx?.CapturedTopLevelVars?.Contains(name) == true &&
+            _ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
+            _ctx.EntryPointDisplayClassStaticField != null)
+        {
+            var temp = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, temp);
+            _il.Emit(OpCodes.Ldsfld, _ctx.EntryPointDisplayClassStaticField);
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, entryPointField);
+            return;
+        }
+
+        // Check if it's a non-captured top-level variable
+        if (_ctx?.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+        {
+            _il.Emit(OpCodes.Stsfld, topLevelField);
+            return;
+        }
+
         // Non-hoisted local variable - use IL local
         // Create or get the local
         if (!_locals.TryGetValue(name, out var local))

@@ -661,35 +661,6 @@ public partial class AsyncMoveNextEmitter
         return false;
     }
 
-    protected override void EmitGet(Expr.Get g)
-    {
-        // Static type property dispatch via registry (Math.PI, Number.MAX_VALUE, Symbol.iterator, etc.)
-        if (g.Object is Expr.Variable staticVar && _ctx?.TypeEmitterRegistry != null)
-        {
-            var staticStrategy = _ctx.TypeEmitterRegistry.GetStaticStrategy(staticVar.Name.Lexeme);
-            if (staticStrategy != null && staticStrategy.TryEmitStaticPropertyGet(this, g.Name.Lexeme))
-            {
-                SetStackUnknown();
-                return;
-            }
-        }
-
-        // Type-first dispatch: Use TypeEmitterRegistry for property getters (AbortController.signal, etc.)
-        var objType = _ctx?.TypeMap?.Get(g.Object);
-        if (objType != null && _ctx?.TypeEmitterRegistry != null)
-        {
-            var strategy = _ctx.TypeEmitterRegistry.GetStrategy(objType);
-            if (strategy != null && strategy.TryEmitPropertyGet(this, g.Object, g.Name.Lexeme))
-            {
-                SetStackUnknown();
-                return;
-            }
-        }
-
-        // Fall through to base implementation (dynamic property access)
-        base.EmitGet(g);
-    }
-
     #region Ambiguous Method Runtime Dispatch
 
     /// <summary>

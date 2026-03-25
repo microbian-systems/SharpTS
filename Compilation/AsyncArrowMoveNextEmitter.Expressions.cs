@@ -222,13 +222,21 @@ public partial class AsyncArrowMoveNextEmitter
 
     protected override void EmitSetIndex(Expr.SetIndex si)
     {
+        // Save value to local first (SetIndex is void, but the expression evaluates to the assigned value)
+        EmitExpression(si.Value);
+        EnsureBoxed();
+        var valueLocal = _il.DeclareLocal(typeof(object));
+        _il.Emit(OpCodes.Stloc, valueLocal);
+
         EmitExpression(si.Object);
         EnsureBoxed();
         EmitExpression(si.Index);
         EnsureBoxed();
-        EmitExpression(si.Value);
-        EnsureBoxed();
+        _il.Emit(OpCodes.Ldloc, valueLocal);
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.SetIndex);
+
+        // Push value back as the expression result (arr[i] = v evaluates to v)
+        _il.Emit(OpCodes.Ldloc, valueLocal);
         SetStackUnknown();
     }
 
@@ -472,6 +480,9 @@ public partial class AsyncArrowMoveNextEmitter
                 return;
             }
         }
+
+        // Type-first dispatch: property setter via TypeEmitterRegistry
+        if (TryEmitTypeRegistryPropertySet(s)) return;
 
         // Default: dynamic property assignment
         EmitExpression(s.Object);

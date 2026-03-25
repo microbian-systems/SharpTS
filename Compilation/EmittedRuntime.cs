@@ -1951,6 +1951,21 @@ public class EmittedRuntime
     public MethodBuilder DnsConvertList { get; set; } = null!;
     public MethodBuilder DnsDoQuery { get; set; } = null!;
 
+    // DNS wire protocol helpers (emitted into output assembly)
+    public MethodBuilder DnsGetSystemDns { get; set; } = null!;
+    public MethodBuilder DnsBuildQuery { get; set; } = null!;
+    public MethodBuilder DnsSendReceive { get; set; } = null!;
+    public MethodBuilder DnsReadName { get; set; } = null!;
+    public MethodBuilder DnsSkipName { get; set; } = null!;
+    public MethodBuilder DnsParseResponse { get; set; } = null!;
+    public MethodBuilder DnsReadCharString { get; set; } = null!;
+    public MethodBuilder DnsReadUInt32 { get; set; } = null!;
+    public MethodBuilder DnsReadUInt16 { get; set; } = null!;
+    public MethodBuilder DnsParseRecord { get; set; } = null!;
+    public MethodBuilder DnsSendViaTcp { get; set; } = null!;
+    public MethodBuilder DnsReadExact { get; set; } = null!;
+    public MethodBuilder DnsEncodeName { get; set; } = null!;
+
     // ============================================================
     // Private Field/Method Access Helpers for Async Contexts
     // ============================================================

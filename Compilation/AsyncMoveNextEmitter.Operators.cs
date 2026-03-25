@@ -131,6 +131,9 @@ public partial class AsyncMoveNextEmitter
             }
         }
 
+        // Type-first dispatch: property setter via TypeEmitterRegistry
+        if (TryEmitTypeRegistryPropertySet(s)) return;
+
         // Default: dynamic property assignment
         // Build stack for SetProperty(obj, name, value)
         EmitExpression(s.Object);
