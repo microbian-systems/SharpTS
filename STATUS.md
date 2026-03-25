@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-03-19 (Implemented package.json exports/imports resolution for modern npm package support)
+**Last Updated:** 2026-03-24 (AsyncLocalStorage: full async context propagation; fixed module-level async arrow compilation)
 
 ## Legend
 - ✅ Implemented
@@ -445,6 +445,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `timers` | ✅ | setTimeout, clearTimeout, setInterval, clearInterval, setImmediate, clearImmediate |
 | `perf_hooks` | ✅ | performance.now(), timeOrigin, mark(), measure(), getEntries(), getEntriesByName(), getEntriesByType(), clearMarks(), clearMeasures(); PerformanceObserver |
 | `worker_threads` | ✅ | Worker, isMainThread, parentPort, workerData, MessageChannel, MessagePort |
+| `async_hooks` | ✅ | AsyncLocalStorage: run, getStore, enterWith, exit, disable; async context propagation via .NET AsyncLocal |
 
 ---
 

@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-19 (Implemented package.json exports/imports resolution: subpath exports, conditional exports, wildcard patterns, self-referencing, #-prefixed subpath imports)
+**Last Updated:** 2026-03-24 (AsyncLocalStorage: full async context propagation with run/getStore/enterWith/exit/disable; fixed module-level async arrow compilation)
 
 ## Legend
 - ✅ Implemented
@@ -42,6 +42,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; connect, disconnect, remoteAddress, get/setRecvBufferSize, get/setSendBufferSize; message/listening/close/error/connect events |
 | `cluster` | ✅ | isPrimary/isWorker/isMaster, fork, worker.send/disconnect/kill/isDead/isConnected, process.send (IPC), cluster events (fork/online/disconnect/exit/message), cluster.disconnect, setupPrimary, workers dict |
 | `vm` | ✅ | runInNewContext, runInThisContext, createContext, isContext, compileFunction, Script class |
+| `async_hooks` | ✅ | AsyncLocalStorage: run, getStore, enterWith, exit, disable; async context propagation via .NET AsyncLocal |
 
 ---
 
@@ -893,6 +894,6 @@ SharpTS provides comprehensive support for file system operations (sync, callbac
 Priority features to implement for broader Node.js compatibility:
 
 1. ~~**package.json exports**~~ ✅ Implemented: subpath exports, conditional exports, wildcard patterns, self-referencing, subpath imports
-2. **AsyncLocalStorage / async_hooks** - Request-scoped context propagation for frameworks (medium effort)
+2. ~~**AsyncLocalStorage / async_hooks**~~ ✅ Implemented: AsyncLocalStorage with run, getStore, enterWith, exit, disable; async context propagation across await/Promise.then
 3. **IPC sockets** - Named pipes / Unix domain socket support in net module (medium effort)
 4. **cluster HTTP port sharing** - Round-robin load balancing (medium effort)
