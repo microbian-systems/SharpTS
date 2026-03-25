@@ -2,14 +2,12 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Reflection.Emit;
-using DnsClient;
-using DnsClient.Protocol;
 
 namespace SharpTS.Compilation;
 
 /// <summary>
 /// DNS module methods for standalone assemblies.
-/// Provides DNS resolution using System.Net.Dns.
+/// Uses pure BCL DNS wire protocol — no external dependencies.
 /// </summary>
 public partial class RuntimeEmitter
 {
@@ -19,6 +17,21 @@ public partial class RuntimeEmitter
         EmitDnsLookupService(typeBuilder, runtime);
         EmitDnsGetLookup(typeBuilder, runtime);
         EmitDnsGetLookupService(typeBuilder, runtime);
+
+        // DNS wire protocol helpers (emitted into output assembly, BCL-only)
+        EmitDnsReadUInt16(typeBuilder, runtime);
+        EmitDnsReadUInt32(typeBuilder, runtime);
+        EmitDnsReadCharString(typeBuilder, runtime);
+        EmitDnsReadExact(typeBuilder, runtime);
+        EmitDnsEncodeName(typeBuilder, runtime);
+        EmitDnsReadNameMethod(typeBuilder, runtime);
+        EmitDnsSkipNameMethod(typeBuilder, runtime);
+        EmitDnsGetSystemDnsMethod(typeBuilder, runtime);
+        EmitDnsBuildQueryMethod(typeBuilder, runtime);
+        EmitDnsSendViaTcpMethod(typeBuilder, runtime);
+        EmitDnsSendReceiveMethod(typeBuilder, runtime);
+        EmitDnsParseRecordMethod(typeBuilder, runtime);
+        EmitDnsParseResponseMethod(typeBuilder, runtime);
 
         // DNS record resolution (MX, TXT, SRV, CNAME, NS, SOA, PTR, CAA, NAPTR)
         EmitDnsConvertList(typeBuilder, runtime);
@@ -532,8 +545,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits DnsResolveRecord: resolves DNS records by type (MX, TXT, SRV, etc.).
-    /// Uses late-binding via Type.GetType to call DnsRecordResolver.Resolve at runtime.
-    /// This avoids embedding a SharpTS assembly reference in the compiled DLL.
+    /// Now uses emitted wire protocol — no DnsClient dependency.
     /// Signature: object DnsResolveRecord(object hostname, object rrtype)
     /// </summary>
     private void EmitDnsResolveRecord(TypeBuilder typeBuilder, EmittedRuntime runtime)
@@ -592,294 +604,59 @@ public partial class RuntimeEmitter
         EmitRrtypeCheck(il, rrtypeLocal, "AAAA", aaaaLabel, strEquals);
         il.Emit(OpCodes.Br, unknownLabel);
 
-        // === MX section ===
+        // Wire protocol query types
+        const int qtMX = 15, qtTXT = 16, qtSRV = 33, qtCNAME = 5, qtNS = 2;
+        const int qtSOA = 6, qtPTR = 12, qtCAA = 257, qtNAPTR = 35;
+
+        // === MX section — DnsDoQuery returns pre-parsed List<object?> of dicts ===
         il.MarkLabel(mxLabel);
-        EmitDnsQueryCall(il, runtime, hostnameLocal, (int)QueryType.MX);
-        var mxResponseLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, mxResponseLocal);
-        var mxList = EmitDnsAnswerIteration(il, runtime, typeof(MxRecord), mxResponseLocal, hostnameLocal, "resolveMx",
-            (emitIl, recordLocal, listLocal) =>
-            {
-                // Create dictionary { exchange: string, priority: number }
-                emitIl.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!);
-                var dictLocal = emitIl.DeclareLocal(_types.DictionaryStringObject);
-                emitIl.Emit(OpCodes.Stloc, dictLocal);
-
-                // dict["exchange"] = record.Exchange.Value.TrimEnd('.')
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "exchange");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                EmitDnsStringProperty(emitIl, typeof(MxRecord), "Exchange");
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                // dict["priority"] = (double)record.Preference
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "priority");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(MxRecord).GetProperty("Preference")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Conv_R8);
-                emitIl.Emit(OpCodes.Box, typeof(double));
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                // list.Add(dict)
-                emitIl.Emit(OpCodes.Ldloc, listLocal);
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
-            });
-        // Wrap list -> $Array via DnsConvertList (handles inner dicts -> $Object)
-        il.Emit(OpCodes.Ldloc, mxList);
-        il.Emit(OpCodes.Call, runtime.DnsConvertList);
-        il.Emit(OpCodes.Stloc, resultLocal);
+        EmitDnsResolveViaWireProtocol(il, runtime, hostnameLocal, resultLocal, qtMX, wrapWithConvertList: true);
         il.Emit(OpCodes.Br, returnLabel);
 
         // === TXT section ===
         il.MarkLabel(txtLabel);
-        EmitDnsQueryCall(il, runtime, hostnameLocal, (int)QueryType.TXT);
-        var txtResponseLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, txtResponseLocal);
-        var txtList = EmitDnsAnswerIteration(il, runtime, typeof(TxtRecord), txtResponseLocal, hostnameLocal, "resolveTxt",
-            (emitIl, recordLocal, listLocal) =>
-            {
-                // Each TXT record has Text property (IReadOnlyList<string>)
-                // Convert to List<object?> of strings, then wrap as inner list
-                emitIl.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
-                var innerList = emitIl.DeclareLocal(_types.ListOfObject);
-                emitIl.Emit(OpCodes.Stloc, innerList);
-
-                // Get Text property
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(TxtRecord).GetProperty("Text")!.GetGetMethod()!);
-                // IReadOnlyList<string> -> iterate
-                var txtEnumerator = emitIl.DeclareLocal(typeof(IEnumerator<string>));
-                emitIl.Emit(OpCodes.Callvirt, typeof(IEnumerable<string>).GetMethod("GetEnumerator")!);
-                emitIl.Emit(OpCodes.Stloc, txtEnumerator);
-                var txtLoopStart = emitIl.DefineLabel();
-                var txtLoopEnd = emitIl.DefineLabel();
-                emitIl.MarkLabel(txtLoopStart);
-                emitIl.Emit(OpCodes.Ldloc, txtEnumerator);
-                emitIl.Emit(OpCodes.Callvirt, typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!);
-                emitIl.Emit(OpCodes.Brfalse, txtLoopEnd);
-                emitIl.Emit(OpCodes.Ldloc, innerList);
-                emitIl.Emit(OpCodes.Ldloc, txtEnumerator);
-                emitIl.Emit(OpCodes.Callvirt, typeof(IEnumerator<string>).GetProperty("Current")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
-                emitIl.Emit(OpCodes.Br, txtLoopStart);
-                emitIl.MarkLabel(txtLoopEnd);
-
-                // list.Add(innerList) — will be converted to $Array by DnsConvertList
-                emitIl.Emit(OpCodes.Ldloc, listLocal);
-                emitIl.Emit(OpCodes.Ldloc, innerList);
-                emitIl.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
-            });
-        il.Emit(OpCodes.Ldloc, txtList);
-        il.Emit(OpCodes.Call, runtime.DnsConvertList);
-        il.Emit(OpCodes.Stloc, resultLocal);
+        EmitDnsResolveViaWireProtocol(il, runtime, hostnameLocal, resultLocal, qtTXT, wrapWithConvertList: true);
         il.Emit(OpCodes.Br, returnLabel);
 
         // === SRV section ===
         il.MarkLabel(srvLabel);
-        EmitDnsQueryCall(il, runtime, hostnameLocal, (int)QueryType.SRV);
-        var srvResponseLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, srvResponseLocal);
-        var srvList = EmitDnsAnswerIteration(il, runtime, typeof(SrvRecord), srvResponseLocal, hostnameLocal, "resolveSrv",
-            (emitIl, recordLocal, listLocal) =>
-            {
-                emitIl.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!);
-                var dictLocal = emitIl.DeclareLocal(_types.DictionaryStringObject);
-                emitIl.Emit(OpCodes.Stloc, dictLocal);
-
-                // name = Target.Value.TrimEnd('.')
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "name");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                EmitDnsStringProperty(emitIl, typeof(SrvRecord), "Target");
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                // port = (double)Port
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "port");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(SrvRecord).GetProperty("Port")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Conv_R8);
-                emitIl.Emit(OpCodes.Box, typeof(double));
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                // priority = (double)Priority
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "priority");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(SrvRecord).GetProperty("Priority")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Conv_R8);
-                emitIl.Emit(OpCodes.Box, typeof(double));
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                // weight = (double)Weight
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "weight");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(SrvRecord).GetProperty("Weight")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Conv_R8);
-                emitIl.Emit(OpCodes.Box, typeof(double));
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                emitIl.Emit(OpCodes.Ldloc, listLocal);
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
-            });
-        il.Emit(OpCodes.Ldloc, srvList);
-        il.Emit(OpCodes.Call, runtime.DnsConvertList);
-        il.Emit(OpCodes.Stloc, resultLocal);
+        EmitDnsResolveViaWireProtocol(il, runtime, hostnameLocal, resultLocal, qtSRV, wrapWithConvertList: true);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // === CNAME section ===
+        // === CNAME section — returns List<object?> of strings ===
         il.MarkLabel(cnameLabel);
-        EmitDnsQueryCall(il, runtime, hostnameLocal, (int)QueryType.CNAME);
-        var cnameResponseLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, cnameResponseLocal);
-        var cnameList = EmitDnsStringRecordIteration(il, runtime, typeof(CNameRecord), "CanonicalName",
-            cnameResponseLocal, hostnameLocal, "resolveCname");
-        il.Emit(OpCodes.Ldloc, cnameList);
-        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
-        il.Emit(OpCodes.Stloc, resultLocal);
+        EmitDnsResolveViaWireProtocol(il, runtime, hostnameLocal, resultLocal, qtCNAME, wrapWithConvertList: false);
         il.Emit(OpCodes.Br, returnLabel);
 
         // === NS section ===
         il.MarkLabel(nsLabel);
-        EmitDnsQueryCall(il, runtime, hostnameLocal, (int)QueryType.NS);
-        var nsResponseLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, nsResponseLocal);
-        var nsList = EmitDnsStringRecordIteration(il, runtime, typeof(NsRecord), "NSDName",
-            nsResponseLocal, hostnameLocal, "resolveNs");
-        il.Emit(OpCodes.Ldloc, nsList);
-        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
-        il.Emit(OpCodes.Stloc, resultLocal);
+        EmitDnsResolveViaWireProtocol(il, runtime, hostnameLocal, resultLocal, qtNS, wrapWithConvertList: false);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // === SOA section ===
+        // === SOA section — DnsDoQuery returns single Dictionary ===
         il.MarkLabel(soaLabel);
-        EmitDnsQueryCall(il, runtime, hostnameLocal, (int)QueryType.SOA);
-        var soaResponseLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, soaResponseLocal);
-        EmitDnsSoaProcessing(il, runtime, soaResponseLocal, hostnameLocal, resultLocal);
+        il.Emit(OpCodes.Ldloc, hostnameLocal);
+        il.Emit(OpCodes.Ldc_I4, qtSOA);
+        il.Emit(OpCodes.Call, runtime.DnsDoQuery);
+        // SOA returns a Dictionary<string, object?> directly, wrap as $Object
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Call, runtime.CreateObject);
+        il.Emit(OpCodes.Stloc, resultLocal);
         il.Emit(OpCodes.Br, returnLabel);
 
         // === PTR section ===
         il.MarkLabel(ptrLabel);
-        EmitDnsQueryCall(il, runtime, hostnameLocal, (int)QueryType.PTR);
-        var ptrResponseLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, ptrResponseLocal);
-        var ptrList = EmitDnsStringRecordIteration(il, runtime, typeof(PtrRecord), "PtrDomainName",
-            ptrResponseLocal, hostnameLocal, "resolvePtr");
-        il.Emit(OpCodes.Ldloc, ptrList);
-        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
-        il.Emit(OpCodes.Stloc, resultLocal);
+        EmitDnsResolveViaWireProtocol(il, runtime, hostnameLocal, resultLocal, qtPTR, wrapWithConvertList: false);
         il.Emit(OpCodes.Br, returnLabel);
 
         // === CAA section ===
         il.MarkLabel(caaLabel);
-        EmitDnsQueryCall(il, runtime, hostnameLocal, (int)QueryType.CAA);
-        var caaResponseLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, caaResponseLocal);
-        var caaList = EmitDnsAnswerIteration(il, runtime, typeof(CaaRecord), caaResponseLocal, hostnameLocal, "resolveCaa",
-            (emitIl, recordLocal, listLocal) =>
-            {
-                emitIl.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!);
-                var dictLocal = emitIl.DeclareLocal(_types.DictionaryStringObject);
-                emitIl.Emit(OpCodes.Stloc, dictLocal);
-
-                // critical = (double)(Flags & 0x80)
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "critical");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(CaaRecord).GetProperty("Flags")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Ldc_I4, 0x80);
-                emitIl.Emit(OpCodes.And);
-                emitIl.Emit(OpCodes.Conv_R8);
-                emitIl.Emit(OpCodes.Box, typeof(double));
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                // dict[tag] = value
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(CaaRecord).GetProperty("Tag")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(CaaRecord).GetProperty("Value")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                emitIl.Emit(OpCodes.Ldloc, listLocal);
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
-            });
-        il.Emit(OpCodes.Ldloc, caaList);
-        il.Emit(OpCodes.Call, runtime.DnsConvertList);
-        il.Emit(OpCodes.Stloc, resultLocal);
+        EmitDnsResolveViaWireProtocol(il, runtime, hostnameLocal, resultLocal, qtCAA, wrapWithConvertList: true);
         il.Emit(OpCodes.Br, returnLabel);
 
         // === NAPTR section ===
         il.MarkLabel(naptrLabel);
-        EmitDnsQueryCall(il, runtime, hostnameLocal, (int)QueryType.NAPTR);
-        var naptrResponseLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, naptrResponseLocal);
-        var naptrList = EmitDnsAnswerIteration(il, runtime, typeof(NAPtrRecord), naptrResponseLocal, hostnameLocal, "resolveNaptr",
-            (emitIl, recordLocal, listLocal) =>
-            {
-                emitIl.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!);
-                var dictLocal = emitIl.DeclareLocal(_types.DictionaryStringObject);
-                emitIl.Emit(OpCodes.Stloc, dictLocal);
-
-                // flags
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "flags");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(NAPtrRecord).GetProperty("Flags")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                // service
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "service");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(NAPtrRecord).GetProperty("Services")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                // regexp
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "regexp");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(NAPtrRecord).GetProperty("RegularExpression")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                // replacement = Replacement.Value.TrimEnd('.')
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "replacement");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                EmitDnsStringProperty(emitIl, typeof(NAPtrRecord), "Replacement");
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                // order = (double)Order
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "order");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(NAPtrRecord).GetProperty("Order")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Conv_R8);
-                emitIl.Emit(OpCodes.Box, typeof(double));
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                // preference = (double)Preference
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Ldstr, "preference");
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                emitIl.Emit(OpCodes.Callvirt, typeof(NAPtrRecord).GetProperty("Preference")!.GetGetMethod()!);
-                emitIl.Emit(OpCodes.Conv_R8);
-                emitIl.Emit(OpCodes.Box, typeof(double));
-                emitIl.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-                emitIl.Emit(OpCodes.Ldloc, listLocal);
-                emitIl.Emit(OpCodes.Ldloc, dictLocal);
-                emitIl.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
-            });
-        il.Emit(OpCodes.Ldloc, naptrList);
-        il.Emit(OpCodes.Call, runtime.DnsConvertList);
-        il.Emit(OpCodes.Stloc, resultLocal);
+        EmitDnsResolveViaWireProtocol(il, runtime, hostnameLocal, resultLocal, qtNAPTR, wrapWithConvertList: true);
         il.Emit(OpCodes.Br, returnLabel);
 
         // === A section (uses System.Net.Dns) ===
@@ -907,6 +684,30 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits IL to call DnsDoQuery and wrap the result as $Array.
+    /// For types with dict results (MX, SRV, CAA, NAPTR, TXT), uses DnsConvertList.
+    /// For types with string results (CNAME, NS, PTR), wraps directly as $Array.
+    /// </summary>
+    private void EmitDnsResolveViaWireProtocol(ILGenerator il, EmittedRuntime runtime,
+        LocalBuilder hostnameLocal, LocalBuilder resultLocal, int queryType, bool wrapWithConvertList)
+    {
+        il.Emit(OpCodes.Ldloc, hostnameLocal);
+        il.Emit(OpCodes.Ldc_I4, queryType);
+        il.Emit(OpCodes.Call, runtime.DnsDoQuery);
+        // DnsDoQuery returns List<object?> for non-SOA types
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        if (wrapWithConvertList)
+        {
+            il.Emit(OpCodes.Call, runtime.DnsConvertList);
+        }
+        else
+        {
+            il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
+        }
+        il.Emit(OpCodes.Stloc, resultLocal);
+    }
+
+    /// <summary>
     /// Emits an rrtype string comparison and branch.
     /// </summary>
     private static void EmitRrtypeCheck(ILGenerator il, LocalBuilder rrtypeLocal, string value, Label target, MethodInfo strEquals)
@@ -915,232 +716,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, value);
         il.Emit(OpCodes.Callvirt, strEquals);
         il.Emit(OpCodes.Brtrue, target);
-    }
-
-    /// <summary>
-    /// Emits a call to DnsDoQuery(hostname, queryType) and leaves the result on the stack.
-    /// </summary>
-    private void EmitDnsQueryCall(ILGenerator il, EmittedRuntime runtime, LocalBuilder hostnameLocal, int queryType)
-    {
-        il.Emit(OpCodes.Ldloc, hostnameLocal);
-        il.Emit(OpCodes.Ldc_I4, queryType);
-        il.Emit(OpCodes.Call, runtime.DnsDoQuery);
-    }
-
-    /// <summary>
-    /// Emits IL to iterate DNS answers, filter by record type, and build a result list.
-    /// The emitExtraction callback emits IL to process a single matched record.
-    /// </summary>
-    /// <returns>LocalBuilder for the result List&lt;object?&gt;</returns>
-    private LocalBuilder EmitDnsAnswerIteration(ILGenerator il, EmittedRuntime runtime,
-        Type recordType, LocalBuilder responseLocal, LocalBuilder hostnameLocal,
-        string methodName, Action<ILGenerator, LocalBuilder, LocalBuilder> emitExtraction)
-    {
-        // Get Answers from IDnsQueryResponse
-        var answersLocal = il.DeclareLocal(typeof(IReadOnlyList<DnsResourceRecord>));
-        il.Emit(OpCodes.Ldloc, responseLocal);
-        il.Emit(OpCodes.Castclass, typeof(IDnsQueryResponse));
-        il.Emit(OpCodes.Callvirt, typeof(IDnsQueryResponse).GetProperty("Answers")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, answersLocal);
-
-        // Get count
-        var countLocal = il.DeclareLocal(typeof(int));
-        il.Emit(OpCodes.Ldloc, answersLocal);
-        il.Emit(OpCodes.Callvirt, typeof(IReadOnlyCollection<DnsResourceRecord>).GetProperty("Count")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, countLocal);
-
-        // Create result list
-        var resultList = il.DeclareLocal(_types.ListOfObject);
-        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
-        il.Emit(OpCodes.Stloc, resultList);
-
-        // Loop index
-        var indexLocal = il.DeclareLocal(typeof(int));
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, indexLocal);
-
-        var loopStart = il.DefineLabel();
-        var loopEnd = il.DefineLabel();
-
-        il.MarkLabel(loopStart);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldloc, countLocal);
-        il.Emit(OpCodes.Bge, loopEnd);
-
-        // answers[i]
-        il.Emit(OpCodes.Ldloc, answersLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, typeof(IReadOnlyList<DnsResourceRecord>).GetMethod("get_Item")!);
-
-        // isinst recordType
-        il.Emit(OpCodes.Isinst, recordType);
-        var recordLocal = il.DeclareLocal(recordType);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Stloc, recordLocal);
-        var skipLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, skipLabel);
-
-        // Extract and add to result list
-        emitExtraction(il, recordLocal, resultList);
-
-        il.MarkLabel(skipLabel);
-
-        // i++
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, indexLocal);
-        il.Emit(OpCodes.Br, loopStart);
-
-        il.MarkLabel(loopEnd);
-
-        // Check empty
-        il.Emit(OpCodes.Ldloc, resultList);
-        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.ListOfObject, "Count"));
-        var notEmptyLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, notEmptyLabel);
-
-        il.Emit(OpCodes.Ldstr, $"Runtime Error: dns.{methodName} ENODATA ");
-        il.Emit(OpCodes.Ldloc, hostnameLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
-        il.Emit(OpCodes.Throw);
-
-        il.MarkLabel(notEmptyLabel);
-        return resultList;
-    }
-
-    /// <summary>
-    /// Emits IL for record types that produce a list of strings from a DnsString property
-    /// (CNAME, NS, PTR). Gets propertyName.Value.TrimEnd('.') for each matching record.
-    /// </summary>
-    private LocalBuilder EmitDnsStringRecordIteration(ILGenerator il, EmittedRuntime runtime,
-        Type recordType, string dnsStringPropertyName,
-        LocalBuilder responseLocal, LocalBuilder hostnameLocal, string methodName)
-    {
-        return EmitDnsAnswerIteration(il, runtime, recordType, responseLocal, hostnameLocal, methodName,
-            (emitIl, recordLocal, listLocal) =>
-            {
-                emitIl.Emit(OpCodes.Ldloc, listLocal);
-                emitIl.Emit(OpCodes.Ldloc, recordLocal);
-                EmitDnsStringProperty(emitIl, recordType, dnsStringPropertyName);
-                emitIl.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
-            });
-    }
-
-    /// <summary>
-    /// Emits IL to get a DnsString property, read .Value, and TrimEnd('.').
-    /// Assumes the record object is already on the stack.
-    /// </summary>
-    private static void EmitDnsStringProperty(ILGenerator il, Type recordType, string propertyName)
-    {
-        il.Emit(OpCodes.Callvirt, recordType.GetProperty(propertyName)!.GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, typeof(DnsString).GetProperty("Value")!.GetGetMethod()!);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, typeof(char));
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldc_I4, (int)'.');
-        il.Emit(OpCodes.Stelem_I2);
-        il.Emit(OpCodes.Callvirt, typeof(string).GetMethod("TrimEnd", [typeof(char[])])!);
-    }
-
-    /// <summary>
-    /// Emits SOA record processing. SOA returns a single $Object, not an array.
-    /// </summary>
-    private void EmitDnsSoaProcessing(ILGenerator il, EmittedRuntime runtime,
-        LocalBuilder responseLocal, LocalBuilder hostnameLocal, LocalBuilder resultLocal)
-    {
-        // Get Answers
-        var answersLocal = il.DeclareLocal(typeof(IReadOnlyList<DnsResourceRecord>));
-        il.Emit(OpCodes.Ldloc, responseLocal);
-        il.Emit(OpCodes.Castclass, typeof(IDnsQueryResponse));
-        il.Emit(OpCodes.Callvirt, typeof(IDnsQueryResponse).GetProperty("Answers")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, answersLocal);
-
-        var countLocal = il.DeclareLocal(typeof(int));
-        il.Emit(OpCodes.Ldloc, answersLocal);
-        il.Emit(OpCodes.Callvirt, typeof(IReadOnlyCollection<DnsResourceRecord>).GetProperty("Count")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, countLocal);
-
-        // Find first SoaRecord
-        var foundLocal = il.DeclareLocal(typeof(bool));
-        var indexLocal = il.DeclareLocal(typeof(int));
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, indexLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, foundLocal);
-
-        var loopStart = il.DefineLabel();
-        var loopEnd = il.DefineLabel();
-        var foundLabel = il.DefineLabel();
-
-        il.MarkLabel(loopStart);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldloc, countLocal);
-        il.Emit(OpCodes.Bge, loopEnd);
-
-        il.Emit(OpCodes.Ldloc, answersLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, typeof(IReadOnlyList<DnsResourceRecord>).GetMethod("get_Item")!);
-        il.Emit(OpCodes.Isinst, typeof(SoaRecord));
-        var soaLocal = il.DeclareLocal(typeof(SoaRecord));
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Stloc, soaLocal);
-        il.Emit(OpCodes.Brtrue, foundLabel);
-
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, indexLocal);
-        il.Emit(OpCodes.Br, loopStart);
-
-        il.MarkLabel(loopEnd);
-        // Not found -> throw ENODATA
-        il.Emit(OpCodes.Ldstr, "Runtime Error: dns.resolveSoa ENODATA ");
-        il.Emit(OpCodes.Ldloc, hostnameLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
-        il.Emit(OpCodes.Throw);
-
-        il.MarkLabel(foundLabel);
-        // Build dictionary from SoaRecord
-        il.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!);
-        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
-        il.Emit(OpCodes.Stloc, dictLocal);
-
-        // nsname = MName.Value.TrimEnd('.')
-        il.Emit(OpCodes.Ldloc, dictLocal);
-        il.Emit(OpCodes.Ldstr, "nsname");
-        il.Emit(OpCodes.Ldloc, soaLocal);
-        EmitDnsStringProperty(il, typeof(SoaRecord), "MName");
-        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-        // hostmaster = RName.Value.TrimEnd('.')
-        il.Emit(OpCodes.Ldloc, dictLocal);
-        il.Emit(OpCodes.Ldstr, "hostmaster");
-        il.Emit(OpCodes.Ldloc, soaLocal);
-        EmitDnsStringProperty(il, typeof(SoaRecord), "RName");
-        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-
-        // serial, refresh, retry, expire, minttl — all uint -> double
-        foreach (var (key, prop) in new[] {
-            ("serial", "Serial"), ("refresh", "Refresh"), ("retry", "Retry"),
-            ("expire", "Expire"), ("minttl", "Minimum") })
-        {
-            il.Emit(OpCodes.Ldloc, dictLocal);
-            il.Emit(OpCodes.Ldstr, key);
-            il.Emit(OpCodes.Ldloc, soaLocal);
-            il.Emit(OpCodes.Callvirt, typeof(SoaRecord).GetProperty(prop)!.GetGetMethod()!);
-            il.Emit(OpCodes.Conv_R8);
-            il.Emit(OpCodes.Box, typeof(double));
-            il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
-        }
-
-        // Wrap as $Object
-        il.Emit(OpCodes.Ldloc, dictLocal);
-        il.Emit(OpCodes.Call, runtime.CreateObject);
-        il.Emit(OpCodes.Stloc, resultLocal);
     }
 
     /// <summary>
@@ -1222,10 +797,9 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits DnsDoQuery: shared helper that creates a LookupClient, performs a DNS query,
-    /// checks for errors, and returns the IDnsQueryResponse.
+    /// Emits DnsDoQuery: orchestrator that builds query, sends, and parses response.
+    /// Uses emitted wire protocol helpers — no DnsClient dependency.
     /// Signature: object DnsDoQuery(string hostname, int queryType)
-    /// Uses DnsClient.dll types directly — no SharpTS.dll dependency.
     /// </summary>
     private void EmitDnsDoQuery(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1238,76 +812,2271 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // var client = new LookupClient();
-        var clientLocal = il.DeclareLocal(typeof(LookupClient));
-        il.Emit(OpCodes.Newobj, typeof(LookupClient).GetConstructor(Type.EmptyTypes)!);
-        il.Emit(OpCodes.Stloc, clientLocal);
+        // byte[] query = DnsBuildQuery(hostname, queryType)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.DnsBuildQuery);
+        var queryLocal = il.DeclareLocal(typeof(byte[]));
+        il.Emit(OpCodes.Stloc, queryLocal);
 
-        // var result = client.Query(hostname, (QueryType)queryType, QueryClass.IN);
-        il.Emit(OpCodes.Ldloc, clientLocal);
-        il.Emit(OpCodes.Ldarg_0); // hostname
-        il.Emit(OpCodes.Ldarg_1); // queryType (int)
-        // QueryType is an enum backed by int, we need to convert
-        // QueryClass.IN = 1
-        il.Emit(OpCodes.Ldc_I4_1); // QueryClass.IN
-        il.Emit(OpCodes.Callvirt, typeof(LookupClient).GetMethod("Query",
-            [typeof(string), typeof(QueryType), typeof(QueryClass)])!);
-        var resultLocal = il.DeclareLocal(typeof(IDnsQueryResponse));
+        // byte[] response = DnsSendReceive(query)
+        il.Emit(OpCodes.Ldloc, queryLocal);
+        il.Emit(OpCodes.Call, runtime.DnsSendReceive);
+        var responseLocal = il.DeclareLocal(typeof(byte[]));
+        il.Emit(OpCodes.Stloc, responseLocal);
+
+        // return DnsParseResponse(response, queryType, hostname)
+        il.Emit(OpCodes.Ldloc, responseLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.DnsParseResponse);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DnsReadUInt16: reads 2 bytes big-endian from data at offset[0], increments offset[0] by 2.
+    /// Signature: int DnsReadUInt16(byte[] data, int[] offset)
+    /// </summary>
+    private void EmitDnsReadUInt16(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsReadUInt16",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Int32,
+            [typeof(byte[]), typeof(int[])]);
+        runtime.DnsReadUInt16 = method;
+
+        var il = method.GetILGenerator();
+
+        // int off = offset[0]
+        var offLocal = il.DeclareLocal(_types.Int32); // 0
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Stloc, offLocal);
+
+        // int val = (data[off] << 8) | data[off + 1]
+        var valLocal = il.DeclareLocal(_types.Int32); // 1
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Shl);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Stloc, valLocal);
+
+        // offset[0] = off + 2
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stelem_I4);
+
+        // return val
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DnsReadUInt32: reads 4 bytes big-endian from data at offset[0], increments offset[0] by 4.
+    /// Signature: int DnsReadUInt32(byte[] data, int[] offset)
+    /// </summary>
+    private void EmitDnsReadUInt32(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsReadUInt32",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Int32,
+            [typeof(byte[]), typeof(int[])]);
+        runtime.DnsReadUInt32 = method;
+
+        var il = method.GetILGenerator();
+
+        // int off = offset[0]
+        var offLocal = il.DeclareLocal(_types.Int32); // 0
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Stloc, offLocal);
+
+        // int val = (data[off] << 24) | (data[off+1] << 16) | (data[off+2] << 8) | data[off+3]
+        var valLocal = il.DeclareLocal(_types.Int32); // 1
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4, 24);
+        il.Emit(OpCodes.Shl);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4, 16);
+        il.Emit(OpCodes.Shl);
+        il.Emit(OpCodes.Or);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Shl);
+        il.Emit(OpCodes.Or);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Or);
+
+        il.Emit(OpCodes.Stloc, valLocal);
+
+        // offset[0] = off + 4
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stelem_I4);
+
+        // return val
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DnsReadCharString: reads a length-prefixed string from data at offset[0].
+    /// Signature: string DnsReadCharString(byte[] data, int[] offset)
+    /// </summary>
+    private void EmitDnsReadCharString(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsReadCharString",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [typeof(byte[]), typeof(int[])]);
+        runtime.DnsReadCharString = method;
+
+        var il = method.GetILGenerator();
+
+        // int off = offset[0]
+        var offLocal = il.DeclareLocal(_types.Int32); // 0
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Stloc, offLocal);
+
+        // int len = data[off]
+        var lenLocal = il.DeclareLocal(_types.Int32); // 1
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Stloc, lenLocal);
+
+        // off++
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, offLocal);
+
+        // string result = Encoding.UTF8.GetString(data, off, len)
+        il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("UTF8")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Text.Encoding).GetMethod("GetString", [typeof(byte[]), _types.Int32, _types.Int32])!);
+        var resultLocal = il.DeclareLocal(_types.String); // 2
         il.Emit(OpCodes.Stloc, resultLocal);
 
-        // if (result.HasError)
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Callvirt, typeof(IDnsQueryResponse).GetProperty("HasError")!.GetGetMethod()!);
-        var noErrorLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, noErrorLabel);
+        // offset[0] = off + len
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stelem_I4);
 
-        // Get error code from result.Header.ResponseCode
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Callvirt, typeof(IDnsQueryResponse).GetProperty("Header")!.GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, typeof(DnsResponseHeader).GetProperty("ResponseCode")!.GetGetMethod()!);
-        var responseCodeLocal = il.DeclareLocal(typeof(DnsHeaderResponseCode));
-        il.Emit(OpCodes.Stloc, responseCodeLocal);
-
-        // Map ResponseCode to error string
-        var errorCodeLocal = il.DeclareLocal(_types.String);
-        il.Emit(OpCodes.Ldstr, "EAI_FAIL"); // default
-        il.Emit(OpCodes.Stloc, errorCodeLocal);
-
-        EmitResponseCodeCheck(il, responseCodeLocal, errorCodeLocal, DnsHeaderResponseCode.NotExistentDomain, "ENOTFOUND");
-        EmitResponseCodeCheck(il, responseCodeLocal, errorCodeLocal, DnsHeaderResponseCode.ServerFailure, "ESERVFAIL");
-        EmitResponseCodeCheck(il, responseCodeLocal, errorCodeLocal, DnsHeaderResponseCode.Refused, "EREFUSED");
-        EmitResponseCodeCheck(il, responseCodeLocal, errorCodeLocal, DnsHeaderResponseCode.FormatError, "EFORMERR");
-        EmitResponseCodeCheck(il, responseCodeLocal, errorCodeLocal, DnsHeaderResponseCode.NotImplemented, "ENOTIMP");
-
-        // throw new Exception("Runtime Error: dns.resolve " + code + " " + hostname)
-        il.Emit(OpCodes.Ldstr, "Runtime Error: dns.resolve ");
-        il.Emit(OpCodes.Ldloc, errorCodeLocal);
-        il.Emit(OpCodes.Ldstr, " ");
-        il.Emit(OpCodes.Ldarg_0); // hostname
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
-        il.Emit(OpCodes.Throw);
-
-        il.MarkLabel(noErrorLabel);
-
-        // return result (as object)
+        // return result
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
-    /// Emits a single ResponseCode comparison and error code assignment.
+    /// Emits DnsReadExact: reads exact number of bytes from a NetworkStream.
+    /// Signature: void DnsReadExact(NetworkStream stream, byte[] buf, int offset, int count)
     /// </summary>
-    private static void EmitResponseCodeCheck(ILGenerator il, LocalBuilder responseCodeLocal,
-        LocalBuilder errorCodeLocal, DnsHeaderResponseCode code, string errorStr)
+    private void EmitDnsReadExact(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        il.Emit(OpCodes.Ldloc, responseCodeLocal);
-        il.Emit(OpCodes.Ldc_I4, (int)code);
-        var skipLabel = il.DefineLabel();
-        il.Emit(OpCodes.Bne_Un, skipLabel);
-        il.Emit(OpCodes.Ldstr, errorStr);
+        var method = typeBuilder.DefineMethod(
+            "DnsReadExact",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(void),
+            [typeof(System.Net.Sockets.NetworkStream), typeof(byte[]), _types.Int32, _types.Int32]);
+        runtime.DnsReadExact = method;
+
+        var il = method.GetILGenerator();
+
+        // while (count > 0)
+        var loopStart = il.DefineLabel();
+        var loopCond = il.DefineLabel();
+        il.Emit(OpCodes.Br, loopCond);
+
+        il.MarkLabel(loopStart);
+
+        // int read = stream.Read(buf, offset, count)
+        var readLocal = il.DeclareLocal(_types.Int32); // 0
+        il.Emit(OpCodes.Ldarg_0); // stream
+        il.Emit(OpCodes.Ldarg_1); // buf
+        il.Emit(OpCodes.Ldarg_2); // offset
+        il.Emit(OpCodes.Ldarg_3); // count
+        il.Emit(OpCodes.Callvirt, typeof(System.IO.Stream).GetMethod("Read", [typeof(byte[]), _types.Int32, _types.Int32])!);
+        il.Emit(OpCodes.Stloc, readLocal);
+
+        // if (read == 0) throw
+        il.Emit(OpCodes.Ldloc, readLocal);
+        var notZeroLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, notZeroLabel);
+        il.Emit(OpCodes.Ldstr, "Runtime Error: dns.resolve connection closed unexpectedly");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(notZeroLabel);
+
+        // offset += read
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldloc, readLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Starg, 2);
+
+        // count -= read
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Ldloc, readLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Starg, 3);
+
+        il.MarkLabel(loopCond);
+        il.Emit(OpCodes.Ldarg_3); // count
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bgt, loopStart);
+
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DnsEncodeName: encodes a domain name as DNS labels into a List&lt;byte&gt;.
+    /// Signature: void DnsEncodeName(List&lt;byte&gt; packet, string name)
+    /// </summary>
+    private void EmitDnsEncodeName(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsEncodeName",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(void),
+            [typeof(List<byte>), _types.String]);
+        runtime.DnsEncodeName = method;
+
+        var il = method.GetILGenerator();
+
+        // string trimmed = name.TrimEnd('.')
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Char);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldc_I4, (int)'.');
+        il.Emit(OpCodes.Stelem_I2);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("TrimEnd", [typeof(char[])])!);
+
+        // string[] labels = trimmed.Split('.', StringSplitOptions.None)
+        il.Emit(OpCodes.Ldc_I4, (int)'.');
+        il.Emit(OpCodes.Ldc_I4_0); // StringSplitOptions.None
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Split", [_types.Char, typeof(StringSplitOptions)])!);
+        var labelsLocal = il.DeclareLocal(typeof(string[])); // 0
+        il.Emit(OpCodes.Stloc, labelsLocal);
+
+        // for (int i = 0; i < labels.Length; i++)
+        var indexLocal = il.DeclareLocal(_types.Int32); // 1
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        var loopStart = il.DefineLabel();
+        var loopCond = il.DefineLabel();
+        il.Emit(OpCodes.Br, loopCond);
+
+        il.MarkLabel(loopStart);
+
+        // byte[] bytes = Encoding.ASCII.GetBytes(labels[i])
+        il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("ASCII")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, labelsLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, typeof(System.Text.Encoding).GetMethod("GetBytes", [_types.String])!);
+        var bytesLocal = il.DeclareLocal(typeof(byte[])); // 2
+        il.Emit(OpCodes.Stloc, bytesLocal);
+
+        // packet.Add((byte)bytes.Length)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, bytesLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_U1);
+        il.Emit(OpCodes.Callvirt, typeof(List<byte>).GetMethod("Add")!);
+
+        // packet.AddRange(bytes)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, bytesLocal);
+        il.Emit(OpCodes.Callvirt, typeof(List<byte>).GetMethod("AddRange", [typeof(IEnumerable<byte>)])!);
+
+        // i++
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        il.MarkLabel(loopCond);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, labelsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Blt, loopStart);
+
+        // packet.Add(0x00) — root label
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Conv_U1);
+        il.Emit(OpCodes.Callvirt, typeof(List<byte>).GetMethod("Add")!);
+
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DnsReadName: reads a DNS name with pointer decompression (RFC 1035 §4.1.4).
+    /// Signature: string DnsReadName(byte[] data, int[] offset)
+    /// </summary>
+    private void EmitDnsReadNameMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsReadName",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [typeof(byte[]), typeof(int[])]);
+        runtime.DnsReadName = method;
+
+        var il = method.GetILGenerator();
+
+        // var sb = new StringBuilder()
+        var sbLocal = il.DeclareLocal(typeof(System.Text.StringBuilder)); // 0
+        il.Emit(OpCodes.Newobj, typeof(System.Text.StringBuilder).GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, sbLocal);
+
+        // bool jumped = false
+        var jumpedLocal = il.DeclareLocal(_types.Int32); // 1 (use int as bool)
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, jumpedLocal);
+
+        // int savedOffset = 0
+        var savedOffsetLocal = il.DeclareLocal(_types.Int32); // 2
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, savedOffsetLocal);
+
+        // int maxJumps = 128
+        var maxJumpsLocal = il.DeclareLocal(_types.Int32); // 3
+        il.Emit(OpCodes.Ldc_I4, 128);
+        il.Emit(OpCodes.Stloc, maxJumpsLocal);
+
+        // int off = offset[0]
+        var offLocal = il.DeclareLocal(_types.Int32); // 4
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Stloc, offLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+
+        // if (maxJumps-- <= 0) break
+        il.Emit(OpCodes.Ldloc, maxJumpsLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, maxJumpsLocal);
+        il.Emit(OpCodes.Ldloc, maxJumpsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, loopEnd);
+
+        // if (off >= data.Length) break
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // int len = data[off]
+        var lenLocal = il.DeclareLocal(_types.Int32); // 5
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Stloc, lenLocal);
+
+        // if (len == 0) { off++; break; }
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        var notZeroLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, notZeroLabel);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, offLocal);
+        il.Emit(OpCodes.Br, loopEnd);
+
+        il.MarkLabel(notZeroLabel);
+
+        // if ((len & 0xC0) == 0xC0) -> pointer
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xC0);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Ldc_I4, 0xC0);
+        var notPointerLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, notPointerLabel);
+
+        // Pointer case
+        // if (!jumped) savedOffset = off + 2
+        il.Emit(OpCodes.Ldloc, jumpedLocal);
+        var skipSaveLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, skipSaveLabel);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, savedOffsetLocal);
+        il.MarkLabel(skipSaveLabel);
+
+        // int pointer = ((len & 0x3F) << 8) | data[off + 1]
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Ldc_I4, 0x3F);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Shl);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Stloc, offLocal);
+
+        // jumped = true
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, jumpedLocal);
+
+        il.Emit(OpCodes.Br, loopStart); // continue
+
+        // Regular label
+        il.MarkLabel(notPointerLabel);
+
+        // off++
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, offLocal);
+
+        // if (sb.Length > 0) sb.Append('.')
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Text.StringBuilder).GetProperty("Length")!.GetGetMethod()!);
+        var skipDotLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, skipDotLabel);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'.');
+        il.Emit(OpCodes.Callvirt, typeof(System.Text.StringBuilder).GetMethod("Append", [_types.Char])!);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(skipDotLabel);
+
+        // sb.Append(Encoding.ASCII.GetString(data, off, len))
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("ASCII")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Text.Encoding).GetMethod("GetString", [typeof(byte[]), _types.Int32, _types.Int32])!);
+        il.Emit(OpCodes.Callvirt, typeof(System.Text.StringBuilder).GetMethod("Append", [_types.String])!);
+        il.Emit(OpCodes.Pop);
+
+        // off += len
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, offLocal);
+
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+
+        // if (jumped) offset[0] = savedOffset; else offset[0] = off
+        il.Emit(OpCodes.Ldloc, jumpedLocal);
+        var notJumpedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notJumpedLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, savedOffsetLocal);
+        il.Emit(OpCodes.Stelem_I4);
+        var returnLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, returnLabel);
+
+        il.MarkLabel(notJumpedLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Stelem_I4);
+
+        il.MarkLabel(returnLabel);
+
+        // return sb.ToString()
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(System.Text.StringBuilder), "ToString"));
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DnsSkipName: skips a DNS name in the packet (for traversal without reading).
+    /// Signature: void DnsSkipName(byte[] data, int[] offset)
+    /// </summary>
+    private void EmitDnsSkipNameMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsSkipName",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(void),
+            [typeof(byte[]), typeof(int[])]);
+        runtime.DnsSkipName = method;
+
+        var il = method.GetILGenerator();
+
+        // int off = offset[0]
+        var offLocal = il.DeclareLocal(_types.Int32); // 0
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Stloc, offLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+
+        // if (off >= data.Length) break
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // int len = data[off]
+        var lenLocal = il.DeclareLocal(_types.Int32); // 1
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Stloc, lenLocal);
+
+        // if (len == 0) { off++; break; }
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        var notZeroLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, notZeroLabel);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, offLocal);
+        il.Emit(OpCodes.Br, loopEnd);
+
+        il.MarkLabel(notZeroLabel);
+
+        // if ((len & 0xC0) == 0xC0) { off += 2; break; }
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xC0);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Ldc_I4, 0xC0);
+        var notPointerLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, notPointerLabel);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, offLocal);
+        il.Emit(OpCodes.Br, loopEnd);
+
+        il.MarkLabel(notPointerLabel);
+
+        // off += 1 + len
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, offLocal);
+
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+
+        // offset[0] = off
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, offLocal);
+        il.Emit(OpCodes.Stelem_I4);
+
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DnsGetSystemDns: returns the system's primary DNS server address as string.
+    /// Signature: string DnsGetSystemDns()
+    /// </summary>
+    private void EmitDnsGetSystemDnsMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsGetSystemDns",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            Type.EmptyTypes);
+        runtime.DnsGetSystemDns = method;
+
+        var il = method.GetILGenerator();
+
+        var resultLocal = il.DeclareLocal(_types.String); // 0
+        var returnLabel = il.DefineLabel();
+
+        il.BeginExceptionBlock();
+
+        // First pass: prefer IPv4
+        // var interfaces = NetworkInterface.GetAllNetworkInterfaces()
+        var niArrayLocal = il.DeclareLocal(typeof(System.Net.NetworkInformation.NetworkInterface[])); // 1
+        il.Emit(OpCodes.Call, typeof(System.Net.NetworkInformation.NetworkInterface).GetMethod("GetAllNetworkInterfaces")!);
+        il.Emit(OpCodes.Stloc, niArrayLocal);
+
+        // for (int i = 0; i < interfaces.Length; i++)
+        var iLocal = il.DeclareLocal(_types.Int32); // 2
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        var pass1LoopStart = il.DefineLabel();
+        var pass1LoopCond = il.DefineLabel();
+        il.Emit(OpCodes.Br, pass1LoopCond);
+
+        il.MarkLabel(pass1LoopStart);
+
+        // if (ni.OperationalStatus != Up) continue
+        il.Emit(OpCodes.Ldloc, niArrayLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.NetworkInformation.NetworkInterface).GetProperty("OperationalStatus")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Net.NetworkInformation.OperationalStatus.Up);
+        var pass1ContinueLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, pass1ContinueLabel);
+
+        // var props = ni.GetIPProperties()
+        il.Emit(OpCodes.Ldloc, niArrayLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.NetworkInformation.NetworkInterface).GetMethod("GetIPProperties")!);
+        var propsLocal = il.DeclareLocal(typeof(System.Net.NetworkInformation.IPInterfaceProperties)); // 3
+        il.Emit(OpCodes.Stloc, propsLocal);
+
+        // var dnsAddrs = props.DnsAddresses
+        il.Emit(OpCodes.Ldloc, propsLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.NetworkInformation.IPInterfaceProperties).GetProperty("DnsAddresses")!.GetGetMethod()!);
+        var dnsAddrsLocal = il.DeclareLocal(typeof(System.Net.NetworkInformation.IPAddressCollection)); // 4
+        il.Emit(OpCodes.Stloc, dnsAddrsLocal);
+
+        // for (int j = 0; j < dnsAddrs.Count; j++)
+        var jLocal = il.DeclareLocal(_types.Int32); // 5
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, jLocal);
+        var innerLoopStart = il.DefineLabel();
+        var innerLoopCond = il.DefineLabel();
+        il.Emit(OpCodes.Br, innerLoopCond);
+
+        il.MarkLabel(innerLoopStart);
+
+        // if (dnsAddrs[j].AddressFamily == InterNetwork)
+        il.Emit(OpCodes.Ldloc, dnsAddrsLocal);
+        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.NetworkInformation.IPAddressCollection).GetProperty("Item")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, typeof(IPAddress).GetProperty("AddressFamily")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4, (int)AddressFamily.InterNetwork);
+        var innerContinueLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, innerContinueLabel);
+
+        // Found IPv4 DNS
+        il.Emit(OpCodes.Ldloc, dnsAddrsLocal);
+        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.NetworkInformation.IPAddressCollection).GetProperty("Item")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IPAddress), "ToString"));
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Leave, returnLabel);
+
+        il.MarkLabel(innerContinueLabel);
+        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, jLocal);
+
+        il.MarkLabel(innerLoopCond);
+        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Ldloc, dnsAddrsLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.NetworkInformation.IPAddressCollection).GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Blt, innerLoopStart);
+
+        il.MarkLabel(pass1ContinueLabel);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(pass1LoopCond);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, niArrayLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Blt, pass1LoopStart);
+
+        // Second pass: accept any address family
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        var pass2LoopStart = il.DefineLabel();
+        var pass2LoopCond = il.DefineLabel();
+        il.Emit(OpCodes.Br, pass2LoopCond);
+
+        il.MarkLabel(pass2LoopStart);
+
+        // if (ni.OperationalStatus != Up) continue
+        il.Emit(OpCodes.Ldloc, niArrayLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.NetworkInformation.NetworkInterface).GetProperty("OperationalStatus")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Net.NetworkInformation.OperationalStatus.Up);
+        var pass2ContinueLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, pass2ContinueLabel);
+
+        // var props2 = ni.GetIPProperties()
+        il.Emit(OpCodes.Ldloc, niArrayLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.NetworkInformation.NetworkInterface).GetMethod("GetIPProperties")!);
+        il.Emit(OpCodes.Stloc, propsLocal);
+
+        // var dnsAddrs2 = props2.DnsAddresses
+        il.Emit(OpCodes.Ldloc, propsLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.NetworkInformation.IPInterfaceProperties).GetProperty("DnsAddresses")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, dnsAddrsLocal);
+
+        // if (dnsAddrs2.Count > 0) return dnsAddrs2[0].ToString()
+        il.Emit(OpCodes.Ldloc, dnsAddrsLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.NetworkInformation.IPAddressCollection).GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, pass2ContinueLabel);
+
+        il.Emit(OpCodes.Ldloc, dnsAddrsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.NetworkInformation.IPAddressCollection).GetProperty("Item")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IPAddress), "ToString"));
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Leave, returnLabel);
+
+        il.MarkLabel(pass2ContinueLabel);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(pass2LoopCond);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, niArrayLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Blt, pass2LoopStart);
+
+        // Fallback: "8.8.8.8"
+        il.Emit(OpCodes.Ldstr, "8.8.8.8");
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Leave, returnLabel);
+
+        // catch — fallback to "8.8.8.8"
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "8.8.8.8");
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Leave, returnLabel);
+
+        il.EndExceptionBlock();
+
+        il.MarkLabel(returnLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DnsBuildQuery: builds a DNS query packet per RFC 1035.
+    /// Signature: byte[] DnsBuildQuery(string hostname, int queryType)
+    /// </summary>
+    private void EmitDnsBuildQueryMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsBuildQuery",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(byte[]),
+            [_types.String, _types.Int32]);
+        runtime.DnsBuildQuery = method;
+
+        var il = method.GetILGenerator();
+
+        // var packet = new List<byte>(64)
+        var packetLocal = il.DeclareLocal(typeof(List<byte>)); // 0
+        il.Emit(OpCodes.Ldc_I4, 64);
+        il.Emit(OpCodes.Newobj, typeof(List<byte>).GetConstructor([_types.Int32])!);
+        il.Emit(OpCodes.Stloc, packetLocal);
+
+        // Transaction ID (random)
+        // var rng = new Random()
+        var rngLocal = il.DeclareLocal(typeof(Random)); // 1
+        il.Emit(OpCodes.Newobj, typeof(Random).GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, rngLocal);
+
+        // int id = rng.Next(0, 65536)
+        var idLocal = il.DeclareLocal(_types.Int32); // 2
+        il.Emit(OpCodes.Ldloc, rngLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldc_I4, 65536);
+        il.Emit(OpCodes.Callvirt, typeof(Random).GetMethod("Next", [_types.Int32, _types.Int32])!);
+        il.Emit(OpCodes.Stloc, idLocal);
+
+        // packet.Add((byte)(id >> 8))
+        il.Emit(OpCodes.Ldloc, packetLocal);
+        il.Emit(OpCodes.Ldloc, idLocal);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Shr);
+        il.Emit(OpCodes.Conv_U1);
+        il.Emit(OpCodes.Callvirt, typeof(List<byte>).GetMethod("Add")!);
+
+        // packet.Add((byte)(id & 0xFF))
+        il.Emit(OpCodes.Ldloc, packetLocal);
+        il.Emit(OpCodes.Ldloc, idLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xFF);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Conv_U1);
+        il.Emit(OpCodes.Callvirt, typeof(List<byte>).GetMethod("Add")!);
+
+        // Flags: 0x01 0x00 (standard query, recursion desired)
+        EmitListByteAdd(il, packetLocal, 0x01);
+        EmitListByteAdd(il, packetLocal, 0x00);
+
+        // QDCOUNT = 1
+        EmitListByteAdd(il, packetLocal, 0x00);
+        EmitListByteAdd(il, packetLocal, 0x01);
+
+        // ANCOUNT = 0
+        EmitListByteAdd(il, packetLocal, 0x00);
+        EmitListByteAdd(il, packetLocal, 0x00);
+
+        // NSCOUNT = 0
+        EmitListByteAdd(il, packetLocal, 0x00);
+        EmitListByteAdd(il, packetLocal, 0x00);
+
+        // ARCOUNT = 0
+        EmitListByteAdd(il, packetLocal, 0x00);
+        EmitListByteAdd(il, packetLocal, 0x00);
+
+        // EncodeName(packet, hostname)
+        il.Emit(OpCodes.Ldloc, packetLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.DnsEncodeName);
+
+        // QTYPE (2 bytes, big-endian)
+        il.Emit(OpCodes.Ldloc, packetLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Shr);
+        il.Emit(OpCodes.Conv_U1);
+        il.Emit(OpCodes.Callvirt, typeof(List<byte>).GetMethod("Add")!);
+
+        il.Emit(OpCodes.Ldloc, packetLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4, 0xFF);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Conv_U1);
+        il.Emit(OpCodes.Callvirt, typeof(List<byte>).GetMethod("Add")!);
+
+        // QCLASS = IN (1)
+        EmitListByteAdd(il, packetLocal, 0x00);
+        EmitListByteAdd(il, packetLocal, 0x01);
+
+        // return packet.ToArray()
+        il.Emit(OpCodes.Ldloc, packetLocal);
+        il.Emit(OpCodes.Callvirt, typeof(List<byte>).GetMethod("ToArray")!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Helper: emits packet.Add((byte)value) for a constant byte.
+    /// </summary>
+    private static void EmitListByteAdd(ILGenerator il, LocalBuilder packetLocal, byte value)
+    {
+        il.Emit(OpCodes.Ldloc, packetLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)value);
+        il.Emit(OpCodes.Conv_U1);
+        il.Emit(OpCodes.Callvirt, typeof(List<byte>).GetMethod("Add")!);
+    }
+
+    /// <summary>
+    /// Emits DnsSendViaTcp: sends a DNS query via TCP with 2-byte length prefix.
+    /// Signature: byte[] DnsSendViaTcp(byte[] query, string server)
+    /// </summary>
+    private void EmitDnsSendViaTcpMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsSendViaTcp",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(byte[]),
+            [typeof(byte[]), _types.String]);
+        runtime.DnsSendViaTcp = method;
+
+        var il = method.GetILGenerator();
+
+        var resultLocal = il.DeclareLocal(typeof(byte[])); // 0
+        var returnLabel = il.DefineLabel();
+
+        // using var tcp = new TcpClient()
+        var tcpLocal = il.DeclareLocal(typeof(TcpClient)); // 1
+        il.Emit(OpCodes.Newobj, typeof(TcpClient).GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, tcpLocal);
+
+        il.BeginExceptionBlock();
+
+        // tcp.ReceiveTimeout = 5000
+        il.Emit(OpCodes.Ldloc, tcpLocal);
+        il.Emit(OpCodes.Ldc_I4, 5000);
+        il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetProperty("ReceiveTimeout")!.GetSetMethod()!);
+
+        // tcp.SendTimeout = 5000
+        il.Emit(OpCodes.Ldloc, tcpLocal);
+        il.Emit(OpCodes.Ldc_I4, 5000);
+        il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetProperty("SendTimeout")!.GetSetMethod()!);
+
+        // tcp.Connect(server, 53)
+        il.Emit(OpCodes.Ldloc, tcpLocal);
+        il.Emit(OpCodes.Ldarg_1); // server
+        il.Emit(OpCodes.Ldc_I4, 53);
+        il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetMethod("Connect", [_types.String, _types.Int32])!);
+
+        // var stream = tcp.GetStream()
+        var streamLocal = il.DeclareLocal(typeof(System.Net.Sockets.NetworkStream)); // 2
+        il.Emit(OpCodes.Ldloc, tcpLocal);
+        il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetMethod("GetStream")!);
+        il.Emit(OpCodes.Stloc, streamLocal);
+
+        // Write 2-byte length prefix
+        // var lengthPrefix = new byte[2]
+        var prefixLocal = il.DeclareLocal(typeof(byte[])); // 3
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Byte);
+        il.Emit(OpCodes.Stloc, prefixLocal);
+
+        // lengthPrefix[0] = (byte)(query.Length >> 8)
+        il.Emit(OpCodes.Ldloc, prefixLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Shr);
+        il.Emit(OpCodes.Conv_U1);
+        il.Emit(OpCodes.Stelem_I1);
+
+        // lengthPrefix[1] = (byte)(query.Length & 0xFF)
+        il.Emit(OpCodes.Ldloc, prefixLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4, 0xFF);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Conv_U1);
+        il.Emit(OpCodes.Stelem_I1);
+
+        // stream.Write(lengthPrefix, 0, 2)
+        il.Emit(OpCodes.Ldloc, streamLocal);
+        il.Emit(OpCodes.Ldloc, prefixLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Callvirt, typeof(System.IO.Stream).GetMethod("Write", [typeof(byte[]), _types.Int32, _types.Int32])!);
+
+        // stream.Write(query, 0, query.Length)
+        il.Emit(OpCodes.Ldloc, streamLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Callvirt, typeof(System.IO.Stream).GetMethod("Write", [typeof(byte[]), _types.Int32, _types.Int32])!);
+
+        // stream.Flush()
+        il.Emit(OpCodes.Ldloc, streamLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.IO.Stream).GetMethod("Flush", Type.EmptyTypes)!);
+
+        // Read 2-byte response length
+        // var respLenBuf = new byte[2]
+        var respLenBufLocal = il.DeclareLocal(typeof(byte[])); // 4
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Byte);
+        il.Emit(OpCodes.Stloc, respLenBufLocal);
+
+        // DnsReadExact(stream, respLenBuf, 0, 2)
+        il.Emit(OpCodes.Ldloc, streamLocal);
+        il.Emit(OpCodes.Ldloc, respLenBufLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Call, runtime.DnsReadExact);
+
+        // int respLen = (respLenBuf[0] << 8) | respLenBuf[1]
+        var respLenLocal = il.DeclareLocal(_types.Int32); // 5
+        il.Emit(OpCodes.Ldloc, respLenBufLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Shl);
+        il.Emit(OpCodes.Ldloc, respLenBufLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Stloc, respLenLocal);
+
+        // var response = new byte[respLen]
+        il.Emit(OpCodes.Ldloc, respLenLocal);
+        il.Emit(OpCodes.Newarr, _types.Byte);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // DnsReadExact(stream, response, 0, respLen)
+        il.Emit(OpCodes.Ldloc, streamLocal);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, respLenLocal);
+        il.Emit(OpCodes.Call, runtime.DnsReadExact);
+
+        il.Emit(OpCodes.Leave, returnLabel);
+
+        // finally: tcp.Dispose()
+        il.BeginFinallyBlock();
+        il.Emit(OpCodes.Ldloc, tcpLocal);
+        il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetMethod("Dispose", Type.EmptyTypes)!);
+        il.EndExceptionBlock();
+
+        il.MarkLabel(returnLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DnsSendReceive: sends DNS query via UDP, falls back to TCP on truncation, with retry loop.
+    /// Signature: byte[] DnsSendReceive(byte[] query)
+    /// </summary>
+    private void EmitDnsSendReceiveMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsSendReceive",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(byte[]),
+            [typeof(byte[])]);
+        runtime.DnsSendReceive = method;
+
+        var il = method.GetILGenerator();
+
+        // string dnsServer = DnsGetSystemDns()
+        var serverLocal = il.DeclareLocal(_types.String); // 0
+        il.Emit(OpCodes.Call, runtime.DnsGetSystemDns);
+        il.Emit(OpCodes.Stloc, serverLocal);
+
+        // var endpoint = new IPEndPoint(IPAddress.Parse(server), 53)
+        var endpointLocal = il.DeclareLocal(typeof(IPEndPoint)); // 1
+        il.Emit(OpCodes.Ldloc, serverLocal);
+        il.Emit(OpCodes.Call, typeof(IPAddress).GetMethod("Parse", [_types.String])!);
+        il.Emit(OpCodes.Ldc_I4, 53);
+        il.Emit(OpCodes.Newobj, typeof(IPEndPoint).GetConstructor([typeof(IPAddress), _types.Int32])!);
+        il.Emit(OpCodes.Stloc, endpointLocal);
+
+        // byte[] result = null
+        var resultLocal = il.DeclareLocal(typeof(byte[])); // 2
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // for (int attempt = 0; attempt <= 2; attempt++)
+        var attemptLocal = il.DeclareLocal(_types.Int32); // 3
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, attemptLocal);
+
+        var retryLoopStart = il.DefineLabel();
+        var retryLoopCond = il.DefineLabel();
+        var returnLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, retryLoopCond);
+
+        il.MarkLabel(retryLoopStart);
+
+        // try
+        il.BeginExceptionBlock();
+
+        // using var udp = new UdpClient()
+        var udpLocal = il.DeclareLocal(typeof(UdpClient)); // 4
+        il.Emit(OpCodes.Newobj, typeof(UdpClient).GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, udpLocal);
+
+        // udp.Client.ReceiveTimeout = 5000
+        il.Emit(OpCodes.Ldloc, udpLocal);
+        il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetProperty("Client")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4, 5000);
+        il.Emit(OpCodes.Callvirt, typeof(Socket).GetProperty("ReceiveTimeout")!.GetSetMethod()!);
+
+        // udp.Client.SendTimeout = 5000
+        il.Emit(OpCodes.Ldloc, udpLocal);
+        il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetProperty("Client")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4, 5000);
+        il.Emit(OpCodes.Callvirt, typeof(Socket).GetProperty("SendTimeout")!.GetSetMethod()!);
+
+        // udp.Send(query, query.Length, endpoint)
+        il.Emit(OpCodes.Ldloc, udpLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldloc, endpointLocal);
+        il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetMethod("Send", [typeof(byte[]), _types.Int32, typeof(IPEndPoint)])!);
+        il.Emit(OpCodes.Pop); // discard send count
+
+        // var remoteEp = new IPEndPoint(IPAddress.Any, 0)
+        var remoteEpLocal = il.DeclareLocal(typeof(IPEndPoint)); // 5
+        il.Emit(OpCodes.Ldsfld, typeof(IPAddress).GetField("Any")!);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newobj, typeof(IPEndPoint).GetConstructor([typeof(IPAddress), _types.Int32])!);
+        il.Emit(OpCodes.Stloc, remoteEpLocal);
+
+        // byte[] response = udp.Receive(ref remoteEp)
+        var responseLocal = il.DeclareLocal(typeof(byte[])); // 6
+        il.Emit(OpCodes.Ldloc, udpLocal);
+        il.Emit(OpCodes.Ldloca, remoteEpLocal);
+        il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetMethod("Receive", [typeof(IPEndPoint).MakeByRefType()])!);
+        il.Emit(OpCodes.Stloc, responseLocal);
+
+        // udp.Dispose()
+        il.Emit(OpCodes.Ldloc, udpLocal);
+        il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetMethod("Dispose", Type.EmptyTypes)!);
+
+        // Check TC (truncation) bit — byte[2], bit 1
+        // if (response.Length >= 3 && (response[2] & 0x02) != 0) -> TCP fallback
+        il.Emit(OpCodes.Ldloc, responseLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_3);
+        var noTcCheckLabel = il.DefineLabel();
+        il.Emit(OpCodes.Blt, noTcCheckLabel);
+
+        il.Emit(OpCodes.Ldloc, responseLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Brfalse, noTcCheckLabel);
+
+        // TCP fallback: result = DnsSendViaTcp(query, server)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, serverLocal);
+        il.Emit(OpCodes.Call, runtime.DnsSendViaTcp);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Leave, returnLabel);
+
+        il.MarkLabel(noTcCheckLabel);
+
+        // No truncation: result = response
+        il.Emit(OpCodes.Ldloc, responseLocal);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Leave, returnLabel);
+
+        // catch (SocketException) when (attempt < MaxRetries)
+        il.BeginCatchBlock(typeof(SocketException));
+        il.Emit(OpCodes.Pop);
+        // if (attempt >= 2) rethrow by throwing timeout error
+        il.Emit(OpCodes.Ldloc, attemptLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        var retryLabel = il.DefineLabel();
+        il.Emit(OpCodes.Blt, retryLabel);
+        il.Emit(OpCodes.Ldstr, "Runtime Error: dns.resolve ETIMEOUT DNS query timed out");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(retryLabel);
+        il.Emit(OpCodes.Leave, retryLoopCond); // continue to next attempt
+
+        il.EndExceptionBlock();
+
+        // attempt++
+        il.Emit(OpCodes.Ldloc, attemptLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, attemptLocal);
+
+        il.MarkLabel(retryLoopCond);
+        il.Emit(OpCodes.Ldloc, attemptLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ble, retryLoopStart);
+
+        // If we exhausted retries without returning, throw
+        il.Emit(OpCodes.Ldstr, "Runtime Error: dns.resolve ETIMEOUT DNS query timed out");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(returnLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DnsParseRecord: parses a single DNS record RDATA based on type.
+    /// Signature: object DnsParseRecord(byte[] data, int[] offset, int type, int rdlength, int rdataStart)
+    /// </summary>
+    private void EmitDnsParseRecordMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsParseRecord",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [typeof(byte[]), typeof(int[]), _types.Int32, _types.Int32, _types.Int32]);
+        runtime.DnsParseRecord = method;
+
+        var il = method.GetILGenerator();
+
+        var dictType = _types.DictionaryStringObject;
+        var dictCtor = _types.GetDefaultConstructor(dictType);
+        var dictAdd = _types.GetMethod(dictType, "Add", _types.String, _types.Object);
+
+        var resultLocal = il.DeclareLocal(_types.Object);   // 0
+        var returnLabel = il.DefineLabel();
+
+        // Labels for each record type
+        var typeALabel = il.DefineLabel();
+        var typeAAAALabel = il.DefineLabel();
+        var typeMXLabel = il.DefineLabel();
+        var typeTXTLabel = il.DefineLabel();
+        var typeSRVLabel = il.DefineLabel();
+        var typeCNAMELabel = il.DefineLabel();
+        var typeNSLabel = il.DefineLabel();
+        var typeSOALabel = il.DefineLabel();
+        var typePTRLabel = il.DefineLabel();
+        var typeCAALabel = il.DefineLabel();
+        var typeNAPTRLabel = il.DefineLabel();
+        var defaultLabel = il.DefineLabel();
+
+        // Switch on type (arg2)
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4_1); // TypeA
+        il.Emit(OpCodes.Beq, typeALabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4, 28); // TypeAAAA
+        il.Emit(OpCodes.Beq, typeAAAALabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4, 15); // TypeMX
+        il.Emit(OpCodes.Beq, typeMXLabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4, 16); // TypeTXT
+        il.Emit(OpCodes.Beq, typeTXTLabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4, 33); // TypeSRV
+        il.Emit(OpCodes.Beq, typeSRVLabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4_5); // TypeCNAME
+        il.Emit(OpCodes.Beq, typeCNAMELabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4_2); // TypeNS
+        il.Emit(OpCodes.Beq, typeNSLabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4_6); // TypeSOA
+        il.Emit(OpCodes.Beq, typeSOALabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4, 12); // TypePTR
+        il.Emit(OpCodes.Beq, typePTRLabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4, 257); // TypeCAA
+        il.Emit(OpCodes.Beq, typeCAALabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4, 35); // TypeNAPTR
+        il.Emit(OpCodes.Beq, typeNAPTRLabel);
+
+        il.Emit(OpCodes.Br, defaultLabel);
+
+        // === TypeA (1): 4 bytes -> IPAddress -> ToString() ===
+        il.MarkLabel(typeALabel);
+        {
+            il.Emit(OpCodes.Ldarg_3); // rdlength
+            il.Emit(OpCodes.Ldc_I4_4);
+            var aOkLabel = il.DefineLabel();
+            il.Emit(OpCodes.Bge, aOkLabel);
+            EmitSetOffsetAndReturnNull(il, returnLabel, resultLocal);
+            il.MarkLabel(aOkLabel);
+
+            var ipBytesLocal = il.DeclareLocal(typeof(byte[])); // 1
+            il.Emit(OpCodes.Ldc_I4_4);
+            il.Emit(OpCodes.Newarr, _types.Byte);
+            il.Emit(OpCodes.Stloc, ipBytesLocal);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldloc, ipBytesLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldc_I4_4);
+            il.Emit(OpCodes.Call, typeof(Array).GetMethod("Copy", [typeof(Array), _types.Int32, typeof(Array), _types.Int32, _types.Int32])!);
+
+            il.Emit(OpCodes.Ldloc, ipBytesLocal);
+            il.Emit(OpCodes.Newobj, typeof(IPAddress).GetConstructor([typeof(byte[])])!);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IPAddress), "ToString"));
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            EmitSetOffsetToRdataEnd(il);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
+
+        // === TypeAAAA (28): 16 bytes -> IPAddress -> ToString() ===
+        il.MarkLabel(typeAAAALabel);
+        {
+            il.Emit(OpCodes.Ldarg_3); // rdlength
+            il.Emit(OpCodes.Ldc_I4, 16);
+            var aaaaOkLabel = il.DefineLabel();
+            il.Emit(OpCodes.Bge, aaaaOkLabel);
+            EmitSetOffsetAndReturnNull(il, returnLabel, resultLocal);
+            il.MarkLabel(aaaaOkLabel);
+
+            var ipBytesLocal = il.DeclareLocal(typeof(byte[]));
+            il.Emit(OpCodes.Ldc_I4, 16);
+            il.Emit(OpCodes.Newarr, _types.Byte);
+            il.Emit(OpCodes.Stloc, ipBytesLocal);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldloc, ipBytesLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldc_I4, 16);
+            il.Emit(OpCodes.Call, typeof(Array).GetMethod("Copy", [typeof(Array), _types.Int32, typeof(Array), _types.Int32, _types.Int32])!);
+
+            il.Emit(OpCodes.Ldloc, ipBytesLocal);
+            il.Emit(OpCodes.Newobj, typeof(IPAddress).GetConstructor([typeof(byte[])])!);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IPAddress), "ToString"));
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            EmitSetOffsetToRdataEnd(il);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
+
+        // === TypeMX (15): preference(2) + ReadName -> Dictionary { exchange, priority } ===
+        il.MarkLabel(typeMXLabel);
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadUInt16);
+            var prefLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Stloc, prefLocal);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadName);
+            var exchangeLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Stloc, exchangeLocal);
+
+            il.Emit(OpCodes.Newobj, dictCtor);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "exchange");
+            il.Emit(OpCodes.Ldloc, exchangeLocal);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "priority");
+            il.Emit(OpCodes.Ldloc, prefLocal);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            EmitSetOffsetToRdataEnd(il);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
+
+        // === TypeTXT (16): sequence of length-prefixed strings -> List<object?> ===
+        il.MarkLabel(typeTXTLabel);
+        {
+            var chunksLocal = il.DeclareLocal(_types.ListOfObject);
+            il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Stloc, chunksLocal);
+
+            var endLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg, 4); // rdataStart
+            il.Emit(OpCodes.Ldarg_3); // rdlength
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, endLocal);
+
+            var txtLoopStart = il.DefineLabel();
+            var txtLoopCond = il.DefineLabel();
+            il.Emit(OpCodes.Br, txtLoopCond);
+
+            il.MarkLabel(txtLoopStart);
+
+            // int strLen = data[offset[0]]
+            var strLenLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldelem_U1);
+            il.Emit(OpCodes.Stloc, strLenLocal);
+
+            // offset[0]++
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stelem_I4);
+
+            // string text = Encoding.UTF8.GetString(data, offset[0], strLen)
+            var textLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("UTF8")!.GetGetMethod()!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldloc, strLenLocal);
+            il.Emit(OpCodes.Callvirt, typeof(System.Text.Encoding).GetMethod("GetString", [typeof(byte[]), _types.Int32, _types.Int32])!);
+            il.Emit(OpCodes.Stloc, textLocal);
+
+            // chunks.Add(text)
+            il.Emit(OpCodes.Ldloc, chunksLocal);
+            il.Emit(OpCodes.Ldloc, textLocal);
+            il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
+
+            // offset[0] += strLen
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldloc, strLenLocal);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stelem_I4);
+
+            il.MarkLabel(txtLoopCond);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldloc, endLocal);
+            il.Emit(OpCodes.Blt, txtLoopStart);
+
+            // offset[0] = end
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldloc, endLocal);
+            il.Emit(OpCodes.Stelem_I4);
+
+            il.Emit(OpCodes.Ldloc, chunksLocal);
+            il.Emit(OpCodes.Stloc, resultLocal);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
+
+        // === TypeSRV (33): priority(2) + weight(2) + port(2) + ReadName -> Dictionary ===
+        il.MarkLabel(typeSRVLabel);
+        {
+            var priorityLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadUInt16);
+            il.Emit(OpCodes.Stloc, priorityLocal);
+
+            var weightLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadUInt16);
+            il.Emit(OpCodes.Stloc, weightLocal);
+
+            var portLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadUInt16);
+            il.Emit(OpCodes.Stloc, portLocal);
+
+            var targetLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadName);
+            il.Emit(OpCodes.Stloc, targetLocal);
+
+            il.Emit(OpCodes.Newobj, dictCtor);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "name");
+            il.Emit(OpCodes.Ldloc, targetLocal);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "port");
+            il.Emit(OpCodes.Ldloc, portLocal);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "priority");
+            il.Emit(OpCodes.Ldloc, priorityLocal);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "weight");
+            il.Emit(OpCodes.Ldloc, weightLocal);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            EmitSetOffsetToRdataEnd(il);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
+
+        // === TypeCNAME (5): ReadName -> string ===
+        il.MarkLabel(typeCNAMELabel);
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadName);
+            il.Emit(OpCodes.Stloc, resultLocal);
+            EmitSetOffsetToRdataEnd(il);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
+
+        // === TypeNS (2): ReadName -> string ===
+        il.MarkLabel(typeNSLabel);
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadName);
+            il.Emit(OpCodes.Stloc, resultLocal);
+            EmitSetOffsetToRdataEnd(il);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
+
+        // === TypeSOA (6): mname + rname + 5xUInt32 -> Dictionary ===
+        il.MarkLabel(typeSOALabel);
+        {
+            var mnameLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadName);
+            il.Emit(OpCodes.Stloc, mnameLocal);
+
+            var rnameLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadName);
+            il.Emit(OpCodes.Stloc, rnameLocal);
+
+            var serialLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadUInt32);
+            il.Emit(OpCodes.Stloc, serialLocal);
+
+            var refreshLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadUInt32);
+            il.Emit(OpCodes.Stloc, refreshLocal);
+
+            var retryLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadUInt32);
+            il.Emit(OpCodes.Stloc, retryLocal);
+
+            var expireLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadUInt32);
+            il.Emit(OpCodes.Stloc, expireLocal);
+
+            var minimumLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadUInt32);
+            il.Emit(OpCodes.Stloc, minimumLocal);
+
+            il.Emit(OpCodes.Newobj, dictCtor);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "nsname");
+            il.Emit(OpCodes.Ldloc, mnameLocal);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "hostmaster");
+            il.Emit(OpCodes.Ldloc, rnameLocal);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "serial");
+            il.Emit(OpCodes.Ldloc, serialLocal);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "refresh");
+            il.Emit(OpCodes.Ldloc, refreshLocal);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "retry");
+            il.Emit(OpCodes.Ldloc, retryLocal);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "expire");
+            il.Emit(OpCodes.Ldloc, expireLocal);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "minttl");
+            il.Emit(OpCodes.Ldloc, minimumLocal);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            EmitSetOffsetToRdataEnd(il);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
+
+        // === TypePTR (12): ReadName -> string ===
+        il.MarkLabel(typePTRLabel);
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadName);
+            il.Emit(OpCodes.Stloc, resultLocal);
+            EmitSetOffsetToRdataEnd(il);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
+
+        // === TypeCAA (257): flags(1) + tagLen(1) + tag + value -> Dictionary ===
+        il.MarkLabel(typeCAALabel);
+        {
+            // int flags = data[offset[0]]
+            var flagsLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldelem_U1);
+            il.Emit(OpCodes.Stloc, flagsLocal);
+
+            // offset[0]++
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stelem_I4);
+
+            // int tagLen = data[offset[0]]
+            var tagLenLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldelem_U1);
+            il.Emit(OpCodes.Stloc, tagLenLocal);
+
+            // offset[0]++
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stelem_I4);
+
+            // string tag = Encoding.ASCII.GetString(data, offset[0], tagLen)
+            var tagLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("ASCII")!.GetGetMethod()!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldloc, tagLenLocal);
+            il.Emit(OpCodes.Callvirt, typeof(System.Text.Encoding).GetMethod("GetString", [typeof(byte[]), _types.Int32, _types.Int32])!);
+            il.Emit(OpCodes.Stloc, tagLocal);
+
+            // offset[0] += tagLen
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldloc, tagLenLocal);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stelem_I4);
+
+            // int valueLen = rdlength - 2 - tagLen
+            var valueLenLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_3); // rdlength
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Sub);
+            il.Emit(OpCodes.Ldloc, tagLenLocal);
+            il.Emit(OpCodes.Sub);
+            il.Emit(OpCodes.Stloc, valueLenLocal);
+
+            // string value = Encoding.UTF8.GetString(data, offset[0], valueLen)
+            var valueLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("UTF8")!.GetGetMethod()!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_I4);
+            il.Emit(OpCodes.Ldloc, valueLenLocal);
+            il.Emit(OpCodes.Callvirt, typeof(System.Text.Encoding).GetMethod("GetString", [typeof(byte[]), _types.Int32, _types.Int32])!);
+            il.Emit(OpCodes.Stloc, valueLocal);
+
+            // Build dictionary { critical: (double)(flags & 0x80), [tag]: value }
+            il.Emit(OpCodes.Newobj, dictCtor);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "critical");
+            il.Emit(OpCodes.Ldloc, flagsLocal);
+            il.Emit(OpCodes.Ldc_I4, 0x80);
+            il.Emit(OpCodes.And);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldloc, tagLocal);
+            il.Emit(OpCodes.Ldloc, valueLocal);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            EmitSetOffsetToRdataEnd(il);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
+
+        // === TypeNAPTR (35): order(2) + preference(2) + 3xCharString + ReadName -> Dictionary ===
+        il.MarkLabel(typeNAPTRLabel);
+        {
+            var orderLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadUInt16);
+            il.Emit(OpCodes.Stloc, orderLocal);
+
+            var prefLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadUInt16);
+            il.Emit(OpCodes.Stloc, prefLocal);
+
+            var naptrFlagsLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadCharString);
+            il.Emit(OpCodes.Stloc, naptrFlagsLocal);
+
+            var serviceLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadCharString);
+            il.Emit(OpCodes.Stloc, serviceLocal);
+
+            var regexpLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadCharString);
+            il.Emit(OpCodes.Stloc, regexpLocal);
+
+            var replacementLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.DnsReadName);
+            il.Emit(OpCodes.Stloc, replacementLocal);
+
+            il.Emit(OpCodes.Newobj, dictCtor);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "flags");
+            il.Emit(OpCodes.Ldloc, naptrFlagsLocal);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "service");
+            il.Emit(OpCodes.Ldloc, serviceLocal);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "regexp");
+            il.Emit(OpCodes.Ldloc, regexpLocal);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "replacement");
+            il.Emit(OpCodes.Ldloc, replacementLocal);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "order");
+            il.Emit(OpCodes.Ldloc, orderLocal);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "preference");
+            il.Emit(OpCodes.Ldloc, prefLocal);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, dictAdd);
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            EmitSetOffsetToRdataEnd(il);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
+
+        // === Default: skip RDATA, return null ===
+        il.MarkLabel(defaultLabel);
+        EmitSetOffsetAndReturnNull(il, returnLabel, resultLocal);
+
+        // === Return ===
+        il.MarkLabel(returnLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Helper: emits offset[0] = rdataStart + rdlength (using arg1, arg4, arg3).
+    /// </summary>
+    private static void EmitSetOffsetToRdataEnd(ILGenerator il)
+    {
+        il.Emit(OpCodes.Ldarg_1); // offset (int[])
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg, 4); // rdataStart
+        il.Emit(OpCodes.Ldarg_3); // rdlength
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stelem_I4);
+    }
+
+    /// <summary>
+    /// Helper: emits offset[0] = rdataStart + rdlength, then result = null, branch to return.
+    /// </summary>
+    private static void EmitSetOffsetAndReturnNull(ILGenerator il, Label returnLabel, LocalBuilder resultLocal)
+    {
+        EmitSetOffsetToRdataEnd(il);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Br, returnLabel);
+    }
+
+    /// <summary>
+    /// Emits DnsParseResponse: parses a full DNS response packet.
+    /// Signature: object DnsParseResponse(byte[] data, int queryType, string hostname)
+    /// </summary>
+    private void EmitDnsParseResponseMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsParseResponse",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [typeof(byte[]), _types.Int32, _types.String]);
+        runtime.DnsParseResponse = method;
+
+        var il = method.GetILGenerator();
+
+        var resultLocal = il.DeclareLocal(_types.Object);    // 0
+        var returnLabel = il.DefineLabel();
+
+        // if (data.Length < 12) throw
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4, 12);
+        var dataOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bge, dataOkLabel);
+
+        il.Emit(OpCodes.Ldstr, "Runtime Error: dns.resolve EAI_FAIL ");
+        il.Emit(OpCodes.Ldarg_2); // hostname
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(dataOkLabel);
+
+        // int rcode = data[3] & 0x0F
+        var rcodeLocal = il.DeclareLocal(_types.Int32); // 1
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4, 0x0F);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Stloc, rcodeLocal);
+
+        // if (rcode != 0) throw with appropriate error code
+        il.Emit(OpCodes.Ldloc, rcodeLocal);
+        var rcodeOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, rcodeOkLabel);
+
+        // Switch on rcode for error string
+        var rcode1Label = il.DefineLabel();
+        var rcode2Label = il.DefineLabel();
+        var rcode3Label = il.DefineLabel();
+        var rcode4Label = il.DefineLabel();
+        var rcode5Label = il.DefineLabel();
+        var rcodeDefaultLabel = il.DefineLabel();
+        var throwRcodeLabel = il.DefineLabel();
+
+        var errorCodeLocal = il.DeclareLocal(_types.String); // 2
+
+        il.Emit(OpCodes.Ldloc, rcodeLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Beq, rcode1Label);
+        il.Emit(OpCodes.Ldloc, rcodeLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Beq, rcode2Label);
+        il.Emit(OpCodes.Ldloc, rcodeLocal);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Beq, rcode3Label);
+        il.Emit(OpCodes.Ldloc, rcodeLocal);
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Beq, rcode4Label);
+        il.Emit(OpCodes.Ldloc, rcodeLocal);
+        il.Emit(OpCodes.Ldc_I4_5);
+        il.Emit(OpCodes.Beq, rcode5Label);
+        il.Emit(OpCodes.Br, rcodeDefaultLabel);
+
+        il.MarkLabel(rcode1Label);
+        il.Emit(OpCodes.Ldstr, "EFORMERR");
         il.Emit(OpCodes.Stloc, errorCodeLocal);
-        il.MarkLabel(skipLabel);
+        il.Emit(OpCodes.Br, throwRcodeLabel);
+
+        il.MarkLabel(rcode2Label);
+        il.Emit(OpCodes.Ldstr, "ESERVFAIL");
+        il.Emit(OpCodes.Stloc, errorCodeLocal);
+        il.Emit(OpCodes.Br, throwRcodeLabel);
+
+        il.MarkLabel(rcode3Label);
+        il.Emit(OpCodes.Ldstr, "ENOTFOUND");
+        il.Emit(OpCodes.Stloc, errorCodeLocal);
+        il.Emit(OpCodes.Br, throwRcodeLabel);
+
+        il.MarkLabel(rcode4Label);
+        il.Emit(OpCodes.Ldstr, "ENOTIMP");
+        il.Emit(OpCodes.Stloc, errorCodeLocal);
+        il.Emit(OpCodes.Br, throwRcodeLabel);
+
+        il.MarkLabel(rcode5Label);
+        il.Emit(OpCodes.Ldstr, "EREFUSED");
+        il.Emit(OpCodes.Stloc, errorCodeLocal);
+        il.Emit(OpCodes.Br, throwRcodeLabel);
+
+        il.MarkLabel(rcodeDefaultLabel);
+        il.Emit(OpCodes.Ldstr, "EAI_FAIL");
+        il.Emit(OpCodes.Stloc, errorCodeLocal);
+
+        // throw new Exception("Runtime Error: dns.resolve {errorCode} {hostname}")
+        il.MarkLabel(throwRcodeLabel);
+        il.Emit(OpCodes.Ldstr, "Runtime Error: dns.resolve ");
+        il.Emit(OpCodes.Ldloc, errorCodeLocal);
+        il.Emit(OpCodes.Ldstr, " ");
+        il.Emit(OpCodes.Ldarg_2); // hostname
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(rcodeOkLabel);
+
+        // int ancount = (data[6] << 8) | data[7]
+        var ancountLocal = il.DeclareLocal(_types.Int32); // 3
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_6);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Shl);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_7);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Stloc, ancountLocal);
+
+        // int[] offset = new int[] { 12 }
+        var offsetLocal = il.DeclareLocal(typeof(int[])); // 4
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Int32);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldc_I4, 12);
+        il.Emit(OpCodes.Stelem_I4);
+        il.Emit(OpCodes.Stloc, offsetLocal);
+
+        // Skip question section: qdcount = (data[4] << 8) | data[5]
+        var qdcountLocal = il.DeclareLocal(_types.Int32); // 5
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Shl);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_5);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Stloc, qdcountLocal);
+
+        // for (int q = 0; q < qdcount; q++) { SkipName(data, offset); offset[0] += 4; }
+        var qLocal = il.DeclareLocal(_types.Int32); // 6
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, qLocal);
+        var qLoopStart = il.DefineLabel();
+        var qLoopCond = il.DefineLabel();
+        il.Emit(OpCodes.Br, qLoopCond);
+
+        il.MarkLabel(qLoopStart);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Call, runtime.DnsSkipName);
+        // offset[0] += 4 (QTYPE + QCLASS)
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stelem_I4);
+        il.Emit(OpCodes.Ldloc, qLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, qLocal);
+        il.MarkLabel(qLoopCond);
+        il.Emit(OpCodes.Ldloc, qLocal);
+        il.Emit(OpCodes.Ldloc, qdcountLocal);
+        il.Emit(OpCodes.Blt, qLoopStart);
+
+        // var results = new List<object?>()
+        var resultsLocal = il.DeclareLocal(_types.ListOfObject); // 7
+        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, resultsLocal);
+
+        // for (int i = 0; i < ancount; i++)
+        var iLocal = il.DeclareLocal(_types.Int32); // 8
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        var ansLoopStart = il.DefineLabel();
+        var ansLoopCond = il.DefineLabel();
+        il.Emit(OpCodes.Br, ansLoopCond);
+
+        il.MarkLabel(ansLoopStart);
+
+        // SkipName(data, offset)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Call, runtime.DnsSkipName);
+
+        // int type = (data[offset[0]] << 8) | data[offset[0] + 1]
+        var typeLocal = il.DeclareLocal(_types.Int32); // 9
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Shl);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // offset[0] += 2 (TYPE)
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stelem_I4);
+
+        // offset[0] += 2 (CLASS)
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stelem_I4);
+
+        // offset[0] += 4 (TTL)
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stelem_I4);
+
+        // int rdlength = (data[offset[0]] << 8) | data[offset[0] + 1]
+        var rdlengthLocal = il.DeclareLocal(_types.Int32); // 10
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Shl);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Stloc, rdlengthLocal);
+
+        // offset[0] += 2 (RDLENGTH)
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stelem_I4);
+
+        // int rdataStart = offset[0]
+        var rdataStartLocal = il.DeclareLocal(_types.Int32); // 11
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Stloc, rdataStartLocal);
+
+        // if (type == queryType)
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldarg_1); // queryType
+        var skipRecordLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, skipRecordLabel);
+
+        // var record = DnsParseRecord(data, offset, type, rdlength, rdataStart)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldloc, rdlengthLocal);
+        il.Emit(OpCodes.Ldloc, rdataStartLocal);
+        il.Emit(OpCodes.Call, runtime.DnsParseRecord);
+        var recordLocal = il.DeclareLocal(_types.Object); // 12
+        il.Emit(OpCodes.Stloc, recordLocal);
+
+        // if (record != null) results.Add(record)
+        il.Emit(OpCodes.Ldloc, recordLocal);
+        var ansLoopContinue = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, ansLoopContinue);
+        il.Emit(OpCodes.Ldloc, resultsLocal);
+        il.Emit(OpCodes.Ldloc, recordLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
+        il.Emit(OpCodes.Br, ansLoopContinue);
+
+        // else: offset[0] += rdlength (skip non-matching record)
+        il.MarkLabel(skipRecordLabel);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, offsetLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Ldloc, rdlengthLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stelem_I4);
+
+        il.MarkLabel(ansLoopContinue);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(ansLoopCond);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, ancountLocal);
+        il.Emit(OpCodes.Blt, ansLoopStart);
+
+        // if (queryType == TypeSOA (6))
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_6);
+        var notSoaLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, notSoaLabel);
+
+        // SOA: if (results.Count == 0) throw ENODATA
+        il.Emit(OpCodes.Ldloc, resultsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.ListOfObject, "Count"));
+        var soaHasResultLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, soaHasResultLabel);
+
+        il.Emit(OpCodes.Ldstr, "Runtime Error: dns.resolveSoa ENODATA ");
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(soaHasResultLabel);
+        // return results[0]
+        il.Emit(OpCodes.Ldloc, resultsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Br, returnLabel);
+
+        il.MarkLabel(notSoaLabel);
+
+        // if (results.Count == 0) throw ENODATA with method-specific prefix
+        il.Emit(OpCodes.Ldloc, resultsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.ListOfObject, "Count"));
+        var hasResultsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, hasResultsLabel);
+
+        // Generic ENODATA error — use "dns.resolve" as method name
+        il.Emit(OpCodes.Ldstr, "Runtime Error: dns.resolve ENODATA ");
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(hasResultsLabel);
+
+        // return results (as List<object?>)
+        il.Emit(OpCodes.Ldloc, resultsLocal);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        il.MarkLabel(returnLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>

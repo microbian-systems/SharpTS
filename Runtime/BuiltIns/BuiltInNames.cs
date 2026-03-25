@@ -178,6 +178,7 @@ public static class BuiltInNames
     public const string Math = "Math";
     public const string JSON = "JSON";
     public const string Console = "console";
+    public const string ConsolePrefix = "console.";
     public const string Process = "process";
     public const string Reflect = "Reflect";
     public const string Atomics = "Atomics";
