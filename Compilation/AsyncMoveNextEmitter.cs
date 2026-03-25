@@ -23,6 +23,7 @@ public partial class AsyncMoveNextEmitter : StatementEmitterBase, IEmitterContex
     protected override CompilationContext Ctx => _ctx!;
     protected override TypeProvider Types => _types;
     protected override IVariableResolver Resolver => _resolver!;
+    protected override FieldBuilder? GetThisField() => _builder.ThisField;
 
     #region IEmitterContext Implementation
 

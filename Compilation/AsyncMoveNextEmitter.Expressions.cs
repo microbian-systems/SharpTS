@@ -7,7 +7,7 @@ namespace SharpTS.Compilation;
 public partial class AsyncMoveNextEmitter
 {
     // EmitExpression dispatch is inherited from ExpressionEmitterBase
-    // EmitDefaultForType is defined in AsyncMoveNextEmitter.ArrowFunctions.cs
+    // EmitCall and call helpers are inherited from ExpressionEmitterBase.CallHelpers.cs
 
     protected override void EmitAwait(Expr.Await a)
     {
@@ -21,9 +21,6 @@ public partial class AsyncMoveNextEmitter
         EnsureBoxed();
 
         // 2. Convert to Task<object> - handle $Promise, Task<object>, or non-Task values
-        // If it's a $Promise, extract its Task property
-        // If it's already a Task<object>, use it directly
-        // Otherwise, wrap in Task.FromResult (for non-promise values like numbers, strings, etc.)
         var taskLocal = _il.DeclareLocal(typeof(Task<object>));
         var isPromiseLabel = _il.DefineLabel();
         var isTaskLabel = _il.DefineLabel();
@@ -34,24 +31,20 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Isinst, _ctx!.Runtime!.TSPromiseType);
         _il.Emit(OpCodes.Brtrue, isPromiseLabel);
 
-        // Not a $Promise - check if it's a Task<object>
         _il.Emit(OpCodes.Dup);
         _il.Emit(OpCodes.Isinst, typeof(Task<object>));
         _il.Emit(OpCodes.Brtrue, isTaskLabel);
 
-        // Not a Promise or Task - wrap in Task.FromResult
         _il.MarkLabel(wrapValueLabel);
         _il.Emit(OpCodes.Call, typeof(Task).GetMethod("FromResult")!.MakeGenericMethod(typeof(object)));
         _il.Emit(OpCodes.Stloc, taskLocal);
         _il.Emit(OpCodes.Br, haveTaskLabel);
 
-        // Is a Task<object> - use directly
         _il.MarkLabel(isTaskLabel);
         _il.Emit(OpCodes.Castclass, typeof(Task<object>));
         _il.Emit(OpCodes.Stloc, taskLocal);
         _il.Emit(OpCodes.Br, haveTaskLabel);
 
-        // Is a $Promise - extract its Task property
         _il.MarkLabel(isPromiseLabel);
         _il.Emit(OpCodes.Castclass, _ctx.Runtime.TSPromiseType);
         _il.Emit(OpCodes.Callvirt, _ctx.Runtime.TSPromiseTaskGetter);
@@ -77,12 +70,10 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Brtrue, continueLabel);
 
         // 6. Not completed - suspend
-        // this.<>1__state = stateNumber
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, stateNumber);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
 
-        // builder.AwaitUnsafeOnCompleted(ref awaiter, ref this)
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldflda, _builder.BuilderField);
         _il.Emit(OpCodes.Ldarg_0);
@@ -90,48 +81,35 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Call, _builder.GetBuilderAwaitUnsafeOnCompletedMethod());
 
-        // return (exit MoveNext)
         _il.Emit(OpCodes.Leave, _endLabel);
 
-        // 7. Resume point (jumped to from state switch)
+        // 7. Resume point
         _il.MarkLabel(resumeLabel);
-
-        // Reset state to -1 (running)
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4_M1);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
 
-        // 8. Continue point (if was already completed)
+        // 8. Continue point
         _il.MarkLabel(continueLabel);
 
-        // 9. Get result: awaiter.GetResult()
-        // If we're inside a try block with awaits, wrap GetResult in try/catch
+        // 9. Get result
         if (_currentTryCatchExceptionLocal != null)
         {
             var getResultDoneLabel = _il.DefineLabel();
-
             _il.BeginExceptionBlock();
-
             _il.Emit(OpCodes.Ldarg_0);
             _il.Emit(OpCodes.Ldflda, awaiterField);
             _il.Emit(OpCodes.Call, _builder.GetAwaiterGetResultMethod());
-
-            // Store result temporarily
             var resultTemp = _il.DeclareLocal(typeof(object));
             _il.Emit(OpCodes.Stloc, resultTemp);
             _il.Emit(OpCodes.Leave, getResultDoneLabel);
-
             _il.BeginCatchBlock(typeof(Exception));
-            // Wrap and store exception
             _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
             _il.Emit(OpCodes.Stloc, _currentTryCatchExceptionLocal);
-            // Push null as result
             _il.Emit(OpCodes.Ldnull);
             _il.Emit(OpCodes.Stloc, resultTemp);
             _il.Emit(OpCodes.Leave, getResultDoneLabel);
-
             _il.EndExceptionBlock();
-
             _il.MarkLabel(getResultDoneLabel);
             _il.Emit(OpCodes.Ldloc, resultTemp);
         }
@@ -142,7 +120,6 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Call, _builder.GetAwaiterGetResultMethod());
         }
 
-        // Result is now on stack
         SetStackUnknown();
     }
 
@@ -173,7 +150,6 @@ public partial class AsyncMoveNextEmitter
     {
         string name = v.Name.Lexeme;
 
-        // Try resolver first (hoisted fields and non-hoisted locals)
         var stackType = _resolver!.TryLoadVariable(name);
         if (stackType != null)
         {
@@ -181,8 +157,6 @@ public partial class AsyncMoveNextEmitter
             return;
         }
 
-        // Check if it's an imported value (from another module) - must check BEFORE Functions
-        // because cross-module function references need to go through the import field
         if (_ctx!.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
         {
             _il.Emit(OpCodes.Ldsfld, topLevelField);
@@ -190,10 +164,8 @@ public partial class AsyncMoveNextEmitter
             return;
         }
 
-        // Fallback: Check if it's a function
         if (_ctx.Functions.TryGetValue(_ctx.ResolveFunctionName(name), out var funcMethod))
         {
-            // Create TSFunction wrapper
             _il.Emit(OpCodes.Ldnull);
             _il.Emit(OpCodes.Ldtoken, funcMethod);
             _il.Emit(OpCodes.Call, Types.MethodBaseGetMethodFromHandle);
@@ -202,7 +174,6 @@ public partial class AsyncMoveNextEmitter
             return;
         }
 
-        // Fallback: Check if it's a namespace - load the static field
         if (_ctx.NamespaceFields?.TryGetValue(name, out var nsField) == true)
         {
             _il.Emit(OpCodes.Ldsfld, nsField);
@@ -210,7 +181,6 @@ public partial class AsyncMoveNextEmitter
             return;
         }
 
-        // Fallback: Check if it's a captured top-level variable in entry-point display class
         if (_ctx.CapturedTopLevelVars?.Contains(name) == true &&
             _ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
             _ctx.EntryPointDisplayClassStaticField != null)
@@ -221,7 +191,6 @@ public partial class AsyncMoveNextEmitter
             return;
         }
 
-        // Not found - push null
         _il.Emit(OpCodes.Ldnull);
         SetStackUnknown();
     }
@@ -232,11 +201,8 @@ public partial class AsyncMoveNextEmitter
 
         EmitExpression(a.Value);
         EnsureBoxed();
-
-        // Duplicate for return value
         _il.Emit(OpCodes.Dup);
 
-        // Check if it's a captured top-level variable in entry-point display class
         if (_ctx!.CapturedTopLevelVars?.Contains(name) == true &&
             _ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
             _ctx.EntryPointDisplayClassStaticField != null)
@@ -250,7 +216,6 @@ public partial class AsyncMoveNextEmitter
             return;
         }
 
-        // Check if it's a non-captured top-level variable
         if (_ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
         {
             _il.Emit(OpCodes.Stsfld, topLevelField);
@@ -258,391 +223,40 @@ public partial class AsyncMoveNextEmitter
             return;
         }
 
-        // Use resolver to store (consumes one copy, leaves one on stack as return value)
         _resolver!.TryStoreVariable(name);
-
         SetStackUnknown();
     }
 
     protected override void EmitSuper(Expr.Super s)
     {
-        // Load hoisted 'this' from state machine field
-        // In async methods, 'this' is hoisted to the state machine struct
         if (_builder.ThisField != null)
         {
-            _il.Emit(OpCodes.Ldarg_0);  // State machine ref
+            _il.Emit(OpCodes.Ldarg_0);
             _il.Emit(OpCodes.Ldfld, _builder.ThisField);
         }
         else
         {
-            // Fallback - shouldn't happen if 'this' hoisting is working properly
             _il.Emit(OpCodes.Ldnull);
         }
 
-        // Load the method name
         _il.Emit(OpCodes.Ldstr, s.Method?.Lexeme ?? "constructor");
-
-        // Call GetSuperMethod(instance, methodName) to get a callable wrapper (TSFunction)
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.GetSuperMethod);
         SetStackUnknown();
     }
 
     protected override void EmitBinary(Expr.Binary b)
     {
-        // Emit left and right operands
         EmitExpression(b.Left);
         EnsureBoxed();
         EmitExpression(b.Right);
         EnsureBoxed();
 
-        // Use consolidated binary operator helper
         if (!_helpers.TryEmitBinaryOperator(b.Operator.Type, _ctx!.Runtime!.Add, _ctx!.Runtime!.Equals))
         {
-            // Unsupported operator - return null
             _il.Emit(OpCodes.Pop);
             _il.Emit(OpCodes.Ldnull);
             SetStackUnknown();
         }
-    }
-
-    protected override void EmitCall(Expr.Call c)
-    {
-        // Handle console.log specially (handles both Variable and Get patterns)
-        if (_helpers.TryEmitConsoleLog(c,
-            arg => { EmitExpression(arg); EnsureBoxed(); },
-            _ctx!.Runtime!.ConsoleLog,
-            _ctx!.Runtime!.ConsoleLogMultiple))
-        {
-            return;
-        }
-
-        // Special case: super.method() call — emit non-virtual Call to base method
-        if (c.Callee is Expr.Super superMethodExpr && superMethodExpr.Method != null && superMethodExpr.Method.Lexeme != "constructor")
-        {
-            if (TryEmitSuperMethodCall(superMethodExpr.Method.Lexeme, c.Arguments))
-                return;
-        }
-
-        // Handle fetch() - global async HTTP function
-        // Unwrap TypeAssertion/Grouping (e.g., (fetch as any)()) to get the underlying callee
-        Expr fetchCallee = c.Callee;
-        bool unwrapped = true;
-        while (unwrapped)
-        {
-            unwrapped = false;
-            if (fetchCallee is Expr.TypeAssertion ta2) { fetchCallee = ta2.Expression; unwrapped = true; }
-            if (fetchCallee is Expr.Grouping g2) { fetchCallee = g2.Expression; unwrapped = true; }
-        }
-        if (fetchCallee is Expr.Variable fetchVar && fetchVar.Name.Lexeme == "fetch")
-        {
-            EmitFetchCall(c.Arguments);
-            return;
-        }
-
-        // Static type dispatch via registry (Math, JSON, Object, Array, Number, Promise, Symbol)
-        if (c.Callee is Expr.Get staticGet &&
-            staticGet.Object is Expr.Variable staticVar &&
-            _ctx?.TypeEmitterRegistry != null)
-        {
-            var staticStrategy = _ctx.TypeEmitterRegistry.GetStaticStrategy(staticVar.Name.Lexeme);
-            if (staticStrategy != null && staticStrategy.TryEmitStaticCall(this, staticGet.Name.Lexeme, c.Arguments))
-            {
-                SetStackUnknown();
-                return;
-            }
-        }
-
-        // Built-in module method calls (fs.readFileSync, path.join, etc.)
-        if (c.Callee is Expr.Get builtInGet &&
-            builtInGet.Object is Expr.Variable builtInModuleVar &&
-            _ctx!.BuiltInModuleNamespaces != null &&
-            _ctx.BuiltInModuleNamespaces.TryGetValue(builtInModuleVar.Name.Lexeme, out var builtInModuleName) &&
-            _ctx.BuiltInModuleEmitterRegistry?.GetEmitter(builtInModuleName) is { } builtInModuleEmitter)
-        {
-            if (builtInModuleEmitter.TryEmitMethodCall(this, builtInGet.Name.Lexeme, c.Arguments))
-            {
-                SetStackUnknown();
-                return;
-            }
-        }
-
-        // Special case: fs.promises.methodName() - emit direct method call instead of going through TSFunction
-        // Pattern: c.Callee is Get(Get(Variable("fs"), "promises"), "methodName")
-        if (c.Callee is Expr.Get fsPromisesMethodGet &&
-            fsPromisesMethodGet.Object is Expr.Get fsPromisesGet &&
-            fsPromisesGet.Name.Lexeme == "promises" &&
-            fsPromisesGet.Object is Expr.Variable fsVar &&
-            _ctx!.BuiltInModuleNamespaces != null &&
-            _ctx.BuiltInModuleNamespaces.TryGetValue(fsVar.Name.Lexeme, out var fsModuleName) &&
-            fsModuleName == "fs" &&
-            _ctx.BuiltInModuleEmitterRegistry?.GetEmitter("fs/promises") is { } fsPromisesEmitter)
-        {
-            if (fsPromisesEmitter.TryEmitMethodCall(this, fsPromisesMethodGet.Name.Lexeme, c.Arguments))
-            {
-                SetStackUnknown();
-                return;
-            }
-        }
-
-        // Handle Class.staticMethod() calls
-        if (c.Callee is Expr.Get classStaticGet &&
-            classStaticGet.Object is Expr.Variable classVar &&
-            _ctx!.Classes.TryGetValue(_ctx.ResolveClassName(classVar.Name.Lexeme), out var classBuilder))
-        {
-            string resolvedClassName = _ctx.ResolveClassName(classVar.Name.Lexeme);
-            if (_ctx.ClassRegistry!.TryGetStaticMethod(resolvedClassName, classStaticGet.Name.Lexeme, out var staticMethod))
-            {
-                var staticMethodParams = staticMethod!.GetParameters();
-                var paramCount = staticMethodParams.Length;
-
-                // Emit all arguments and save to temps (await may occur in arguments)
-                List<LocalBuilder> staticArgTemps = [];
-                for (int i = 0; i < c.Arguments.Count; i++)
-                {
-                    EmitExpression(c.Arguments[i]);
-                    EnsureBoxed();
-                    var temp = _il.DeclareLocal(typeof(object));
-                    _il.Emit(OpCodes.Stloc, temp);
-                    staticArgTemps.Add(temp);
-                }
-
-                // Load args from temps with proper type conversions
-                for (int i = 0; i < staticArgTemps.Count; i++)
-                {
-                    _il.Emit(OpCodes.Ldloc, staticArgTemps[i]);
-                    if (i < staticMethodParams.Length)
-                    {
-                        var targetType = staticMethodParams[i].ParameterType;
-                        if (targetType.IsValueType && targetType != typeof(object))
-                        {
-                            _il.Emit(OpCodes.Unbox_Any, targetType);
-                        }
-                    }
-                }
-
-                // Pad missing optional arguments with appropriate default values
-                for (int i = c.Arguments.Count; i < paramCount; i++)
-                {
-                    EmitDefaultForType(staticMethodParams[i].ParameterType);
-                }
-
-                _il.Emit(OpCodes.Call, staticMethod);
-                SetStackUnknown();
-                return;
-            }
-        }
-
-        // Handle Promise instance methods: promise.then(onFulfilled?, onRejected?)
-        // promise.catch(onRejected), promise.finally(onFinally)
-        if (c.Callee is Expr.Get methodGet)
-        {
-            string methodName = methodGet.Name.Lexeme;
-            if (methodName is "then" or "catch" or "finally")
-            {
-                EmitPromiseInstanceMethodCall(methodGet.Object, methodName, c.Arguments);
-                return;
-            }
-
-            // Try direct dispatch for known class instance methods
-            if (TryEmitDirectMethodCall(methodGet.Object, methodName, c.Arguments))
-                return;
-
-            // Type-first dispatch: Use TypeEmitterRegistry if we have type information
-            var objType = _ctx?.TypeMap?.Get(methodGet.Object);
-            if (objType != null && _ctx?.TypeEmitterRegistry != null)
-            {
-                var strategy = _ctx.TypeEmitterRegistry.GetStrategy(objType);
-                if (strategy != null && strategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                    return;
-
-                // Handle union types - try emitters for member types
-                if (objType is TypeSystem.TypeInfo.Union union)
-                {
-                    bool hasBufferMember = union.Types.Any(t => t is TypeSystem.TypeInfo.Buffer);
-                    bool hasStringMember = union.Types.Any(t => t is TypeSystem.TypeInfo.String or TypeSystem.TypeInfo.StringLiteral);
-                    bool hasArrayMember = union.Types.Any(t => t is TypeSystem.TypeInfo.Array);
-
-                    // Check for ambiguous methods that exist on multiple types
-                    bool isAmbiguousMethod = methodName is "slice" or "concat" or "includes" or "indexOf" or "toString";
-                    int typesWithMethod = 0;
-                    if (hasBufferMember && isAmbiguousMethod) typesWithMethod++;
-                    if (hasStringMember && isAmbiguousMethod) typesWithMethod++;
-                    if (hasArrayMember && isAmbiguousMethod) typesWithMethod++;
-
-                    // If multiple types could have this method, skip type-specific emitters
-                    // and let runtime dispatch handle it below
-                    if (typesWithMethod <= 1)
-                    {
-                        // Try buffer emitter if union contains buffer
-                        if (hasBufferMember)
-                        {
-                            var bufferStrategy = _ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Buffer());
-                            if (bufferStrategy != null && bufferStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                                return;
-                        }
-
-                        // Try string emitter if union contains string
-                        if (hasStringMember)
-                        {
-                            var stringStrategy = _ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.String());
-                            if (stringStrategy != null && stringStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                                return;
-                        }
-
-                        // Try array emitter if union contains array
-                        if (hasArrayMember)
-                        {
-                            var arrayStrategy = _ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Array(new TypeSystem.TypeInfo.Any()));
-                            if (arrayStrategy != null && arrayStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                                return;
-                        }
-                    }
-                }
-            }
-
-            // Fallback: Method name-based dispatch for known built-in methods when type info is unavailable
-            // This handles cases where type inference is lost (e.g., loop variables from for-await)
-            if (_ctx?.TypeEmitterRegistry != null)
-            {
-                // String-only methods
-                if (methodName is "charAt" or "substring" or "toUpperCase" or "toLowerCase"
-                    or "trim" or "replace" or "split" or "startsWith" or "endsWith"
-                    or "repeat" or "padStart" or "padEnd" or "charCodeAt" or "lastIndexOf"
-                    or "trimStart" or "trimEnd" or "replaceAll" or "at" or "match" or "search")
-                {
-                    var stringStrategy = _ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.String());
-                    if (stringStrategy != null && stringStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                        return;
-                }
-
-                // Array-only methods
-                // Note: forEach is NOT in this list because it exists on multiple types
-                // (Array, Map, Set, Headers). Array forEach is handled by type-first dispatch.
-                if (methodName is "pop" or "shift" or "unshift" or "map" or "filter"
-                    or "push" or "find" or "findIndex" or "some" or "every" or "reduce" or "join"
-                    or "reverse" or "fill")
-                {
-                    var arrayStrategy = _ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Array(new TypeSystem.TypeInfo.Any()));
-                    if (arrayStrategy != null && arrayStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                        return;
-                }
-            }
-
-            // Handle ambiguous methods (slice, concat, includes, indexOf) that exist on both string and array
-            // Use runtime dispatch when type is unknown
-            if (methodName is "slice" or "concat" or "includes" or "indexOf")
-            {
-                EmitAmbiguousMethodCall(methodGet.Object, methodName, c.Arguments);
-                return;
-            }
-        }
-
-        // Check if it's a built-in module method binding (e.g., import { readFile } from 'fs/promises')
-        // This handles direct calls like readFile(...) by emitting direct method calls instead of TSFunction
-        if (c.Callee is Expr.Variable builtInVar &&
-            _ctx!.BuiltInModuleMethodBindings?.TryGetValue(builtInVar.Name.Lexeme, out var binding) == true)
-        {
-            var builtInEmitter = _ctx.BuiltInModuleEmitterRegistry?.GetEmitter(binding.ModuleName);
-            if (builtInEmitter != null && builtInEmitter.TryEmitMethodCall(this, binding.MethodName, c.Arguments))
-            {
-                SetStackUnknown();
-                return;
-            }
-        }
-
-        // Check if it's a direct function call
-        if (c.Callee is Expr.Variable funcVar && _ctx!.Functions.TryGetValue(_ctx.ResolveFunctionName(funcVar.Name.Lexeme), out var funcMethod))
-        {
-            // Direct call to known function
-            // IMPORTANT: In async context, await can happen in arguments
-            // Emit all arguments first and store to temps
-            var parameters = funcMethod.GetParameters();
-            List<LocalBuilder> directArgTemps = [];
-
-            for (int i = 0; i < parameters.Length; i++)
-            {
-                if (i < c.Arguments.Count)
-                {
-                    EmitExpression(c.Arguments[i]);
-                    EnsureBoxed();
-                }
-                else
-                {
-                    _il.Emit(OpCodes.Ldnull);
-                }
-                var temp = _il.DeclareLocal(typeof(object));
-                _il.Emit(OpCodes.Stloc, temp);
-                directArgTemps.Add(temp);
-            }
-
-            // Now load all args from temps and call, unboxing value-type params
-            for (int i = 0; i < directArgTemps.Count; i++)
-            {
-                _il.Emit(OpCodes.Ldloc, directArgTemps[i]);
-                if (i < parameters.Length)
-                {
-                    var targetType = parameters[i].ParameterType;
-                    if (targetType.IsValueType && targetType != typeof(object))
-                    {
-                        _il.Emit(OpCodes.Unbox_Any, targetType);
-                    }
-                }
-            }
-            _il.Emit(OpCodes.Call, funcMethod);
-
-            // Box value-type return values (e.g., double, bool) so the async
-            // state machine can treat the result as object
-            var returnType = funcMethod.ReturnType;
-            if (returnType.IsValueType && returnType != typeof(void))
-            {
-                _il.Emit(OpCodes.Box, returnType);
-            }
-            else if (returnType == typeof(void))
-            {
-                // Void methods leave nothing on the stack — push null
-                _il.Emit(OpCodes.Ldnull);
-            }
-            SetStackUnknown();
-            return;
-        }
-
-        // Generic call through TSFunction
-        // IMPORTANT: In async context, await can happen in callee or arguments
-        // Emit all parts that may contain await first and store to temps
-
-        // Emit callee first and save to temp
-        EmitExpression(c.Callee);
-        EnsureBoxed();
-        var calleeTemp = _il.DeclareLocal(typeof(object));
-        _il.Emit(OpCodes.Stloc, calleeTemp);
-
-        // Emit all arguments and save to temps
-        List<LocalBuilder> argTemps = [];
-        foreach (var arg in c.Arguments)
-        {
-            EmitExpression(arg);
-            EnsureBoxed();
-            var temp = _il.DeclareLocal(typeof(object));
-            _il.Emit(OpCodes.Stloc, temp);
-            argTemps.Add(temp);
-        }
-
-        // Now build the call with saved values (no awaits can happen here)
-        _il.Emit(OpCodes.Ldloc, calleeTemp);
-
-        // Build arguments array from temps
-        _il.Emit(OpCodes.Ldc_I4, c.Arguments.Count);
-        _il.Emit(OpCodes.Newarr, typeof(object));
-        for (int i = 0; i < argTemps.Count; i++)
-        {
-            _il.Emit(OpCodes.Dup);
-            _il.Emit(OpCodes.Ldc_I4, i);
-            _il.Emit(OpCodes.Ldloc, argTemps[i]);
-            _il.Emit(OpCodes.Stelem_Ref);
-        }
-
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.InvokeValue);
-        SetStackUnknown();
     }
 
     protected override bool TryEmitStaticFieldAccess(Expr.Get g)
@@ -660,291 +274,4 @@ public partial class AsyncMoveNextEmitter
         }
         return false;
     }
-
-    #region Ambiguous Method Runtime Dispatch
-
-    /// <summary>
-    /// Handles methods that exist on both strings and arrays at runtime.
-    /// Used as fallback when type information is not available.
-    /// </summary>
-    private void EmitAmbiguousMethodCall(Expr obj, string methodName, List<Expr> arguments)
-    {
-        // Emit the object
-        EmitExpression(obj);
-        EnsureBoxed();
-
-        var objLocal = _il.DeclareLocal(typeof(object));
-        _il.Emit(OpCodes.Stloc, objLocal);
-
-        // Check if it's a string
-        var isStringLabel = _il.DefineLabel();
-        var isListLabel = _il.DefineLabel();
-        var doneLabel = _il.DefineLabel();
-
-        _il.Emit(OpCodes.Ldloc, objLocal);
-        _il.Emit(OpCodes.Isinst, typeof(string));
-        _il.Emit(OpCodes.Brtrue, isStringLabel);
-
-        // Assume it's a list if not a string
-        _il.Emit(OpCodes.Br, isListLabel);
-
-        // String path
-        _il.MarkLabel(isStringLabel);
-        _il.Emit(OpCodes.Ldloc, objLocal);
-        _il.Emit(OpCodes.Castclass, typeof(string));
-
-        switch (methodName)
-        {
-            case "includes":
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                    _il.Emit(OpCodes.Castclass, typeof(string));
-                }
-                else
-                {
-                    _il.Emit(OpCodes.Ldstr, "");
-                }
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.StringIncludes);
-                _il.Emit(OpCodes.Box, typeof(bool));
-                break;
-
-            case "indexOf":
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                    _il.Emit(OpCodes.Castclass, typeof(string));
-                }
-                else
-                {
-                    _il.Emit(OpCodes.Ldstr, "");
-                }
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.StringIndexOf);
-                _il.Emit(OpCodes.Box, typeof(double));
-                break;
-
-            case "slice":
-                _il.Emit(OpCodes.Ldc_I4, arguments.Count);
-                _il.Emit(OpCodes.Ldc_I4, arguments.Count);
-                _il.Emit(OpCodes.Newarr, typeof(object));
-                for (int i = 0; i < arguments.Count; i++)
-                {
-                    _il.Emit(OpCodes.Dup);
-                    _il.Emit(OpCodes.Ldc_I4, i);
-                    EmitExpression(arguments[i]);
-                    EnsureBoxed();
-                    _il.Emit(OpCodes.Stelem_Ref);
-                }
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.StringSlice);
-                break;
-
-            case "concat":
-                _il.Emit(OpCodes.Ldc_I4, arguments.Count);
-                _il.Emit(OpCodes.Newarr, typeof(object));
-                for (int i = 0; i < arguments.Count; i++)
-                {
-                    _il.Emit(OpCodes.Dup);
-                    _il.Emit(OpCodes.Ldc_I4, i);
-                    EmitExpression(arguments[i]);
-                    EnsureBoxed();
-                    _il.Emit(OpCodes.Stelem_Ref);
-                }
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.StringConcat);
-                break;
-        }
-
-        _il.Emit(OpCodes.Br, doneLabel);
-
-        // List path
-        _il.MarkLabel(isListLabel);
-        _il.Emit(OpCodes.Ldloc, objLocal);
-        _il.Emit(OpCodes.Castclass, typeof(List<object>));
-
-        switch (methodName)
-        {
-            case "includes":
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                }
-                else
-                {
-                    _il.Emit(OpCodes.Ldnull);
-                }
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.ArrayIncludes);
-                _il.Emit(OpCodes.Box, typeof(bool));
-                break;
-
-            case "indexOf":
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                }
-                else
-                {
-                    _il.Emit(OpCodes.Ldnull);
-                }
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.ArrayIndexOf);
-                _il.Emit(OpCodes.Box, typeof(double));
-                break;
-
-            case "slice":
-                _il.Emit(OpCodes.Ldc_I4, arguments.Count);
-                _il.Emit(OpCodes.Newarr, typeof(object));
-                for (int i = 0; i < arguments.Count; i++)
-                {
-                    _il.Emit(OpCodes.Dup);
-                    _il.Emit(OpCodes.Ldc_I4, i);
-                    EmitExpression(arguments[i]);
-                    EnsureBoxed();
-                    _il.Emit(OpCodes.Stelem_Ref);
-                }
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.ArraySlice);
-                break;
-
-            case "concat":
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                }
-                else
-                {
-                    _il.Emit(OpCodes.Ldnull);
-                }
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.ArrayConcat);
-                break;
-        }
-
-        _il.MarkLabel(doneLabel);
-        SetStackUnknown();
-    }
-
-    /// <summary>
-    /// Emits a fetch() call - the global async HTTP function.
-    /// Calls $Runtime.Fetch(url, options) which returns a Promise.
-    /// </summary>
-    private void EmitFetchCall(List<Expr> arguments)
-    {
-        // Emit URL - first argument (required)
-        if (arguments.Count > 0)
-        {
-            EmitExpression(arguments[0]);
-            EnsureBoxed();
-        }
-        else
-        {
-            // fetch() with no arguments should throw, but emit null and let runtime handle it
-            _il.Emit(OpCodes.Ldnull);
-        }
-
-        // Emit options - second argument (optional)
-        if (arguments.Count > 1)
-        {
-            EmitExpression(arguments[1]);
-            EnsureBoxed();
-        }
-        else
-        {
-            _il.Emit(OpCodes.Ldnull);
-        }
-
-        // Call $Runtime.Fetch(url, options) - returns Promise
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.Fetch);
-
-        // fetch returns a Promise, mark stack as reference type
-        SetStackUnknown();
-    }
-
-    /// <summary>
-    /// Emits a Promise instance method call (.then, .catch, .finally).
-    /// These methods take callbacks and return a new Promise (Task).
-    /// </summary>
-    private void EmitPromiseInstanceMethodCall(Expr promise, string methodName, List<Expr> arguments)
-    {
-        // Emit the promise (should be Task<object?>)
-        EmitExpression(promise);
-        EnsureBoxed();
-
-        // Cast to Task<object?> if needed
-        _il.Emit(OpCodes.Castclass, typeof(Task<object?>));
-
-        switch (methodName)
-        {
-            case "then":
-                // promise.then(onFulfilled?, onRejected?)
-                // PromiseThen(Task<object?> promise, object? onFulfilled, object? onRejected)
-
-                // onFulfilled callback (optional)
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                }
-                else
-                {
-                    _il.Emit(OpCodes.Ldnull);
-                }
-
-                // onRejected callback (optional)
-                if (arguments.Count > 1)
-                {
-                    EmitExpression(arguments[1]);
-                    EnsureBoxed();
-                }
-                else
-                {
-                    _il.Emit(OpCodes.Ldnull);
-                }
-
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.PromiseThen);
-                break;
-
-            case "catch":
-                // promise.catch(onRejected)
-                // PromiseCatch(Task<object?> promise, object? onRejected)
-
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                }
-                else
-                {
-                    _il.Emit(OpCodes.Ldnull);
-                }
-
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.PromiseCatch);
-                break;
-
-            case "finally":
-                // promise.finally(onFinally)
-                // PromiseFinally(Task<object?> promise, object? onFinally)
-
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                }
-                else
-                {
-                    _il.Emit(OpCodes.Ldnull);
-                }
-
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.PromiseFinally);
-                break;
-
-            default:
-                // Unknown method - just return the promise unchanged
-                break;
-        }
-
-        SetStackUnknown();
-    }
-
-    #endregion
 }

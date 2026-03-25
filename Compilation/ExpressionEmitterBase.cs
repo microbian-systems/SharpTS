@@ -277,7 +277,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     protected abstract void EmitVariable(Expr.Variable v);
     protected abstract void EmitAssign(Expr.Assign a);
     protected abstract void EmitBinary(Expr.Binary b);
-    protected abstract void EmitCall(Expr.Call c);
+    // EmitCall is virtual with a default implementation in ExpressionEmitterBase.CallHelpers.cs
     protected abstract void EmitSet(Expr.Set s);
     protected abstract void EmitGetPrivate(Expr.GetPrivate gp);
     protected abstract void EmitSetPrivate(Expr.SetPrivate sp);
