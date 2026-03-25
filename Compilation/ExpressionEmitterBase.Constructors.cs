@@ -427,8 +427,25 @@ public abstract partial class ExpressionEmitterBase
             "TextDecoder" => TryEmitBuiltInConstructor("TextDecoder", arguments),
             "StringDecoder" => TryEmitBuiltInConstructor("StringDecoder", arguments),
             "PerformanceObserver" => TryEmitBuiltInConstructor("PerformanceObserver", arguments),
+            "Agent" => TryEmitAgentConstructor(arguments),
             _ => false
         };
+    }
+
+    private bool TryEmitAgentConstructor(List<Expr> arguments)
+    {
+        if (arguments.Count > 0)
+        {
+            EmitExpression(arguments[0]);
+            EnsureBoxed();
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.HttpAgentFactory);
+        _helpers.SetStackUnknown();
+        return true;
     }
 
     #region Private constructor helpers

@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-03-24 (process.stdin/stdout/stderr: full Readable/Writable stream support with EventEmitter integration)
+**Last Updated:** 2026-03-24 (http.Agent: full API with constructor, globalAgent, destroy, getName; process.stdin/stdout/stderr stream support)
 
 ## Legend
 - ✅ Implemented
@@ -427,7 +427,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `events` | ✅ | EventEmitter: on, once, emit, removeListener, removeAllListeners, listenerCount, listeners, prependListener, prependOnceListener, off, setMaxListeners, getMaxListeners, eventNames |
 | `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough; `finished(stream, opts?, cb)`, `pipeline(source, ...transforms, dest, cb?)`, `addAbortSignal(signal, stream)`; `Readable.from(iterable)`, `Readable.isReadable(stream)`, `Writable.isWritable(stream)`; instance: `toArray()`, `forEach(fn)`, `map(fn)`, `filter(fn)`; `pause`/`resume`/`prefinish` events, `autoDestroy` option, `highWaterMark` enforcement; object mode support; `stream/promises` sub-module (`pipeline`, `finished`) |
 | `buffer` | ✅ | Buffer.from, Buffer.alloc, Buffer.allocUnsafe, Buffer.concat, Buffer.isBuffer, Buffer.byteLength; instance methods: toString, slice, copy, write, fill, includes, indexOf, compare, equals, readUInt/Int, writeUInt/Int, toJSON |
-| `http` / `https` | ✅ | createServer, request, get; Server: listen, close; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
+| `http` / `https` | ✅ | createServer, request, get; Agent class with constructor, destroy, getName, globalAgent; Server: listen, close; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
 | `net` | ✅ | createServer, createConnection/connect, Socket (EventEmitter + Duplex), Server (EventEmitter); isIP, isIPv4, isIPv6 |
 | `tls` | ✅ | createServer, connect, createSecureContext, TLSSocket (extends Socket), Server; DEFAULT_MIN_VERSION/MAX_VERSION; ALPNProtocols, SNICallback, servername; secureConnect/secureConnection/tlsClientError events |
 | `dgram` | ✅ | createSocket, Socket; bind, send, close, address, setBroadcast, setTTL, addMembership, dropMembership; connect, disconnect, remoteAddress, get/setRecvBufferSize, get/setSendBufferSize; message/listening/close/error/connect events |

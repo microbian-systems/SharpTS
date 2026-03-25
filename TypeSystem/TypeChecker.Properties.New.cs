@@ -618,6 +618,15 @@ public partial class TypeChecker
             return new TypeInfo.Error(simpleClassName!);
         }
 
+        // Handle new http.Agent() / new https.Agent() constructor (namespace-qualified)
+        if (newExpr.Callee is Expr.Get { Name.Lexeme: "Agent" } agentGet &&
+            agentGet.Object is Expr.Variable { Name.Lexeme: "http" or "https" })
+        {
+            foreach (var arg in newExpr.Arguments)
+                CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
         // Handle new Intl.NumberFormat() constructor
         if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "NumberFormat" })
         {
@@ -847,6 +856,14 @@ public partial class TypeChecker
 
             return new TypeInfo.Instance(classType);
         }
+        // Handle function-typed constructors (e.g., imported Agent constructor from http module)
+        if (calleeType is TypeInfo.Function || calleeType is TypeInfo.Any)
+        {
+            foreach (var arg in newExpr.Arguments)
+                CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
         throw new TypeCheckException($" '{qualifiedName}' is not a class.");
     }
 

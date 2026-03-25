@@ -569,6 +569,13 @@ public partial class Interpreter
             return value;
         }
 
+        // Handle Agent property assignment (maxSockets, keepAlive, etc.)
+        if (obj is SharpTSAgent agent)
+        {
+            agent.SetMember(set.Name.Lexeme, value);
+            return value;
+        }
+
         // Handle AbortSignal property assignment (onabort)
         if (obj is SharpTSAbortSignal signal)
         {

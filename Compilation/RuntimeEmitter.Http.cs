@@ -85,6 +85,7 @@ public partial class RuntimeEmitter
         EmitHttpGetMethods(typeBuilder, runtime);
         EmitHttpGetStatusCodes(typeBuilder, runtime);
         EmitHttpGetGlobalAgent(typeBuilder, runtime);
+        EmitHttpGetAgentConstructor(typeBuilder, runtime);
 
         // Emit wrappers for module import support
         EmitHttpModuleWrappers(typeBuilder, runtime);
@@ -2174,7 +2175,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object HttpGetGlobalAgent()
-    /// Returns a stub global agent object.
+    /// Returns the global agent object with full Agent properties.
     /// </summary>
     private void EmitHttpGetGlobalAgent(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -2187,23 +2188,264 @@ public partial class RuntimeEmitter
         runtime.HttpGetGlobalAgent = method;
 
         var il = method.GetILGenerator();
+        EmitAgentObjectCreation(il, runtime, keepAlive: true, maxSockets: double.PositiveInfinity,
+            maxTotalSockets: double.PositiveInfinity, maxFreeSockets: 256, keepAliveMsecs: 1000, timeout: 0);
+        il.Emit(OpCodes.Ret);
+    }
 
-        // Create new dictionary for the agent object
+    /// <summary>
+    /// Emits: public static object HttpGetAgentConstructor()
+    /// Returns a TSFunction that creates new Agent instances from options.
+    /// </summary>
+    private void EmitHttpGetAgentConstructor(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // Emit the Agent factory method: AgentFactory(object? options) -> object
+        var factoryMethod = typeBuilder.DefineMethod(
+            "AgentFactory",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.HttpAgentFactory = factoryMethod;
+
+        {
+            var il = factoryMethod.GetILGenerator();
+
+            // Get keepAlive from options (default: false)
+            var keepAliveLocal = il.DeclareLocal(_types.Boolean);
+            var maxSocketsLocal = il.DeclareLocal(_types.Double);
+            var maxTotalSocketsLocal = il.DeclareLocal(_types.Double);
+            var maxFreeSocketsLocal = il.DeclareLocal(_types.Double);
+            var keepAliveMsecsLocal = il.DeclareLocal(_types.Double);
+            var timeoutLocal = il.DeclareLocal(_types.Double);
+
+            // Set defaults
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, keepAliveLocal);
+            il.Emit(OpCodes.Ldc_R8, double.PositiveInfinity);
+            il.Emit(OpCodes.Stloc, maxSocketsLocal);
+            il.Emit(OpCodes.Ldc_R8, double.PositiveInfinity);
+            il.Emit(OpCodes.Stloc, maxTotalSocketsLocal);
+            il.Emit(OpCodes.Ldc_R8, 256.0);
+            il.Emit(OpCodes.Stloc, maxFreeSocketsLocal);
+            il.Emit(OpCodes.Ldc_R8, 1000.0);
+            il.Emit(OpCodes.Stloc, keepAliveMsecsLocal);
+            il.Emit(OpCodes.Ldc_R8, 0.0);
+            il.Emit(OpCodes.Stloc, timeoutLocal);
+
+            // If options is not null and is a dictionary, extract values
+            var createObjLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Brfalse, createObjLabel);
+
+            // Try to extract keepAlive
+            EmitExtractBoolOption(il, runtime, "keepAlive", keepAliveLocal);
+            EmitExtractDoubleOption(il, runtime, "maxSockets", maxSocketsLocal);
+            EmitExtractDoubleOption(il, runtime, "maxTotalSockets", maxTotalSocketsLocal);
+            EmitExtractDoubleOption(il, runtime, "maxFreeSockets", maxFreeSocketsLocal);
+            EmitExtractDoubleOption(il, runtime, "keepAliveMsecs", keepAliveMsecsLocal);
+            EmitExtractDoubleOption(il, runtime, "timeout", timeoutLocal);
+
+            il.MarkLabel(createObjLabel);
+
+            // Create agent object
+            il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+
+            // Set all properties
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "keepAlive");
+            il.Emit(OpCodes.Ldloc, keepAliveLocal);
+            il.Emit(OpCodes.Box, _types.Boolean);
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "keepAliveMsecs");
+            il.Emit(OpCodes.Ldloc, keepAliveMsecsLocal);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "maxSockets");
+            il.Emit(OpCodes.Ldloc, maxSocketsLocal);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "maxTotalSockets");
+            il.Emit(OpCodes.Ldloc, maxTotalSocketsLocal);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "maxFreeSockets");
+            il.Emit(OpCodes.Ldloc, maxFreeSocketsLocal);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "timeout");
+            il.Emit(OpCodes.Ldloc, timeoutLocal);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "scheduling");
+            il.Emit(OpCodes.Ldstr, "lifo");
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+
+            // Add empty objects for sockets/freeSockets/requests
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "sockets");
+            il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "freeSockets");
+            il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "requests");
+            il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+
+            // Wrap in $Object
+            il.Emit(OpCodes.Call, runtime.CreateObject);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // Emit the getter that returns a TSFunction wrapping AgentFactory
+        var getterMethod = typeBuilder.DefineMethod(
+            "HttpGetAgentConstructor",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            Type.EmptyTypes
+        );
+        runtime.HttpGetAgentConstructor = getterMethod;
+
+        {
+            var il = getterMethod.GetILGenerator();
+            il.Emit(OpCodes.Ldnull); // target (static)
+            il.Emit(OpCodes.Ldtoken, factoryMethod);
+            il.Emit(OpCodes.Call, _types.GetMethod(
+                _types.MethodBase, "GetMethodFromHandle", _types.RuntimeMethodHandle));
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+            il.Emit(OpCodes.Ret);
+        }
+    }
+
+    private void EmitExtractBoolOption(ILGenerator il, EmittedRuntime runtime,
+        string name, LocalBuilder local)
+    {
+        var skipLabel = il.DefineLabel();
+        var valueLocal = il.DeclareLocal(_types.Object);
+
+        // GetProperty(options, name)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, name);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, valueLocal);
+
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Stloc, local);
+
+        il.MarkLabel(skipLabel);
+    }
+
+    private void EmitExtractDoubleOption(ILGenerator il, EmittedRuntime runtime,
+        string name, LocalBuilder local)
+    {
+        var skipLabel = il.DefineLabel();
+        var valueLocal = il.DeclareLocal(_types.Object);
+
+        // GetProperty(options, name)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, name);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, valueLocal);
+
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Stloc, local);
+
+        il.MarkLabel(skipLabel);
+    }
+
+    private void EmitAgentObjectCreation(ILGenerator il, EmittedRuntime runtime,
+        bool keepAlive, double maxSockets, double maxTotalSockets,
+        double maxFreeSockets, double keepAliveMsecs, double timeout)
+    {
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
 
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldstr, "keepAlive");
-        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(keepAlive ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Call, runtime.SetProperty);
 
         il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldstr, "maxSockets");
-        il.Emit(OpCodes.Ldc_R8, double.PositiveInfinity);
+        il.Emit(OpCodes.Ldstr, "keepAliveMsecs");
+        il.Emit(OpCodes.Ldc_R8, keepAliveMsecs);
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Call, runtime.SetProperty);
 
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "maxSockets");
+        il.Emit(OpCodes.Ldc_R8, maxSockets);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "maxTotalSockets");
+        il.Emit(OpCodes.Ldc_R8, maxTotalSockets);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "maxFreeSockets");
+        il.Emit(OpCodes.Ldc_R8, maxFreeSockets);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "timeout");
+        il.Emit(OpCodes.Ldc_R8, timeout);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "scheduling");
+        il.Emit(OpCodes.Ldstr, "lifo");
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        // Add empty objects for sockets/freeSockets/requests
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "sockets");
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "freeSockets");
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "requests");
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        // Wrap in $Object
+        il.Emit(OpCodes.Call, runtime.CreateObject);
     }
 
     // ===== $Request class fields =====

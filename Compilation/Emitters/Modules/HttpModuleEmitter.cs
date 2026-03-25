@@ -26,7 +26,8 @@ public sealed class HttpModuleEmitter : IBuiltInModuleEmitter
         "get",
         "METHODS",
         "STATUS_CODES",
-        "globalAgent"
+        "globalAgent",
+        "Agent"
     ];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
@@ -49,6 +50,7 @@ public sealed class HttpModuleEmitter : IBuiltInModuleEmitter
             "METHODS" => EmitMethods(emitter),
             "STATUS_CODES" => EmitStatusCodes(emitter),
             "globalAgent" => EmitGlobalAgent(emitter),
+            "Agent" => EmitAgentConstructor(emitter),
             _ => false
         };
     }
@@ -174,6 +176,15 @@ public sealed class HttpModuleEmitter : IBuiltInModuleEmitter
         return true;
     }
 
+    private static bool EmitAgentConstructor(IEmitterContext emitter)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        il.Emit(OpCodes.Call, ctx.Runtime!.HttpGetAgentConstructor);
+        emitter.SetStackUnknown();
+        return true;
+    }
+
     public bool IsExportedProperty(string memberName) => memberName is
-        "METHODS" or "STATUS_CODES" or "globalAgent";
+        "METHODS" or "STATUS_CODES" or "globalAgent" or "Agent";
 }

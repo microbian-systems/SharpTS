@@ -336,6 +336,23 @@ public partial class ILEmitter
         // Extract qualified name from callee expression
         var (namespaceParts, className) = ExtractQualifiedName(n.Callee);
 
+        // Special case: new http.Agent(options?) constructor
+        if (className == "Agent" && (namespaceParts.Count == 0 || namespaceParts is ["http"] or ["https"]))
+        {
+            if (n.Arguments.Count > 0)
+            {
+                EmitExpression(n.Arguments[0]);
+                EmitBoxIfNeeded(n.Arguments[0]);
+            }
+            else
+            {
+                IL.Emit(OpCodes.Ldnull);
+            }
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.HttpAgentFactory);
+            SetStackUnknown();
+            return;
+        }
+
         // Special case: new Intl.NumberFormat(locale?, options?) constructor
         if (namespaceParts is ["Intl"] && className == "NumberFormat")
         {

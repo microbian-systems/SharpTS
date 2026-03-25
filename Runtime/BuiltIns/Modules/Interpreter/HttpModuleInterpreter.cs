@@ -28,7 +28,8 @@ public static class HttpModuleInterpreter
             ["get"] = new BuiltInAsyncMethod("get", 1, 2, Get),
             ["METHODS"] = GetMethods(),
             ["STATUS_CODES"] = GetStatusCodes(),
-            ["globalAgent"] = CreateGlobalAgent()
+            ["globalAgent"] = SharpTSAgent.GlobalAgent,
+            ["Agent"] = new BuiltInMethod("Agent", 0, 1, ConstructAgent)
         };
     }
 
@@ -221,17 +222,12 @@ public static class HttpModuleInterpreter
     }
 
     /// <summary>
-    /// Creates a minimal global agent object for compatibility.
+    /// Constructs a new http.Agent from options.
     /// </summary>
-    private static SharpTSObject CreateGlobalAgent()
+    private static object? ConstructAgent(Interp interpreter, object? receiver, List<object?> args)
     {
-        return new SharpTSObject(new Dictionary<string, object?>
-        {
-            ["maxSockets"] = double.PositiveInfinity,
-            ["maxFreeSockets"] = 256.0,
-            ["keepAlive"] = true,
-            ["keepAliveMsecs"] = 1000.0
-        });
+        var options = args.Count > 0 ? args[0] as SharpTSObject : null;
+        return SharpTSAgent.FromOptions(options);
     }
 
     /// <summary>

@@ -1904,14 +1904,33 @@ public static class BuiltInModuleTypes
         // METHODS type - array of strings
         var methodsType = new TypeInfo.Array(stringType);
 
-        // globalAgent type
+        // Agent type with full API surface
+        var boolType = new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
         var agentType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
         {
+            ["keepAlive"] = boolType,
+            ["keepAliveMsecs"] = numberType,
             ["maxSockets"] = numberType,
+            ["maxTotalSockets"] = numberType,
             ["maxFreeSockets"] = numberType,
-            ["keepAlive"] = new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN),
-            ["keepAliveMsecs"] = numberType
+            ["timeout"] = numberType,
+            ["scheduling"] = stringType,
+            ["sockets"] = anyType,
+            ["freeSockets"] = anyType,
+            ["requests"] = anyType,
+            ["destroy"] = new TypeInfo.Function([], voidType),
+            ["getName"] = new TypeInfo.Function([anyType], stringType, RequiredParams: 0),
+            ["createConnection"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
+            // EventEmitter methods
+            ["on"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["once"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["off"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["emit"] = new TypeInfo.Function([stringType, anyType], boolType, RequiredParams: 1, HasRestParam: true),
+            ["removeAllListeners"] = new TypeInfo.Function([stringType], anyType, RequiredParams: 0)
         }.ToFrozenDictionary());
+
+        // Agent constructor type
+        var agentConstructorType = new TypeInfo.Function([anyType], agentType, RequiredParams: 0);
 
         return new Dictionary<string, TypeInfo>
         {
@@ -1920,7 +1939,8 @@ public static class BuiltInModuleTypes
             ["get"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
             ["METHODS"] = methodsType,
             ["STATUS_CODES"] = statusCodesType,
-            ["globalAgent"] = agentType
+            ["globalAgent"] = agentType,
+            ["Agent"] = agentConstructorType
         };
     }
 

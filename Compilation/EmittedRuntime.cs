@@ -1236,6 +1236,8 @@ public class EmittedRuntime
     public MethodBuilder HttpGetMethods { get; set; } = null!;
     public MethodBuilder HttpGetStatusCodes { get; set; } = null!;
     public MethodBuilder HttpGetGlobalAgent { get; set; } = null!;
+    public MethodBuilder HttpGetAgentConstructor { get; set; } = null!;
+    public MethodBuilder HttpAgentFactory { get; set; } = null!;
 
     // HTTP low-level helpers (pure-IL for standalone DLLs)
     public MethodBuilder ExtractResponseHeadersHelper { get; set; } = null!;

@@ -743,6 +743,10 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSHttpResponse), (instance, name) =>
             ((SharpTSHttpResponse)instance).GetMember(name));
 
+        // Register http.Agent type
+        registry.RegisterInstanceType(typeof(SharpTSAgent), (instance, name) =>
+            ((SharpTSAgent)instance).GetMember(name));
+
         // Register net module types
         registry.RegisterInstanceType(typeof(SharpTSNetServer), (instance, name) =>
             ((SharpTSNetServer)instance).GetMember(name));

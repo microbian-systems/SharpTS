@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-24 (process.stdin/stdout/stderr: full Readable/Writable stream support with EventEmitter, background stdin reader)
+**Last Updated:** 2026-03-24 (http.Agent: full constructor, globalAgent, destroy, getName, properties; process.stdin/stdout/stderr stream support)
 
 ## Legend
 - ✅ Implemented
@@ -696,7 +696,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | **Constants** | | |
 | `METHODS` | ✅ | Array of supported HTTP methods |
 | `STATUS_CODES` | ✅ | Map of status codes to messages |
-| `globalAgent` | ✅ | Global HTTP agent object |
+| `globalAgent` | ✅ | Global HTTP agent (SharpTSAgent singleton with full Agent API) |
 | **IncomingMessage** | | |
 | Readable stream methods | ✅ | on, pipe, read, pause, resume, push (extends Readable) |
 | `method`, `url`, `headers` | ✅ | Request properties |
@@ -713,8 +713,12 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `statusCode` / `statusMessage` | ✅ | Readable/writable properties |
 | `headersSent` / `finished` | ✅ | State properties |
 | `finish` / `close` events | ✅ | Writable stream events on end |
-| **Not Implemented** | | |
-| `Agent` class | ❌ | Connection pooling agent |
+| **Agent** | | |
+| `Agent` class | ✅ | `new http.Agent(options?)` constructor with keepAlive, maxSockets, maxTotalSockets, maxFreeSockets, keepAliveMsecs, timeout, scheduling |
+| `agent.destroy()` | ✅ | Marks agent as destroyed |
+| `agent.getName(options?)` | ✅ | Returns pool key string (host:port:localAddress:family) |
+| `agent.createConnection()` | ✅ | Stub (connection pooling handled by .NET HttpClient) |
+| `agent.sockets/freeSockets/requests` | ✅ | Empty objects (pooling managed internally by .NET) |
 
 ---
 
