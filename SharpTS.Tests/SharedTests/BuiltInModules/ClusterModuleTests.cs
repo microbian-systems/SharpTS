@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using SharpTS.Runtime.Types;
 using SharpTS.Tests.Infrastructure;
 using Xunit;
@@ -20,6 +22,19 @@ public class ClusterModuleTests : IDisposable
         ClusterSingleton.Instance.Reset();
         // Give worker threads time to fully exit
         Thread.Sleep(50);
+    }
+
+    /// <summary>
+    /// Allocates a free TCP port by binding to port 0 and reading the assigned port.
+    /// The listener is stopped immediately, freeing the port for the test to use.
+    /// </summary>
+    private static int GetFreePort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
     }
 
     #region Import and Basic Properties
@@ -367,9 +382,10 @@ public class ClusterModuleTests : IDisposable
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Fork_WorkersShareNetPort(ExecutionMode mode)
     {
+        var port = GetFreePort();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as cluster from 'cluster';
                 import * as net from 'net';
 
@@ -384,7 +400,7 @@ public class ClusterModuleTests : IDisposable
                         if (readyCount === 2) {
                             // Both workers are listening, connect multiple times
                             for (let i = 0; i < 4; i++) {
-                                const client = net.createConnection({ port: 9876, host: '127.0.0.1' });
+                                const client = net.createConnection({ port: {{port}}, host: '127.0.0.1' });
                                 client.setEncoding('utf8');
                                 client.on('data', (data: string) => {
                                     responseCount++;
@@ -410,7 +426,7 @@ public class ClusterModuleTests : IDisposable
                         socket.write('worker-' + cluster.worker.id);
                         socket.end();
                     });
-                    server.listen(9876, () => {
+                    server.listen({{port}}, () => {
                         process.send('ready');
                     });
                     setTimeout(() => {}, 10000);
@@ -426,9 +442,10 @@ public class ClusterModuleTests : IDisposable
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Fork_WorkerExitReleasesSlot(ExecutionMode mode)
     {
+        var port = GetFreePort();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as cluster from 'cluster';
                 import * as net from 'net';
 
@@ -443,7 +460,7 @@ public class ClusterModuleTests : IDisposable
                             // Kill w1, then verify w2 still serves
                             w1.kill();
                             setTimeout(() => {
-                                const client = net.createConnection({ port: 9877, host: '127.0.0.1' });
+                                const client = net.createConnection({ port: {{port}}, host: '127.0.0.1' });
                                 client.setEncoding('utf8');
                                 client.on('data', (data: string) => {
                                     console.log('after kill: ' + data);
@@ -465,7 +482,7 @@ public class ClusterModuleTests : IDisposable
                         socket.write('worker-' + cluster.worker.id);
                         socket.end();
                     });
-                    server.listen(9877, () => {
+                    server.listen({{port}}, () => {
                         process.send('ready');
                     });
                     setTimeout(() => {}, 10000);
@@ -481,9 +498,10 @@ public class ClusterModuleTests : IDisposable
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Fork_LastWorkerExitStopsListener(ExecutionMode mode)
     {
+        var port = GetFreePort();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as cluster from 'cluster';
                 import * as net from 'net';
 
@@ -493,7 +511,7 @@ public class ClusterModuleTests : IDisposable
                     w1.on('message', (msg: any) => {
                         if (msg === 'ready') {
                             // First verify the port works
-                            const probe = net.createConnection({ port: 9878, host: '127.0.0.1' });
+                            const probe = net.createConnection({ port: {{port}}, host: '127.0.0.1' });
                             probe.setEncoding('utf8');
                             probe.on('data', () => {
                                 probe.destroy();
@@ -512,7 +530,7 @@ public class ClusterModuleTests : IDisposable
                         socket.write('hello');
                         socket.end();
                     });
-                    server.listen(9878, () => {
+                    server.listen({{port}}, () => {
                         process.send('ready');
                     });
                     setTimeout(() => {}, 10000);
@@ -529,9 +547,10 @@ public class ClusterModuleTests : IDisposable
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Fork_WorkersShareHttpPort(ExecutionMode mode)
     {
+        var port = GetFreePort();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as cluster from 'cluster';
                 import * as http from 'http';
 
@@ -544,7 +563,7 @@ public class ClusterModuleTests : IDisposable
                         readyCount++;
                         if (readyCount === 2) {
                             // Both workers listening on same port — send an HTTP request
-                            fetch('http://localhost:9879/').then(async (res) => {
+                            fetch('http://localhost:{{port}}/').then(async (res) => {
                                 const text = await res.text();
                                 console.log('http response: ' + text);
                                 w1.kill();
@@ -564,7 +583,7 @@ public class ClusterModuleTests : IDisposable
                         res.writeHead(200);
                         res.end('worker-' + cluster.worker.id);
                     });
-                    server.listen(9879, () => {
+                    server.listen({{port}}, () => {
                         process.send('ready');
                     });
                     setTimeout(() => {}, 10000);
