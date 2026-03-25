@@ -489,7 +489,7 @@ public class SharpTSReadable : SharpTSEventEmitter
     {
         if (args.Count > 0 && args[0] != null)
         {
-            _pipeDestinations.Remove(args[0]);
+            _pipeDestinations.Remove(args[0]!);
         }
         else
         {

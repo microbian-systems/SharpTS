@@ -100,7 +100,6 @@ public class SharpTSFinalizationRegistry
         private readonly WeakReference<object> _target;
         private readonly object? _heldValue;
         private readonly ConcurrentQueue<object?> _queue;
-        private bool _suppressed;
 
         public object? Token { get; }
 

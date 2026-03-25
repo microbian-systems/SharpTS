@@ -366,7 +366,7 @@ public static class ChildProcessModuleInterpreter
                     {
                         try
                         {
-                            process.StandardInput.Write(wargs[0].ToString());
+                            process.StandardInput.Write(wargs[0]!.ToString());
                             process.StandardInput.Flush();
                         }
                         catch { }

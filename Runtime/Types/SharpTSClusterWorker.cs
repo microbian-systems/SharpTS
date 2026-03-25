@@ -270,8 +270,8 @@ public class SharpTSClusterWorker : SharpTSEventEmitter, IDisposable
 
         try { _primaryToWorkerQueue.CompleteAdding(); } catch { }
 
-        // Release worker event loop so it can exit
-        _workerInterpreter?.Unref();
+        // Shut down the worker's event loop promptly via cooperative cancellation
+        _workerInterpreter?.Shutdown();
 
         ScheduleOnMainThread(() =>
         {
@@ -291,8 +291,9 @@ public class SharpTSClusterWorker : SharpTSEventEmitter, IDisposable
 
         _isConnected = false;
 
-        // Release worker event loop
-        _workerInterpreter?.Unref();
+        // Shut down the worker's event loop promptly via cooperative cancellation.
+        // This interrupts TryTake in RunEventLoop, matching Node.js kill() semantics.
+        _workerInterpreter?.Shutdown();
 
         _cts.Cancel();
 

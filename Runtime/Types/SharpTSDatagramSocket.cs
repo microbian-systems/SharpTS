@@ -156,18 +156,18 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
 
         // Parse remaining args - detect if offset/length form or direct port form
         bool useConnected = false;
-        if (args.Count >= 4 && args[1] is double && args[2] is double && args[3] is double)
+        if (args.Count >= 4 && args[1] is double rawOffset && args[2] is double rawLength && args[3] is double rawPort)
         {
             // send(msg, offset, length, port, address?, callback?)
-            int offset = (int)(double)args[1];
-            int length = (int)(double)args[2];
+            int offset = (int)rawOffset;
+            int length = (int)rawLength;
             if (offset != 0 || length != data.Length)
             {
                 var slice = new byte[length];
                 Array.Copy(data, offset, slice, 0, length);
                 data = slice;
             }
-            port = (int)(double)args[3];
+            port = (int)rawPort;
             if (args.Count > 4 && args[4] is string a) address = a;
             if (args.Count > 4 && args[4] is ISharpTSCallable c4) callback = c4;
             if (args.Count > 5 && args[5] is ISharpTSCallable c5) callback = c5;
