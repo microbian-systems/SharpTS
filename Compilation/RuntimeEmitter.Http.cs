@@ -22,6 +22,9 @@ public partial class RuntimeEmitter
     private FieldBuilder _fetchResponseBodyBytesField = null!;
     private FieldBuilder _fetchResponseBodyConsumedField = null!;
 
+    // Cached HttpClient helper (emitted during fetch emission)
+    private MethodBuilder? _getOrCreateHttpClientMethod;
+
     // HTTP types from BCL
     private Type? _httpClientType;
     private Type? _httpRequestMessageType;
@@ -1227,6 +1230,9 @@ public partial class RuntimeEmitter
             return;
         }
 
+        // Emit cached HttpClient infrastructure (two static fields + getter method)
+        EmitCachedHttpClients(typeBuilder);
+
         // First emit the headers helper
         var applyHeadersMethod = EmitApplyRequestHeaders(typeBuilder, runtime);
 
@@ -1318,6 +1324,94 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits two static HttpClient fields and a getter method that returns the appropriate
+    /// cached client based on the redirect mode string. Creates the client lazily on first use.
+    /// This avoids creating a new HttpClient per fetch call (the .NET recommended pattern).
+    /// </summary>
+    private void EmitCachedHttpClients(TypeBuilder typeBuilder)
+    {
+        // Static fields for cached clients
+        var followField = typeBuilder.DefineField(
+            "_httpClientFollow", _httpClientType!, FieldAttributes.Private | FieldAttributes.Static);
+        var noRedirectField = typeBuilder.DefineField(
+            "_httpClientNoRedirect", _httpClientType!, FieldAttributes.Private | FieldAttributes.Static);
+
+        // GetOrCreateHttpClient(string redirectMode) -> HttpClient
+        var method = typeBuilder.DefineMethod(
+            "GetOrCreateHttpClient",
+            MethodAttributes.Private | MethodAttributes.Static,
+            _httpClientType!,
+            [_types.String]
+        );
+        _getOrCreateHttpClientMethod = method;
+
+        var il = method.GetILGenerator();
+        var handlerCtor = _httpClientHandlerType!.GetConstructor(Type.EmptyTypes)!;
+        var httpClientCtor = _httpClientType!.GetConstructor([typeof(System.Net.Http.HttpMessageHandler)])!;
+        var allowAutoRedirectProp = _httpClientHandlerType.GetProperty("AllowAutoRedirect")!;
+        var timeoutProp = _httpClientType.GetProperty("Timeout")!;
+        var fromSecondsMethod = _types.TimeSpan.GetMethod("FromSeconds", [_types.Double])!;
+
+        // if (redirectMode == "follow" || redirectMode == null) use follow client, else use no-redirect client
+        var useNoRedirectLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "follow");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, useNoRedirectLabel);
+
+        // --- Follow path: return cached _httpClientFollow ---
+        var followDoneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, followField);
+        il.Emit(OpCodes.Brtrue, followDoneLabel);
+
+        // Create: var handler = new HttpClientHandler { AllowAutoRedirect = true }
+        il.Emit(OpCodes.Newobj, handlerCtor);
+        var handlerLocal = il.DeclareLocal(_httpClientHandlerType);
+        il.Emit(OpCodes.Stloc, handlerLocal);
+        il.Emit(OpCodes.Ldloc, handlerLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Callvirt, allowAutoRedirectProp.GetSetMethod()!);
+        // var client = new HttpClient(handler) { Timeout = 30s }
+        il.Emit(OpCodes.Ldloc, handlerLocal);
+        il.Emit(OpCodes.Newobj, httpClientCtor);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_R8, 30.0);
+        il.Emit(OpCodes.Call, fromSecondsMethod);
+        il.Emit(OpCodes.Callvirt, timeoutProp.GetSetMethod()!);
+        il.Emit(OpCodes.Stsfld, followField);
+
+        il.MarkLabel(followDoneLabel);
+        il.Emit(OpCodes.Ldsfld, followField);
+        il.Emit(OpCodes.Ret);
+
+        // --- No-redirect path: return cached _httpClientNoRedirect ---
+        il.MarkLabel(useNoRedirectLabel);
+        var noRedirectDoneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, noRedirectField);
+        il.Emit(OpCodes.Brtrue, noRedirectDoneLabel);
+
+        // Create: var handler = new HttpClientHandler { AllowAutoRedirect = false }
+        il.Emit(OpCodes.Newobj, handlerCtor);
+        var handlerLocal2 = il.DeclareLocal(_httpClientHandlerType);
+        il.Emit(OpCodes.Stloc, handlerLocal2);
+        il.Emit(OpCodes.Ldloc, handlerLocal2);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, allowAutoRedirectProp.GetSetMethod()!);
+        // var client = new HttpClient(handler) { Timeout = 30s }
+        il.Emit(OpCodes.Ldloc, handlerLocal2);
+        il.Emit(OpCodes.Newobj, httpClientCtor);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_R8, 30.0);
+        il.Emit(OpCodes.Call, fromSecondsMethod);
+        il.Emit(OpCodes.Callvirt, timeoutProp.GetSetMethod()!);
+        il.Emit(OpCodes.Stsfld, noRedirectField);
+
+        il.MarkLabel(noRedirectDoneLabel);
+        il.Emit(OpCodes.Ldsfld, noRedirectField);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits helper method that performs the actual HTTP request with try/catch.
     /// Returns object[] { success, status, statusText, ok, url, headers, bodyBytes, errorMessage }
     /// </summary>
@@ -1397,33 +1491,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, redirectLocal);
         il.MarkLabel(skipRedirectExtract);
 
-        // var handler = new HttpClientHandler()
-        var handlerCtor = _httpClientHandlerType!.GetConstructor(Type.EmptyTypes)!;
-        var handlerLocal = il.DeclareLocal(_httpClientHandlerType);
-        il.Emit(OpCodes.Newobj, handlerCtor);
-        il.Emit(OpCodes.Stloc, handlerLocal);
-
-        // handler.AllowAutoRedirect = (redirect == "follow")
-        var allowAutoRedirectProp = _httpClientHandlerType.GetProperty("AllowAutoRedirect")!;
-        il.Emit(OpCodes.Ldloc, handlerLocal);
+        // Select cached HttpClient based on redirect mode
+        // Uses two static fields: _httpClientFollow and _httpClientNoRedirect
+        // Lazy-initialized on first use to avoid static constructor ordering issues
         il.Emit(OpCodes.Ldloc, redirectLocal);
-        il.Emit(OpCodes.Ldstr, "follow");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Callvirt, allowAutoRedirectProp.GetSetMethod()!);
-
-        // var client = new HttpClient(handler)
-        var httpClientCtor = _httpClientType!.GetConstructor([typeof(System.Net.Http.HttpMessageHandler)])!;
-        il.Emit(OpCodes.Ldloc, handlerLocal);
-        il.Emit(OpCodes.Newobj, httpClientCtor);
+        il.Emit(OpCodes.Call, _getOrCreateHttpClientMethod!);
         il.Emit(OpCodes.Stloc, clientLocal);
-
-        // Set timeout to 30 seconds
-        var timeoutProp = _httpClientType.GetProperty("Timeout")!;
-        var fromSecondsMethod = _types.TimeSpan.GetMethod("FromSeconds", [_types.Double])!;
-        il.Emit(OpCodes.Ldloc, clientLocal);
-        il.Emit(OpCodes.Ldc_R8, 30.0);
-        il.Emit(OpCodes.Call, fromSecondsMethod);
-        il.Emit(OpCodes.Callvirt, timeoutProp.GetSetMethod()!);
 
         // Parse method from options (default: "GET")
         var useDefaultMethod1Label = il.DefineLabel();
@@ -1561,7 +1634,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(signalCheckDoneLabel);
 
         // var response = client.SendAsync(request).Result
-        var sendAsyncMethod = _httpClientType.GetMethod("SendAsync", [_httpRequestMessageType])!;
+        var sendAsyncMethod = _httpClientType!.GetMethod("SendAsync", [_httpRequestMessageType])!;
         var taskOfResponseType = sendAsyncMethod.ReturnType;
         var getResultMethod = taskOfResponseType.GetProperty("Result")!.GetGetMethod()!;
 
