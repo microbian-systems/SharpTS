@@ -257,7 +257,7 @@ public partial class ILEmitter
     /// Emits a default value for the given type.
     /// Used when padding missing arguments (fallback when no overload matches).
     /// </summary>
-    public void EmitDefaultForType(Type type)
+    public new void EmitDefaultForType(Type type)
     {
         if (type == typeof(double))
         {

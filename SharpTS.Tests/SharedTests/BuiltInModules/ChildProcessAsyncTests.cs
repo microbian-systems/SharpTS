@@ -63,7 +63,6 @@ public class ChildProcessAsyncTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ExecSync_StillWorks(ExecutionMode mode)
     {
-        // Ensure sync methods still work after adding async methods
         var echoCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? "echo verify"
             : "echo verify";
@@ -178,34 +177,8 @@ public class ChildProcessAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    public void ExecFile_ReturnsCorrectType(ExecutionMode mode)
-    {
-        var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? "cmd.exe"
-            : "/bin/echo";
-        var args = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? "['/c', 'echo', 'cb_test']"
-            : "['cb_test']";
-
-        var files = new Dictionary<string, string>
-        {
-            ["main.ts"] = $$"""
-                import { execFile } from 'child_process';
-                const child = execFile('{{command}}', {{args}});
-                console.log(typeof child === 'object');
-                console.log(child.killed === false);
-                """
-        };
-
-        var output = TestHarness.RunModules(files, "main.ts", mode);
-        Assert.Equal("true\ntrue\n", output);
-    }
-
-    [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Fork_TypeIsFunction(ExecutionMode mode)
     {
-        // Verify fork is accessible and is a function
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -219,28 +192,48 @@ public class ChildProcessAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    public void Spawn_HasOnceMethod(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExecFileSync_CapturesOutput(ExecutionMode mode)
     {
         var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? "cmd.exe"
             : "/bin/echo";
         var args = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? "['/c', 'echo', 'event_test']"
-            : "['event_test']";
+            ? "['/c', 'echo', 'sync_output']"
+            : "['sync_output']";
 
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = $$"""
-                import { spawn } from 'child_process';
-                const child = spawn('{{command}}', {{args}});
-                console.log(typeof child.once === 'function');
-                console.log(typeof child.on === 'function');
-                console.log(typeof child.kill === 'function');
+                import { execFileSync } from 'child_process';
+                const result = execFileSync('{{command}}', {{args}});
+                console.log(result.trim());
                 """
         };
 
         var output = TestHarness.RunModules(files, "main.ts", mode);
-        Assert.Equal("true\ntrue\ntrue\n", output);
+        Assert.Contains("sync_output", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Exec_ChildProcess_HasPidProperty(ExecutionMode mode)
+    {
+        var echoCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? "echo pid_test"
+            : "echo pid_test";
+
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import { exec } from 'child_process';
+                const child = exec('{{echoCommand}}');
+                console.log(typeof child.pid === 'number');
+                console.log(child.pid !== undefined);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
     }
 }

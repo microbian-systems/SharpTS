@@ -80,4 +80,46 @@ public class StreamPromisesTests
         var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Equal("function\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void StreamPromises_Pipeline_ConnectsStreams(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, PassThrough } from 'stream';
+                import { pipeline } from 'stream/promises';
+                const source = new Readable();
+                const dest = new PassThrough();
+                source.push('hello');
+                source.push(null);
+                const p = pipeline(source, dest);
+                console.log(typeof p.then);
+                console.log(dest.readable);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("function", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void StreamPromises_Finished_ReturnsCleanupFunction(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                import { finished } from 'stream';
+                const r = new Readable();
+                const cleanup = finished(r, () => {});
+                console.log(typeof cleanup);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("function\n", output);
+    }
 }

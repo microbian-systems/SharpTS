@@ -97,6 +97,23 @@ public class ReadlineModuleTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Interface_DefaultPrompt(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as readline from 'readline';
+                const rl = readline.createInterface();
+                console.log(rl.getPrompt());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("> \n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Interface_Close_EmitsEvent(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -113,6 +130,26 @@ public class ReadlineModuleTests
 
         var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Contains("true", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Interface_Close_EmitsEvent_WithCount(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as readline from 'readline';
+                const rl = readline.createInterface();
+                let count = 0;
+                rl.on('close', () => { count++; });
+                rl.close();
+                console.log('count:', count);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("count: 1", output);
     }
 
     [Theory]
@@ -134,6 +171,29 @@ public class ReadlineModuleTests
 
         var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Contains("ok", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Interface_PauseResume_EmitsEvents(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as readline from 'readline';
+                const rl = readline.createInterface();
+                const events: string[] = [];
+                rl.on('pause', () => { events.push('paused'); });
+                rl.on('resume', () => { events.push('resumed'); });
+                rl.pause();
+                rl.resume();
+                console.log(events.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("paused", output);
+        Assert.Contains("resumed", output);
     }
 
     [Theory]
@@ -185,5 +245,44 @@ public class ReadlineModuleTests
 
         var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Interface_MultipleSetPrompt(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as readline from 'readline';
+                const rl = readline.createInterface();
+                rl.setPrompt('a> ');
+                console.log(rl.getPrompt());
+                rl.setPrompt('b> ');
+                console.log(rl.getPrompt());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("a> \nb> \n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamedImport_CreateInterface(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { createInterface } from 'readline';
+                const rl = createInterface();
+                console.log(typeof rl === 'object');
+                console.log(rl.getPrompt());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("true", output);
+        Assert.Contains("> ", output);
     }
 }
