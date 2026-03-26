@@ -127,32 +127,39 @@ public partial class Interpreter
 
         object? callee = (await ctx.EvaluateExprAsync(call.Callee)).ToObject();
 
-        List<object?> argumentsList = [];
-        foreach (Expr argument in call.Arguments)
+        var argumentsList = ArgumentListPool.Rent();
+        try
         {
-            if (argument is Expr.Spread spread)
+            foreach (Expr argument in call.Arguments)
             {
-                object? spreadValue = (await ctx.EvaluateExprAsync(spread.Expression)).ToObject();
-                // Use GetIterableElements to support custom iterables with Symbol.iterator
-                argumentsList.AddRange(GetIterableElements(spreadValue));
+                if (argument is Expr.Spread spread)
+                {
+                    object? spreadValue = (await ctx.EvaluateExprAsync(spread.Expression)).ToObject();
+                    // Use GetIterableElements to support custom iterables with Symbol.iterator
+                    argumentsList.AddRange(GetIterableElements(spreadValue));
+                }
+                else
+                {
+                    argumentsList.Add((await ctx.EvaluateExprAsync(argument)).ToObject());
+                }
             }
-            else
+
+            if (callee is not ISharpTSCallable function)
             {
-                argumentsList.Add((await ctx.EvaluateExprAsync(argument)).ToObject());
+                throw new InterpreterException("Can only call functions and classes.");
             }
-        }
 
-        if (callee is not ISharpTSCallable function)
+            if (argumentsList.Count < function.Arity())
+            {
+                throw new InterpreterException($"Expected at least {function.Arity()} arguments but got {argumentsList.Count}.");
+            }
+
+            return function.Call(this, argumentsList);
+        }
+        finally
         {
-            throw new InterpreterException("Can only call functions and classes.");
+            ArgumentListPool.Return(argumentsList);
         }
-
-        if (argumentsList.Count < function.Arity())
-        {
-            throw new InterpreterException($"Expected at least {function.Arity()} arguments but got {argumentsList.Count}.");
-        }
-
-        return function.Call(this, argumentsList);
     }
 
     /// <summary>
@@ -289,32 +296,39 @@ public partial class Interpreter
         }
 
         // Legacy path: spread args or non-V2 callables
-        List<object?> argumentsList = [];
-        foreach (Expr argument in call.Arguments)
+        var argumentsList = ArgumentListPool.Rent();
+        try
         {
-            if (argument is Expr.Spread spread)
+            foreach (Expr argument in call.Arguments)
             {
-                object? spreadValue = Evaluate(spread.Expression);
-                // Use GetIterableElements to support custom iterables with Symbol.iterator
-                argumentsList.AddRange(GetIterableElements(spreadValue));
+                if (argument is Expr.Spread spread)
+                {
+                    object? spreadValue = Evaluate(spread.Expression);
+                    // Use GetIterableElements to support custom iterables with Symbol.iterator
+                    argumentsList.AddRange(GetIterableElements(spreadValue));
+                }
+                else
+                {
+                    argumentsList.Add(Evaluate(argument));
+                }
             }
-            else
+
+            if (callee is not ISharpTSCallable function)
             {
-                argumentsList.Add(Evaluate(argument));
+                throw new InterpreterException("Can only call functions and classes.");
             }
-        }
 
-        if (callee is not ISharpTSCallable function)
+            if (argumentsList.Count < function.Arity())
+            {
+                throw new InterpreterException($"Expected at least {function.Arity()} arguments but got {argumentsList.Count}.");
+            }
+
+            return RuntimeValue.FromBoxed(function.Call(this, argumentsList));
+        }
+        finally
         {
-            throw new InterpreterException("Can only call functions and classes.");
+            ArgumentListPool.Return(argumentsList);
         }
-
-        if (argumentsList.Count < function.Arity())
-        {
-            throw new InterpreterException($"Expected at least {function.Arity()} arguments but got {argumentsList.Count}.");
-        }
-
-        return RuntimeValue.FromBoxed(function.Call(this, argumentsList));
     }
 
     /// <summary>
