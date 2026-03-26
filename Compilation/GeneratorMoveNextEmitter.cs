@@ -20,6 +20,7 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
     protected override CompilationContext Ctx => _ctx!;
     protected override TypeProvider Types => _types;
     protected override IVariableResolver Resolver => _resolver!;
+    protected override FieldBuilder? GetThisField() => _builder.ThisField;
 
     // Labels for state dispatch
     private readonly Dictionary<int, Label> _stateLabels = [];

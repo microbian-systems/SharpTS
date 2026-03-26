@@ -6,21 +6,6 @@ namespace SharpTS.Compilation;
 
 public partial class AsyncArrowMoveNextEmitter
 {
-    protected override void EmitBinary(Expr.Binary b)
-    {
-        EmitExpression(b.Left);
-        EnsureBoxed();
-        EmitExpression(b.Right);
-        EnsureBoxed();
-
-        if (!_helpers.TryEmitBinaryOperator(b.Operator.Type, _ctx!.Runtime!.Add, _ctx!.Runtime!.Equals))
-        {
-            _il.Emit(OpCodes.Pop);
-            _il.Emit(OpCodes.Ldnull);
-        }
-        SetStackUnknown();
-    }
-
     // EmitCall and call helpers inherited from ExpressionEmitterBase.CallHelpers.cs
 
     protected override void EmitAwait(Expr.Await aw)

@@ -272,31 +272,1051 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     }
     #endregion
 
-    #region Abstract Expression Methods
-    protected abstract void EmitLiteral(Expr.Literal lit);
-    protected abstract void EmitVariable(Expr.Variable v);
-    protected abstract void EmitAssign(Expr.Assign a);
-    protected abstract void EmitBinary(Expr.Binary b);
+    #region Virtual Expression Methods with Default Implementations
+    // These methods provide default implementations suitable for state machine emitters.
+    // ILEmitter overrides most with stack-type-tracked and optimized versions.
+    // AsyncArrowMoveNextEmitter overrides where capture indirection differs.
+
+    /// <summary>
+    /// Emits a literal value. Default uses helper methods (EmitNullConstant, EmitDoubleConstant, etc.).
+    /// ILEmitter overrides for BigInteger/SharpTSUndefined support.
+    /// AsyncArrowMoveNextEmitter overrides for eager boxing.
+    /// </summary>
+    protected virtual void EmitLiteral(Expr.Literal lit)
+    {
+        switch (lit.Value)
+        {
+            case null: EmitNullConstant(); break;
+            case double d: EmitDoubleConstant(d); break;
+            case bool b: EmitBoolConstant(b); break;
+            case string s: EmitStringConstant(s); break;
+            default: IL.Emit(OpCodes.Ldnull); SetStackUnknown(); break;
+        }
+    }
+
+    /// <summary>
+    /// Emits a binary operator expression. Default boxes both operands and delegates to TryEmitBinaryOperator.
+    /// ILEmitter overrides with stack-type-tracked fast paths.
+    /// </summary>
+    protected virtual void EmitBinary(Expr.Binary b)
+    {
+        EmitExpression(b.Left);
+        EnsureBoxed();
+        EmitExpression(b.Right);
+        EnsureBoxed();
+
+        if (!_helpers.TryEmitBinaryOperator(b.Operator.Type, Ctx.Runtime!.Add, Ctx.Runtime!.Equals))
+        {
+            IL.Emit(OpCodes.Pop);
+            IL.Emit(OpCodes.Ldnull);
+            SetStackUnknown();
+        }
+    }
+
+    /// <summary>
+    /// Emits an index get expression (obj[index]). Default boxes both and calls Runtime.GetIndex.
+    /// ILEmitter overrides with IndexTarget dispatch and stack type tracking.
+    /// </summary>
+    protected virtual void EmitGetIndex(Expr.GetIndex gi)
+    {
+        EmitExpression(gi.Object);
+        EnsureBoxed();
+        EmitExpression(gi.Index);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.GetIndex);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits an index set expression (obj[index] = value). Default saves value to local (SetIndex is void),
+    /// emits obj + index, calls SetIndex, then pushes value back as expression result.
+    /// ILEmitter overrides with IndexTarget dispatch.
+    /// </summary>
+    protected virtual void EmitSetIndex(Expr.SetIndex si)
+    {
+        EmitExpression(si.Value);
+        EnsureBoxed();
+        var valueLocal = IL.DeclareLocal(typeof(object));
+        IL.Emit(OpCodes.Stloc, valueLocal);
+
+        EmitExpression(si.Object);
+        EnsureBoxed();
+        EmitExpression(si.Index);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Ldloc, valueLocal);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.SetIndex);
+
+        IL.Emit(OpCodes.Ldloc, valueLocal);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits 'this' expression. Default uses GetThisField() hook — loads from field if non-null, else null.
+    /// ILEmitter overrides (Resolver.LoadThis). AsyncArrowMoveNextEmitter overrides (outer state machine capture).
+    /// </summary>
+    protected virtual void EmitThis()
+    {
+        var thisField = GetThisField();
+        if (thisField != null)
+        {
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, thisField);
+            SetStackUnknown();
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+            SetStackType(StackType.Null);
+        }
+    }
+
+    /// <summary>
+    /// Emits a super method access. Default loads 'this' via EmitThis(), then calls GetSuperMethod.
+    /// ILEmitter and AsyncArrowMoveNextEmitter override with their own this-loading logic.
+    /// </summary>
+    protected virtual void EmitSuper(Expr.Super s)
+    {
+        var thisField = GetThisField();
+        if (thisField != null)
+        {
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, thisField);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+
+        IL.Emit(OpCodes.Ldstr, s.Method?.Lexeme ?? "constructor");
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.GetSuperMethod);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits a variable load. Default uses resolver fallback chain:
+    /// resolver → TopLevelStaticVars → Functions → NamespaceFields → CapturedTopLevelVars → null.
+    /// ILEmitter overrides (pseudo-variables, class types, inner functions, ReferenceError).
+    /// AsyncArrowMoveNextEmitter overrides (capture indirection).
+    /// </summary>
+    protected virtual void EmitVariable(Expr.Variable v)
+    {
+        string name = v.Name.Lexeme;
+
+        var stackType = Resolver.TryLoadVariable(name);
+        if (stackType != null)
+        {
+            SetStackType(stackType.Value);
+            return;
+        }
+
+        if (TryEmitGlobalVariable(name)) return;
+
+        IL.Emit(OpCodes.Ldnull);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits a variable assignment. Default emits value, dups, then tries global store or resolver.
+    /// ILEmitter overrides (pseudo-variables, class types, inner functions, ReferenceError).
+    /// AsyncArrowMoveNextEmitter overrides (capture indirection).
+    /// </summary>
+    protected virtual void EmitAssign(Expr.Assign a)
+    {
+        string name = a.Name.Lexeme;
+
+        EmitExpression(a.Value);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Dup);
+
+        if (TryEmitGlobalStore(name)) return;
+
+        Resolver.TryStoreVariable(name);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits a property set (obj.prop = value). Default checks static fields, TypeEmitterRegistry,
+    /// then falls back to dynamic SetProperty.
+    /// ILEmitter overrides (property descriptor, additional patterns).
+    /// </summary>
+    protected virtual void EmitSet(Expr.Set s)
+    {
+        // Handle static field assignment: Class.field = value
+        if (s.Object is Expr.Variable classVar &&
+            Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out _))
+        {
+            string resolvedClassName = Ctx.ResolveClassName(classVar.Name.Lexeme);
+            if (Ctx.ClassRegistry!.TryGetStaticField(resolvedClassName, s.Name.Lexeme, out var staticField))
+            {
+                EmitExpression(s.Value);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Stsfld, staticField!);
+                SetStackUnknown();
+                return;
+            }
+        }
+
+        // Type-first dispatch: property setter via TypeEmitterRegistry
+        if (TryEmitTypeRegistryPropertySet(s)) return;
+
+        // Default: dynamic property assignment
+        EmitExpression(s.Object);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Ldstr, s.Name.Lexeme);
+        EmitExpression(s.Value);
+        EnsureBoxed();
+
+        IL.Emit(OpCodes.Dup);
+        var resultTemp = IL.DeclareLocal(typeof(object));
+        IL.Emit(OpCodes.Stloc, resultTemp);
+
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.SetProperty);
+        IL.Emit(OpCodes.Ldloc, resultTemp);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits a private field get (#field). Default uses ConditionalWeakTable pattern.
+    /// ILEmitter overrides with its own implementation.
+    /// </summary>
+    protected virtual void EmitGetPrivate(Expr.GetPrivate gp)
+    {
+        string fieldName = gp.Name.Lexeme;
+        if (fieldName.StartsWith('#'))
+            fieldName = fieldName[1..];
+
+        string? className = Ctx.CurrentClassName;
+        if (className == null)
+        {
+            IL.Emit(OpCodes.Ldstr, $"Cannot access private field '#{fieldName}' - class context not available");
+            IL.Emit(OpCodes.Newobj, Types.InvalidOperationExceptionCtorString);
+            IL.Emit(OpCodes.Throw);
+            return;
+        }
+
+        if (gp.Object is Expr.Variable classVar &&
+            classVar.Name.Lexeme == Ctx.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            Ctx.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var staticField))
+        {
+            IL.Emit(OpCodes.Ldsfld, staticField!);
+            SetStackUnknown();
+            return;
+        }
+
+        var storageField = Ctx.ClassRegistry!.GetPrivateFieldStorage(className);
+        if (storageField != null)
+        {
+            var cwtType = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<,>)
+                .MakeGenericType(typeof(object), typeof(Dictionary<string, object?>));
+            var dictType = typeof(Dictionary<string, object?>);
+            var dictLocal = IL.DeclareLocal(dictType);
+
+            IL.Emit(OpCodes.Ldsfld, storageField);
+            EmitExpression(gp.Object);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Ldloca, dictLocal);
+            var tryGetValueMethod = cwtType.GetMethod("TryGetValue", [typeof(object), dictType.MakeByRefType()])!;
+            IL.Emit(OpCodes.Callvirt, tryGetValueMethod);
+
+            var successLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Brtrue, successLabel);
+            IL.Emit(OpCodes.Ldstr, $"TypeError: Cannot read private member #{fieldName} from an object whose class did not declare it");
+            IL.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+            IL.Emit(OpCodes.Throw);
+            IL.MarkLabel(successLabel);
+
+            IL.Emit(OpCodes.Ldloc, dictLocal);
+            IL.Emit(OpCodes.Ldstr, fieldName);
+            IL.Emit(OpCodes.Callvirt, dictType.GetMethod("get_Item", [typeof(string)])!);
+            SetStackUnknown();
+            return;
+        }
+
+        if (Ctx.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var fallbackStaticField))
+        {
+            IL.Emit(OpCodes.Ldsfld, fallbackStaticField!);
+            SetStackUnknown();
+            return;
+        }
+
+        IL.Emit(OpCodes.Ldstr, $"Private field '#{fieldName}' not found in class '{className}'");
+        IL.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+        IL.Emit(OpCodes.Throw);
+    }
+
+    /// <summary>
+    /// Emits a private field set (#field = value). Default uses ConditionalWeakTable pattern.
+    /// ILEmitter overrides with its own implementation.
+    /// </summary>
+    protected virtual void EmitSetPrivate(Expr.SetPrivate sp)
+    {
+        string fieldName = sp.Name.Lexeme;
+        if (fieldName.StartsWith('#'))
+            fieldName = fieldName[1..];
+
+        string? className = Ctx.CurrentClassName;
+        if (className == null)
+        {
+            IL.Emit(OpCodes.Ldstr, $"Cannot write private field '#{fieldName}' - class context not available");
+            IL.Emit(OpCodes.Newobj, Types.InvalidOperationExceptionCtorString);
+            IL.Emit(OpCodes.Throw);
+            return;
+        }
+
+        if (sp.Object is Expr.Variable classVar &&
+            classVar.Name.Lexeme == Ctx.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            Ctx.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var staticField))
+        {
+            EmitExpression(sp.Value);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Stsfld, staticField!);
+            SetStackUnknown();
+            return;
+        }
+
+        var storageField = Ctx.ClassRegistry!.GetPrivateFieldStorage(className);
+        if (storageField != null)
+        {
+            var cwtType = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<,>)
+                .MakeGenericType(typeof(object), typeof(Dictionary<string, object?>));
+            var dictType = typeof(Dictionary<string, object?>);
+            var dictLocal = IL.DeclareLocal(dictType);
+            var valueLocal = IL.DeclareLocal(typeof(object));
+
+            IL.Emit(OpCodes.Ldsfld, storageField);
+            EmitExpression(sp.Object);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Ldloca, dictLocal);
+            var tryGetValueMethod = cwtType.GetMethod("TryGetValue", [typeof(object), dictType.MakeByRefType()])!;
+            IL.Emit(OpCodes.Callvirt, tryGetValueMethod);
+
+            var successLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Brtrue, successLabel);
+            IL.Emit(OpCodes.Ldstr, $"TypeError: Cannot write private member #{fieldName} to an object whose class did not declare it");
+            IL.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+            IL.Emit(OpCodes.Throw);
+            IL.MarkLabel(successLabel);
+
+            EmitExpression(sp.Value);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Stloc, valueLocal);
+            IL.Emit(OpCodes.Ldloc, dictLocal);
+            IL.Emit(OpCodes.Ldstr, fieldName);
+            IL.Emit(OpCodes.Ldloc, valueLocal);
+            IL.Emit(OpCodes.Callvirt, dictType.GetMethod("set_Item", [typeof(string), typeof(object)])!);
+            IL.Emit(OpCodes.Ldloc, valueLocal);
+            SetStackUnknown();
+            return;
+        }
+
+        if (Ctx.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var fallbackStaticField))
+        {
+            EmitExpression(sp.Value);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Stsfld, fallbackStaticField!);
+            SetStackUnknown();
+            return;
+        }
+
+        IL.Emit(OpCodes.Ldstr, $"Private field '#{fieldName}' not found in class '{className}'");
+        IL.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+        IL.Emit(OpCodes.Throw);
+    }
+
+    /// <summary>
+    /// Emits a private method call (#method(args)). Default uses ConditionalWeakTable pattern.
+    /// ILEmitter overrides with its own implementation.
+    /// </summary>
+    protected virtual void EmitCallPrivate(Expr.CallPrivate cp)
+    {
+        string methodName = cp.Name.Lexeme;
+        if (methodName.StartsWith('#'))
+            methodName = methodName[1..];
+
+        string? className = Ctx.CurrentClassName;
+        if (className == null)
+        {
+            IL.Emit(OpCodes.Ldstr, $"Cannot call private method '#{methodName}' - class context not available");
+            IL.Emit(OpCodes.Newobj, Types.InvalidOperationExceptionCtorString);
+            IL.Emit(OpCodes.Throw);
+            return;
+        }
+
+        if (cp.Object is Expr.Variable classVar &&
+            classVar.Name.Lexeme == Ctx.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            Ctx.ClassRegistry!.TryGetStaticPrivateMethod(className, methodName, out var staticMethod))
+        {
+            foreach (var arg in cp.Arguments)
+            {
+                EmitExpression(arg);
+                EnsureBoxed();
+            }
+            IL.Emit(OpCodes.Call, staticMethod!);
+            SetStackUnknown();
+            return;
+        }
+
+        if (Ctx.ClassRegistry!.TryGetPrivateMethod(className, methodName, out var instanceMethod))
+        {
+            var storageField = Ctx.ClassRegistry!.GetPrivateFieldStorage(className);
+            if (storageField != null)
+            {
+                var cwtType = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<,>)
+                    .MakeGenericType(typeof(object), typeof(Dictionary<string, object?>));
+                var dictType = typeof(Dictionary<string, object?>);
+                var objLocal = IL.DeclareLocal(typeof(object));
+                var dictLocal = IL.DeclareLocal(dictType);
+
+                EmitExpression(cp.Object);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Stloc, objLocal);
+
+                IL.Emit(OpCodes.Ldsfld, storageField);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Ldloca, dictLocal);
+                var tryGetValueMethod = cwtType.GetMethod("TryGetValue", [typeof(object), dictType.MakeByRefType()])!;
+                IL.Emit(OpCodes.Callvirt, tryGetValueMethod);
+
+                var validLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Brtrue, validLabel);
+                IL.Emit(OpCodes.Ldstr, $"TypeError: Cannot call private method #{methodName} on an object whose class did not declare it");
+                IL.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+                IL.Emit(OpCodes.Throw);
+                IL.MarkLabel(validLabel);
+
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                if (Ctx.CurrentClassBuilder != null)
+                    IL.Emit(OpCodes.Castclass, Ctx.CurrentClassBuilder);
+
+                foreach (var arg in cp.Arguments)
+                {
+                    EmitExpression(arg);
+                    EnsureBoxed();
+                }
+
+                IL.Emit(OpCodes.Callvirt, instanceMethod!);
+                SetStackUnknown();
+                return;
+            }
+            else
+            {
+                // No private field storage — skip brand check
+                EmitExpression(cp.Object);
+                EnsureBoxed();
+                if (Ctx.CurrentClassBuilder != null)
+                    IL.Emit(OpCodes.Castclass, Ctx.CurrentClassBuilder);
+
+                foreach (var arg in cp.Arguments)
+                {
+                    EmitExpression(arg);
+                    EnsureBoxed();
+                }
+
+                IL.Emit(OpCodes.Callvirt, instanceMethod!);
+                SetStackUnknown();
+                return;
+            }
+        }
+
+        IL.Emit(OpCodes.Ldstr, $"Private method '#{methodName}' not found in class '{className}'");
+        IL.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
+        IL.Emit(OpCodes.Throw);
+    }
+
+    /// <summary>
+    /// Emits a template literal. Default uses two-phase pattern (eval to temps, then build string)
+    /// which is safe across await/yield boundaries.
+    /// ILEmitter overrides with array-based ConcatTemplate approach.
+    /// </summary>
+    protected virtual void EmitTemplateLiteral(Expr.TemplateLiteral tl)
+    {
+        if (tl.Strings.Count == 0 && tl.Expressions.Count == 0)
+        {
+            IL.Emit(OpCodes.Ldstr, "");
+            SetStackType(StackType.String);
+            return;
+        }
+
+        // Phase 1: Evaluate all expressions to temps (awaits/yields happen here)
+        var exprTemps = new List<LocalBuilder>();
+        for (int i = 0; i < tl.Expressions.Count; i++)
+        {
+            EmitExpression(tl.Expressions[i]);
+            EnsureBoxed();
+            var temp = IL.DeclareLocal(typeof(object));
+            IL.Emit(OpCodes.Stloc, temp);
+            exprTemps.Add(temp);
+        }
+
+        // Phase 2: Build string from temps (no awaits, stack safe)
+        IL.Emit(OpCodes.Ldstr, tl.Strings[0]);
+
+        for (int i = 0; i < exprTemps.Count; i++)
+        {
+            IL.Emit(OpCodes.Ldloc, exprTemps[i]);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.Stringify);
+            IL.Emit(OpCodes.Call, Types.StringConcat2);
+
+            if (i + 1 < tl.Strings.Count)
+            {
+                IL.Emit(OpCodes.Ldstr, tl.Strings[i + 1]);
+                IL.Emit(OpCodes.Call, Types.StringConcat2);
+            }
+        }
+        SetStackType(StackType.String);
+    }
+
+    /// <summary>
+    /// Emits a tagged template literal. Default uses two-phase pattern.
+    /// ILEmitter overrides with its own implementation.
+    /// </summary>
+    protected virtual void EmitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral ttl)
+    {
+        // Phase 1: Evaluate tag and all expressions to temps
+        EmitExpression(ttl.Tag);
+        EnsureBoxed();
+        var tagTemp = IL.DeclareLocal(typeof(object));
+        IL.Emit(OpCodes.Stloc, tagTemp);
+
+        var exprTemps = new List<LocalBuilder>();
+        for (int i = 0; i < ttl.Expressions.Count; i++)
+        {
+            EmitExpression(ttl.Expressions[i]);
+            EnsureBoxed();
+            var temp = IL.DeclareLocal(typeof(object));
+            IL.Emit(OpCodes.Stloc, temp);
+            exprTemps.Add(temp);
+        }
+
+        // Phase 2: Build arrays and call from temps
+        IL.Emit(OpCodes.Ldloc, tagTemp);
+
+        IL.Emit(OpCodes.Ldc_I4, ttl.CookedStrings.Count);
+        IL.Emit(OpCodes.Newarr, typeof(object));
+        for (int i = 0; i < ttl.CookedStrings.Count; i++)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldc_I4, i);
+            if (ttl.CookedStrings[i] != null)
+                IL.Emit(OpCodes.Ldstr, ttl.CookedStrings[i]!);
+            else
+                IL.Emit(OpCodes.Ldnull);
+            IL.Emit(OpCodes.Stelem_Ref);
+        }
+
+        IL.Emit(OpCodes.Ldc_I4, ttl.RawStrings.Count);
+        IL.Emit(OpCodes.Newarr, typeof(string));
+        for (int i = 0; i < ttl.RawStrings.Count; i++)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldc_I4, i);
+            IL.Emit(OpCodes.Ldstr, ttl.RawStrings[i]);
+            IL.Emit(OpCodes.Stelem_Ref);
+        }
+
+        IL.Emit(OpCodes.Ldc_I4, ttl.Expressions.Count);
+        IL.Emit(OpCodes.Newarr, typeof(object));
+        for (int i = 0; i < exprTemps.Count; i++)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldc_I4, i);
+            IL.Emit(OpCodes.Ldloc, exprTemps[i]);
+            IL.Emit(OpCodes.Stelem_Ref);
+        }
+
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeTaggedTemplate);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits an array literal with spread support. Default handles simple arrays and spread-concatenation.
+    /// ILEmitter overrides with stack-type-tracked array/concat APIs.
+    /// </summary>
+    protected virtual void EmitArrayLiteral(Expr.ArrayLiteral a)
+    {
+        bool hasSpreads = a.Elements.Any(e => e is Expr.Spread);
+
+        if (!hasSpreads)
+        {
+            IL.Emit(OpCodes.Ldc_I4, a.Elements.Count);
+            IL.Emit(OpCodes.Newarr, typeof(object));
+
+            for (int i = 0; i < a.Elements.Count; i++)
+            {
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldc_I4, i);
+                EmitExpression(a.Elements[i]);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Stelem_Ref);
+            }
+
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateArray);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldc_I4, a.Elements.Count);
+            IL.Emit(OpCodes.Newarr, typeof(object));
+
+            for (int i = 0; i < a.Elements.Count; i++)
+            {
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldc_I4, i);
+
+                if (a.Elements[i] is Expr.Spread spread)
+                {
+                    EmitExpression(spread.Expression);
+                    EnsureBoxed();
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldc_I4, 1);
+                    IL.Emit(OpCodes.Newarr, typeof(object));
+                    IL.Emit(OpCodes.Dup);
+                    IL.Emit(OpCodes.Ldc_I4_0);
+                    EmitExpression(a.Elements[i]);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Stelem_Ref);
+                    IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateArray);
+                }
+
+                IL.Emit(OpCodes.Stelem_Ref);
+            }
+
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.SymbolIterator);
+            IL.Emit(OpCodes.Ldtoken, Ctx.Runtime!.RuntimeType);
+            IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.ConcatArrays);
+        }
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits an object literal with support for spreads, computed keys, and accessors.
+    /// ILEmitter overrides with stack-type-tracked implementation.
+    /// </summary>
+    protected virtual void EmitObjectLiteral(Expr.ObjectLiteral o)
+    {
+        bool hasSpreads = o.Properties.Any(p => p.IsSpread);
+        bool hasComputedKeys = o.Properties.Any(p => p.Key is Expr.ComputedKey);
+        bool hasAccessors = o.Properties.Any(p => p.Kind is Expr.ObjectPropertyKind.Getter or Expr.ObjectPropertyKind.Setter);
+
+        if (hasAccessors)
+        {
+            EmitObjectLiteralWithAccessors(o);
+        }
+        else if (!hasSpreads && !hasComputedKeys)
+        {
+            IL.Emit(OpCodes.Newobj, Types.DictionaryStringObjectCtor);
+
+            foreach (var prop in o.Properties)
+            {
+                IL.Emit(OpCodes.Dup);
+                EmitStaticPropertyKey(prop.Key!);
+                EmitExpression(prop.Value);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Callvirt, Types.DictionaryStringObjectSetItem);
+            }
+
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateObject);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Newobj, Types.DictionaryStringObjectNullableCtor);
+
+            foreach (var prop in o.Properties)
+            {
+                IL.Emit(OpCodes.Dup);
+
+                if (prop.IsSpread)
+                {
+                    EmitExpression(prop.Value);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Call, Ctx.Runtime!.MergeIntoObject);
+                }
+                else if (prop.Key is Expr.ComputedKey ck)
+                {
+                    EmitExpression(ck.Expression);
+                    EnsureBoxed();
+                    EmitExpression(prop.Value);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Call, Ctx.Runtime!.SetIndex);
+                }
+                else
+                {
+                    EmitStaticPropertyKey(prop.Key!);
+                    EmitExpression(prop.Value);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Callvirt, Types.DictionaryStringObjectNullableSetItem);
+                }
+            }
+
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateObject);
+        }
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits an object literal with getter/setter accessors using the $Object type.
+    /// </summary>
+    protected virtual void EmitObjectLiteralWithAccessors(Expr.ObjectLiteral o)
+    {
+        IL.Emit(OpCodes.Newobj, Types.DictionaryStringObjectNullableCtor);
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSObjectCtor);
+
+        var objLocal = IL.DeclareLocal(Ctx.Runtime!.TSObjectType);
+        IL.Emit(OpCodes.Stloc, objLocal);
+
+        foreach (var prop in o.Properties)
+        {
+            if (prop.IsSpread)
+            {
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                EmitExpression(prop.Value);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.MergeIntoTSObject);
+                continue;
+            }
+
+            string propKey = GetPropertyKeyString(prop.Key!);
+
+            switch (prop.Kind)
+            {
+                case Expr.ObjectPropertyKind.Getter:
+                    IL.Emit(OpCodes.Ldloc, objLocal);
+                    IL.Emit(OpCodes.Ldstr, propKey);
+                    EmitExpression(prop.Value);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSObjectDefineGetter);
+                    break;
+
+                case Expr.ObjectPropertyKind.Setter:
+                    IL.Emit(OpCodes.Ldloc, objLocal);
+                    IL.Emit(OpCodes.Ldstr, propKey);
+                    EmitExpression(prop.Value);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSObjectDefineSetter);
+                    break;
+
+                default:
+                    IL.Emit(OpCodes.Ldloc, objLocal);
+                    IL.Emit(OpCodes.Ldstr, propKey);
+                    EmitExpression(prop.Value);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSObjectSetProperty);
+                    break;
+            }
+        }
+
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Extracts the string key from a property key expression.
+    /// </summary>
+    protected static string GetPropertyKeyString(Expr.PropertyKey key)
+    {
+        return key switch
+        {
+            Expr.IdentifierKey ik => ik.Name.Lexeme,
+            Expr.LiteralKey lk when lk.Literal.Type == TokenType.STRING => (string)lk.Literal.Literal!,
+            Expr.LiteralKey lk when lk.Literal.Type == TokenType.NUMBER => lk.Literal.Literal!.ToString()!,
+            Expr.ComputedKey => throw new Diagnostics.Exceptions.CompileException("Computed keys not supported in accessor context"),
+            _ => throw new Diagnostics.Exceptions.CompileException($"Unexpected property key type: {key.GetType().Name}")
+        };
+    }
+
+    /// <summary>
+    /// Emits a static property key (identifier, string literal, or number literal) as a string.
+    /// </summary>
+    protected virtual void EmitStaticPropertyKey(Expr.PropertyKey key)
+    {
+        switch (key)
+        {
+            case Expr.IdentifierKey ik:
+                IL.Emit(OpCodes.Ldstr, ik.Name.Lexeme);
+                break;
+            case Expr.LiteralKey lk when lk.Literal.Type == TokenType.STRING:
+                IL.Emit(OpCodes.Ldstr, (string)lk.Literal.Literal!);
+                break;
+            case Expr.LiteralKey lk when lk.Literal.Type == TokenType.NUMBER:
+                IL.Emit(OpCodes.Ldstr, lk.Literal.Literal!.ToString()!);
+                break;
+            default:
+                throw new Diagnostics.Exceptions.CompileException($"Unexpected static property key type: {key.GetType().Name}");
+        }
+    }
+
+    /// <summary>
+    /// Emits a new expression (constructor call). Default handles built-in, Intl, module-qualified,
+    /// and user-class constructors with generic type support and Activator.CreateInstance fallback.
+    /// ILEmitter overrides (60+ additional built-in cases, inner class constructors, enum constructors).
+    /// </summary>
+    protected virtual void EmitNew(Expr.New n)
+    {
+        var (namespaceParts, className) = ExtractQualifiedNameFromCallee(n.Callee);
+
+        if (namespaceParts.Count == 0 && n.Callee is Expr.Variable && TryEmitBuiltInConstructor(className, n.Arguments))
+            return;
+
+        if (TryEmitIntlConstructor(namespaceParts, className, n.Arguments))
+            return;
+
+        if (TryEmitModuleQualifiedConstructor(namespaceParts, className, n.Arguments))
+            return;
+
+        EmitUserClassNew(namespaceParts, className, n);
+    }
+
+    /// <summary>
+    /// Emits a user-class constructor call with generic type support, argument temps (safe across
+    /// await/yield boundaries), and Activator.CreateInstance fallback.
+    /// </summary>
+    protected virtual void EmitUserClassNew(List<string> namespaceParts, string className, Expr.New n)
+    {
+        string resolvedClassName;
+        if (namespaceParts.Count > 0)
+        {
+            string nsPath = string.Join("_", namespaceParts);
+            resolvedClassName = $"{nsPath}_{className}";
+        }
+        else
+        {
+            resolvedClassName = Ctx.ResolveClassName(className);
+        }
+
+        var ctorBuilder = Ctx.ClassRegistry?.GetConstructorByQualifiedName(resolvedClassName);
+        if (Ctx.Classes.TryGetValue(resolvedClassName, out var typeBuilder) && ctorBuilder != null)
+        {
+            Type targetType = typeBuilder;
+            ConstructorInfo targetCtor = ctorBuilder;
+
+            // Handle generic class instantiation
+            if (n.TypeArgs != null && n.TypeArgs.Count > 0 &&
+                Ctx.ClassRegistry!.GetGenericParams(resolvedClassName) != null)
+            {
+                Type[] typeArgs = n.TypeArgs.Select(ResolveTypeArg).ToArray();
+                targetType = typeBuilder.MakeGenericType(typeArgs);
+                targetCtor = TypeBuilder.GetConstructor(targetType, ctorBuilder);
+            }
+
+            var ctorParams = ctorBuilder.GetParameters();
+            int expectedParamCount = ctorParams.Length;
+
+            // Pre-evaluate arguments to temps (safe across await/yield boundaries)
+            List<LocalBuilder> argTemps = [];
+            foreach (var arg in n.Arguments)
+            {
+                EmitExpression(arg);
+                EnsureBoxed();
+                var temp = IL.DeclareLocal(typeof(object));
+                IL.Emit(OpCodes.Stloc, temp);
+                argTemps.Add(temp);
+            }
+
+            // Load arguments with proper type conversions
+            for (int i = 0; i < argTemps.Count; i++)
+            {
+                IL.Emit(OpCodes.Ldloc, argTemps[i]);
+                if (i < ctorParams.Length)
+                {
+                    var targetParamType = ctorParams[i].ParameterType;
+                    if (targetParamType.IsValueType && targetParamType != typeof(object))
+                    {
+                        IL.Emit(OpCodes.Unbox_Any, targetParamType);
+                    }
+                }
+            }
+
+            // Pad missing optional arguments
+            for (int i = n.Arguments.Count; i < expectedParamCount; i++)
+            {
+                EmitDefaultForType(ctorParams[i].ParameterType);
+            }
+
+            IL.Emit(OpCodes.Newobj, targetCtor);
+            SetStackUnknown();
+        }
+        else
+        {
+            // Fallback: try to load via resolver
+            var stackType = Resolver.TryLoadVariable(className);
+            if (stackType != null)
+            {
+                var typeTemp = IL.DeclareLocal(typeof(object));
+                IL.Emit(OpCodes.Stloc, typeTemp);
+
+                List<LocalBuilder> argTemps = [];
+                foreach (var arg in n.Arguments)
+                {
+                    EmitExpression(arg);
+                    EnsureBoxed();
+                    var temp = IL.DeclareLocal(typeof(object));
+                    IL.Emit(OpCodes.Stloc, temp);
+                    argTemps.Add(temp);
+                }
+
+                IL.Emit(OpCodes.Ldloc, typeTemp);
+                IL.Emit(OpCodes.Ldc_I4, n.Arguments.Count);
+                IL.Emit(OpCodes.Newarr, Ctx.Types.Object);
+
+                for (int i = 0; i < argTemps.Count; i++)
+                {
+                    IL.Emit(OpCodes.Dup);
+                    IL.Emit(OpCodes.Ldc_I4, i);
+                    IL.Emit(OpCodes.Ldloc, argTemps[i]);
+                    IL.Emit(OpCodes.Stelem_Ref);
+                }
+
+                var createInstanceMethod = Ctx.Types.GetMethod(Ctx.Types.Activator, "CreateInstance", Ctx.Types.Type, Ctx.Types.ObjectArray);
+                IL.Emit(OpCodes.Call, createInstanceMethod!);
+                SetStackUnknown();
+            }
+            else
+            {
+                IL.Emit(OpCodes.Ldnull);
+                SetStackType(StackType.Null);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Resolves a TypeScript type argument name to a CLR type (stub — all map to object).
+    /// </summary>
+    protected virtual Type ResolveTypeArg(string typeArg) => typeof(object);
+
+    /// <summary>
+    /// Emits an arrow function. Default looks up in ArrowMethods and creates TSFunction.
+    /// ILEmitter overrides (display class, non-capturing optimization).
+    /// AsyncMoveNextEmitter overrides (async arrow dispatch, display class capture).
+    /// AsyncArrowMoveNextEmitter overrides (nested async arrows).
+    /// </summary>
+    protected virtual void EmitArrowFunction(Expr.ArrowFunction af)
+    {
+        if (Ctx.ArrowMethods == null || !Ctx.ArrowMethods.TryGetValue(af, out var method))
+        {
+            IL.Emit(OpCodes.Ldnull);
+            SetStackUnknown();
+            return;
+        }
+
+        IL.Emit(OpCodes.Ldnull);
+        IL.Emit(OpCodes.Ldtoken, method);
+        IL.Emit(OpCodes.Call, Types.MethodBaseGetMethodFromHandle);
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSFunctionCtor);
+        SetStackUnknown();
+    }
+
     // EmitCall is virtual with a default implementation in ExpressionEmitterBase.CallHelpers.cs
-    protected abstract void EmitSet(Expr.Set s);
-    protected abstract void EmitGetPrivate(Expr.GetPrivate gp);
-    protected abstract void EmitSetPrivate(Expr.SetPrivate sp);
-    protected abstract void EmitCallPrivate(Expr.CallPrivate cp);
-    protected abstract void EmitGetIndex(Expr.GetIndex gi);
-    protected abstract void EmitSetIndex(Expr.SetIndex si);
-    protected abstract void EmitTemplateLiteral(Expr.TemplateLiteral tl);
-    protected abstract void EmitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral ttl);
-    protected abstract void EmitArrayLiteral(Expr.ArrayLiteral al);
-    protected abstract void EmitObjectLiteral(Expr.ObjectLiteral ol);
-    protected abstract void EmitNew(Expr.New n);
-    protected abstract void EmitThis();
-    protected abstract void EmitSuper(Expr.Super s);
     // EmitCompoundAssign, EmitLogicalAssign, EmitPrefixIncrement, EmitPostfixIncrement
     // are implemented in ExpressionEmitterBase.Operators.cs as virtual methods.
     // ILEmitter and AsyncArrowMoveNextEmitter override with their own implementations.
-    protected abstract void EmitArrowFunction(Expr.ArrowFunction af);
     protected abstract void EmitClassExpression(Expr.ClassExpr ce);
     protected abstract void EmitDelete(Expr.Delete del);
+    #endregion
+
+    #region Global Variable Resolution Helpers
+
+    /// <summary>
+    /// Tries to emit a global variable load (after resolver fails).
+    /// Checks TopLevelStaticVars → Functions → NamespaceFields → CapturedTopLevelVars.
+    /// </summary>
+    protected virtual bool TryEmitGlobalVariable(string name)
+    {
+        if (Ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+        {
+            IL.Emit(OpCodes.Ldsfld, topLevelField);
+            SetStackUnknown();
+            return true;
+        }
+
+        if (Ctx.Functions.TryGetValue(Ctx.ResolveFunctionName(name), out var funcMethod))
+        {
+            IL.Emit(OpCodes.Ldnull);
+            IL.Emit(OpCodes.Ldtoken, funcMethod);
+            IL.Emit(OpCodes.Call, Types.MethodBaseGetMethodFromHandle);
+            IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSFunctionCtor);
+            SetStackUnknown();
+            return true;
+        }
+
+        if (Ctx.NamespaceFields?.TryGetValue(name, out var nsField) == true)
+        {
+            IL.Emit(OpCodes.Ldsfld, nsField);
+            SetStackUnknown();
+            return true;
+        }
+
+        if (Ctx.CapturedTopLevelVars?.Contains(name) == true &&
+            Ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
+            Ctx.EntryPointDisplayClassStaticField != null)
+        {
+            IL.Emit(OpCodes.Ldsfld, Ctx.EntryPointDisplayClassStaticField);
+            IL.Emit(OpCodes.Ldfld, entryPointField);
+            SetStackUnknown();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Tries to emit a global variable store.
+    /// Checks CapturedTopLevelVars → TopLevelStaticVars.
+    /// Returns true if handled (value consumed from stack).
+    /// </summary>
+    protected virtual bool TryEmitGlobalStore(string name)
+    {
+        if (Ctx.CapturedTopLevelVars?.Contains(name) == true &&
+            Ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
+            Ctx.EntryPointDisplayClassStaticField != null)
+        {
+            var temp = IL.DeclareLocal(Types.Object);
+            IL.Emit(OpCodes.Stloc, temp);
+            IL.Emit(OpCodes.Ldsfld, Ctx.EntryPointDisplayClassStaticField);
+            IL.Emit(OpCodes.Ldloc, temp);
+            IL.Emit(OpCodes.Stfld, entryPointField);
+            SetStackUnknown();
+            return true;
+        }
+
+        if (Ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
+        {
+            IL.Emit(OpCodes.Stsfld, topLevelField);
+            SetStackUnknown();
+            return true;
+        }
+
+        return false;
+    }
+
+    #endregion
+
+    #region Static Field Access
+
+    /// <summary>
+    /// Tries to emit static field access for Class.field patterns.
+    /// Default checks ClassRegistry for static fields.
+    /// </summary>
+    protected virtual bool TryEmitStaticFieldAccess(Expr.Get g)
+    {
+        if (g.Object is Expr.Variable classVar &&
+            Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out _))
+        {
+            string resolvedClassName = Ctx.ResolveClassName(classVar.Name.Lexeme);
+            if (Ctx.ClassRegistry!.TryGetStaticField(resolvedClassName, g.Name.Lexeme, out var staticField))
+            {
+                IL.Emit(OpCodes.Ldsfld, staticField!);
+                SetStackUnknown();
+                return true;
+            }
+        }
+        return false;
+    }
+
     #endregion
 
     #region Virtual Methods - Comma operator
@@ -489,13 +1509,6 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         SetStackUnknown();
         return true;
     }
-
-    /// <summary>
-    /// Tries to emit static field access for Class.field patterns.
-    /// Override in emitters that have access to class registry information.
-    /// Returns true if the expression was handled.
-    /// </summary>
-    protected virtual bool TryEmitStaticFieldAccess(Expr.Get g) => false;
 
     /// <summary>
     /// Attempts to emit a property set via TypeEmitterRegistry strategy dispatch.
