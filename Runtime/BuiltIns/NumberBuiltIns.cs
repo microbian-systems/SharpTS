@@ -58,13 +58,9 @@ public static class NumberBuiltIns
     // Instance member lookup for number values
     private static readonly BuiltInTypeMemberLookup<double> _instanceLookup =
         BuiltInTypeBuilder<double>.ForInstanceType()
-            .Method("toFixed", 0, 1, ToFixed)
             .MethodV2("toFixed", 0, 1, ToFixedV2)
-            .Method("toPrecision", 0, 1, ToPrecision)
             .MethodV2("toPrecision", 0, 1, ToPrecisionV2)
-            .Method("toExponential", 0, 1, ToExponential)
             .MethodV2("toExponential", 0, 1, ToExponentialV2)
-            .Method("toString", 0, 1, ToStringMethod)
             .MethodV2("toString", 0, 1, ToStringMethodV2)
             .Build();
 

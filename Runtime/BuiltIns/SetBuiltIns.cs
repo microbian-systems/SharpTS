@@ -20,9 +20,9 @@ public static class SetBuiltIns
             .MethodV2("has", 1, HasV2)
             .MethodV2("delete", 1, DeleteV2)
             .MethodV2("clear", 0, ClearV2)
-            .Method("keys", 0, Keys)
-            .Method("values", 0, Values)
-            .Method("entries", 0, Entries)
+            .MethodV2("keys", 0, (_, set, _) => RuntimeValue.FromObject(set.Keys()))
+            .MethodV2("values", 0, (_, set, _) => RuntimeValue.FromObject(set.Values()))
+            .MethodV2("entries", 0, (_, set, _) => RuntimeValue.FromObject(set.Entries()))
             .Method("forEach", 1, ForEach)
             // ES2025 Set Operations
             .MethodV2("union", 1, UnionV2)

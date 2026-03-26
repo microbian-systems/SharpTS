@@ -27,7 +27,7 @@ public static class ObjectBuiltIns
             .Method("preventExtensions", 1, PreventExtensions)
             .Method("isExtensible", 1, IsExtensibleMethod)
             .Method("getOwnPropertySymbols", 1, GetOwnPropertySymbols)
-            .Method("getPrototypeOf", 1, GetPrototypeOf)
+            .MethodV2("getPrototypeOf", 1, GetPrototypeOfV2)
             .Method("setPrototypeOf", 2, SetPrototypeOf)
             .Method("groupBy", 2, GroupBy)
             .Method("defineProperties", 2, DefineProperties)
