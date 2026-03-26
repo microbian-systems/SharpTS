@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using SharpTS.Compilation;
 using SharpTS.Execution;
 using SharpTS.Runtime.Types;
 
@@ -32,25 +31,25 @@ public static class ConsoleBuiltIns
     private static readonly BuiltInStaticMemberLookup _lookup =
         BuiltInStaticBuilder.Create()
             // Phase 1: Existing compiler methods + interpreter parity
-            .Method("log", 0, int.MaxValue, Log)
-            .Method("info", 0, int.MaxValue, Info)
-            .Method("debug", 0, int.MaxValue, Debug)
-            .Method("error", 0, int.MaxValue, Error)
-            .Method("warn", 0, int.MaxValue, Warn)
-            .Method("clear", 0, Clear)
-            .Method("time", 0, 1, Time)
-            .Method("timeEnd", 0, 1, TimeEnd)
-            .Method("timeLog", 0, int.MaxValue, TimeLog)
+            .MethodV2("log", 0, int.MaxValue, LogV2)
+            .MethodV2("info", 0, int.MaxValue, InfoV2)
+            .MethodV2("debug", 0, int.MaxValue, DebugV2)
+            .MethodV2("error", 0, int.MaxValue, ErrorV2)
+            .MethodV2("warn", 0, int.MaxValue, WarnV2)
+            .MethodV2("clear", 0, ClearV2)
+            .MethodV2("time", 0, 1, TimeV2)
+            .MethodV2("timeEnd", 0, 1, TimeEndV2)
+            .MethodV2("timeLog", 0, int.MaxValue, TimeLogV2)
             // Phase 2: New methods
-            .Method("assert", 0, int.MaxValue, Assert)
-            .Method("count", 0, 1, Count)
-            .Method("countReset", 0, 1, CountReset)
-            .Method("table", 1, 2, Table)
-            .Method("dir", 1, 2, Dir)
-            .Method("group", 0, int.MaxValue, Group)
-            .Method("groupCollapsed", 0, int.MaxValue, GroupCollapsed)
-            .Method("groupEnd", 0, GroupEnd)
-            .Method("trace", 0, int.MaxValue, Trace)
+            .MethodV2("assert", 0, int.MaxValue, AssertV2)
+            .MethodV2("count", 0, 1, CountV2)
+            .MethodV2("countReset", 0, 1, CountResetV2)
+            .MethodV2("table", 1, 2, TableV2)
+            .MethodV2("dir", 1, 2, DirV2)
+            .MethodV2("group", 0, int.MaxValue, GroupV2)
+            .MethodV2("groupCollapsed", 0, int.MaxValue, GroupCollapsedV2)
+            .MethodV2("groupEnd", 0, GroupEndV2)
+            .MethodV2("trace", 0, int.MaxValue, TraceV2)
             .Build();
 
     public static object? GetMember(string name)
@@ -104,13 +103,31 @@ public static class ConsoleBuiltIns
     }
 
     /// <summary>
-    /// Formats a string with printf-style specifiers (%s, %d, %i, %o, %O, %j).
+    /// Stringifies a RuntimeValue by extracting the boxed object.
     /// </summary>
-    /// <param name="format">The format string</param>
-    /// <param name="args">The substitution arguments</param>
-    /// <param name="argIndex">Starting index in args (typically 1 if format is args[0])</param>
-    /// <returns>Formatted string plus any remaining unsubstituted arguments</returns>
-    private static string FormatString(string format, List<object?> args, int argIndex)
+    private static string StringifyRV(RuntimeValue value)
+        => Stringify(value.ToObject());
+
+    /// <summary>
+    /// Joins a span of RuntimeValue arguments with space separator, stringifying each.
+    /// </summary>
+    private static string JoinArgs(ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length == 0) return "";
+        if (args.Length == 1) return StringifyRV(args[0]);
+        var sb = new StringBuilder();
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (i > 0) sb.Append(' ');
+            sb.Append(StringifyRV(args[i]));
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Formats a string with printf-style specifiers using RuntimeValue span args (%s, %d, %i, %o, %O, %j).
+    /// </summary>
+    private static string FormatStringV2(string format, ReadOnlySpan<RuntimeValue> args, int argIndex)
     {
         var result = new StringBuilder();
         int currentArg = argIndex;
@@ -131,9 +148,9 @@ public static class ConsoleBuiltIns
                 }
 
                 // Handle format specifiers if we have remaining args
-                if (currentArg < args.Count)
+                if (currentArg < args.Length)
                 {
-                    var arg = args[currentArg];
+                    var arg = args[currentArg].ToObject();
                     switch (specifier)
                     {
                         case 's': // String
@@ -178,10 +195,10 @@ public static class ConsoleBuiltIns
         }
 
         // Append any remaining arguments not consumed by format specifiers
-        while (currentArg < args.Count)
+        while (currentArg < args.Length)
         {
             result.Append(' ');
-            result.Append(Stringify(args[currentArg]));
+            result.Append(StringifyRV(args[currentArg]));
             currentArg++;
         }
 
@@ -290,8 +307,6 @@ public static class ConsoleBuiltIns
         return false;
     }
 
-    private static bool IsTruthy(object? value) => RuntimeTypes.IsTruthy(value);
-
     /// <summary>
     /// Writes output to stdout with group indentation.
     /// </summary>
@@ -308,49 +323,48 @@ public static class ConsoleBuiltIns
         writer.WriteLine(GetIndent() + message);
     }
 
-    // ===================== Phase 1 Methods =====================
+    // ===================== V2 Methods =====================
 
-    private static object? Log(Interpreter i, List<object?> args)
+    private static RuntimeValue LogV2(Interpreter i, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0)
+        if (args.Length == 0)
         {
             WriteOutput(i.Out, "");
         }
-        else if (args.Count >= 1 && args[0] is string format && HasFormatSpecifiers(format))
+        else if (args[0].ToObject() is string format && HasFormatSpecifiers(format))
         {
-            // First argument is a format string with specifiers
-            WriteOutput(i.Out, FormatString(format, args, 1));
+            WriteOutput(i.Out, FormatStringV2(format, args, 1));
         }
         else
         {
-            WriteOutput(i.Out, string.Join(" ", args.Select(Stringify)));
+            WriteOutput(i.Out, JoinArgs(args));
         }
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Info(Interpreter interp, List<object?> args)
-        => Log(interp, args);
+    private static RuntimeValue InfoV2(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+        => LogV2(interp, receiver, args);
 
-    private static object? Debug(Interpreter interp, List<object?> args)
-        => Log(interp, args);
+    private static RuntimeValue DebugV2(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+        => LogV2(interp, receiver, args);
 
-    private static object? Error(Interpreter i, List<object?> args)
+    private static RuntimeValue ErrorV2(Interpreter i, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0)
+        if (args.Length == 0)
         {
             WriteError(i.Error, "");
         }
         else
         {
-            WriteError(i.Error, string.Join(" ", args.Select(Stringify)));
+            WriteError(i.Error, JoinArgs(args));
         }
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Warn(Interpreter interp, List<object?> args)
-        => Error(interp, args);
+    private static RuntimeValue WarnV2(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+        => ErrorV2(interp, receiver, args);
 
-    private static object? Clear(Interpreter _, List<object?> args)
+    private static RuntimeValue ClearV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         try
         {
@@ -360,73 +374,81 @@ public static class ConsoleBuiltIns
         {
             // Ignore exceptions (e.g., when stdout is redirected)
         }
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Time(Interpreter _, List<object?> args)
+    private static RuntimeValue TimeV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        string label = args.Count > 0 && args[0] != null ? Stringify(args[0]) : "default";
+        string label = args.Length > 0 && args[0].ToObject() != null ? StringifyRV(args[0]) : "default";
         _timers[label] = Stopwatch.StartNew();
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? TimeEnd(Interpreter i, List<object?> args)
+    private static RuntimeValue TimeEndV2(Interpreter i, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        string label = args.Count > 0 && args[0] != null ? Stringify(args[0]) : "default";
+        string label = args.Length > 0 && args[0].ToObject() != null ? StringifyRV(args[0]) : "default";
         if (_timers.TryGetValue(label, out var sw))
         {
             sw.Stop();
             WriteOutput(i.Out, $"{label}: {sw.Elapsed.TotalMilliseconds}ms");
             _timers.Remove(label);
         }
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? TimeLog(Interpreter i, List<object?> args)
+    private static RuntimeValue TimeLogV2(Interpreter i, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        string label = args.Count > 0 && args[0] != null ? Stringify(args[0]) : "default";
+        string label = args.Length > 0 && args[0].ToObject() != null ? StringifyRV(args[0]) : "default";
         if (_timers.TryGetValue(label, out var sw))
         {
             var elapsed = sw.Elapsed.TotalMilliseconds;
-            if (args.Count > 1)
+            if (args.Length > 1)
             {
                 // Additional arguments are logged after the time
-                var extraArgs = args.Skip(1).Select(Stringify);
-                WriteOutput(i.Out, $"{label}: {elapsed}ms {string.Join(" ", extraArgs)}");
+                var sb = new StringBuilder();
+                for (int j = 1; j < args.Length; j++)
+                {
+                    if (j > 1) sb.Append(' ');
+                    sb.Append(StringifyRV(args[j]));
+                }
+                WriteOutput(i.Out, $"{label}: {elapsed}ms {sb}");
             }
             else
             {
                 WriteOutput(i.Out, $"{label}: {elapsed}ms");
             }
         }
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    // ===================== Phase 2 Methods =====================
-
-    private static object? Assert(Interpreter i, List<object?> args)
+    private static RuntimeValue AssertV2(Interpreter i, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // No condition provided or condition is falsy
-        bool condition = args.Count > 0 && IsTruthy(args[0]);
+        bool condition = args.Length > 0 && args[0].IsTruthy();
         if (!condition)
         {
-            if (args.Count > 1)
+            if (args.Length > 1)
             {
                 // Additional arguments are the assertion message
-                var messageArgs = args.Skip(1).Select(Stringify);
-                WriteError(i.Error, "Assertion failed: " + string.Join(" ", messageArgs));
+                var sb = new StringBuilder();
+                for (int j = 1; j < args.Length; j++)
+                {
+                    if (j > 1) sb.Append(' ');
+                    sb.Append(StringifyRV(args[j]));
+                }
+                WriteError(i.Error, "Assertion failed: " + sb);
             }
             else
             {
                 WriteError(i.Error, "Assertion failed");
             }
         }
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Count(Interpreter i, List<object?> args)
+    private static RuntimeValue CountV2(Interpreter i, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        string label = args.Count > 0 && args[0] != null ? Stringify(args[0]) : "default";
+        string label = args.Length > 0 && args[0].ToObject() != null ? StringifyRV(args[0]) : "default";
         if (!_counts.TryGetValue(label, out var count))
         {
             count = 0;
@@ -434,23 +456,23 @@ public static class ConsoleBuiltIns
         count++;
         _counts[label] = count;
         WriteOutput(i.Out, $"{label}: {count}");
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? CountReset(Interpreter _, List<object?> args)
+    private static RuntimeValue CountResetV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        string label = args.Count > 0 && args[0] != null ? Stringify(args[0]) : "default";
+        string label = args.Length > 0 && args[0].ToObject() != null ? StringifyRV(args[0]) : "default";
         _counts[label] = 0;
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Table(Interpreter i, List<object?> args)
+    private static RuntimeValue TableV2(Interpreter i, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0) return null;
+        if (args.Length == 0) return RuntimeValue.Undefined;
 
-        var data = args[0];
+        var data = args[0].ToObject();
         List<string>? columns = null;
-        if (args.Count > 1 && args[1] is SharpTSArray colArr)
+        if (args.Length > 1 && args[1].ToObject() is SharpTSArray colArr)
         {
             columns = colArr.Elements.Select(e => Stringify(e)).ToList();
         }
@@ -469,7 +491,7 @@ public static class ConsoleBuiltIns
             // For primitives, just log the value
             WriteOutput(i.Out, Stringify(data));
         }
-        return null;
+        return RuntimeValue.Undefined;
     }
 
     private static void RenderArrayTable(TextWriter writer, SharpTSArray arr, List<string>? columnFilter)
@@ -598,14 +620,14 @@ public static class ConsoleBuiltIns
         return value[..(maxWidth - 3)] + "...";
     }
 
-    private static object? Dir(Interpreter i, List<object?> args)
+    private static RuntimeValue DirV2(Interpreter i, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0) return null;
+        if (args.Length == 0) return RuntimeValue.Undefined;
 
-        var obj = args[0];
+        var obj = args[0].ToObject();
         // Options (depth, colors, etc.) are largely ignored for simplicity
         WriteOutput(i.Out, InspectObject(obj, 0));
-        return null;
+        return RuntimeValue.Undefined;
     }
 
     private static string InspectObject(object? obj, int depth)
@@ -648,34 +670,34 @@ public static class ConsoleBuiltIns
         return Stringify(obj);
     }
 
-    private static object? Group(Interpreter i, List<object?> args)
+    private static RuntimeValue GroupV2(Interpreter i, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count > 0)
+        if (args.Length > 0)
         {
-            WriteOutput(i.Out, string.Join(" ", args.Select(Stringify)));
+            WriteOutput(i.Out, JoinArgs(args));
         }
         _groupIndentLevel++;
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? GroupCollapsed(Interpreter interp, List<object?> args)
+    private static RuntimeValue GroupCollapsedV2(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // In a terminal context, groupCollapsed behaves the same as group
-        return Group(interp, args);
+        return GroupV2(interp, receiver, args);
     }
 
-    private static object? GroupEnd(Interpreter _, List<object?> args)
+    private static RuntimeValue GroupEndV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_groupIndentLevel > 0)
         {
             _groupIndentLevel--;
         }
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Trace(Interpreter i, List<object?> args)
+    private static RuntimeValue TraceV2(Interpreter i, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var message = args.Count > 0 ? string.Join(" ", args.Select(Stringify)) : "";
+        var message = args.Length > 0 ? JoinArgs(args) : "";
         WriteOutput(i.Out, "Trace: " + message);
 
         // Print C# stack trace (TypeScript source mapping not available)
@@ -699,7 +721,7 @@ public static class ConsoleBuiltIns
                 WriteOutput(i.Out, $"    at {className}.{methodName}");
             }
         }
-        return null;
+        return RuntimeValue.Undefined;
     }
 
     // ===================== Testing Helpers =====================

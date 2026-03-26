@@ -15,15 +15,15 @@ public static class ArrayBuiltIns
             .MethodV2("shift", 0, ShiftV2)
             .MethodV2("unshift", 1, UnshiftV2)
             .MethodV2("slice", 0, 2, SliceV2)
-            .Method("map", 1, Map)
-            .Method("filter", 1, Filter)
-            .Method("forEach", 1, ForEach)
-            .Method("find", 1, Find)
-            .Method("findIndex", 1, FindIndex)
-            .Method("some", 1, Some)
-            .Method("every", 1, Every)
-            .Method("reduce", 1, 2, Reduce)
-            .Method("reduceRight", 1, 2, ReduceRight)
+            .MethodV2("map", 1, MapV2)
+            .MethodV2("filter", 1, FilterV2)
+            .MethodV2("forEach", 1, ForEachV2)
+            .MethodV2("find", 1, FindV2)
+            .MethodV2("findIndex", 1, FindIndexV2)
+            .MethodV2("some", 1, SomeV2)
+            .MethodV2("every", 1, EveryV2)
+            .MethodV2("reduce", 1, 2, ReduceV2)
+            .MethodV2("reduceRight", 1, 2, ReduceRightV2)
             .MethodV2("includes", 1, IncludesV2)
             .MethodV2("indexOf", 1, IndexOfV2)
             .MethodV2("join", 0, 1, JoinV2)
@@ -35,8 +35,8 @@ public static class ArrayBuiltIns
             .Method("toSorted", 0, 1, ToSorted)
             .Method("splice", 0, int.MaxValue, Splice)
             .Method("toSpliced", 0, int.MaxValue, ToSpliced)
-            .Method("findLast", 1, FindLast)
-            .Method("findLastIndex", 1, FindLastIndex)
+            .MethodV2("findLast", 1, FindLastV2)
+            .MethodV2("findLastIndex", 1, FindLastIndexV2)
             .MethodV2("toReversed", 0, ToReversedV2)
             .MethodV2("with", 2, WithV2)
             .MethodV2("at", 1, AtV2)
@@ -770,6 +770,187 @@ public static class ArrayBuiltIns
         return RuntimeValue.FromObject(arr);
     }
 
+    // --- Callback-based V2 methods ---
+
+    private static RuntimeValue MapV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        using var iter = CallbackIterator.CreateFromRV(args, arr, "map");
+        List<object?> result = [];
+        for (int i = 0; i < arr.Elements.Count; i++)
+            result.Add(iter.Invoke(interp, arr.Elements[i], i));
+        return RuntimeValue.FromObject(new SharpTSArray(result));
+    }
+
+    private static RuntimeValue FilterV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        using var iter = CallbackIterator.CreateFromRV(args, arr, "filter");
+        List<object?> result = [];
+        for (int i = 0; i < arr.Elements.Count; i++)
+        {
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
+                result.Add(arr.Elements[i]);
+        }
+        return RuntimeValue.FromObject(new SharpTSArray(result));
+    }
+
+    private static RuntimeValue ForEachV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        using var iter = CallbackIterator.CreateFromRV(args, arr, "forEach");
+        for (int i = 0; i < arr.Elements.Count; i++)
+            iter.InvokeRV(interp, arr.Elements[i], i);
+        return RuntimeValue.Undefined;
+    }
+
+    private static RuntimeValue FindV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        using var iter = CallbackIterator.CreateFromRV(args, arr, "find");
+        for (int i = 0; i < arr.Elements.Count; i++)
+        {
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
+                return RuntimeValue.FromBoxed(arr.Elements[i]);
+        }
+        return RuntimeValue.Null;
+    }
+
+    private static RuntimeValue FindIndexV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        using var iter = CallbackIterator.CreateFromRV(args, arr, "findIndex");
+        for (int i = 0; i < arr.Elements.Count; i++)
+        {
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
+                return RuntimeValue.FromNumber(i);
+        }
+        return RuntimeValue.FromNumber(-1);
+    }
+
+    private static RuntimeValue SomeV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        using var iter = CallbackIterator.CreateFromRV(args, arr, "some");
+        for (int i = 0; i < arr.Elements.Count; i++)
+        {
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
+                return RuntimeValue.True;
+        }
+        return RuntimeValue.False;
+    }
+
+    private static RuntimeValue EveryV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        using var iter = CallbackIterator.CreateFromRV(args, arr, "every");
+        for (int i = 0; i < arr.Elements.Count; i++)
+        {
+            if (!iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
+                return RuntimeValue.False;
+        }
+        return RuntimeValue.True;
+    }
+
+    private static RuntimeValue ReduceV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        var callback = args[0].ToObject() as ISharpTSCallable
+            ?? throw new Exception("Runtime Error: reduce requires a function argument.");
+
+        int startIndex = 0;
+        object? accumulator;
+
+        if (args.Length > 1)
+        {
+            accumulator = args[1].ToObject();
+        }
+        else
+        {
+            if (arr.Elements.Count == 0)
+                throw new Exception("Runtime Error: reduce of empty array with no initial value.");
+            accumulator = arr.Elements[0];
+            startIndex = 1;
+        }
+
+        var callbackArgs = ArgumentListPool.Rent();
+        try
+        {
+            callbackArgs.Add(null);
+            callbackArgs.Add(null);
+            callbackArgs.Add(null);
+            callbackArgs.Add(arr);
+            for (int i = startIndex; i < arr.Elements.Count; i++)
+            {
+                callbackArgs[0] = accumulator;
+                callbackArgs[1] = arr.Elements[i];
+                callbackArgs[2] = (double)i;
+                accumulator = callback.Call(interp, callbackArgs);
+            }
+            return RuntimeValue.FromBoxed(accumulator);
+        }
+        finally
+        {
+            ArgumentListPool.Return(callbackArgs);
+        }
+    }
+
+    private static RuntimeValue ReduceRightV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        var callback = args[0].ToObject() as ISharpTSCallable
+            ?? throw new Exception("Runtime Error: reduceRight requires a function argument.");
+
+        int startIndex = arr.Elements.Count - 1;
+        object? accumulator;
+
+        if (args.Length > 1)
+        {
+            accumulator = args[1].ToObject();
+        }
+        else
+        {
+            if (arr.Elements.Count == 0)
+                throw new Exception("Runtime Error: reduceRight of empty array with no initial value.");
+            accumulator = arr.Elements[arr.Elements.Count - 1];
+            startIndex = arr.Elements.Count - 2;
+        }
+
+        var callbackArgs = ArgumentListPool.Rent();
+        try
+        {
+            callbackArgs.Add(null);
+            callbackArgs.Add(null);
+            callbackArgs.Add(null);
+            callbackArgs.Add(arr);
+            for (int i = startIndex; i >= 0; i--)
+            {
+                callbackArgs[0] = accumulator;
+                callbackArgs[1] = arr.Elements[i];
+                callbackArgs[2] = (double)i;
+                accumulator = callback.Call(interp, callbackArgs);
+            }
+            return RuntimeValue.FromBoxed(accumulator);
+        }
+        finally
+        {
+            ArgumentListPool.Return(callbackArgs);
+        }
+    }
+
+    private static RuntimeValue FindLastV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        using var iter = CallbackIterator.CreateFromRV(args, arr, "findLast");
+        for (int i = arr.Elements.Count - 1; i >= 0; i--)
+        {
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
+                return RuntimeValue.FromBoxed(arr.Elements[i]);
+        }
+        return RuntimeValue.Null;
+    }
+
+    private static RuntimeValue FindLastIndexV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        using var iter = CallbackIterator.CreateFromRV(args, arr, "findLastIndex");
+        for (int i = arr.Elements.Count - 1; i >= 0; i--)
+        {
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
+                return RuntimeValue.FromNumber(i);
+        }
+        return RuntimeValue.FromNumber(-1);
+    }
+
     #endregion
 
     private static bool IsUndefined(object? obj)
@@ -863,6 +1044,17 @@ public static class ArrayBuiltIns
         public static CallbackIterator Create(List<object?> args, SharpTSArray arr, string methodName)
         {
             var callback = args[0] as ISharpTSCallable
+                ?? throw new Exception($"Runtime Error: {methodName} requires a function argument.");
+            var callbackArgs = ArgumentListPool.Rent();
+            callbackArgs.Add(null);
+            callbackArgs.Add(null);
+            callbackArgs.Add(arr);
+            return new CallbackIterator(callback, callbackArgs, RuntimeValue.FromObject(arr));
+        }
+
+        public static CallbackIterator CreateFromRV(ReadOnlySpan<RuntimeValue> args, SharpTSArray arr, string methodName)
+        {
+            var callback = args[0].ToObject() as ISharpTSCallable
                 ?? throw new Exception($"Runtime Error: {methodName} requires a function argument.");
             var callbackArgs = ArgumentListPool.Rent();
             callbackArgs.Add(null);
