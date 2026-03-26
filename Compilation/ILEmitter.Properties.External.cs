@@ -1,0 +1,321 @@
+using System.Reflection.Emit;
+using SharpTS.Diagnostics.Exceptions;
+using SharpTS.Parsing;
+using SharpTS.TypeSystem;
+
+namespace SharpTS.Compilation;
+
+public partial class ILEmitter
+{
+    /// <summary>
+    /// Tries to emit static property get access on an external .NET type (via @DotNetType).
+    /// Returns true if successful, false if property not found.
+    /// </summary>
+    private bool TryEmitExternalStaticPropertyGet(Type externalType, string propertyName)
+    {
+        // Try PascalCase first (most .NET properties use PascalCase)
+        string pascalPropertyName = NamingConventions.ToPascalCase(propertyName);
+
+        // Try to find a static property (first PascalCase, then original name)
+        var property = externalType.GetProperty(pascalPropertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                    ?? externalType.GetProperty(propertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+
+        if (property != null)
+        {
+            var getter = property.GetGetMethod();
+            if (getter != null)
+            {
+                IL.Emit(OpCodes.Call, getter);
+
+                if (property.PropertyType.IsValueType)
+                {
+                    IL.Emit(OpCodes.Box, property.PropertyType);
+                }
+                SetStackUnknown();
+                return true;
+            }
+        }
+
+        // Try to find a static field
+        var field = externalType.GetField(pascalPropertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                 ?? externalType.GetField(propertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+
+        if (field != null)
+        {
+            IL.Emit(OpCodes.Ldsfld, field);
+
+            if (field.FieldType.IsValueType)
+            {
+                IL.Emit(OpCodes.Box, field.FieldType);
+            }
+            SetStackUnknown();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Emits static member access on a class (used for both ClassName.property and this.property in static context).
+    /// Returns true if successful, false if property not found.
+    /// </summary>
+    private bool EmitStaticMemberAccess(string className, System.Reflection.Emit.TypeBuilder classBuilder, string propertyName)
+    {
+        // Try static getter first (for auto-accessors and explicit static accessors)
+        if (_ctx.ClassRegistry!.TryGetStaticGetter(className, propertyName, out var staticGetter))
+        {
+            IL.Emit(OpCodes.Call, staticGetter!);
+
+            // Track the stack type for proper boxing behavior
+            string pascalPropName = NamingConventions.ToPascalCase(propertyName);
+            if (_ctx.PropertyTypes != null &&
+                _ctx.PropertyTypes.TryGetValue(className, out var propTypes) &&
+                propTypes.TryGetValue(pascalPropName, out var propType))
+            {
+                if (propType == _ctx.Types.Double)
+                {
+                    SetStackType(StackType.Double);
+                }
+                else if (propType == _ctx.Types.Boolean)
+                {
+                    SetStackType(StackType.Boolean);
+                }
+                else if (propType == _ctx.Types.String)
+                {
+                    SetStackType(StackType.String);
+                }
+                else
+                {
+                    SetStackUnknown();
+                }
+            }
+            else
+            {
+                SetStackUnknown();
+            }
+            return true;
+        }
+
+        // Try to find static field using stored FieldBuilders
+        if (_ctx.ClassRegistry!.TryGetStaticField(className, propertyName, out var staticField))
+        {
+            IL.Emit(OpCodes.Ldsfld, staticField!);
+            SetStackUnknown();
+            return true;
+        }
+
+        // Try static private fields - strip leading # if present
+        string privateName = propertyName.StartsWith('#') ? propertyName[1..] : propertyName;
+        if (_ctx.ClassRegistry!.TryGetStaticPrivateField(className, privateName, out var staticPrivateField))
+        {
+            IL.Emit(OpCodes.Ldsfld, staticPrivateField!);
+            SetStackUnknown();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Emits static member set on a class (used for both ClassName.property = value and this.property = value in static context).
+    /// Returns true if successful, false if property not found.
+    /// </summary>
+    private bool EmitStaticMemberSet(string className, System.Reflection.Emit.TypeBuilder classBuilder, string propertyName, Expr value)
+    {
+        // Try static setter first (for auto-accessors and explicit static accessors)
+        if (_ctx.ClassRegistry!.TryGetStaticSetter(className, propertyName, out var staticSetter))
+        {
+            // Get the property type from PropertyTypes dictionary
+            Type propertyType = _ctx.Types.Object;
+            string pascalPropName = NamingConventions.ToPascalCase(propertyName);
+
+            if (_ctx.PropertyTypes != null &&
+                _ctx.PropertyTypes.TryGetValue(className, out var propTypes) &&
+                propTypes.TryGetValue(pascalPropName, out var propType))
+            {
+                propertyType = propType;
+            }
+            else
+            {
+                TypeInfo? valueType = _ctx.TypeMap?.Get(value);
+                if (valueType is TypeInfo.Primitive prim)
+                {
+                    propertyType = prim.Type switch
+                    {
+                        TokenType.TYPE_NUMBER => _ctx.Types.Double,
+                        TokenType.TYPE_BOOLEAN => _ctx.Types.Boolean,
+                        TokenType.TYPE_STRING => _ctx.Types.String,
+                        _ => _ctx.Types.Object
+                    };
+                }
+            }
+
+            EmitExpression(value);
+            EmitBoxIfNeeded(value);
+            IL.Emit(OpCodes.Dup); // Keep value for expression result
+            var staticSetterResultTemp = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, staticSetterResultTemp);
+
+            if (propertyType.IsValueType)
+            {
+                IL.Emit(OpCodes.Unbox_Any, propertyType);
+            }
+            else if (!_ctx.Types.IsObject(propertyType))
+            {
+                IL.Emit(OpCodes.Castclass, propertyType);
+            }
+
+            IL.Emit(OpCodes.Call, staticSetter!);
+
+            IL.Emit(OpCodes.Ldloc, staticSetterResultTemp);
+            return true;
+        }
+
+        // Try static fields - use TryGetCallableStaticField to handle generic classes properly
+        if (_ctx.ClassRegistry!.TryGetCallableStaticField(className, propertyName, classBuilder, out var callableStaticField))
+        {
+            EmitExpression(value);
+            EmitBoxIfNeeded(value);
+            IL.Emit(OpCodes.Dup); // Keep value for expression result
+            IL.Emit(OpCodes.Stsfld, callableStaticField!);
+            return true;
+        }
+
+        // Try static private fields
+        string privateFieldName = propertyName.StartsWith('#') ? propertyName[1..] : propertyName;
+        if (_ctx.ClassRegistry!.TryGetStaticPrivateField(className, privateFieldName, out var staticPrivateField))
+        {
+            EmitExpression(value);
+            EmitBoxIfNeeded(value);
+            IL.Emit(OpCodes.Dup); // Keep value for expression result
+            IL.Emit(OpCodes.Stsfld, staticPrivateField!);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Emits property get access on an external .NET type (via @DotNetType).
+    /// </summary>
+    private void EmitExternalPropertyGet(Expr receiver, Type externalType, string propertyName)
+    {
+        // Try PascalCase first (most .NET properties use PascalCase)
+        string pascalPropertyName = NamingConventions.ToPascalCase(propertyName);
+
+        // Try to find the property (first PascalCase, then original name)
+        var property = externalType.GetProperty(pascalPropertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                    ?? externalType.GetProperty(propertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+        if (property == null)
+        {
+            // Try to find a field instead
+            var field = externalType.GetField(pascalPropertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                     ?? externalType.GetField(propertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+            if (field != null)
+            {
+                // Emit field access
+                EmitExpression(receiver);
+                EmitBoxIfNeeded(receiver);
+                PrepareReceiverForMemberAccess(externalType);
+                IL.Emit(OpCodes.Ldfld, field);
+                BoxResultIfValueType(field.FieldType);
+                SetStackUnknown();
+                return;
+            }
+
+            throw new CompileException($"Property or field '{propertyName}' not found on external type {externalType.FullName}");
+        }
+
+        var getter = property.GetGetMethod();
+        if (getter == null)
+        {
+            throw new CompileException($"Property '{property.Name}' on external type {externalType.FullName} has no getter");
+        }
+
+        // Emit property access
+        EmitExpression(receiver);
+        EmitBoxIfNeeded(receiver);
+        bool isValueType = PrepareReceiverForMemberAccess(externalType);
+        IL.Emit(isValueType ? OpCodes.Call : OpCodes.Callvirt, getter);
+        BoxResultIfValueType(property.PropertyType);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits property set access on an external .NET type (via @DotNetType).
+    /// </summary>
+    private void EmitExternalPropertySet(Expr receiver, Type externalType, string propertyName, Expr value)
+    {
+        // Try PascalCase first (most .NET properties use PascalCase)
+        string pascalPropertyName = NamingConventions.ToPascalCase(propertyName);
+
+        // Try to find the property (first PascalCase, then original name)
+        var property = externalType.GetProperty(pascalPropertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                    ?? externalType.GetProperty(propertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+        if (property == null)
+        {
+            // Try to find a field instead
+            var field = externalType.GetField(pascalPropertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                     ?? externalType.GetField(propertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+            if (field != null)
+            {
+                // Emit field set
+                EmitExpression(receiver);
+                EmitBoxIfNeeded(receiver);
+                IL.Emit(OpCodes.Castclass, externalType);
+                EmitExpression(value);
+                EmitExternalTypeConversion(field.FieldType);
+
+                // Save value for expression result
+                IL.Emit(OpCodes.Dup);
+                var valueTemp = IL.DeclareLocal(field.FieldType);
+                IL.Emit(OpCodes.Stloc, valueTemp);
+
+                IL.Emit(OpCodes.Stfld, field);
+
+                // Put value back on stack as boxed result
+                IL.Emit(OpCodes.Ldloc, valueTemp);
+                if (field.FieldType.IsValueType)
+                {
+                    IL.Emit(OpCodes.Box, field.FieldType);
+                }
+                SetStackUnknown();
+                return;
+            }
+
+            throw new CompileException($"Property or field '{propertyName}' not found on external type {externalType.FullName}");
+        }
+
+        var setter = property.GetSetMethod();
+        if (setter == null)
+        {
+            throw new CompileException($"Property '{property.Name}' on external type {externalType.FullName} has no setter");
+        }
+
+        // Emit property set
+        EmitExpression(receiver);
+        EmitBoxIfNeeded(receiver);
+        IL.Emit(OpCodes.Castclass, externalType);
+        EmitExpression(value);
+        EmitExternalTypeConversion(property.PropertyType);
+
+        // Save value for expression result
+        IL.Emit(OpCodes.Dup);
+        var propValueTemp = IL.DeclareLocal(property.PropertyType);
+        IL.Emit(OpCodes.Stloc, propValueTemp);
+
+        IL.Emit(OpCodes.Callvirt, setter);
+
+        // Put value back on stack as boxed result
+        IL.Emit(OpCodes.Ldloc, propValueTemp);
+        if (property.PropertyType.IsValueType)
+        {
+            IL.Emit(OpCodes.Box, property.PropertyType);
+        }
+        SetStackUnknown();
+    }
+}
