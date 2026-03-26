@@ -240,7 +240,7 @@ public partial class Interpreter
                         // Capture the result but continue to finally for disposal
                         if (result.Type == ExecutionResult.ResultType.Throw)
                         {
-                            pendingError = result.Value;
+                            pendingError = result.Value.ToObject();
                         }
                         blockResult = result;
                         break;
@@ -330,7 +330,7 @@ public partial class Interpreter
     /// <returns>A ValueTask containing the execution result.</returns>
     private async ValueTask<ExecutionResult> ExecuteSwitchCore(IEvaluationContext ctx, Stmt.Switch switchStmt)
     {
-        object? subject = await ctx.EvaluateExprAsync(switchStmt.Subject);
+        object? subject = (await ctx.EvaluateExprAsync(switchStmt.Subject)).ToObject();
         bool fallen = false;
         bool matched = false;
 
@@ -338,7 +338,7 @@ public partial class Interpreter
         {
             if (!fallen && !matched)
             {
-                object? caseValue = await ctx.EvaluateExprAsync(caseItem.Value);
+                object? caseValue = (await ctx.EvaluateExprAsync(caseItem.Value)).ToObject();
                 if (IsEqual(subject, caseValue))
                 {
                     matched = true;
@@ -441,7 +441,7 @@ public partial class Interpreter
                 if (result.Type == ExecutionResult.ResultType.Throw)
                 {
                     pendingResult = result;
-                    (exceptionHandled, pendingResult) = await HandleCatchBlockCore(ctx, tryCatch, result.Value);
+                    (exceptionHandled, pendingResult) = await HandleCatchBlockCore(ctx, tryCatch, result.Value.ToObject());
                     break;
                 }
                 else if (result.IsAbrupt)
@@ -555,7 +555,7 @@ public partial class Interpreter
                 if (result.Type == ExecutionResult.ResultType.Throw)
                 {
                     pendingResult = result;
-                    (exceptionHandled, pendingResult) = HandleCatchBlock(tryCatch, result.Value);
+                    (exceptionHandled, pendingResult) = HandleCatchBlock(tryCatch, result.Value.ToObject());
                     break;
                 }
                 else if (result.IsAbrupt)

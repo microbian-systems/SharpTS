@@ -21,11 +21,11 @@ public partial class Interpreter
     /// <see cref="ApplyCompoundOperator"/>, and stores the result.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Addition_assignment">MDN Compound Assignment</seealso>
-    private object? EvaluateCompoundAssign(Expr.CompoundAssign compound)
+    private RuntimeValue EvaluateCompoundAssign(Expr.CompoundAssign compound)
     {
-        object? currentValue = _environment.Get(compound.Name).ToObject();
-        object? addValue = Evaluate(compound.Value);
-        object? newValue = ApplyCompoundOperator(compound.Operator.Type, currentValue, addValue);
+        RuntimeValue currentValue = _environment.Get(compound.Name);
+        RuntimeValue addValue = EvaluateRV(compound.Value);
+        RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, currentValue, addValue);
         _environment.Assign(compound.Name, newValue);
         return newValue;
     }
@@ -40,15 +40,15 @@ public partial class Interpreter
     /// plain objects (<see cref="SharpTSObject"/>).
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Addition_assignment">MDN Compound Assignment</seealso>
-    private object? EvaluateCompoundSet(Expr.CompoundSet compound)
+    private RuntimeValue EvaluateCompoundSet(Expr.CompoundSet compound)
     {
         object? obj = Evaluate(compound.Object);
-        object? addValue = Evaluate(compound.Value);
 
         if (TryGetProperty(obj, compound.Name, out object? currentValue))
         {
-            object? newValue = ApplyCompoundOperator(compound.Operator.Type, currentValue, addValue);
-            if (TrySetProperty(obj, compound.Name, newValue))
+            RuntimeValue addValue = EvaluateRV(compound.Value);
+            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, RuntimeValue.FromBoxed(currentValue), addValue);
+            if (TrySetProperty(obj, compound.Name, newValue.ToObject()))
             {
                 return newValue;
             }
@@ -66,17 +66,16 @@ public partial class Interpreter
     /// Currently only supports array element compound assignment.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Addition_assignment">MDN Compound Assignment</seealso>
-    private object? EvaluateCompoundSetIndex(Expr.CompoundSetIndex compound)
+    private RuntimeValue EvaluateCompoundSetIndex(Expr.CompoundSetIndex compound)
     {
         object? obj = Evaluate(compound.Object);
         object? index = Evaluate(compound.Index);
-        object? addValue = Evaluate(compound.Value);
 
         if (obj is SharpTSArray array && index is double idx)
         {
-            object? currentValue = array.Get((int)idx);
-            object? newValue = ApplyCompoundOperator(compound.Operator.Type, currentValue, addValue);
-            array.Set((int)idx, newValue);
+            RuntimeValue addValue = EvaluateRV(compound.Value);
+            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, RuntimeValue.FromBoxed(array.Get((int)idx)), addValue);
+            array.Set((int)idx, newValue.ToObject());
             return newValue;
         }
 
@@ -94,25 +93,25 @@ public partial class Interpreter
     /// - <c>x ||= y</c>: Only assigns y to x if x is falsy
     /// - <c>x ??= y</c>: Only assigns y to x if x is null/undefined
     /// </remarks>
-    private object? EvaluateLogicalAssign(Expr.LogicalAssign logical)
+    private RuntimeValue EvaluateLogicalAssign(Expr.LogicalAssign logical)
     {
-        object? currentValue = _environment.Get(logical.Name).ToObject();
+        RuntimeValue currentValue = _environment.Get(logical.Name);
 
         switch (logical.Operator.Type)
         {
             case TokenType.AND_AND_EQUAL:
-                if (!IsTruthy(currentValue)) return currentValue;
+                if (!currentValue.IsTruthy()) return currentValue;
                 break;
             case TokenType.OR_OR_EQUAL:
-                if (IsTruthy(currentValue)) return currentValue;
+                if (currentValue.IsTruthy()) return currentValue;
                 break;
             case TokenType.QUESTION_QUESTION_EQUAL:
-                if (currentValue != null && currentValue is not SharpTSUndefined) return currentValue;
+                if (!currentValue.IsNullish) return currentValue;
                 break;
         }
 
         // Short-circuit condition not met, evaluate and assign
-        object? newValue = Evaluate(logical.Value);
+        RuntimeValue newValue = EvaluateRV(logical.Value);
         _environment.Assign(logical.Name, newValue);
         return newValue;
     }
@@ -120,7 +119,7 @@ public partial class Interpreter
     /// <summary>
     /// Evaluates a logical assignment expression on an object property (e.g., <c>obj.x &&= y</c>).
     /// </summary>
-    private object? EvaluateLogicalSet(Expr.LogicalSet logical)
+    private RuntimeValue EvaluateLogicalSet(Expr.LogicalSet logical)
     {
         object? obj = Evaluate(logical.Object);
 
@@ -129,22 +128,23 @@ public partial class Interpreter
             throw new InterpreterException("Only instances and objects have fields.");
         }
 
+        RuntimeValue currentRV = RuntimeValue.FromBoxed(currentValue);
         switch (logical.Operator.Type)
         {
             case TokenType.AND_AND_EQUAL:
-                if (!IsTruthy(currentValue)) return currentValue;
+                if (!currentRV.IsTruthy()) return currentRV;
                 break;
             case TokenType.OR_OR_EQUAL:
-                if (IsTruthy(currentValue)) return currentValue;
+                if (currentRV.IsTruthy()) return currentRV;
                 break;
             case TokenType.QUESTION_QUESTION_EQUAL:
-                if (currentValue != null && currentValue is not SharpTSUndefined) return currentValue;
+                if (!currentRV.IsNullish) return currentRV;
                 break;
         }
 
         // Short-circuit condition not met, evaluate and assign
-        object? newValue = Evaluate(logical.Value);
-        if (!TrySetProperty(obj, logical.Name, newValue))
+        RuntimeValue newValue = EvaluateRV(logical.Value);
+        if (!TrySetProperty(obj, logical.Name, newValue.ToObject()))
         {
             throw new InterpreterException("Only instances and objects have fields.");
         }
@@ -154,31 +154,31 @@ public partial class Interpreter
     /// <summary>
     /// Evaluates a logical assignment expression on an array element (e.g., <c>arr[i] &&= y</c>).
     /// </summary>
-    private object? EvaluateLogicalSetIndex(Expr.LogicalSetIndex logical)
+    private RuntimeValue EvaluateLogicalSetIndex(Expr.LogicalSetIndex logical)
     {
         object? obj = Evaluate(logical.Object);
         object? index = Evaluate(logical.Index);
 
         if (obj is SharpTSArray array && index is double idx)
         {
-            object? currentValue = array.Get((int)idx);
+            RuntimeValue currentRV = RuntimeValue.FromBoxed(array.Get((int)idx));
 
             switch (logical.Operator.Type)
             {
                 case TokenType.AND_AND_EQUAL:
-                    if (!IsTruthy(currentValue)) return currentValue;
+                    if (!currentRV.IsTruthy()) return currentRV;
                     break;
                 case TokenType.OR_OR_EQUAL:
-                    if (IsTruthy(currentValue)) return currentValue;
+                    if (currentRV.IsTruthy()) return currentRV;
                     break;
                 case TokenType.QUESTION_QUESTION_EQUAL:
-                    if (currentValue != null && currentValue is not SharpTSUndefined) return currentValue;
+                    if (!currentRV.IsNullish) return currentRV;
                     break;
             }
 
             // Short-circuit condition not met, evaluate and assign
-            object? newValue = Evaluate(logical.Value);
-            array.Set((int)idx, newValue);
+            RuntimeValue newValue = EvaluateRV(logical.Value);
+            array.Set((int)idx, newValue.ToObject());
             return newValue;
         }
 
@@ -195,7 +195,7 @@ public partial class Interpreter
     /// Supports variables, property access, and index access as operands.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Increment">MDN Increment Operator</seealso>
-    private object? EvaluatePrefixIncrement(Expr.PrefixIncrement prefix)
+    private RuntimeValue EvaluatePrefixIncrement(Expr.PrefixIncrement prefix)
     {
         double delta = prefix.Operator.Type == TokenType.PLUS_PLUS ? 1 : -1;
         return EvaluateIncrement(prefix.Operand, delta, returnOld: false);
@@ -211,7 +211,7 @@ public partial class Interpreter
     /// Supports variables, property access, and index access as operands.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Increment">MDN Increment Operator</seealso>
-    private object? EvaluatePostfixIncrement(Expr.PostfixIncrement postfix)
+    private RuntimeValue EvaluatePostfixIncrement(Expr.PostfixIncrement postfix)
     {
         double delta = postfix.Operator.Type == TokenType.PLUS_PLUS ? 1 : -1;
         return EvaluateIncrement(postfix.Operand, delta, returnOld: true);
@@ -294,11 +294,11 @@ public partial class Interpreter
     /// - delete variable: throws SyntaxError in strict mode, returns false in sloppy mode
     /// - delete on non-existent property: returns true
     /// </remarks>
-    private object EvaluateDelete(Expr.Delete delete)
+    private RuntimeValue EvaluateDelete(Expr.Delete delete)
     {
         bool strictMode = _environment.IsStrictMode;
 
-        return delete.Operand switch
+        bool result = delete.Operand switch
         {
             Expr.Get get => DeleteProperty(get, strictMode),
             Expr.GetIndex getIndex => DeleteIndexedProperty(getIndex, strictMode),
@@ -308,6 +308,7 @@ public partial class Interpreter
                 SloppyModeWarnings.WarnAndReturn(false, "delete variable", $"delete {v.Name.Lexeme} returns false in sloppy mode"),
             _ => true // Deleting other expressions returns true but does nothing
         };
+        return RuntimeValue.FromBoolean(result);
     }
 
     /// <summary>

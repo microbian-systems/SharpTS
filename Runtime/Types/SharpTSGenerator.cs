@@ -114,11 +114,11 @@ public class SharpTSGenerator : IEnumerable<object?>
             var result = ExecuteStatements(_declaration.Body);
             if (result.Type == ExecutionResult.ResultType.Return)
             {
-                _returnValue = result.Value;
+                _returnValue = result.Value.ToObject();
             }
             else if (result.Type == ExecutionResult.ResultType.Throw)
             {
-                throw new Exception(_interpreter.Stringify(result.Value));
+                throw new Exception(_interpreter.Stringify(result.Value.ToObject()));
             }
         }
         finally
@@ -530,11 +530,11 @@ public class SharpTSArrowGenerator : IEnumerable<object?>
                 var result = ExecuteStatements(_declaration.BlockBody);
                 if (result.Type == ExecutionResult.ResultType.Return)
                 {
-                    _returnValue = result.Value;
+                    _returnValue = result.Value.ToObject();
                 }
                 else if (result.Type == ExecutionResult.ResultType.Throw)
                 {
-                    throw new Exception(_interpreter.Stringify(result.Value));
+                    throw new Exception(_interpreter.Stringify(result.Value.ToObject()));
                 }
             }
         }

@@ -71,11 +71,11 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable
         if (result.Type == ExecutionResult.ResultType.Return)
         {
             // Unwrap Promise if returning a Promise from async function
-            return await SharpTSPromise.UnwrapIfPromise(result.Value);
+            return await SharpTSPromise.UnwrapIfPromise(result.Value.ToObject());
         }
         if (result.Type == ExecutionResult.ResultType.Throw)
         {
-            throw new Exception(interpreter.Stringify(result.Value));
+            throw new Exception(interpreter.Stringify(result.Value.ToObject()));
         }
 
         return null;
@@ -172,11 +172,11 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable
             var result = await interpreter.ExecuteBlockAsync(_declaration.BlockBody, environment);
             if (result.Type == ExecutionResult.ResultType.Return)
             {
-                return await SharpTSPromise.UnwrapIfPromise(result.Value);
+                return await SharpTSPromise.UnwrapIfPromise(result.Value.ToObject());
             }
             if (result.Type == ExecutionResult.ResultType.Throw)
             {
-                throw new Exception(interpreter.Stringify(result.Value));
+                throw new Exception(interpreter.Stringify(result.Value.ToObject()));
             }
         }
 

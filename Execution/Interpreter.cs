@@ -106,6 +106,9 @@ public partial class Interpreter : IDisposable
     private readonly SyncEvaluationContext _syncContext;
     private readonly AsyncEvaluationContext _asyncContext;
 
+    // Cached wrapper for GlobalFunctionHandler delegate compatibility
+    private Func<Expr, ValueTask<object?>>? _syncEvalWrapperCached;
+
     /// <summary>
     /// The TextWriter used for stdout output (console.log, process.stdout.write, etc.).
     /// Defaults to Console.Out when not explicitly provided.
@@ -797,7 +800,7 @@ public partial class Interpreter : IDisposable
                     var result = Execute(statement);
                     if (result.Type == ExecutionResult.ResultType.Throw)
                     {
-                        Out.WriteLine($"Runtime Error: {Stringify(result.Value)}");
+                        Out.WriteLine($"Runtime Error: {Stringify(result.Value.ToObject())}");
                         return;
                     }
                     if (result.IsAbrupt)
@@ -853,7 +856,7 @@ public partial class Interpreter : IDisposable
                 var result = Execute(statement);
                 if (result.Type == ExecutionResult.ResultType.Throw)
                 {
-                    throw new InvalidOperationException($"Runtime Error: {Stringify(result.Value)}");
+                    throw new InvalidOperationException($"Runtime Error: {Stringify(result.Value.ToObject())}");
                 }
                 if (result.IsAbrupt)
                 {
@@ -959,7 +962,7 @@ public partial class Interpreter : IDisposable
                     var result = Execute(stmt);
                     if (result.Type == ExecutionResult.ResultType.Throw)
                     {
-                        throw new InterpreterException(Stringify(result.Value));
+                        throw new InterpreterException(Stringify(result.Value.ToObject()));
                     }
                     if (result.IsAbrupt) break;
                 }
@@ -1099,7 +1102,7 @@ public partial class Interpreter : IDisposable
                     var result = Execute(stmt);
                     if (result.Type == ExecutionResult.ResultType.Throw)
                     {
-                        throw new InterpreterException(Stringify(result.Value));
+                        throw new InterpreterException(Stringify(result.Value.ToObject()));
                     }
                     if (result.IsAbrupt) break;
                 }
@@ -1843,7 +1846,7 @@ public partial class Interpreter : IDisposable
                                     // Handle throw from static block
                                     if (result.Type == ExecutionResult.ResultType.Throw)
                                     {
-                                        throw new InterpreterException($"Error in static block: {Stringify(result.Value)}");
+                                        throw new InterpreterException($"Error in static block: {Stringify(result.Value.ToObject())}");
                                     }
                                     // Return, break, continue are not allowed (validated by type checker)
                                 }

@@ -1,5 +1,6 @@
 using System.Text;
 using SharpTS.Execution;
+using SharpTS.Runtime;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Runtime.BuiltIns;
@@ -9,32 +10,32 @@ public static class StringBuiltIns
     private static readonly BuiltInTypeMemberLookup<string> _lookup =
         BuiltInTypeBuilder<string>.ForInstanceType()
             .Property("length", s => (double)s.Length)
-            .Method("charAt", 1, CharAt)
-            .Method("substring", 1, 2, Substring)
-            .Method("indexOf", 1, IndexOf)
-            .Method("toUpperCase", 0, ToUpperCase)
-            .Method("toLowerCase", 0, ToLowerCase)
-            .Method("trim", 0, Trim)
+            .MethodV2("charAt", 1, CharAtV2)
+            .MethodV2("substring", 1, 2, SubstringV2)
+            .MethodV2("indexOf", 1, IndexOfV2)
+            .MethodV2("toUpperCase", 0, ToUpperCaseV2)
+            .MethodV2("toLowerCase", 0, ToLowerCaseV2)
+            .MethodV2("trim", 0, TrimV2)
             .Method("replace", 2, Replace)
             .Method("split", 1, 2, Split)
             .Method("match", 1, Match)
             .Method("matchAll", 1, MatchAll)
             .Method("search", 1, Search)
-            .Method("includes", 1, Includes)
-            .Method("startsWith", 1, StartsWith)
-            .Method("endsWith", 1, EndsWith)
-            .Method("slice", 1, 2, Slice)
-            .Method("repeat", 1, Repeat)
+            .MethodV2("includes", 1, IncludesV2)
+            .MethodV2("startsWith", 1, StartsWithV2)
+            .MethodV2("endsWith", 1, EndsWithV2)
+            .MethodV2("slice", 1, 2, SliceV2)
+            .MethodV2("repeat", 1, RepeatV2)
             .Method("padStart", 1, 2, PadStart)
             .Method("padEnd", 1, 2, PadEnd)
-            .Method("charCodeAt", 1, CharCodeAt)
+            .MethodV2("charCodeAt", 1, CharCodeAtV2)
             .Method("codePointAt", 1, CodePointAt)
             .Method("concat", 0, int.MaxValue, Concat)
-            .Method("lastIndexOf", 1, LastIndexOf)
-            .Method("trimStart", 0, TrimStart)
-            .Method("trimEnd", 0, TrimEnd)
+            .MethodV2("lastIndexOf", 1, LastIndexOfV2)
+            .MethodV2("trimStart", 0, TrimStartV2)
+            .MethodV2("trimEnd", 0, TrimEndV2)
             .Method("replaceAll", 2, ReplaceAll)
-            .Method("at", 1, At)
+            .MethodV2("at", 1, AtV2)
             .Method("normalize", 0, 1, Normalize)
             .Method("localeCompare", 1, LocaleCompare)
             .Build();
@@ -486,4 +487,100 @@ public static class StringBuiltIns
         }
         return sb.ToString();
     }
+
+    #region V2 Implementations (RuntimeValue — no boxing)
+
+    private static RuntimeValue CharAtV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var index = (int)args[0].AsNumber();
+        if (index < 0 || index >= str.Length) return RuntimeValue.EmptyString;
+        return RuntimeValue.FromString(str[index].ToString());
+    }
+
+    private static RuntimeValue SubstringV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var start = Math.Max(0, (int)args[0].AsNumber());
+        var end = args.Length > 1 ? (int)args[1].AsNumber() : str.Length;
+        if (start >= str.Length) return RuntimeValue.EmptyString;
+        if (end > str.Length) end = str.Length;
+        if (end <= start) return RuntimeValue.EmptyString;
+        return RuntimeValue.FromString(str.Substring(start, end - start));
+    }
+
+    private static RuntimeValue IndexOfV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var search = args[0].AsString();
+        return RuntimeValue.FromNumber(str.IndexOf(search));
+    }
+
+    private static RuntimeValue ToUpperCaseV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromString(str.ToUpper());
+
+    private static RuntimeValue ToLowerCaseV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromString(str.ToLower());
+
+    private static RuntimeValue TrimV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromString(str.Trim());
+
+    private static RuntimeValue IncludesV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoolean(str.Contains(args[0].AsString()));
+
+    private static RuntimeValue StartsWithV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoolean(str.StartsWith(args[0].AsString()));
+
+    private static RuntimeValue EndsWithV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoolean(str.EndsWith(args[0].AsString()));
+
+    private static RuntimeValue SliceV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var start = (int)args[0].AsNumber();
+        var end = args.Length > 1 ? (int)args[1].AsNumber() : str.Length;
+        if (start < 0) start = Math.Max(0, str.Length + start);
+        if (end < 0) end = Math.Max(0, str.Length + end);
+        start = Math.Min(start, str.Length);
+        end = Math.Min(end, str.Length);
+        if (end <= start) return RuntimeValue.EmptyString;
+        return RuntimeValue.FromString(str.Substring(start, end - start));
+    }
+
+    private static RuntimeValue RepeatV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var count = (int)args[0].AsNumber();
+        if (count < 0) throw new Exception("Runtime Error: Invalid count value for repeat()");
+        if (count == 0 || str.Length == 0) return RuntimeValue.EmptyString;
+        if (count == 1) return RuntimeValue.FromString(str);
+        return RuntimeValue.FromString(string.Create(str.Length * count, (str, count), static (span, state) =>
+        {
+            var (s, c) = state;
+            var srcSpan = s.AsSpan();
+            for (int i = 0; i < c; i++)
+                srcSpan.CopyTo(span.Slice(i * s.Length, s.Length));
+        }));
+    }
+
+    private static RuntimeValue CharCodeAtV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var index = (int)args[0].AsNumber();
+        if (index < 0 || index >= str.Length) return RuntimeValue.NaN;
+        return RuntimeValue.FromNumber(str[index]);
+    }
+
+    private static RuntimeValue LastIndexOfV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromNumber(str.LastIndexOf(args[0].AsString()));
+
+    private static RuntimeValue TrimStartV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromString(str.TrimStart());
+
+    private static RuntimeValue TrimEndV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromString(str.TrimEnd());
+
+    private static RuntimeValue AtV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var index = (int)args[0].AsNumber();
+        if (index < 0) index = str.Length + index;
+        if (index < 0 || index >= str.Length) return RuntimeValue.Null;
+        return RuntimeValue.FromString(str[index].ToString());
+    }
+
+    #endregion
 }

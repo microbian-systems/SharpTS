@@ -47,7 +47,7 @@ public partial class Interpreter
                 {
                     throw new InterpreterException($"{BuiltInNames.Promise} constructor requires exactly 1 argument (executor function), got {newExpr.Arguments.Count}.");
                 }
-                object? executor = await ctx.EvaluateExprAsync(newExpr.Arguments[0]);
+                object? executor = (await ctx.EvaluateExprAsync(newExpr.Arguments[0])).ToObject();
                 return CreatePromiseFromExecutor(executor);
             }
 
@@ -60,7 +60,7 @@ public partial class Interpreter
         }
 
         // Evaluate the callee expression to get the class/constructor
-        object? klass = await ctx.EvaluateExprAsync(newExpr.Callee);
+        object? klass = (await ctx.EvaluateExprAsync(newExpr.Callee)).ToObject();
 
         // Handle Proxy construct trap
         if (klass is SharpTSProxy proxy)
@@ -109,7 +109,7 @@ public partial class Interpreter
     /// Supports new on expressions: new ctor(), new Namespace.Class(), new (expr)()
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/classes.html#constructors">TypeScript Constructors</seealso>
-    private object? EvaluateNew(Expr.New newExpr)
+    private RuntimeValue EvaluateNew(Expr.New newExpr)
     {
         // Built-in types only apply when callee is a simple identifier
         bool isSimpleName = IsSimpleIdentifier(newExpr.Callee);
@@ -126,7 +126,7 @@ public partial class Interpreter
                     throw new InterpreterException($"{BuiltInNames.Promise} constructor requires exactly 1 argument (executor function), got {newExpr.Arguments.Count}.");
                 }
                 object? executor = Evaluate(newExpr.Arguments[0]);
-                return CreatePromiseFromExecutor(executor);
+                return RuntimeValue.FromObject(CreatePromiseFromExecutor(executor));
             }
 
             // Try factory for all other built-in constructors
@@ -137,7 +137,7 @@ public partial class Interpreter
                 {
                     args.Add(Evaluate(arg));
                 }
-                return BuiltInConstructorFactory.TryCreate(simpleClassName, args, this);
+                return RuntimeValue.FromBoxed(BuiltInConstructorFactory.TryCreate(simpleClassName, args, this));
             }
         }
 
@@ -152,7 +152,7 @@ public partial class Interpreter
             {
                 proxyArgs.Add(Evaluate(arg));
             }
-            return proxy.TrapConstruct(proxyArgs, this);
+            return RuntimeValue.FromBoxed(proxy.TrapConstruct(proxyArgs, this));
         }
 
         // Handle callable constructors (like SharpTSEventEmitterConstructor)
@@ -164,7 +164,7 @@ public partial class Interpreter
             {
                 ctorArgs.Add(Evaluate(arg));
             }
-            return callable.Call(this, ctorArgs);
+            return RuntimeValue.FromBoxed(callable.Call(this, ctorArgs));
         }
 
         // Bound functions cannot be used as constructors (JS spec compliance)
@@ -189,7 +189,7 @@ public partial class Interpreter
         {
             arguments.Add(Evaluate(arg));
         }
-        return sharpClass.Call(this, arguments);
+        return RuntimeValue.FromBoxed(sharpClass.Call(this, arguments));
     }
 
     /// <summary>
@@ -202,9 +202,9 @@ public partial class Interpreter
     /// on an instance.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/classes.html#this-at-runtime-in-classes">TypeScript this in Classes</seealso>
-    private object? EvaluateThis(Expr.This expr)
+    private RuntimeValue EvaluateThis(Expr.This expr)
     {
-        return _environment.Get(expr.Keyword).ToObject();
+        return _environment.Get(expr.Keyword);
     }
 
     /// <summary>
@@ -219,7 +219,7 @@ public partial class Interpreter
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/objects.html">TypeScript Object Types</seealso>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-7.html#optional-chaining">TypeScript Optional Chaining</seealso>
-    private object? EvaluateGet(Expr.Get get)
+    private RuntimeValue EvaluateGet(Expr.Get get)
     {
         // Handle namespace static property access (e.g., Number.MAX_VALUE, Number.NaN)
         // These namespaces don't have runtime values, but have static properties
@@ -233,14 +233,14 @@ public partial class Interpreter
                 if (member is BuiltInMethod bm && bm.MinArity == 0 && bm.MaxArity == 0)
                 {
                     // It's a constant property, invoke it to get the value
-                    return bm.Call(this, []);
+                    return RuntimeValue.FromBoxed(bm.Call(this, []));
                 }
-                return member;
+                return RuntimeValue.FromObject(member);
             }
         }
 
         object? obj = Evaluate(get.Object);
-        return EvaluateGetOnObject(get, obj);
+        return RuntimeValue.FromBoxed(EvaluateGetOnObject(get, obj));
     }
 
     /// <summary>
@@ -439,11 +439,11 @@ public partial class Interpreter
     /// and simple object property assignment.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/objects.html">TypeScript Object Types</seealso>
-    private object? EvaluateSet(Expr.Set set)
+    private RuntimeValue EvaluateSet(Expr.Set set)
     {
         object? obj = Evaluate(set.Object);
         object? value = Evaluate(set.Value);
-        return EvaluateSetOnObject(set, obj, value);
+        return RuntimeValue.FromBoxed(EvaluateSetOnObject(set, obj, value));
     }
 
     /// <summary>
@@ -600,10 +600,10 @@ public partial class Interpreter
     /// in the current <see cref="RuntimeEnvironment"/>.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/variable-declarations.html">TypeScript Variable Declarations</seealso>
-    private object? EvaluateAssign(Expr.Assign assign)
+    private RuntimeValue EvaluateAssign(Expr.Assign assign)
     {
-        object? value = Evaluate(assign.Value);
-        
+        RuntimeValue value = EvaluateRV(assign.Value);
+
         if (_locals.TryGetValue(assign, out int distance))
         {
             _environment.AssignAt(distance, assign.Name, value);
@@ -621,7 +621,7 @@ public partial class Interpreter
     /// <summary>
     /// Evaluates a private field access expression (obj.#field).
     /// </summary>
-    private object? EvaluateGetPrivate(Expr.GetPrivate expr)
+    private RuntimeValue EvaluateGetPrivate(Expr.GetPrivate expr)
     {
         object? obj = Evaluate(expr.Object);
         string fieldName = expr.Name.Lexeme;
@@ -633,7 +633,7 @@ public partial class Interpreter
             // The type checker already verified we're inside this class
             if (klass.HasStaticPrivateField(fieldName))
             {
-                return klass.GetStaticPrivateField(fieldName);
+                return RuntimeValue.FromBoxed(klass.GetStaticPrivateField(fieldName));
             }
 
             throw new InterpreterException($"Static private field '{fieldName}' does not exist on class '{klass.Name}'.");
@@ -645,7 +645,7 @@ public partial class Interpreter
             // For instance private fields, use the instance's class as the declaring class
             // The type checker already verified brand checking
             var declaringClass = instance.RuntimeClass;
-            return declaringClass.GetPrivateField(instance, fieldName);
+            return RuntimeValue.FromBoxed(declaringClass.GetPrivateField(instance, fieldName));
         }
 
         throw new InterpreterException($"Cannot read private field '{fieldName}' from non-class value.");
@@ -654,10 +654,10 @@ public partial class Interpreter
     /// <summary>
     /// Evaluates a private field assignment expression (obj.#field = value).
     /// </summary>
-    private object? EvaluateSetPrivate(Expr.SetPrivate expr)
+    private RuntimeValue EvaluateSetPrivate(Expr.SetPrivate expr)
     {
         object? obj = Evaluate(expr.Object);
-        object? value = Evaluate(expr.Value);
+        RuntimeValue value = EvaluateRV(expr.Value);
         string fieldName = expr.Name.Lexeme;
 
         // Handle static private field assignment on class
@@ -667,7 +667,7 @@ public partial class Interpreter
             // The type checker already verified we're inside this class
             if (klass.HasStaticPrivateField(fieldName))
             {
-                klass.SetStaticPrivateField(fieldName, value);
+                klass.SetStaticPrivateField(fieldName, value.ToObject());
                 return value;
             }
 
@@ -680,7 +680,7 @@ public partial class Interpreter
             // For instance private fields, use the instance's class as the declaring class
             // The type checker already verified brand checking
             var declaringClass = instance.RuntimeClass;
-            declaringClass.SetPrivateField(instance, fieldName, value);
+            declaringClass.SetPrivateField(instance, fieldName, value.ToObject());
             return value;
         }
 
@@ -690,7 +690,7 @@ public partial class Interpreter
     /// <summary>
     /// Evaluates a private method call expression (obj.#method(...)).
     /// </summary>
-    private object? EvaluateCallPrivate(Expr.CallPrivate expr)
+    private RuntimeValue EvaluateCallPrivate(Expr.CallPrivate expr)
     {
         object? obj = Evaluate(expr.Object);
         string methodName = expr.Name.Lexeme;
@@ -713,7 +713,7 @@ public partial class Interpreter
                 throw new InterpreterException($"Static private method '{methodName}' does not exist on class '{klass.Name}'.");
             }
 
-            return method.Call(this, arguments);
+            return RuntimeValue.FromBoxed(method.Call(this, arguments));
         }
 
         // Instance private method call
@@ -729,7 +729,7 @@ public partial class Interpreter
             }
 
             // Bind method to instance
-            return SharpTSClass.BindMethod(method, instance).Call(this, arguments);
+            return RuntimeValue.FromBoxed(SharpTSClass.BindMethod(method, instance).Call(this, arguments));
         }
 
         throw new InterpreterException($"Cannot call private method '{methodName}' on non-class value.");

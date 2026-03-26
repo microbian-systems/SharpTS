@@ -31,7 +31,7 @@ public interface ISharpTSCallable
 /// </remarks>
 /// <seealso cref="SharpTSArrowFunction"/>
 /// <seealso cref="RuntimeEnvironment"/>
-public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
+public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCategorized
 {
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Function;
@@ -48,6 +48,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     }
 
     public int Arity() => _arity;
+    int ISharpTSCallableV2.Arity => _arity;
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
@@ -67,11 +68,11 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         var result = interpreter.ExecuteBlock(_declaration.Body, environment);
         if (result.Type == ExecutionResult.ResultType.Return)
         {
-            return result.Value;
+            return result.Value.ToObject();
         }
         if (result.Type == ExecutionResult.ResultType.Throw)
         {
-            throw new Exception(interpreter.Stringify(result.Value));
+            throw new Exception(interpreter.Stringify(result.Value.ToObject()));
         }
 
         return null;
@@ -114,6 +115,36 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         return new SharpTSFunction(_declaration, environment);
     }
 
+    /// <summary>
+    /// V2 call path — avoids boxing at parameter and return boundaries.
+    /// </summary>
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    {
+        if (_declaration.Body == null)
+        {
+            throw new Exception($"Cannot invoke abstract method '{_declaration.Name.Lexeme}'.");
+        }
+
+        bool functionStrict = CheckForUseStrict(_declaration.Body);
+        RuntimeEnvironment environment = functionStrict
+            ? new RuntimeEnvironment(_closure, strictMode: true)
+            : new RuntimeEnvironment(_closure);
+
+        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
+
+        var result = interpreter.ExecuteBlock(_declaration.Body, environment);
+        if (result.Type == ExecutionResult.ResultType.Return)
+        {
+            return result.Value;
+        }
+        if (result.Type == ExecutionResult.ResultType.Throw)
+        {
+            throw new Exception(interpreter.Stringify(result.Value.ToObject()));
+        }
+
+        return RuntimeValue.Undefined;
+    }
+
     public override string ToString() => $"<fn {_declaration.Name.Lexeme}>";
 }
 
@@ -127,7 +158,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
 /// For function expressions and object method shorthand (<c>HasOwnThis=true</c>), <c>this</c> is bound at call time.
 /// </remarks>
 /// <seealso cref="SharpTSFunction"/>
-public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
+public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCategorized
 {
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Function;
@@ -151,6 +182,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
     }
 
     public int Arity() => _arity;
+    int ISharpTSCallableV2.Arity => _arity;
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
@@ -182,15 +214,56 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             var result = interpreter.ExecuteBlock(_declaration.BlockBody, environment);
             if (result.Type == ExecutionResult.ResultType.Return)
             {
-                return result.Value;
+                return result.Value.ToObject();
             }
             if (result.Type == ExecutionResult.ResultType.Throw)
             {
-                throw new Exception(interpreter.Stringify(result.Value));
+                throw new Exception(interpreter.Stringify(result.Value.ToObject()));
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// V2 call path — avoids boxing at parameter and return boundaries.
+    /// </summary>
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    {
+        bool functionStrict = _declaration.BlockBody != null && CheckForUseStrict(_declaration.BlockBody);
+        RuntimeEnvironment environment = functionStrict
+            ? new RuntimeEnvironment(_closure, strictMode: true)
+            : new RuntimeEnvironment(_closure);
+
+        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
+
+        if (_declaration.ExpressionBody != null)
+        {
+            RuntimeEnvironment previous = interpreter.Environment;
+            try
+            {
+                interpreter.SetEnvironment(environment);
+                return interpreter.EvaluateRV(_declaration.ExpressionBody);
+            }
+            finally
+            {
+                interpreter.SetEnvironment(previous);
+            }
+        }
+        else if (_declaration.BlockBody != null)
+        {
+            var result = interpreter.ExecuteBlock(_declaration.BlockBody, environment);
+            if (result.Type == ExecutionResult.ResultType.Return)
+            {
+                return result.Value;
+            }
+            if (result.Type == ExecutionResult.ResultType.Throw)
+            {
+                throw new Exception(interpreter.Stringify(result.Value.ToObject()));
+            }
+        }
+
+        return RuntimeValue.Undefined;
     }
 
     /// <summary>

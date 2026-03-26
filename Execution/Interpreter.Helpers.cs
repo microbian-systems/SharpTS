@@ -155,7 +155,7 @@ public partial class Interpreter
     /// <param name="returnOld">If <c>true</c>, returns the old value (postfix); otherwise returns the new value (prefix).</param>
     /// <returns>The old or new value depending on <paramref name="returnOld"/>.</returns>
     /// <exception cref="Exception">Thrown if the operand is not a valid l-value.</exception>
-    private object? EvaluateIncrement(Expr operand, double delta, bool returnOld)
+    private RuntimeValue EvaluateIncrement(Expr operand, double delta, bool returnOld)
     {
         switch (operand)
         {
@@ -164,7 +164,7 @@ public partial class Interpreter
                 double current = _environment.Get(variable.Name).AsNumber();
                 double newValue = current + delta;
                 _environment.Assign(variable.Name, RuntimeValue.FromNumber(newValue));
-                return returnOld ? current : newValue;
+                return RuntimeValue.FromNumber(returnOld ? current : newValue);
             }
 
             case Expr.Get get:
@@ -176,7 +176,7 @@ public partial class Interpreter
                     double newValue = current + delta;
                     if (TrySetProperty(obj, get.Name, newValue))
                     {
-                        return returnOld ? current : newValue;
+                        return RuntimeValue.FromNumber(returnOld ? current : newValue);
                     }
                 }
                 break;
@@ -192,7 +192,7 @@ public partial class Interpreter
                     double newValue = current + delta;
                     if (TrySetIndex(obj, index, newValue))
                     {
-                        return returnOld ? current : newValue;
+                        return RuntimeValue.FromNumber(returnOld ? current : newValue);
                     }
                 }
                 break;

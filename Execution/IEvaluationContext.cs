@@ -39,7 +39,7 @@ public interface IEvaluationContext
     /// </summary>
     /// <param name="expr">The expression to evaluate.</param>
     /// <returns>A ValueTask containing the evaluation result.</returns>
-    ValueTask<object?> EvaluateExprAsync(Expr expr);
+    ValueTask<RuntimeValue> EvaluateExprAsync(Expr expr);
 
     /// <summary>
     /// Executes a statement, returning the result as a ValueTask.
@@ -67,11 +67,11 @@ internal sealed class SyncEvaluationContext : IEvaluationContext
     public RuntimeEnvironment Environment => _interpreter.Environment;
     public bool IsAsync => false;
 
-    public ValueTask<object?> EvaluateExprAsync(Expr expr)
+    public ValueTask<RuntimeValue> EvaluateExprAsync(Expr expr)
     {
-        // Sync path: evaluate immediately and return completed ValueTask
-        var result = _interpreter.Evaluate(expr);
-        return new ValueTask<object?>(result);
+        // Sync path: evaluate directly as RuntimeValue — no boxing
+        var result = _interpreter.EvaluateRV(expr);
+        return new ValueTask<RuntimeValue>(result);
     }
 
     public ValueTask<ExecutionResult> ExecuteStmtAsync(Stmt stmt)
@@ -99,10 +99,16 @@ internal sealed class AsyncEvaluationContext : IEvaluationContext
     public RuntimeEnvironment Environment => _interpreter.Environment;
     public bool IsAsync => true;
 
-    public ValueTask<object?> EvaluateExprAsync(Expr expr)
+    public ValueTask<RuntimeValue> EvaluateExprAsync(Expr expr)
     {
-        // Async path: use the async evaluator
-        return new ValueTask<object?>(_interpreter.EvaluateAsync(expr));
+        // Async path: use the async evaluator, wrap result as RuntimeValue
+        return new ValueTask<RuntimeValue>(EvaluateAsyncRV(expr));
+    }
+
+    private async Task<RuntimeValue> EvaluateAsyncRV(Expr expr)
+    {
+        var result = await _interpreter.EvaluateAsync(expr);
+        return RuntimeValue.FromBoxed(result);
     }
 
     public ValueTask<ExecutionResult> ExecuteStmtAsync(Stmt stmt)
@@ -127,7 +133,7 @@ internal static class EvaluationContextExtensions
         var results = new List<object?>();
         foreach (var expr in exprs)
         {
-            results.Add(await ctx.EvaluateExprAsync(expr));
+            results.Add((await ctx.EvaluateExprAsync(expr)).ToObject());
         }
         return results;
     }

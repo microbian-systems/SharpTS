@@ -159,4 +159,9 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     /// Wraps the value in RuntimeValue.FromBoxed automatically.
     /// </summary>
     public void Define(string name, object? value) => _values[name] = RuntimeValue.FromBoxed(value);
+
+    /// <summary>
+    /// Defines a variable with a RuntimeValue directly, avoiding FromBoxed overhead.
+    /// </summary>
+    public void Define(string name, RuntimeValue value) => _values[name] = value;
 }

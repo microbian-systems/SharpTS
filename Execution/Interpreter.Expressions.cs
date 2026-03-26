@@ -42,10 +42,8 @@ public partial class Interpreter
         return _registry.DispatchExpr(expr, this);
     }
 
-    // Expression handlers - called by the registry via RuntimeValue dispatch
-    // Each wraps its Evaluate* result with RuntimeValue.FromBoxed() for now.
-    // As individual Evaluate* methods are migrated to return RuntimeValue,
-    // the FromBoxed() wrapping can be removed.
+    // Expression handlers - called by the registry via RuntimeValue dispatch.
+    // All Evaluate* methods return RuntimeValue directly — no FromBoxed in dispatch.
 
     internal RuntimeValue VisitComma(Expr.Comma comma) { Evaluate(comma.Left); return EvaluateRV(comma.Right); }
     internal RuntimeValue VisitBinary(Expr.Binary binary) => EvaluateBinary(binary);
@@ -55,43 +53,43 @@ public partial class Interpreter
     internal RuntimeValue VisitGrouping(Expr.Grouping grouping) => EvaluateRV(grouping.Expression);
     internal RuntimeValue VisitLiteral(Expr.Literal literal) => EvaluateLiteral(literal);
     internal RuntimeValue VisitUnary(Expr.Unary unary) => EvaluateUnary(unary);
-    internal RuntimeValue VisitDelete(Expr.Delete delete) => RuntimeValue.FromBoxed(EvaluateDelete(delete));
+    internal RuntimeValue VisitDelete(Expr.Delete delete) => EvaluateDelete(delete);
     internal RuntimeValue VisitVariable(Expr.Variable variable) => LookupVariableRV(variable.Name, variable);
-    internal RuntimeValue VisitAssign(Expr.Assign assign) => RuntimeValue.FromBoxed(EvaluateAssign(assign));
-    internal RuntimeValue VisitCall(Expr.Call call) => RuntimeValue.FromBoxed(EvaluateCall(call));
-    internal RuntimeValue VisitGet(Expr.Get get) => RuntimeValue.FromBoxed(EvaluateGet(get));
-    internal RuntimeValue VisitSet(Expr.Set set) => RuntimeValue.FromBoxed(EvaluateSet(set));
-    internal RuntimeValue VisitGetPrivate(Expr.GetPrivate gp) => RuntimeValue.FromBoxed(EvaluateGetPrivate(gp));
-    internal RuntimeValue VisitSetPrivate(Expr.SetPrivate sp) => RuntimeValue.FromBoxed(EvaluateSetPrivate(sp));
-    internal RuntimeValue VisitCallPrivate(Expr.CallPrivate cp) => RuntimeValue.FromBoxed(EvaluateCallPrivate(cp));
-    internal RuntimeValue VisitThis(Expr.This thisExpr) => RuntimeValue.FromBoxed(EvaluateThis(thisExpr));
-    internal RuntimeValue VisitNew(Expr.New newExpr) => RuntimeValue.FromBoxed(EvaluateNew(newExpr));
-    internal RuntimeValue VisitArrayLiteral(Expr.ArrayLiteral array) => RuntimeValue.FromBoxed(EvaluateArray(array));
-    internal RuntimeValue VisitObjectLiteral(Expr.ObjectLiteral obj) => RuntimeValue.FromBoxed(EvaluateObject(obj));
-    internal RuntimeValue VisitGetIndex(Expr.GetIndex getIndex) => RuntimeValue.FromBoxed(EvaluateGetIndex(getIndex));
-    internal RuntimeValue VisitSetIndex(Expr.SetIndex setIndex) => RuntimeValue.FromBoxed(EvaluateSetIndex(setIndex));
-    internal RuntimeValue VisitSuper(Expr.Super super) => RuntimeValue.FromBoxed(EvaluateSuper(super));
-    internal RuntimeValue VisitCompoundAssign(Expr.CompoundAssign compound) => RuntimeValue.FromBoxed(EvaluateCompoundAssign(compound));
-    internal RuntimeValue VisitCompoundSet(Expr.CompoundSet compoundSet) => RuntimeValue.FromBoxed(EvaluateCompoundSet(compoundSet));
-    internal RuntimeValue VisitCompoundSetIndex(Expr.CompoundSetIndex compoundSetIndex) => RuntimeValue.FromBoxed(EvaluateCompoundSetIndex(compoundSetIndex));
-    internal RuntimeValue VisitLogicalAssign(Expr.LogicalAssign logical) => RuntimeValue.FromBoxed(EvaluateLogicalAssign(logical));
-    internal RuntimeValue VisitLogicalSet(Expr.LogicalSet logicalSet) => RuntimeValue.FromBoxed(EvaluateLogicalSet(logicalSet));
-    internal RuntimeValue VisitLogicalSetIndex(Expr.LogicalSetIndex logicalSetIndex) => RuntimeValue.FromBoxed(EvaluateLogicalSetIndex(logicalSetIndex));
-    internal RuntimeValue VisitPrefixIncrement(Expr.PrefixIncrement prefix) => RuntimeValue.FromBoxed(EvaluatePrefixIncrement(prefix));
-    internal RuntimeValue VisitPostfixIncrement(Expr.PostfixIncrement postfix) => RuntimeValue.FromBoxed(EvaluatePostfixIncrement(postfix));
-    internal RuntimeValue VisitArrowFunction(Expr.ArrowFunction arrow) => RuntimeValue.FromBoxed(EvaluateArrowFunction(arrow));
-    internal RuntimeValue VisitTemplateLiteral(Expr.TemplateLiteral template) => RuntimeValue.FromBoxed(EvaluateTemplateLiteral(template));
-    internal RuntimeValue VisitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral tagged) => RuntimeValue.FromBoxed(EvaluateTaggedTemplateLiteral(tagged));
+    internal RuntimeValue VisitAssign(Expr.Assign assign) => EvaluateAssign(assign);
+    internal RuntimeValue VisitCall(Expr.Call call) => EvaluateCall(call);
+    internal RuntimeValue VisitGet(Expr.Get get) => EvaluateGet(get);
+    internal RuntimeValue VisitSet(Expr.Set set) => EvaluateSet(set);
+    internal RuntimeValue VisitGetPrivate(Expr.GetPrivate gp) => EvaluateGetPrivate(gp);
+    internal RuntimeValue VisitSetPrivate(Expr.SetPrivate sp) => EvaluateSetPrivate(sp);
+    internal RuntimeValue VisitCallPrivate(Expr.CallPrivate cp) => EvaluateCallPrivate(cp);
+    internal RuntimeValue VisitThis(Expr.This thisExpr) => EvaluateThis(thisExpr);
+    internal RuntimeValue VisitNew(Expr.New newExpr) => EvaluateNew(newExpr);
+    internal RuntimeValue VisitArrayLiteral(Expr.ArrayLiteral array) => EvaluateArray(array);
+    internal RuntimeValue VisitObjectLiteral(Expr.ObjectLiteral obj) => EvaluateObject(obj);
+    internal RuntimeValue VisitGetIndex(Expr.GetIndex getIndex) => EvaluateGetIndex(getIndex);
+    internal RuntimeValue VisitSetIndex(Expr.SetIndex setIndex) => EvaluateSetIndex(setIndex);
+    internal RuntimeValue VisitSuper(Expr.Super super) => EvaluateSuper(super);
+    internal RuntimeValue VisitCompoundAssign(Expr.CompoundAssign compound) => EvaluateCompoundAssign(compound);
+    internal RuntimeValue VisitCompoundSet(Expr.CompoundSet compoundSet) => EvaluateCompoundSet(compoundSet);
+    internal RuntimeValue VisitCompoundSetIndex(Expr.CompoundSetIndex compoundSetIndex) => EvaluateCompoundSetIndex(compoundSetIndex);
+    internal RuntimeValue VisitLogicalAssign(Expr.LogicalAssign logical) => EvaluateLogicalAssign(logical);
+    internal RuntimeValue VisitLogicalSet(Expr.LogicalSet logicalSet) => EvaluateLogicalSet(logicalSet);
+    internal RuntimeValue VisitLogicalSetIndex(Expr.LogicalSetIndex logicalSetIndex) => EvaluateLogicalSetIndex(logicalSetIndex);
+    internal RuntimeValue VisitPrefixIncrement(Expr.PrefixIncrement prefix) => EvaluatePrefixIncrement(prefix);
+    internal RuntimeValue VisitPostfixIncrement(Expr.PostfixIncrement postfix) => EvaluatePostfixIncrement(postfix);
+    internal RuntimeValue VisitArrowFunction(Expr.ArrowFunction arrow) => EvaluateArrowFunction(arrow);
+    internal RuntimeValue VisitTemplateLiteral(Expr.TemplateLiteral template) => EvaluateTemplateLiteral(template);
+    internal RuntimeValue VisitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral tagged) => EvaluateTaggedTemplateLiteral(tagged);
     internal RuntimeValue VisitSpread(Expr.Spread spread) => EvaluateRV(spread.Expression);
     internal RuntimeValue VisitTypeAssertion(Expr.TypeAssertion ta) => EvaluateRV(ta.Expression);
     internal RuntimeValue VisitSatisfies(Expr.Satisfies sat) => EvaluateRV(sat.Expression);
     internal RuntimeValue VisitNonNullAssertion(Expr.NonNullAssertion nna) => EvaluateRV(nna.Expression);
     internal RuntimeValue VisitAwait(Expr.Await awaitExpr) => throw new InterpreterException("'await' can only be used inside async functions.");
-    internal RuntimeValue VisitDynamicImport(Expr.DynamicImport di) => RuntimeValue.FromBoxed(EvaluateDynamicImport(di));
-    internal RuntimeValue VisitImportMeta(Expr.ImportMeta im) => RuntimeValue.FromBoxed(EvaluateImportMeta(im));
-    internal RuntimeValue VisitYield(Expr.Yield yieldExpr) => RuntimeValue.FromBoxed(EvaluateYield(yieldExpr));
+    internal RuntimeValue VisitDynamicImport(Expr.DynamicImport di) => EvaluateDynamicImport(di);
+    internal RuntimeValue VisitImportMeta(Expr.ImportMeta im) => EvaluateImportMeta(im);
+    internal RuntimeValue VisitYield(Expr.Yield yieldExpr) => EvaluateYield(yieldExpr);
     internal RuntimeValue VisitRegexLiteral(Expr.RegexLiteral regex) => RuntimeValue.FromObject(new SharpTSRegExp(regex.Pattern, regex.Flags));
-    internal RuntimeValue VisitClassExpr(Expr.ClassExpr classExpr) => RuntimeValue.FromBoxed(EvaluateClassExpression(classExpr));
+    internal RuntimeValue VisitClassExpr(Expr.ClassExpr classExpr) => EvaluateClassExpression(classExpr);
 
     /// <summary>
     /// Asynchronously dispatches an expression to the appropriate evaluator.
@@ -129,25 +127,25 @@ public partial class Interpreter
             case Expr.Call call: return await EvaluateCallAsync(call);
             case Expr.Get get: return await EvaluateGetAsync(get);
             case Expr.Set set: return await EvaluateSetAsync(set);
-            case Expr.GetPrivate gp: return EvaluateGetPrivate(gp);
-            case Expr.SetPrivate sp: return EvaluateSetPrivate(sp);
-            case Expr.CallPrivate cp: return EvaluateCallPrivate(cp);
-            case Expr.This thisExpr: return EvaluateThis(thisExpr);
+            case Expr.GetPrivate gp: return EvaluateGetPrivate(gp).ToObject();
+            case Expr.SetPrivate sp: return EvaluateSetPrivate(sp).ToObject();
+            case Expr.CallPrivate cp: return EvaluateCallPrivate(cp).ToObject();
+            case Expr.This thisExpr: return EvaluateThis(thisExpr).ToObject();
             case Expr.New newExpr: return await EvaluateNewAsync(newExpr);
             case Expr.ArrayLiteral array: return await EvaluateArrayAsync(array);
             case Expr.ObjectLiteral obj: return await EvaluateObjectAsync(obj);
             case Expr.GetIndex getIndex: return await EvaluateGetIndexAsync(getIndex);
             case Expr.SetIndex setIndex: return await EvaluateSetIndexAsync(setIndex);
-            case Expr.Super super: return EvaluateSuper(super);
+            case Expr.Super super: return EvaluateSuper(super).ToObject();
             case Expr.CompoundAssign compound: return await EvaluateCompoundAssignAsync(compound);
             case Expr.CompoundSet compoundSet: return await EvaluateCompoundSetAsync(compoundSet);
             case Expr.CompoundSetIndex compoundSetIndex: return await EvaluateCompoundSetIndexAsync(compoundSetIndex);
             case Expr.LogicalAssign logical: return await EvaluateLogicalAssignAsync(logical);
             case Expr.LogicalSet logicalSet: return await EvaluateLogicalSetAsync(logicalSet);
             case Expr.LogicalSetIndex logicalSetIndex: return await EvaluateLogicalSetIndexAsync(logicalSetIndex);
-            case Expr.PrefixIncrement prefix: return EvaluatePrefixIncrement(prefix);
-            case Expr.PostfixIncrement postfix: return EvaluatePostfixIncrement(postfix);
-            case Expr.ArrowFunction arrow: return EvaluateArrowFunction(arrow);
+            case Expr.PrefixIncrement prefix: return EvaluatePrefixIncrement(prefix).ToObject();
+            case Expr.PostfixIncrement postfix: return EvaluatePostfixIncrement(postfix).ToObject();
+            case Expr.ArrowFunction arrow: return EvaluateArrowFunction(arrow).ToObject();
             case Expr.TemplateLiteral template: return await EvaluateTemplateLiteralAsync(template);
             case Expr.TaggedTemplateLiteral tagged: return await EvaluateTaggedTemplateLiteralAsync(tagged);
             case Expr.Spread spread: return await EvaluateAsync(spread.Expression);
@@ -155,11 +153,11 @@ public partial class Interpreter
             case Expr.Satisfies sat: return await EvaluateAsync(sat.Expression);
             case Expr.NonNullAssertion nna: return await EvaluateAsync(nna.Expression);
             case Expr.Await awaitExpr: return await EvaluateAwaitAsync(awaitExpr);
-            case Expr.DynamicImport di: return EvaluateDynamicImport(di);
-            case Expr.ImportMeta im: return EvaluateImportMeta(im);
-            case Expr.Yield yieldExpr: return EvaluateYield(yieldExpr);
+            case Expr.DynamicImport di: return EvaluateDynamicImport(di).ToObject();
+            case Expr.ImportMeta im: return EvaluateImportMeta(im).ToObject();
+            case Expr.Yield yieldExpr: return EvaluateYield(yieldExpr).ToObject();
             case Expr.RegexLiteral regex: return new SharpTSRegExp(regex.Pattern, regex.Flags);
-            case Expr.ClassExpr classExpr: return EvaluateClassExpression(classExpr);
+            case Expr.ClassExpr classExpr: return EvaluateClassExpression(classExpr).ToObject();
             default: throw new InvalidOperationException($"Runtime Error: Unhandled expression type in async Interpreter: {expr.GetType().Name}");
         }
     }
@@ -174,7 +172,7 @@ public partial class Interpreter
     /// which is caught by SharpTSGenerator.Next() to extract the yielded value.
     /// For yield*, the IsDelegating flag indicates delegation to another iterable.
     /// </remarks>
-    private object? EvaluateYield(Expr.Yield yieldExpr)
+    private RuntimeValue EvaluateYield(Expr.Yield yieldExpr)
     {
         object? value = yieldExpr.Value != null ? Evaluate(yieldExpr.Value) : null;
         throw new YieldException(value, yieldExpr.IsDelegating);
@@ -241,10 +239,10 @@ public partial class Interpreter
     /// stringifying each expression result before concatenation.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Template_literals">MDN Template Literals</seealso>
-    private object? EvaluateTemplateLiteral(Expr.TemplateLiteral template)
+    private RuntimeValue EvaluateTemplateLiteral(Expr.TemplateLiteral template)
     {
         var evaluatedExprs = template.Expressions.Select(Evaluate).ToList();
-        return BuildTemplateLiteralString(template.Strings, evaluatedExprs);
+        return RuntimeValue.FromString(BuildTemplateLiteralString(template.Strings, evaluatedExprs));
     }
 
     /// <summary>
@@ -252,7 +250,7 @@ public partial class Interpreter
     /// </summary>
     /// <param name="tagged">The tagged template literal AST node.</param>
     /// <returns>The result of calling the tag function.</returns>
-    private object? EvaluateTaggedTemplateLiteral(Expr.TaggedTemplateLiteral tagged)
+    private RuntimeValue EvaluateTaggedTemplateLiteral(Expr.TaggedTemplateLiteral tagged)
     {
         object? tag = Evaluate(tagged.Tag);
 
@@ -269,7 +267,7 @@ public partial class Interpreter
         foreach (var expr in tagged.Expressions)
             args.Add(Evaluate(expr));
 
-        return callable.Call(this, args);
+        return RuntimeValue.FromBoxed(callable.Call(this, args));
     }
 
     /// <summary>
@@ -284,7 +282,7 @@ public partial class Interpreter
     /// no-op callable to match TypeScript's implicit default constructor behavior.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/classes.html#super-calls">TypeScript super Calls</seealso>
-    private object? EvaluateSuper(Expr.Super expr)
+    private RuntimeValue EvaluateSuper(Expr.Super expr)
     {
         SharpTSClass superclass = _environment.Get(expr.Keyword).AsObject<SharpTSClass>()!;
         SharpTSInstance instance = _environment.Get(new Token(TokenType.THIS, "this", null, 0)).AsObject<SharpTSInstance>()!;
@@ -297,7 +295,7 @@ public partial class Interpreter
         // This matches TypeScript's implicit default constructor behavior
         if (method == null && methodName == "constructor")
         {
-            return new NoOpCallable();
+            return RuntimeValue.FromObject(new NoOpCallable());
         }
 
         if (method == null)
@@ -305,7 +303,7 @@ public partial class Interpreter
             throw new InterpreterException($"Undefined property '{methodName}'.");
         }
 
-        return SharpTSClass.BindMethod(method, instance);
+        return RuntimeValue.FromObject(SharpTSClass.BindMethod(method, instance));
     }
 
     /// <summary>
@@ -329,7 +327,7 @@ public partial class Interpreter
     /// for recursion, but not outside.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/functions.html#arrow-functions">TypeScript Arrow Functions</seealso>
-    private object? EvaluateArrowFunction(Expr.ArrowFunction arrow)
+    private RuntimeValue EvaluateArrowFunction(Expr.ArrowFunction arrow)
     {
         RuntimeEnvironment closure = _environment;
 
@@ -364,7 +362,7 @@ public partial class Interpreter
             closure.Assign(arrow.Name, func);
         }
 
-        return func;
+        return RuntimeValue.FromObject(func);
     }
 
     /// <summary>
@@ -393,7 +391,7 @@ public partial class Interpreter
             Expr.IdentifierKey ik => ik.Name.Lexeme,
             Expr.LiteralKey lk when lk.Literal.Type == TokenType.STRING => (string)lk.Literal.Literal!,
             Expr.LiteralKey lk when lk.Literal.Type == TokenType.NUMBER => lk.Literal.Literal!.ToString()!,
-            Expr.ComputedKey ck => (await ctx.EvaluateExprAsync(ck.Expression))?.ToString() ?? "undefined",
+            Expr.ComputedKey ck => (await ctx.EvaluateExprAsync(ck.Expression)).ToObject()?.ToString() ?? "undefined",
             _ => throw new InterpreterException("Invalid property key for accessor.")
         };
     }
@@ -453,7 +451,7 @@ public partial class Interpreter
                 stringFields[lk.Literal.Literal!.ToString()!] = value;
                 break;
             case Expr.ComputedKey ck:
-                object? keyValue = await ctx.EvaluateExprAsync(ck.Expression);
+                object? keyValue = (await ctx.EvaluateExprAsync(ck.Expression)).ToObject();
                 if (keyValue is SharpTSSymbol sym)
                     symbolFields[sym] = value;
                 else if (keyValue is double numKey)
@@ -481,7 +479,7 @@ public partial class Interpreter
         {
             if (prop.IsSpread)
             {
-                object? spreadValue = await ctx.EvaluateExprAsync(prop.Value);
+                object? spreadValue = (await ctx.EvaluateExprAsync(prop.Value)).ToObject();
                 ApplySpreadToFields(spreadValue, stringFields);
             }
             else if (prop.Kind == Expr.ObjectPropertyKind.Getter)
@@ -500,7 +498,7 @@ public partial class Interpreter
             }
             else
             {
-                object? value = await ctx.EvaluateExprAsync(prop.Value);
+                object? value = (await ctx.EvaluateExprAsync(prop.Value)).ToObject();
                 await ApplyPropertyToFieldsCore(ctx, prop.Key!, value, stringFields, symbolFields);
             }
         }
@@ -536,7 +534,7 @@ public partial class Interpreter
     /// from the source object or instance.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/objects.html">TypeScript Object Types</seealso>
-    private object? EvaluateObject(Expr.ObjectLiteral obj)
+    private RuntimeValue EvaluateObject(Expr.ObjectLiteral obj)
     {
         Dictionary<string, object?> stringFields = [];
         Dictionary<SharpTSSymbol, object?> symbolFields = [];
@@ -589,7 +587,7 @@ public partial class Interpreter
             }
         }
 
-        return result;
+        return RuntimeValue.FromObject(result);
     }
 
     /// <summary>
@@ -600,7 +598,7 @@ public partial class Interpreter
         // The body should be a function or arrow function expression
         if (body is Expr.ArrowFunction arrow)
         {
-            return EvaluateArrowFunction(arrow) as SharpTSArrowFunction
+            return EvaluateArrowFunction(arrow).ToObject() as SharpTSArrowFunction
                    ?? throw new InterpreterException("Failed to create getter function.");
         }
         throw new InterpreterException("Getter must be a function expression.");
@@ -614,7 +612,7 @@ public partial class Interpreter
         // The body should be a function expression
         if (body is Expr.ArrowFunction arrow)
         {
-            return EvaluateArrowFunction(arrow) as SharpTSArrowFunction
+            return EvaluateArrowFunction(arrow).ToObject() as SharpTSArrowFunction
                    ?? throw new InterpreterException("Failed to create setter function.");
         }
         throw new InterpreterException("Setter must be a function expression.");
@@ -658,7 +656,7 @@ public partial class Interpreter
         foreach (var e in array.Elements)
         {
             var isSpread = e is Expr.Spread;
-            var value = await ctx.EvaluateExprAsync(isSpread ? ((Expr.Spread)e).Expression : e);
+            var value = (await ctx.EvaluateExprAsync(isSpread ? ((Expr.Spread)e).Expression : e)).ToObject();
             evaluated.Add((isSpread, value));
         }
         return BuildArrayFromElements(evaluated);
@@ -673,7 +671,7 @@ public partial class Interpreter
     /// Supports spread elements (<c>...arr</c>) which expand array contents inline.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#arrays">TypeScript Arrays</seealso>
-    private object? EvaluateArray(Expr.ArrayLiteral array)
+    private RuntimeValue EvaluateArray(Expr.ArrayLiteral array)
     {
         var evaluated = new List<(bool isSpread, object? value)>();
         foreach (var e in array.Elements)
@@ -682,7 +680,7 @@ public partial class Interpreter
             var value = Evaluate(isSpread ? ((Expr.Spread)e).Expression : e);
             evaluated.Add((isSpread, value));
         }
-        return BuildArrayFromElements(evaluated);
+        return RuntimeValue.FromObject(BuildArrayFromElements(evaluated));
     }
 
     /// <summary>
@@ -717,7 +715,7 @@ public partial class Interpreter
     /// Supports array element access and enum reverse mapping (numeric value to name).
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Property_accessors#bracket_notation">MDN Bracket Notation</seealso>
-    private object? EvaluateGetIndex(Expr.GetIndex getIndex)
+    private RuntimeValue EvaluateGetIndex(Expr.GetIndex getIndex)
     {
         object? obj = Evaluate(getIndex.Object);
         object? index = Evaluate(getIndex.Index);
@@ -726,10 +724,10 @@ public partial class Interpreter
         if (obj is SharpTSProxy proxy)
         {
             string key = index?.ToString() ?? "";
-            return proxy.TrapGet(key, this);
+            return RuntimeValue.FromBoxed(proxy.TrapGet(key, this));
         }
 
-        return ResolveIndexTarget(obj, index) switch
+        return RuntimeValue.FromBoxed(ResolveIndexTarget(obj, index) switch
         {
             IndexTarget.Array t => t.Target.Get(t.Index),
             IndexTarget.TypedArray t => t.Target[t.Index],
@@ -745,7 +743,7 @@ public partial class Interpreter
             IndexTarget.HeadersString t => (object?)t.Target.Get(t.Key) ?? SharpTSUndefined.Instance,
             IndexTarget.Unsupported => throw new InterpreterException("Index access not supported on this type."),
             _ => throw new InterpreterException("Index access not supported on this type.")
-        };
+        });
     }
 
     /// <summary>
@@ -757,7 +755,7 @@ public partial class Interpreter
     /// Currently only supports array element assignment.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Property_accessors#bracket_notation">MDN Bracket Notation</seealso>
-    private object? EvaluateSetIndex(Expr.SetIndex setIndex)
+    private RuntimeValue EvaluateSetIndex(Expr.SetIndex setIndex)
     {
         object? obj = Evaluate(setIndex.Object);
         object? index = Evaluate(setIndex.Index);
@@ -768,7 +766,7 @@ public partial class Interpreter
         if (obj is SharpTSProxy proxy)
         {
             string key = index?.ToString() ?? "";
-            return proxy.TrapSet(key, value, this);
+            return RuntimeValue.FromBoxed(proxy.TrapSet(key, value, this));
         }
 
         var target = ResolveIndexTarget(obj, index);
@@ -781,43 +779,44 @@ public partial class Interpreter
             case IndexTarget.Array t:
                 if (strictMode) t.Target.SetStrict(t.Index, value, strictMode);
                 else t.Target.Set(t.Index, value);
-                return value;
+                break;
 
             case IndexTarget.TypedArray t:
                 t.Target[t.Index] = value;
-                return value;
+                break;
 
             case IndexTarget.Buffer t:
                 t.Target[t.Index] = value is double d ? d : Convert.ToDouble(value);
-                return value;
+                break;
 
             case IndexTarget.ObjectString t:
                 if (strictMode) t.Target.SetPropertyStrict(t.Key, value, strictMode);
                 else t.Target.SetProperty(t.Key, value);
-                return value;
+                break;
 
             case IndexTarget.ObjectSymbol t:
                 if (strictMode) t.Target.SetBySymbolStrict(t.Key, value, strictMode);
                 else t.Target.SetBySymbol(t.Key, value);
-                return value;
+                break;
 
             case IndexTarget.InstanceString t:
                 if (strictMode) t.Target.SetRawFieldStrict(t.Key, value, strictMode);
                 else t.Target.SetRawField(t.Key, value);
-                return value;
+                break;
 
             case IndexTarget.InstanceSymbol t:
                 if (strictMode) t.Target.SetBySymbolStrict(t.Key, value, strictMode);
                 else t.Target.SetBySymbol(t.Key, value);
-                return value;
+                break;
 
             case IndexTarget.GlobalThis t:
                 t.Target.SetProperty(t.Key, value);
-                return value;
+                break;
 
             default:
                 throw new InterpreterException("Index assignment not supported on this type.");
         }
+        return RuntimeValue.FromBoxed(value);
     }
 
     /// <summary>
@@ -830,15 +829,15 @@ public partial class Interpreter
     /// The returned Promise resolves to an object containing all module exports.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import">MDN Dynamic Import</seealso>
-    private object? EvaluateDynamicImport(Expr.DynamicImport di)
+    private RuntimeValue EvaluateDynamicImport(Expr.DynamicImport di)
     {
-        return new SharpTSPromise(DynamicImportAsync(di));
+        return RuntimeValue.FromObject(new SharpTSPromise(DynamicImportAsync(di)));
     }
 
     /// <summary>
     /// Evaluates an import.meta expression, returning an object with module metadata.
     /// </summary>
-    private object? EvaluateImportMeta(Expr.ImportMeta im)
+    private RuntimeValue EvaluateImportMeta(Expr.ImportMeta im)
     {
         // Get current module path
         string path = _currentModule?.Path ?? "";
@@ -850,12 +849,12 @@ public partial class Interpreter
             url = "file:///" + url.Replace("\\", "/");
         }
 
-        return new SharpTSObject(new Dictionary<string, object?>
+        return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
         {
             ["url"] = url,
             ["filename"] = path,
             ["dirname"] = Path.GetDirectoryName(path) ?? ""
-        });
+        }));
     }
 
     /// <summary>
@@ -901,7 +900,7 @@ public partial class Interpreter
     /// Evaluates a class expression and returns the SharpTSClass object.
     /// Unlike class declarations, the class is not added to the environment.
     /// </summary>
-    private object? EvaluateClassExpression(Expr.ClassExpr classExpr)
+    private RuntimeValue EvaluateClassExpression(Expr.ClassExpr classExpr)
     {
         // Generate name for anonymous classes
         string className = classExpr.Name?.Lexeme ?? $"$ClassExpr_{++_classExprCounter}";
@@ -1060,7 +1059,7 @@ public partial class Interpreter
                                         // Handle throw from static block
                                         if (result.Type == ExecutionResult.ResultType.Throw)
                                         {
-                                            throw new InterpreterException($"Error in static block: {Stringify(result.Value)}");
+                                            throw new InterpreterException($"Error in static block: {Stringify(result.Value.ToObject())}");
                                         }
                                         // Return, break, continue are not allowed (validated by type checker)
                                     }
@@ -1077,7 +1076,7 @@ public partial class Interpreter
                 classEnv.Assign(classExpr.Name, klass);
             }
 
-            return klass;
+            return RuntimeValue.FromObject(klass);
         }
     }
 }

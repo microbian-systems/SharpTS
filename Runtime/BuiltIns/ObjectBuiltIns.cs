@@ -1,5 +1,6 @@
 using SharpTS.Compilation;
 using SharpTS.Execution;
+using SharpTS.Runtime;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Runtime.BuiltIns;
@@ -8,17 +9,17 @@ public static class ObjectBuiltIns
 {
     private static readonly BuiltInStaticMemberLookup _staticLookup =
         BuiltInStaticBuilder.Create()
-            .Method("keys", 1, Keys)
-            .Method("values", 1, Values)
-            .Method("entries", 1, Entries)
+            .MethodV2("keys", 1, KeysV2)
+            .MethodV2("values", 1, ValuesV2)
+            .MethodV2("entries", 1, EntriesV2)
             .Method("fromEntries", 1, FromEntries)
-            .Method("hasOwn", 2, HasOwn)
-            .Method("is", 2, Is)
+            .MethodV2("hasOwn", 2, HasOwnV2)
+            .MethodV2("is", 2, IsV2)
             .Method("assign", 1, int.MaxValue, Assign)
-            .Method("freeze", 1, Freeze)
-            .Method("seal", 1, Seal)
-            .Method("isFrozen", 1, IsFrozen)
-            .Method("isSealed", 1, IsSealed)
+            .MethodV2("freeze", 1, FreezeV2)
+            .MethodV2("seal", 1, SealV2)
+            .MethodV2("isFrozen", 1, IsFrozenV2)
+            .MethodV2("isSealed", 1, IsSealedV2)
             .Method("defineProperty", 3, DefineProperty)
             .Method("getOwnPropertyDescriptor", 2, GetOwnPropertyDescriptor)
             .Method("getOwnPropertyNames", 1, GetOwnPropertyNames)
@@ -54,6 +55,22 @@ public static class ObjectBuiltIns
         throw new Exception("Object.keys() requires an object argument");
     }
 
+    private static RuntimeValue KeysV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var arg = args[0].ToObject();
+        if (arg is SharpTSObject obj)
+        {
+            var keys = obj.Fields.Keys.Select(k => (object?)k).ToList();
+            return RuntimeValue.FromObject(new SharpTSArray(keys));
+        }
+        if (arg is SharpTSInstance inst)
+        {
+            var keys = inst.GetFieldNames().Select(k => (object?)k).ToList();
+            return RuntimeValue.FromObject(new SharpTSArray(keys));
+        }
+        throw new Exception("Object.keys() requires an object argument");
+    }
+
     private static object? Values(Interpreter _, List<object?> args)
     {
         if (args[0] is SharpTSObject obj)
@@ -65,6 +82,22 @@ public static class ObjectBuiltIns
         {
             var values = inst.GetFieldNames().Select(n => inst.GetRawField(n)).ToList();
             return new SharpTSArray(values);
+        }
+        throw new Exception("Object.values() requires an object argument");
+    }
+
+    private static RuntimeValue ValuesV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var arg = args[0].ToObject();
+        if (arg is SharpTSObject obj)
+        {
+            var values = obj.Fields.Values.ToList();
+            return RuntimeValue.FromObject(new SharpTSArray(values));
+        }
+        if (arg is SharpTSInstance inst)
+        {
+            var values = inst.GetFieldNames().Select(n => inst.GetRawField(n)).ToList();
+            return RuntimeValue.FromObject(new SharpTSArray(values));
         }
         throw new Exception("Object.values() requires an object argument");
     }
@@ -82,6 +115,24 @@ public static class ObjectBuiltIns
             var entries = inst.GetFieldNames().Select(n =>
                 (object?)new SharpTSArray([(object?)n, inst.GetRawField(n)])).ToList();
             return new SharpTSArray(entries);
+        }
+        throw new Exception("Object.entries() requires an object argument");
+    }
+
+    private static RuntimeValue EntriesV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var arg = args[0].ToObject();
+        if (arg is SharpTSObject obj)
+        {
+            var entries = obj.Fields.Select(kv =>
+                (object?)new SharpTSArray([(object?)kv.Key, kv.Value])).ToList();
+            return RuntimeValue.FromObject(new SharpTSArray(entries));
+        }
+        if (arg is SharpTSInstance inst)
+        {
+            var entries = inst.GetFieldNames().Select(n =>
+                (object?)new SharpTSArray([(object?)n, inst.GetRawField(n)])).ToList();
+            return RuntimeValue.FromObject(new SharpTSArray(entries));
         }
         throw new Exception("Object.entries() requires an object argument");
     }
@@ -123,6 +174,18 @@ public static class ObjectBuiltIns
             SharpTSInstance inst => inst.GetFieldNames().Contains(key),
             _ => false
         };
+    }
+
+    private static RuntimeValue HasOwnV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var obj = args[0].ToObject();
+        var key = args[1].AsString() ?? args[1].ToObject()?.ToString() ?? "";
+        return RuntimeValue.FromBoolean(obj switch
+        {
+            SharpTSObject tsObj => tsObj.Fields.ContainsKey(key),
+            SharpTSInstance inst => inst.GetFieldNames().Contains(key),
+            _ => false
+        });
     }
 
     /// <summary>
@@ -173,6 +236,53 @@ public static class ObjectBuiltIns
 
         // Reference equality for objects
         return ReferenceEquals(value1, value2);
+    }
+
+    private static RuntimeValue IsV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var value1 = args[0];
+        var value2 = args[1];
+
+        // Handle null/undefined cases
+        if (value1.Kind is ValueKind.Null or ValueKind.Undefined
+            && value2.Kind is ValueKind.Null or ValueKind.Undefined)
+        {
+            return RuntimeValue.FromBoolean(value1.Kind == value2.Kind);
+        }
+        if (value1.Kind is ValueKind.Null or ValueKind.Undefined
+            || value2.Kind is ValueKind.Null or ValueKind.Undefined)
+        {
+            return RuntimeValue.False;
+        }
+
+        // Handle number cases (NaN and -0/+0)
+        if (value1.Kind == ValueKind.Number && value2.Kind == ValueKind.Number)
+        {
+            var d1 = value1.AsNumber();
+            var d2 = value2.AsNumber();
+            if (double.IsNaN(d1) && double.IsNaN(d2))
+                return RuntimeValue.True;
+            if (d1 == 0.0 && d2 == 0.0)
+                return RuntimeValue.FromBoolean(1.0 / d1 == 1.0 / d2);
+            return RuntimeValue.FromBoolean(d1 == d2);
+        }
+
+        // Handle boolean cases
+        if (value1.Kind == ValueKind.Boolean && value2.Kind == ValueKind.Boolean)
+            return RuntimeValue.FromBoolean(value1.AsBoolean() == value2.AsBoolean());
+
+        // Handle string cases
+        if (value1.Kind == ValueKind.String && value2.Kind == ValueKind.String)
+            return RuntimeValue.FromBoolean(value1.AsString() == value2.AsString());
+
+        // Fall back to boxed comparison for objects, bigints, symbols
+        var obj1 = value1.ToObject();
+        var obj2 = value2.ToObject();
+
+        if (obj1 is System.Numerics.BigInteger bi1 && obj2 is System.Numerics.BigInteger bi2)
+            return RuntimeValue.FromBoolean(bi1 == bi2);
+
+        return RuntimeValue.FromBoolean(ReferenceEquals(obj1, obj2));
     }
 
     private static object? Assign(Interpreter _, List<object?> args)
@@ -253,6 +363,31 @@ public static class ObjectBuiltIns
         }
     }
 
+    private static RuntimeValue FreezeV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var arg = args[0].ToObject();
+        switch (arg)
+        {
+            case SharpTSObject obj:
+                obj.Freeze();
+                return RuntimeValue.FromObject(obj);
+            case SharpTSInstance inst:
+                inst.Freeze();
+                return RuntimeValue.FromObject(inst);
+            case SharpTSArray arr:
+                arr.Freeze();
+                return RuntimeValue.FromObject(arr);
+            case Dictionary<string, object?> dict:
+                PropertyDescriptorStore.Freeze(dict);
+                return RuntimeValue.FromObject(dict);
+            case System.Collections.IDictionary idict:
+                PropertyDescriptorStore.Freeze(idict);
+                return RuntimeValue.FromObject(idict);
+            default:
+                return args[0];
+        }
+    }
+
     private static object? Seal(Interpreter _, List<object?> args)
     {
         // Object.seal(obj) - seals the object and returns it
@@ -280,6 +415,31 @@ public static class ObjectBuiltIns
         }
     }
 
+    private static RuntimeValue SealV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var arg = args[0].ToObject();
+        switch (arg)
+        {
+            case SharpTSObject obj:
+                obj.Seal();
+                return RuntimeValue.FromObject(obj);
+            case SharpTSInstance inst:
+                inst.Seal();
+                return RuntimeValue.FromObject(inst);
+            case SharpTSArray arr:
+                arr.Seal();
+                return RuntimeValue.FromObject(arr);
+            case Dictionary<string, object?> dict:
+                PropertyDescriptorStore.Seal(dict);
+                return RuntimeValue.FromObject(dict);
+            case System.Collections.IDictionary idict:
+                PropertyDescriptorStore.Seal(idict);
+                return RuntimeValue.FromObject(idict);
+            default:
+                return args[0];
+        }
+    }
+
     private static object? IsFrozen(Interpreter _, List<object?> args)
     {
         // Object.isFrozen(obj) - returns true if the object is frozen
@@ -295,6 +455,20 @@ public static class ObjectBuiltIns
         };
     }
 
+    private static RuntimeValue IsFrozenV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var arg = args[0].ToObject();
+        return RuntimeValue.FromBoolean(arg switch
+        {
+            SharpTSObject obj => obj.IsFrozen,
+            SharpTSInstance inst => inst.IsFrozen,
+            SharpTSArray arr => arr.IsFrozen,
+            Dictionary<string, object?> dict => PropertyDescriptorStore.IsFrozen(dict),
+            System.Collections.IDictionary idict => PropertyDescriptorStore.IsFrozen(idict),
+            _ => true
+        });
+    }
+
     private static object? IsSealed(Interpreter _, List<object?> args)
     {
         // Object.isSealed(obj) - returns true if the object is sealed
@@ -308,6 +482,20 @@ public static class ObjectBuiltIns
             // Non-extensible primitives are considered sealed in JavaScript
             _ => true
         };
+    }
+
+    private static RuntimeValue IsSealedV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var arg = args[0].ToObject();
+        return RuntimeValue.FromBoolean(arg switch
+        {
+            SharpTSObject obj => obj.IsSealed,
+            SharpTSInstance inst => inst.IsSealed,
+            SharpTSArray arr => arr.IsSealed,
+            Dictionary<string, object?> dict => PropertyDescriptorStore.IsSealed(dict),
+            System.Collections.IDictionary idict => PropertyDescriptorStore.IsSealed(idict),
+            _ => true
+        });
     }
 
     /// <summary>

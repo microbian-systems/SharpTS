@@ -88,6 +88,32 @@ public sealed class BuiltInTypeBuilder<TReceiver>
     }
 
     /// <summary>
+    /// Registers a V2 method with fixed arity using RuntimeValue (no boxing).
+    /// The receiver is extracted from the RuntimeValue at call time.
+    /// </summary>
+    public BuiltInTypeBuilder<TReceiver> MethodV2(
+        string name,
+        int arity,
+        Func<Interpreter, TReceiver, ReadOnlySpan<RuntimeValue>, RuntimeValue> implementation)
+    {
+        return MethodV2(name, arity, arity, implementation);
+    }
+
+    /// <summary>
+    /// Registers a V2 method with variable arity using RuntimeValue (no boxing).
+    /// </summary>
+    public BuiltInTypeBuilder<TReceiver> MethodV2(
+        string name,
+        int minArity,
+        int maxArity,
+        Func<Interpreter, TReceiver, ReadOnlySpan<RuntimeValue>, RuntimeValue> implementation)
+    {
+        _methods[name] = BuiltInMethod.CreateV2(name, minArity, maxArity,
+            (interp, receiver, args) => implementation(interp, (TReceiver)receiver.ToObject()!, args));
+        return this;
+    }
+
+    /// <summary>
     /// Builds the member lookup for fast O(1) access.
     /// </summary>
     public BuiltInTypeMemberLookup<TReceiver> Build()

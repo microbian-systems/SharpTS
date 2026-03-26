@@ -6,6 +6,7 @@ using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
 using SharpTS.TypeSystem;
 using System.Buffers;
+using System.Runtime.CompilerServices;
 
 namespace SharpTS.Execution;
 
@@ -32,8 +33,7 @@ public partial class Interpreter
             {
                 for (int i = 0; i < argCount; i++)
                 {
-                    // TODO: When EvaluateExprAsync returns RuntimeValue, remove FromBoxed
-                    rented[i] = RuntimeValue.FromBoxed(await ctx.EvaluateExprAsync(arguments[i]));
+                    rented[i] = await ctx.EvaluateExprAsync(arguments[i]);
                 }
                 return v2.CallV2(this, rented.AsSpan(0, argCount)).ToObject();
             }
@@ -49,7 +49,7 @@ public partial class Interpreter
         {
             foreach (var arg in arguments)
             {
-                pooledList.Add(await ctx.EvaluateExprAsync(arg));
+                pooledList.Add((await ctx.EvaluateExprAsync(arg)).ToObject());
             }
             return method.Call(this, pooledList);
         }
@@ -121,23 +121,24 @@ public partial class Interpreter
         if (call.Callee is Expr.Variable globalVar &&
             GlobalFunctionRegistry.Instance.TryGetHandler(globalVar.Name.Lexeme, out var handler))
         {
-            return await handler!(ctx.EvaluateExprAsync, call.Arguments, this);
+            Func<Expr, ValueTask<object?>> evalWrapper = async expr => (await ctx.EvaluateExprAsync(expr)).ToObject();
+            return await handler!(evalWrapper, call.Arguments, this);
         }
 
-        object? callee = await ctx.EvaluateExprAsync(call.Callee);
+        object? callee = (await ctx.EvaluateExprAsync(call.Callee)).ToObject();
 
         List<object?> argumentsList = [];
         foreach (Expr argument in call.Arguments)
         {
             if (argument is Expr.Spread spread)
             {
-                object? spreadValue = await ctx.EvaluateExprAsync(spread.Expression);
+                object? spreadValue = (await ctx.EvaluateExprAsync(spread.Expression)).ToObject();
                 // Use GetIterableElements to support custom iterables with Symbol.iterator
                 argumentsList.AddRange(GetIterableElements(spreadValue));
             }
             else
             {
-                argumentsList.Add(await ctx.EvaluateExprAsync(argument));
+                argumentsList.Add((await ctx.EvaluateExprAsync(argument)).ToObject());
             }
         }
 
@@ -158,9 +159,9 @@ public partial class Interpreter
     /// Calls a built-in method with sync evaluation.
     /// Uses V2 (RuntimeValue) fast path when the method supports it.
     /// </summary>
-    private object? CallBuiltInSync(ISharpTSCallable method, IReadOnlyList<Expr> arguments)
+    private RuntimeValue CallBuiltInSync(ISharpTSCallable method, IReadOnlyList<Expr> arguments)
     {
-        // V2 fast path
+        // V2 fast path — no boxing at all
         if (method is ISharpTSCallableV2 v2 && method is BuiltInMethod bm && bm.HasV2Implementation)
         {
             var argCount = arguments.Count;
@@ -171,7 +172,7 @@ public partial class Interpreter
                 {
                     rented[i] = EvaluateRV(arguments[i]);
                 }
-                return v2.CallV2(this, rented.AsSpan(0, argCount)).ToObject();
+                return v2.CallV2(this, rented.AsSpan(0, argCount));
             }
             finally
             {
@@ -187,7 +188,7 @@ public partial class Interpreter
             {
                 pooledList.Add(Evaluate(arg));
             }
-            return method.Call(this, pooledList);
+            return RuntimeValue.FromBoxed(method.Call(this, pooledList));
         }
         finally
         {
@@ -206,7 +207,7 @@ public partial class Interpreter
     /// Validates arity before invoking the callable.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/functions.html">TypeScript Functions</seealso>
-    private object? EvaluateCall(Expr.Call call)
+    private RuntimeValue EvaluateCall(Expr.Call call)
     {
         // Handle console.* methods
         if (call.Callee is Expr.Variable v && v.Name.Lexeme.StartsWith(BuiltInNames.ConsolePrefix, StringComparison.Ordinal))
@@ -261,12 +262,33 @@ public partial class Interpreter
         if (call.Callee is Expr.Variable globalVar &&
             GlobalFunctionRegistry.Instance.TryGetHandler(globalVar.Name.Lexeme, out var handler))
         {
-            // Use sync context for handler
-            return handler!(_syncContext.EvaluateExprAsync, call.Arguments, this).GetAwaiter().GetResult();
+            // Use cached wrapper to avoid per-call delegate allocation
+            _syncEvalWrapperCached ??= expr => new ValueTask<object?>(_syncContext.EvaluateExprAsync(expr).Result.ToObject());
+            return RuntimeValue.FromBoxed(handler!(_syncEvalWrapperCached, call.Arguments, this).GetAwaiter().GetResult());
         }
 
         object? callee = Evaluate(call.Callee);
 
+        // V2 fast path: no spread args and callee supports V2 — zero boxing
+        if (callee is ISharpTSCallableV2 v2Callee && !HasSpreadArgs(call.Arguments))
+        {
+            int argCount = call.Arguments.Count;
+            var rented = ArrayPool<RuntimeValue>.Shared.Rent(Math.Max(argCount, 1));
+            try
+            {
+                for (int i = 0; i < argCount; i++)
+                {
+                    rented[i] = EvaluateRV(call.Arguments[i]);
+                }
+                return v2Callee.CallV2(this, rented.AsSpan(0, argCount));
+            }
+            finally
+            {
+                ArrayPool<RuntimeValue>.Shared.Return(rented);
+            }
+        }
+
+        // Legacy path: spread args or non-V2 callables
         List<object?> argumentsList = [];
         foreach (Expr argument in call.Arguments)
         {
@@ -292,7 +314,20 @@ public partial class Interpreter
             throw new InterpreterException($"Expected at least {function.Arity()} arguments but got {argumentsList.Count}.");
         }
 
-        return function.Call(this, argumentsList);
+        return RuntimeValue.FromBoxed(function.Call(this, argumentsList));
+    }
+
+    /// <summary>
+    /// Checks if any arguments are spread expressions.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool HasSpreadArgs(IReadOnlyList<Expr> arguments)
+    {
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            if (arguments[i] is Expr.Spread) return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -605,21 +640,61 @@ public partial class Interpreter
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Addition_assignment">MDN Compound Assignment</seealso>
     private object? ApplyCompoundOperator(TokenType op, object? left, object? right)
     {
+        return ApplyCompoundOperatorRV(op, RuntimeValue.FromBoxed(left), RuntimeValue.FromBoxed(right)).ToObject();
+    }
+
+    /// <summary>
+    /// RuntimeValue-native compound operator — avoids boxing for numeric operations.
+    /// </summary>
+    private RuntimeValue ApplyCompoundOperatorRV(TokenType op, RuntimeValue left, RuntimeValue right)
+    {
+        // Fast path: both numeric (most common for compound assignment)
+        if (left.IsNumber && right.IsNumber)
+        {
+            double l = left.AsNumberUnsafe(), r = right.AsNumberUnsafe();
+            return op switch
+            {
+                TokenType.PLUS_EQUAL => RuntimeValue.FromNumber(l + r),
+                TokenType.MINUS_EQUAL => RuntimeValue.FromNumber(l - r),
+                TokenType.STAR_EQUAL => RuntimeValue.FromNumber(l * r),
+                TokenType.SLASH_EQUAL => RuntimeValue.FromNumber(l / r),
+                TokenType.PERCENT_EQUAL => RuntimeValue.FromNumber(l % r),
+                TokenType.AMPERSAND_EQUAL => RuntimeValue.FromNumber((int)l & (int)r),
+                TokenType.PIPE_EQUAL => RuntimeValue.FromNumber((int)l | (int)r),
+                TokenType.CARET_EQUAL => RuntimeValue.FromNumber((int)l ^ (int)r),
+                TokenType.LESS_LESS_EQUAL => RuntimeValue.FromNumber((int)l << ((int)r & 0x1F)),
+                TokenType.GREATER_GREATER_EQUAL => RuntimeValue.FromNumber((int)l >> ((int)r & 0x1F)),
+                TokenType.GREATER_GREATER_GREATER_EQUAL => RuntimeValue.FromNumber((uint)(int)l >> ((int)r & 0x1F)),
+                _ => throw new InterpreterException($"Unknown compound operator: {op}")
+            };
+        }
+
+        // String concatenation path
+        if (op == TokenType.PLUS_EQUAL && left.IsString)
+        {
+            return RuntimeValue.FromString(string.Concat(left.AsStringUnsafe(), Stringify(right.ToObject())));
+        }
+
+        // Fallback for mixed types
+        object? l2 = left.ToObject(), r2 = right.ToObject();
         return op switch
         {
-            TokenType.PLUS_EQUAL => left is string s ? string.Concat(s, Stringify(right)) : (double)left! + (double)right!,
-            TokenType.MINUS_EQUAL => (double)left! - (double)right!,
-            TokenType.STAR_EQUAL => (double)left! * (double)right!,
-            TokenType.SLASH_EQUAL => (double)left! / (double)right!,
-            TokenType.PERCENT_EQUAL => (double)left! % (double)right!,
-            // Bitwise compound operators
-            TokenType.AMPERSAND_EQUAL => (double)(ToInt32(left) & ToInt32(right)),
-            TokenType.PIPE_EQUAL => (double)(ToInt32(left) | ToInt32(right)),
-            TokenType.CARET_EQUAL => (double)(ToInt32(left) ^ ToInt32(right)),
-            TokenType.LESS_LESS_EQUAL => (double)(ToInt32(left) << (ToInt32(right) & 0x1F)),
-            TokenType.GREATER_GREATER_EQUAL => (double)(ToInt32(left) >> (ToInt32(right) & 0x1F)),
-            TokenType.GREATER_GREATER_GREATER_EQUAL => (double)((uint)ToInt32(left) >> (ToInt32(right) & 0x1F)),
-            _ => throw new InterpreterException($"Unknown compound operator: {op}")
+            TokenType.PLUS_EQUAL => RuntimeValue.FromBoxed(
+                l2 is string s ? string.Concat(s, Stringify(r2)) : (double)l2! + (double)r2!),
+            _ => RuntimeValue.FromNumber(op switch
+            {
+                TokenType.MINUS_EQUAL => (double)l2! - (double)r2!,
+                TokenType.STAR_EQUAL => (double)l2! * (double)r2!,
+                TokenType.SLASH_EQUAL => (double)l2! / (double)r2!,
+                TokenType.PERCENT_EQUAL => (double)l2! % (double)r2!,
+                TokenType.AMPERSAND_EQUAL => ToInt32(l2) & ToInt32(r2),
+                TokenType.PIPE_EQUAL => ToInt32(l2) | ToInt32(r2),
+                TokenType.CARET_EQUAL => ToInt32(l2) ^ ToInt32(r2),
+                TokenType.LESS_LESS_EQUAL => ToInt32(l2) << (ToInt32(r2) & 0x1F),
+                TokenType.GREATER_GREATER_EQUAL => ToInt32(l2) >> (ToInt32(r2) & 0x1F),
+                TokenType.GREATER_GREATER_GREATER_EQUAL => (int)((uint)ToInt32(l2) >> (ToInt32(r2) & 0x1F)),
+                _ => throw new InterpreterException($"Unknown compound operator: {op}")
+            })
         };
     }
 

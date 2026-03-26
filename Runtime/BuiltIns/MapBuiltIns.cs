@@ -1,4 +1,5 @@
 using SharpTS.Execution;
+using SharpTS.Runtime;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Runtime.BuiltIns;
@@ -15,11 +16,11 @@ public static class MapBuiltIns
     private static readonly BuiltInTypeMemberLookup<SharpTSMap> _lookup =
         BuiltInTypeBuilder<SharpTSMap>.ForInstanceType()
             .Property("size", map => (double)map.Size)
-            .Method("get", 1, Get)
-            .Method("set", 2, Set)
-            .Method("has", 1, Has)
-            .Method("delete", 1, Delete)
-            .Method("clear", 0, Clear)
+            .MethodV2("get", 1, GetV2)
+            .MethodV2("set", 2, SetV2)
+            .MethodV2("has", 1, HasV2)
+            .MethodV2("delete", 1, DeleteV2)
+            .MethodV2("clear", 0, ClearV2)
             .Method("keys", 0, Keys)
             .Method("values", 0, Values)
             .Method("entries", 0, Entries)
@@ -37,22 +38,22 @@ public static class MapBuiltIns
     public static object? GetMember(SharpTSMap receiver, string name)
         => _lookup.GetMember(receiver, name);
 
-    private static object? Get(Interpreter _, SharpTSMap map, List<object?> args)
-        => map.Get(args[0]);
+    private static RuntimeValue GetV2(Interpreter _, SharpTSMap map, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(map.Get(args[0].ToObject()));
 
-    private static object? Set(Interpreter _, SharpTSMap map, List<object?> args)
-        => map.Set(args[0], args[1]);
+    private static RuntimeValue SetV2(Interpreter _, SharpTSMap map, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromObject(map.Set(args[0].ToObject(), args[1].ToObject()));
 
-    private static object? Has(Interpreter _, SharpTSMap map, List<object?> args)
-        => map.Has(args[0]);
+    private static RuntimeValue HasV2(Interpreter _, SharpTSMap map, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoolean(map.Has(args[0].ToObject()));
 
-    private static object? Delete(Interpreter _, SharpTSMap map, List<object?> args)
-        => map.Delete(args[0]);
+    private static RuntimeValue DeleteV2(Interpreter _, SharpTSMap map, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoolean(map.Delete(args[0].ToObject()));
 
-    private static object? Clear(Interpreter _, SharpTSMap map, List<object?> args)
+    private static RuntimeValue ClearV2(Interpreter _, SharpTSMap map, ReadOnlySpan<RuntimeValue> args)
     {
         map.Clear();
-        return null;
+        return RuntimeValue.Undefined;
     }
 
     private static object? Keys(Interpreter _, SharpTSMap map, List<object?> args)

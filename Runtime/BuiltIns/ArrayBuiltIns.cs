@@ -1,5 +1,6 @@
 using SharpTS.Compilation;
 using SharpTS.Execution;
+using SharpTS.Runtime;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Runtime.BuiltIns;
@@ -9,11 +10,11 @@ public static class ArrayBuiltIns
     private static readonly BuiltInTypeMemberLookup<SharpTSArray> _lookup =
         BuiltInTypeBuilder<SharpTSArray>.ForInstanceType()
             .Property("length", arr => (double)arr.Elements.Count)
-            .Method("push", 1, int.MaxValue, Push)
-            .Method("pop", 0, Pop)
-            .Method("shift", 0, Shift)
-            .Method("unshift", 1, Unshift)
-            .Method("slice", 0, 2, Slice)
+            .MethodV2("push", 1, int.MaxValue, PushV2)
+            .MethodV2("pop", 0, PopV2)
+            .MethodV2("shift", 0, ShiftV2)
+            .MethodV2("unshift", 1, UnshiftV2)
+            .MethodV2("slice", 0, 2, SliceV2)
             .Method("map", 1, Map)
             .Method("filter", 1, Filter)
             .Method("forEach", 1, ForEach)
@@ -23,11 +24,11 @@ public static class ArrayBuiltIns
             .Method("every", 1, Every)
             .Method("reduce", 1, 2, Reduce)
             .Method("reduceRight", 1, 2, ReduceRight)
-            .Method("includes", 1, Includes)
-            .Method("indexOf", 1, IndexOf)
-            .Method("join", 0, 1, Join)
-            .Method("concat", 1, Concat)
-            .Method("reverse", 0, Reverse)
+            .MethodV2("includes", 1, IncludesV2)
+            .MethodV2("indexOf", 1, IndexOfV2)
+            .MethodV2("join", 0, 1, JoinV2)
+            .MethodV2("concat", 1, ConcatV2)
+            .MethodV2("reverse", 0, ReverseV2)
             .Method("flat", 0, 1, Flat)
             .Method("flatMap", 1, FlatMap)
             .Method("sort", 0, 1, Sort)
@@ -36,11 +37,11 @@ public static class ArrayBuiltIns
             .Method("toSpliced", 0, int.MaxValue, ToSpliced)
             .Method("findLast", 1, FindLast)
             .Method("findLastIndex", 1, FindLastIndex)
-            .Method("toReversed", 0, ToReversed)
-            .Method("with", 2, With)
-            .Method("at", 1, At)
-            .Method("fill", 1, 3, Fill)
-            .Method("copyWithin", 1, 3, CopyWithin)
+            .MethodV2("toReversed", 0, ToReversedV2)
+            .MethodV2("with", 2, WithV2)
+            .MethodV2("at", 1, AtV2)
+            .MethodV2("fill", 1, 3, FillV2)
+            .MethodV2("copyWithin", 1, 3, CopyWithinV2)
             .Method("entries", 0, Entries)
             .Method("keys", 0, Keys)
             .Method("values", 0, Values)
@@ -128,7 +129,7 @@ public static class ArrayBuiltIns
         List<object?> result = [];
         for (int i = 0; i < arr.Elements.Count; i++)
         {
-            if (IsTruthy(iter.Invoke(interp, arr.Elements[i], i)))
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
                 result.Add(arr.Elements[i]);
         }
         return new SharpTSArray(result);
@@ -138,7 +139,7 @@ public static class ArrayBuiltIns
     {
         using var iter = CallbackIterator.Create(args, arr, "forEach");
         for (int i = 0; i < arr.Elements.Count; i++)
-            iter.Invoke(interp, arr.Elements[i], i);
+            iter.InvokeRV(interp, arr.Elements[i], i);
         return null;
     }
 
@@ -147,7 +148,7 @@ public static class ArrayBuiltIns
         using var iter = CallbackIterator.Create(args, arr, "find");
         for (int i = 0; i < arr.Elements.Count; i++)
         {
-            if (IsTruthy(iter.Invoke(interp, arr.Elements[i], i)))
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
                 return arr.Elements[i];
         }
         return null;
@@ -158,7 +159,7 @@ public static class ArrayBuiltIns
         using var iter = CallbackIterator.Create(args, arr, "findIndex");
         for (int i = 0; i < arr.Elements.Count; i++)
         {
-            if (IsTruthy(iter.Invoke(interp, arr.Elements[i], i)))
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
                 return (double)i;
         }
         return -1.0;
@@ -169,7 +170,7 @@ public static class ArrayBuiltIns
         using var iter = CallbackIterator.Create(args, arr, "some");
         for (int i = 0; i < arr.Elements.Count; i++)
         {
-            if (IsTruthy(iter.Invoke(interp, arr.Elements[i], i)))
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
                 return true;
         }
         return false;
@@ -180,7 +181,7 @@ public static class ArrayBuiltIns
         using var iter = CallbackIterator.Create(args, arr, "every");
         for (int i = 0; i < arr.Elements.Count; i++)
         {
-            if (!IsTruthy(iter.Invoke(interp, arr.Elements[i], i)))
+            if (!iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
                 return false;
         }
         return true;
@@ -310,32 +311,7 @@ public static class ArrayBuiltIns
         return string.Join(separator, arr.Elements.Select(Stringify));
     }
 
-    private static object? Concat(Interpreter _, SharpTSArray arr, List<object?> args)
-    {
-        var result = new List<object?>(arr.Elements);
-
-        if (args[0] is SharpTSArray otherArr)
-        {
-            result.AddRange(otherArr.Elements);
-        }
-        else
-        {
-            result.Add(args[0]);
-        }
-
-        return new SharpTSArray(result);
-    }
-
-    private static object? Reverse(Interpreter _, SharpTSArray arr, List<object?> args)
-    {
-        // Frozen arrays cannot be modified; sealed arrays allow in-place modifications
-        if (arr.IsFrozen)
-        {
-            return arr;
-        }
-        arr.Elements.Reverse();
-        return arr;
-    }
+    // concat and reverse converted to V2 — see ConcatV2 and ReverseV2
 
     private static object? Flat(Interpreter _, SharpTSArray arr, List<object?> args)
     {
@@ -370,7 +346,7 @@ public static class ArrayBuiltIns
         var result = new List<object?>();
         for (int i = 0; i < arr.Elements.Count; i++)
         {
-            var callResult = iter.Invoke(interp, arr.Elements[i], i);
+            var callResult = iter.InvokeRV(interp, arr.Elements[i], i).ToObject();
             // flatMap flattens by 1 level only
             if (callResult is SharpTSArray mappedArray)
                 result.AddRange(mappedArray.Elements);
@@ -594,7 +570,7 @@ public static class ArrayBuiltIns
         using var iter = CallbackIterator.Create(args, arr, "findLast");
         for (int i = arr.Elements.Count - 1; i >= 0; i--)
         {
-            if (IsTruthy(iter.Invoke(interp, arr.Elements[i], i)))
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
                 return arr.Elements[i];
         }
         return null;
@@ -605,123 +581,196 @@ public static class ArrayBuiltIns
         using var iter = CallbackIterator.Create(args, arr, "findLastIndex");
         for (int i = arr.Elements.Count - 1; i >= 0; i--)
         {
-            if (IsTruthy(iter.Invoke(interp, arr.Elements[i], i)))
+            if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
                 return (double)i;
         }
         return -1.0;
     }
 
-    private static object? ToReversed(Interpreter _, SharpTSArray arr, List<object?> args)
+    // toReversed, with, at, fill, copyWithin converted to V2 — see V2 region
+
+    #region V2 Implementations (RuntimeValue — no boxing)
+
+    private static RuntimeValue PushV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (arr.IsFrozen || arr.IsSealed || !arr.IsExtensible)
+            return RuntimeValue.FromNumber(arr.Elements.Count);
+        foreach (var arg in args)
+            arr.Elements.Add(arg.ToObject());
+        return RuntimeValue.FromNumber(arr.Elements.Count);
+    }
+
+    private static RuntimeValue PopV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (arr.IsFrozen || arr.IsSealed || arr.Elements.Count == 0)
+            return RuntimeValue.Null;
+        return RuntimeValue.FromBoxed(arr.Elements.RemoveLast());
+    }
+
+    private static RuntimeValue ShiftV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (arr.IsFrozen || arr.IsSealed || arr.Elements.Count == 0)
+            return RuntimeValue.Null;
+        return RuntimeValue.FromBoxed(arr.Elements.RemoveFirst());
+    }
+
+    private static RuntimeValue UnshiftV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (arr.IsFrozen || arr.IsSealed || !arr.IsExtensible)
+            return RuntimeValue.FromNumber(arr.Elements.Count);
+        arr.Elements.AddFirst(args[0].ToObject());
+        return RuntimeValue.FromNumber(arr.Elements.Count);
+    }
+
+    private static RuntimeValue SliceV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        var start = args.Length > 0 ? (int)args[0].AsNumber() : 0;
+        var end = args.Length > 1 ? (int)args[1].AsNumber() : arr.Elements.Count;
+        if (start < 0) start = Math.Max(0, arr.Elements.Count + start);
+        if (end < 0) end = Math.Max(0, arr.Elements.Count + end);
+        if (start > arr.Elements.Count) start = arr.Elements.Count;
+        if (end > arr.Elements.Count) end = arr.Elements.Count;
+        if (end <= start) return RuntimeValue.FromObject(new SharpTSArray([]));
+        var sliced = arr.Elements.GetRange(start, end - start);
+        return RuntimeValue.FromObject(new SharpTSArray(new Deque<object?>(sliced)));
+    }
+
+    private static RuntimeValue IncludesV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        var searchElement = args[0].ToObject();
+        foreach (var element in arr.Elements)
+        {
+            if (IsEqual(element, searchElement))
+                return RuntimeValue.True;
+        }
+        return RuntimeValue.False;
+    }
+
+    private static RuntimeValue IndexOfV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        var searchElement = args[0].ToObject();
+        for (int idx = 0; idx < arr.Elements.Count; idx++)
+        {
+            if (IsEqual(arr.Elements[idx], searchElement))
+                return RuntimeValue.FromNumber(idx);
+        }
+        return RuntimeValue.FromNumber(-1);
+    }
+
+    private static RuntimeValue JoinV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        var separator = args.Length > 0 ? Stringify(args[0].ToObject()) : ",";
+        return RuntimeValue.FromString(string.Join(separator, arr.Elements.Select(Stringify)));
+    }
+
+    private static RuntimeValue ConcatV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        var arg = args[0].ToObject();
+        var result = new List<object?>(arr.Elements);
+        if (arg is SharpTSArray otherArr)
+            result.AddRange(otherArr.Elements);
+        else
+            result.Add(arg);
+        return RuntimeValue.FromObject(new SharpTSArray(result));
+    }
+
+    private static RuntimeValue ReverseV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (arr.IsFrozen)
+            return RuntimeValue.FromObject(arr);
+        arr.Elements.Reverse();
+        return RuntimeValue.FromObject(arr);
+    }
+
+    private static RuntimeValue ToReversedV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
         var result = new List<object?>(arr.Elements.Count);
         for (int i = arr.Elements.Count - 1; i >= 0; i--)
             result.Add(arr.Elements[i]);
-        return new SharpTSArray(result);
+        return RuntimeValue.FromObject(new SharpTSArray(result));
     }
 
-    private static object? With(Interpreter _, SharpTSArray arr, List<object?> args)
+    private static RuntimeValue WithV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
         int len = arr.Elements.Count;
-        int index = ToIntegerOrInfinity(args[0], 0);
+        int index = (int)args[0].AsNumber();
         int actualIndex = index < 0 ? len + index : index;
         if (actualIndex < 0 || actualIndex >= len)
             throw new Exception("RangeError: Invalid index for with()");
         var result = new List<object?>(arr.Elements);
-        result[actualIndex] = args[1];
-        return new SharpTSArray(result);
+        result[actualIndex] = args[1].ToObject();
+        return RuntimeValue.FromObject(new SharpTSArray(result));
     }
 
-    private static object? At(Interpreter _, SharpTSArray arr, List<object?> args)
+    private static RuntimeValue AtV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
         int len = arr.Elements.Count;
-        int index = ToIntegerOrInfinity(args[0], 0);
+        int index = (int)args[0].AsNumber();
         int actualIndex = index < 0 ? len + index : index;
         if (actualIndex < 0 || actualIndex >= len)
-            return null;
-        return arr.Elements[actualIndex];
+            return RuntimeValue.Null;
+        return RuntimeValue.FromBoxed(arr.Elements[actualIndex]);
     }
 
-    private static object? Fill(Interpreter _, SharpTSArray arr, List<object?> args)
+    private static RuntimeValue FillV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
-        // Frozen arrays cannot be modified
         if (arr.IsFrozen)
-        {
-            return arr;
-        }
+            return RuntimeValue.FromObject(arr);
 
         int len = arr.Elements.Count;
-        if (len == 0) return arr;
+        if (len == 0) return RuntimeValue.FromObject(arr);
 
-        // Get fill value (required first argument)
-        var value = args.Count > 0 ? args[0] : null;
+        var value = args.Length > 0 ? args[0].ToObject() : null;
 
-        // Parse start index (optional, default 0)
-        int relStart = args.Count > 1 ? ToIntegerOrInfinity(args[1], 0) : 0;
+        int relStart = args.Length > 1 ? ToIntegerOrInfinity(args[1].ToObject(), 0) : 0;
         int actualStart = relStart < 0 ? Math.Max(len + relStart, 0) : Math.Min(relStart, len);
 
-        // Parse end index (optional, default length)
-        int relEnd = args.Count > 2 ? ToIntegerOrInfinity(args[2], len) : len;
+        int relEnd = args.Length > 2 ? ToIntegerOrInfinity(args[2].ToObject(), len) : len;
         int actualEnd = relEnd < 0 ? Math.Max(len + relEnd, 0) : Math.Min(relEnd, len);
 
-        // Fill the range
         for (int i = actualStart; i < actualEnd; i++)
-        {
             arr.Elements[i] = value;
-        }
 
-        return arr;
+        return RuntimeValue.FromObject(arr);
     }
 
-    private static object? CopyWithin(Interpreter _, SharpTSArray arr, List<object?> args)
+    private static RuntimeValue CopyWithinV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
-        // Frozen arrays cannot be modified
         if (arr.IsFrozen)
-        {
-            return arr;
-        }
+            return RuntimeValue.FromObject(arr);
 
         int len = arr.Elements.Count;
-        if (len == 0) return arr;
+        if (len == 0) return RuntimeValue.FromObject(arr);
 
-        // Parse target (required first argument)
-        int relTarget = args.Count > 0 ? ToIntegerOrInfinity(args[0], 0) : 0;
+        int relTarget = args.Length > 0 ? (int)args[0].AsNumber() : 0;
         int to = relTarget < 0 ? Math.Max(len + relTarget, 0) : Math.Min(relTarget, len);
 
-        // Parse start (optional, default 0)
-        int relStart = args.Count > 1 ? ToIntegerOrInfinity(args[1], 0) : 0;
+        int relStart = args.Length > 1 ? (int)args[1].AsNumber() : 0;
         int from = relStart < 0 ? Math.Max(len + relStart, 0) : Math.Min(relStart, len);
 
-        // Parse end (optional, default length)
-        int relEnd = args.Count > 2 ? ToIntegerOrInfinity(args[2], len) : len;
-        int final = relEnd < 0 ? Math.Max(len + relEnd, 0) : Math.Min(relEnd, len);
+        int relEnd = args.Length > 2 ? (int)args[2].AsNumber() : len;
+        int final_ = relEnd < 0 ? Math.Max(len + relEnd, 0) : Math.Min(relEnd, len);
 
-        // Calculate count
-        int count = Math.Min(final - from, len - to);
+        int count = Math.Min(final_ - from, len - to);
 
         if (count > 0)
         {
-            // Handle overlapping regions correctly
-            // If copying forward would overwrite source data, copy backward
             if (from < to && to < from + count)
             {
-                // Copy backward
                 for (int i = count - 1; i >= 0; i--)
-                {
                     arr.Elements[to + i] = arr.Elements[from + i];
-                }
             }
             else
             {
-                // Copy forward
                 for (int i = 0; i < count; i++)
-                {
                     arr.Elements[to + i] = arr.Elements[from + i];
-                }
             }
         }
 
-        return arr;
+        return RuntimeValue.FromObject(arr);
     }
+
+    #endregion
 
     private static bool IsUndefined(object? obj)
     {
@@ -799,12 +848,16 @@ public static class ArrayBuiltIns
     private readonly struct CallbackIterator : IDisposable
     {
         private readonly ISharpTSCallable _callback;
+        private readonly ISharpTSCallableV2? _callbackV2;
         private readonly PooledArgumentList _args;
+        private readonly RuntimeValue[] _argsV2;
 
-        private CallbackIterator(ISharpTSCallable callback, PooledArgumentList args)
+        private CallbackIterator(ISharpTSCallable callback, PooledArgumentList args, RuntimeValue arrRV)
         {
             _callback = callback;
+            _callbackV2 = callback as ISharpTSCallableV2;
             _args = args;
+            _argsV2 = [default, default, arrRV];
         }
 
         public static CallbackIterator Create(List<object?> args, SharpTSArray arr, string methodName)
@@ -815,14 +868,39 @@ public static class ArrayBuiltIns
             callbackArgs.Add(null);
             callbackArgs.Add(null);
             callbackArgs.Add(arr);
-            return new CallbackIterator(callback, callbackArgs);
+            return new CallbackIterator(callback, callbackArgs, RuntimeValue.FromObject(arr));
         }
 
         public object? Invoke(Interpreter interp, object? element, int index)
         {
+            // V2 fast path — avoids boxing element and index
+            if (_callbackV2 != null)
+            {
+                _argsV2[0] = RuntimeValue.FromBoxed(element);
+                _argsV2[1] = RuntimeValue.FromNumber(index);
+                return _callbackV2.CallV2(interp, _argsV2).ToObject();
+            }
+
             _args[0] = element;
             _args[1] = (double)index;
             return _callback.Call(interp, _args);
+        }
+
+        /// <summary>
+        /// V2-native invoke — returns RuntimeValue without boxing at return boundary.
+        /// </summary>
+        public RuntimeValue InvokeRV(Interpreter interp, object? element, int index)
+        {
+            if (_callbackV2 != null)
+            {
+                _argsV2[0] = RuntimeValue.FromBoxed(element);
+                _argsV2[1] = RuntimeValue.FromNumber(index);
+                return _callbackV2.CallV2(interp, _argsV2);
+            }
+
+            _args[0] = element;
+            _args[1] = (double)index;
+            return RuntimeValue.FromBoxed(_callback.Call(interp, _args));
         }
 
         public void Dispose() => ArgumentListPool.Return(_args);

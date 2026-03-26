@@ -1,4 +1,5 @@
 using SharpTS.Execution;
+using SharpTS.Runtime;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Runtime.BuiltIns;
@@ -15,10 +16,10 @@ public static class SetBuiltIns
     private static readonly BuiltInTypeMemberLookup<SharpTSSet> _lookup =
         BuiltInTypeBuilder<SharpTSSet>.ForInstanceType()
             .Property("size", set => (double)set.Size)
-            .Method("add", 1, Add)
-            .Method("has", 1, Has)
-            .Method("delete", 1, Delete)
-            .Method("clear", 0, Clear)
+            .MethodV2("add", 1, AddV2)
+            .MethodV2("has", 1, HasV2)
+            .MethodV2("delete", 1, DeleteV2)
+            .MethodV2("clear", 0, ClearV2)
             .Method("keys", 0, Keys)
             .Method("values", 0, Values)
             .Method("entries", 0, Entries)
@@ -28,42 +29,39 @@ public static class SetBuiltIns
             .Method("intersection", 1, Intersection)
             .Method("difference", 1, Difference)
             .Method("symmetricDifference", 1, SymmetricDifference)
-            .Method("isSubsetOf", 1, IsSubsetOf)
-            .Method("isSupersetOf", 1, IsSupersetOf)
-            .Method("isDisjointFrom", 1, IsDisjointFrom)
+            .MethodV2("isSubsetOf", 1, IsSubsetOfV2)
+            .MethodV2("isSupersetOf", 1, IsSupersetOfV2)
+            .MethodV2("isDisjointFrom", 1, IsDisjointFromV2)
             .Build();
 
     public static object? GetMember(SharpTSSet receiver, string name)
         => _lookup.GetMember(receiver, name);
 
-    private static object? Add(Interpreter _, SharpTSSet set, List<object?> args)
+    private static RuntimeValue AddV2(Interpreter _, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
     {
-        var value = args[0];
-        if (value == null)
-            throw new Exception("Runtime Error: Set value cannot be null.");
-        return set.Add(value);
+        var value = args[0].ToObject()
+            ?? throw new Exception("Runtime Error: Set value cannot be null.");
+        return RuntimeValue.FromObject(set.Add(value));
     }
 
-    private static object? Has(Interpreter _, SharpTSSet set, List<object?> args)
+    private static RuntimeValue HasV2(Interpreter _, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
     {
-        var value = args[0];
-        if (value == null)
-            throw new Exception("Runtime Error: Set value cannot be null.");
-        return set.Has(value);
+        var value = args[0].ToObject()
+            ?? throw new Exception("Runtime Error: Set value cannot be null.");
+        return RuntimeValue.FromBoolean(set.Has(value));
     }
 
-    private static object? Delete(Interpreter _, SharpTSSet set, List<object?> args)
+    private static RuntimeValue DeleteV2(Interpreter _, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
     {
-        var value = args[0];
-        if (value == null)
-            throw new Exception("Runtime Error: Set value cannot be null.");
-        return set.Delete(value);
+        var value = args[0].ToObject()
+            ?? throw new Exception("Runtime Error: Set value cannot be null.");
+        return RuntimeValue.FromBoolean(set.Delete(value));
     }
 
-    private static object? Clear(Interpreter _, SharpTSSet set, List<object?> args)
+    private static RuntimeValue ClearV2(Interpreter _, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
     {
         set.Clear();
-        return null;
+        return RuntimeValue.Undefined;
     }
 
     private static object? Keys(Interpreter _, SharpTSSet set, List<object?> args)
@@ -121,24 +119,24 @@ public static class SetBuiltIns
         return set.SymmetricDifference(other);
     }
 
-    private static object? IsSubsetOf(Interpreter _, SharpTSSet set, List<object?> args)
+    private static RuntimeValue IsSubsetOfV2(Interpreter _, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
     {
-        var other = args[0] as SharpTSSet
+        var other = args[0].ToObject() as SharpTSSet
             ?? throw new Exception("Runtime Error: isSubsetOf requires a Set argument.");
-        return set.IsSubsetOf(other);
+        return RuntimeValue.FromBoolean(set.IsSubsetOf(other));
     }
 
-    private static object? IsSupersetOf(Interpreter _, SharpTSSet set, List<object?> args)
+    private static RuntimeValue IsSupersetOfV2(Interpreter _, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
     {
-        var other = args[0] as SharpTSSet
+        var other = args[0].ToObject() as SharpTSSet
             ?? throw new Exception("Runtime Error: isSupersetOf requires a Set argument.");
-        return set.IsSupersetOf(other);
+        return RuntimeValue.FromBoolean(set.IsSupersetOf(other));
     }
 
-    private static object? IsDisjointFrom(Interpreter _, SharpTSSet set, List<object?> args)
+    private static RuntimeValue IsDisjointFromV2(Interpreter _, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
     {
-        var other = args[0] as SharpTSSet
+        var other = args[0].ToObject() as SharpTSSet
             ?? throw new Exception("Runtime Error: isDisjointFrom requires a Set argument.");
-        return set.IsDisjointFrom(other);
+        return RuntimeValue.FromBoolean(set.IsDisjointFrom(other));
     }
 }
