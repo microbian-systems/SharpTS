@@ -31,24 +31,5 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Leave, _setResultLabel);
     }
 
-    protected override void EmitIf(Stmt.If i)
-    {
-        var elseLabel = _il.DefineLabel();
-        var endLabel = _il.DefineLabel();
-
-        EmitExpression(i.Condition);
-        EnsureBoxed();
-        EmitTruthyCheck();
-        _il.Emit(OpCodes.Brfalse, elseLabel);
-
-        EmitStatement(i.ThenBranch);
-        _il.Emit(OpCodes.Br, endLabel);
-
-        _il.MarkLabel(elseLabel);
-        if (i.ElseBranch != null)
-            EmitStatement(i.ElseBranch);
-
-        _il.MarkLabel(endLabel);
-    }
-
+    // EmitIf: inherited from StatementEmitterBase (identical logic)
 }

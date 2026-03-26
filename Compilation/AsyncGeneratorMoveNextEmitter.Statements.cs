@@ -6,94 +6,8 @@ namespace SharpTS.Compilation;
 
 public partial class AsyncGeneratorMoveNextEmitter
 {
-    public override void EmitStatement(Stmt stmt)
-    {
-        switch (stmt)
-        {
-            case Stmt.Expression e:
-                EmitExpression(e.Expr);
-                _il.Emit(OpCodes.Pop);
-                break;
-
-            case Stmt.Var v:
-                EmitVarDeclaration(v);
-                break;
-
-            case Stmt.Const c:
-                EmitVarDeclaration(new Stmt.Var(c.Name, c.TypeAnnotation, c.Initializer));
-                break;
-
-            case Stmt.Return r:
-                EmitReturn(r);
-                break;
-
-            case Stmt.If i:
-                EmitIf(i);
-                break;
-
-            case Stmt.While w:
-                EmitWhile(w);
-                break;
-
-            case Stmt.Block b:
-                if (b.Statements != null)
-                    foreach (var s in b.Statements)
-                        EmitStatement(s);
-                break;
-
-            case Stmt.Sequence seq:
-                foreach (var s in seq.Statements)
-                    EmitStatement(s);
-                break;
-
-            case Stmt.Print p:
-                EmitPrint(p);
-                break;
-
-            case Stmt.ForOf f:
-                EmitForOf(f);
-                break;
-
-            case Stmt.DoWhile dw:
-                EmitDoWhile(dw);
-                break;
-
-            case Stmt.For f:
-                EmitFor(f);
-                break;
-
-            case Stmt.ForIn fi:
-                EmitForIn(fi);
-                break;
-
-            case Stmt.Throw t:
-                EmitThrow(t);
-                break;
-
-            case Stmt.Switch s:
-                EmitSwitch(s);
-                break;
-
-            case Stmt.TryCatch tc:
-                EmitTryCatch(tc);
-                break;
-
-            case Stmt.Break b:
-                EmitBreak(b);
-                break;
-
-            case Stmt.Continue c:
-                EmitContinue(c);
-                break;
-
-            case Stmt.LabeledStatement ls:
-                EmitLabeledStatement(ls);
-                break;
-
-            default:
-                break;
-        }
-    }
+    // EmitStatement: inherited from StatementEmitterBase (handles all statement types
+    // including Using, DeclareModule, DeclareGlobal that were previously missing here)
 
     protected override FieldBuilder? GetHoistedVariableField(string name) => _builder.GetVariableField(name);
 
@@ -117,48 +31,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         EmitReturnValueTaskBool(false);
     }
 
-    protected override void EmitIf(Stmt.If i)
-    {
-        var elseLabel = _il.DefineLabel();
-        var endLabel = _il.DefineLabel();
-
-        EmitExpression(i.Condition);
-        EnsureBoxed();
-        EmitTruthyCheck();
-        _il.Emit(OpCodes.Brfalse, elseLabel);
-
-        EmitStatement(i.ThenBranch);
-        _il.Emit(OpCodes.Br, endLabel);
-
-        _il.MarkLabel(elseLabel);
-        if (i.ElseBranch != null)
-            EmitStatement(i.ElseBranch);
-
-        _il.MarkLabel(endLabel);
-    }
-
-    protected override void EmitWhile(Stmt.While w)
-    {
-        var startLabel = _il.DefineLabel();
-        var endLabel = _il.DefineLabel();
-        var continueLabel = _il.DefineLabel();
-
-        EnterLoop(endLabel, continueLabel);
-
-        _il.MarkLabel(startLabel);
-        EmitExpression(w.Condition);
-        EnsureBoxed();
-        EmitTruthyCheck();
-        _il.Emit(OpCodes.Brfalse, endLabel);
-
-        EmitStatement(w.Body);
-
-        _il.MarkLabel(continueLabel);
-        _il.Emit(OpCodes.Br, startLabel);
-
-        _il.MarkLabel(endLabel);
-        ExitLoop();
-    }
+    // EmitIf, EmitWhile: inherited from StatementEmitterBase (identical logic)
 
     protected override void EmitForOf(Stmt.ForOf f)
     {
@@ -173,67 +46,14 @@ public partial class AsyncGeneratorMoveNextEmitter
 
         if (enumeratorField == null)
         {
-            // No suspension inside this loop - use local enumerator
-            EmitForOfWithLocalEnumerator(f);
+            // No suspension inside this loop - delegate to base (uses
+            // DeclareLoopVariable/EmitStoreLoopVariable overrides for hoisted fields)
+            base.EmitForOf(f);
             return;
         }
 
         // Loop contains yield/await - use hoisted enumerator field
         EmitForOfWithHoistedEnumerator(f, enumeratorField);
-    }
-
-    private void EmitForOfWithLocalEnumerator(Stmt.ForOf f)
-    {
-        string varName = f.Variable.Lexeme;
-        var varField = _builder.GetVariableField(varName);
-
-        EmitExpression(f.Iterable);
-        EnsureBoxed();
-
-        var getEnumerator = typeof(System.Collections.IEnumerable).GetMethod("GetEnumerator")!;
-        var moveNext = typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!;
-        var current = typeof(System.Collections.IEnumerator).GetProperty("Current")!.GetGetMethod()!;
-
-        _il.Emit(OpCodes.Castclass, typeof(System.Collections.IEnumerable));
-        _il.Emit(OpCodes.Callvirt, getEnumerator);
-
-        var enumLocal = _il.DeclareLocal(typeof(System.Collections.IEnumerator));
-        _il.Emit(OpCodes.Stloc, enumLocal);
-
-        var startLabel = _il.DefineLabel();
-        var endLabel = _il.DefineLabel();
-        var continueLabel = _il.DefineLabel();
-
-        EnterLoop(endLabel, continueLabel);
-
-        _il.MarkLabel(startLabel);
-        _il.Emit(OpCodes.Ldloc, enumLocal);
-        _il.Emit(OpCodes.Callvirt, moveNext);
-        _il.Emit(OpCodes.Brfalse, endLabel);
-
-        if (varField != null)
-        {
-            _il.Emit(OpCodes.Ldarg_0);
-            _il.Emit(OpCodes.Ldloc, enumLocal);
-            _il.Emit(OpCodes.Callvirt, current);
-            _il.Emit(OpCodes.Stfld, varField);
-        }
-        else
-        {
-            var varLocal = _il.DeclareLocal(typeof(object));
-            _ctx!.Locals.RegisterLocal(varName, varLocal);
-            _il.Emit(OpCodes.Ldloc, enumLocal);
-            _il.Emit(OpCodes.Callvirt, current);
-            _il.Emit(OpCodes.Stloc, varLocal);
-        }
-
-        EmitStatement(f.Body);
-
-        _il.MarkLabel(continueLabel);
-        _il.Emit(OpCodes.Br, startLabel);
-
-        _il.MarkLabel(endLabel);
-        ExitLoop();
     }
 
     private void EmitForOfWithHoistedEnumerator(Stmt.ForOf f, FieldBuilder enumeratorField)
@@ -421,162 +241,11 @@ public partial class AsyncGeneratorMoveNextEmitter
         ExitLoop();
     }
 
-    protected override void EmitPrint(Stmt.Print p)
-    {
-        EmitExpression(p.Expr);
-        EnsureBoxed();
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.ConsoleLog);
-    }
-
-    protected override void EmitDoWhile(Stmt.DoWhile dw)
-    {
-        var startLabel = _il.DefineLabel();
-        var endLabel = _il.DefineLabel();
-        var continueLabel = _il.DefineLabel();
-
-        EnterLoop(endLabel, continueLabel);
-
-        _il.MarkLabel(startLabel);
-        EmitStatement(dw.Body);
-
-        _il.MarkLabel(continueLabel);
-
-        EmitExpression(dw.Condition);
-        EnsureBoxed();
-        EmitTruthyCheck();
-        _il.Emit(OpCodes.Brtrue, startLabel);
-
-        _il.MarkLabel(endLabel);
-        ExitLoop();
-    }
-
-    protected override void EmitForIn(Stmt.ForIn f)
-    {
-        var startLabel = _il.DefineLabel();
-        var endLabel = _il.DefineLabel();
-        var continueLabel = _il.DefineLabel();
-
-        string varName = f.Variable.Lexeme;
-        var varField = _builder.GetVariableField(varName);
-
-        EmitExpression(f.Object);
-        EnsureBoxed();
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.GetKeys);
-        var keysLocal = _il.DeclareLocal(typeof(List<object>));
-        _il.Emit(OpCodes.Stloc, keysLocal);
-
-        var indexLocal = _il.DeclareLocal(typeof(int));
-        _il.Emit(OpCodes.Ldc_I4_0);
-        _il.Emit(OpCodes.Stloc, indexLocal);
-
-        LocalBuilder? loopVar = null;
-        if (varField == null)
-        {
-            loopVar = _il.DeclareLocal(typeof(object));
-            _ctx!.Locals.RegisterLocal(varName, loopVar);
-        }
-
-        EnterLoop(endLabel, continueLabel);
-
-        _il.MarkLabel(startLabel);
-
-        _il.Emit(OpCodes.Ldloc, indexLocal);
-        _il.Emit(OpCodes.Ldloc, keysLocal);
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.GetLength);
-        _il.Emit(OpCodes.Clt);
-        _il.Emit(OpCodes.Brfalse, endLabel);
-
-        _il.Emit(OpCodes.Ldloc, keysLocal);
-        _il.Emit(OpCodes.Ldloc, indexLocal);
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.GetElement);
-
-        if (varField != null)
-        {
-            var keyTemp = _il.DeclareLocal(typeof(object));
-            _il.Emit(OpCodes.Stloc, keyTemp);
-            _il.Emit(OpCodes.Ldarg_0);
-            _il.Emit(OpCodes.Ldloc, keyTemp);
-            _il.Emit(OpCodes.Stfld, varField);
-        }
-        else
-        {
-            _il.Emit(OpCodes.Stloc, loopVar!);
-        }
-
-        EmitStatement(f.Body);
-
-        _il.MarkLabel(continueLabel);
-
-        _il.Emit(OpCodes.Ldloc, indexLocal);
-        _il.Emit(OpCodes.Ldc_I4_1);
-        _il.Emit(OpCodes.Add);
-        _il.Emit(OpCodes.Stloc, indexLocal);
-
-        _il.Emit(OpCodes.Br, startLabel);
-
-        _il.MarkLabel(endLabel);
-        ExitLoop();
-    }
-
-    protected override void EmitThrow(Stmt.Throw t)
-    {
-        EmitExpression(t.Value);
-        EnsureBoxed();
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateException);
-        _il.Emit(OpCodes.Throw);
-    }
-
-    protected override void EmitSwitch(Stmt.Switch s)
-    {
-        var endLabel = _il.DefineLabel();
-        var defaultLabel = _il.DefineLabel();
-        var caseLabels = s.Cases.Select(_ => _il.DefineLabel()).ToList();
-
-        EmitExpression(s.Subject);
-        EnsureBoxed();
-        var subjectLocal = _il.DeclareLocal(typeof(object));
-        _il.Emit(OpCodes.Stloc, subjectLocal);
-
-        for (int i = 0; i < s.Cases.Count; i++)
-        {
-            _il.Emit(OpCodes.Ldloc, subjectLocal);
-            EmitExpression(s.Cases[i].Value);
-            EnsureBoxed();
-            _il.Emit(OpCodes.Call, _ctx!.Runtime!.Equals);
-            _il.Emit(OpCodes.Brtrue, caseLabels[i]);
-        }
-
-        if (s.DefaultBody == null)
-            _il.Emit(OpCodes.Br, endLabel);
-        else
-            _il.Emit(OpCodes.Br, defaultLabel);
-
-        for (int i = 0; i < s.Cases.Count; i++)
-        {
-            _il.MarkLabel(caseLabels[i]);
-            foreach (var stmt in s.Cases[i].Body)
-            {
-                if (stmt is Stmt.Break)
-                    _il.Emit(OpCodes.Br, endLabel);
-                else
-                    EmitStatement(stmt);
-            }
-        }
-
-        if (s.DefaultBody != null)
-        {
-            _il.MarkLabel(defaultLabel);
-            foreach (var stmt in s.DefaultBody)
-            {
-                if (stmt is Stmt.Break)
-                    _il.Emit(OpCodes.Br, endLabel);
-                else
-                    EmitStatement(stmt);
-            }
-        }
-
-        _il.MarkLabel(endLabel);
-    }
+    // EmitPrint, EmitDoWhile, EmitForIn, EmitThrow, EmitSwitch:
+    // inherited from StatementEmitterBase (identical logic; EmitForIn uses
+    // DeclareLoopVariable/EmitStoreLoopVariable overrides for hoisted fields)
+    // Note: base EmitSwitch also fixes a bug where labeled breaks inside switch
+    // cases were incorrectly treated as switch breaks.
 
     protected override void EmitBranchToLabel(Label target)
     {

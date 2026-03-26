@@ -338,6 +338,13 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
+            // --- http.Agent ---
+            case "Agent":
+                EmitBoxedArgOrNull(arguments, 0);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.HttpAgentFactory);
+                SetStackUnknown();
+                return true;
+
             // --- vm.Script ---
             case "Script":
                 EmitBoxedArgOrNull(arguments, 0);

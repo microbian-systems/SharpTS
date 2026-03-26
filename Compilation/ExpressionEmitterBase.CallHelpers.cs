@@ -37,18 +37,88 @@ public abstract partial class ExpressionEmitterBase
                 return;
         }
 
-        // Handle fetch() - global async HTTP function
-        Expr fetchCallee = c.Callee;
-        bool unwrapped = true;
-        while (unwrapped)
+        // Handle global functions by variable name
+        if (c.Callee is Expr.Variable globalVar)
         {
-            unwrapped = false;
-            if (fetchCallee is Expr.TypeAssertion ta2) { fetchCallee = ta2.Expression; unwrapped = true; }
-            if (fetchCallee is Expr.Grouping g2) { fetchCallee = g2.Expression; unwrapped = true; }
+            switch (globalVar.Name.Lexeme)
+            {
+                case "fetch":
+                    EmitFetchCall(c.Arguments);
+                    return;
+                case "parseInt":
+                    EmitGlobalParseInt(c.Arguments);
+                    return;
+                case "parseFloat":
+                    EmitGlobalParseFloat(c.Arguments);
+                    return;
+                case "isNaN":
+                    EmitGlobalIsNaN(c.Arguments);
+                    return;
+                case "isFinite":
+                    EmitGlobalIsFinite(c.Arguments);
+                    return;
+                case "structuredClone":
+                    EmitStructuredClone(c.Arguments);
+                    return;
+                case "setTimeout":
+                    EmitSetTimeout(c.Arguments);
+                    return;
+                case "clearTimeout":
+                    EmitClearTimeout(c.Arguments);
+                    return;
+                case "setInterval":
+                    EmitSetInterval(c.Arguments);
+                    return;
+                case "clearInterval":
+                    EmitClearInterval(c.Arguments);
+                    return;
+                case "queueMicrotask":
+                    EmitQueueMicrotask(c.Arguments);
+                    return;
+                case "Symbol":
+                    EmitSymbolCall(c.Arguments);
+                    return;
+                case "BigInt":
+                    EmitBigIntCall(c.Arguments);
+                    return;
+                case "Date":
+                    // Date() without 'new' returns current date as string
+                    IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateDateNoArgs);
+                    IL.Emit(OpCodes.Call, Ctx.Runtime!.DateToString);
+                    return;
+                case "Error" or "TypeError" or "RangeError" or "ReferenceError"
+                    or "SyntaxError" or "URIError" or "EvalError" or "AggregateError":
+                    EmitErrorCall(globalVar.Name.Lexeme, c.Arguments);
+                    return;
+            }
         }
-        if (fetchCallee is Expr.Variable fetchVar && fetchVar.Name.Lexeme == "fetch")
+
+        // Handle fetch() with type assertions/groupings unwrapped
+        if (c.Callee is not Expr.Variable)
         {
-            EmitFetchCall(c.Arguments);
+            Expr fetchCallee = c.Callee;
+            bool unwrapped = true;
+            while (unwrapped)
+            {
+                unwrapped = false;
+                if (fetchCallee is Expr.TypeAssertion ta2) { fetchCallee = ta2.Expression; unwrapped = true; }
+                if (fetchCallee is Expr.Grouping g2) { fetchCallee = g2.Expression; unwrapped = true; }
+            }
+            if (fetchCallee is Expr.Variable fetchVar && fetchVar.Name.Lexeme == "fetch")
+            {
+                EmitFetchCall(c.Arguments);
+                return;
+            }
+        }
+
+        // Handle Date.now() static method
+        if (c.Callee is Expr.Get dateGet &&
+            dateGet.Object is Expr.Variable dateStaticVar &&
+            dateStaticVar.Name.Lexeme == "Date" &&
+            dateGet.Name.Lexeme == "now")
+        {
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.DateNow);
+            IL.Emit(OpCodes.Box, Types.Double);
             return;
         }
 
@@ -466,6 +536,140 @@ public abstract partial class ExpressionEmitterBase
         SetStackUnknown();
         return true;
     }
+
+    #region Global Function Helpers
+
+    protected void EmitGlobalParseInt(List<Expr> arguments)
+    {
+        if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+        if (arguments.Count > 1) { EmitExpression(arguments[1]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldc_I4, 10); IL.Emit(OpCodes.Box, Types.Int32); }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.NumberParseInt);
+        IL.Emit(OpCodes.Box, Types.Double);
+    }
+
+    protected void EmitGlobalParseFloat(List<Expr> arguments)
+    {
+        if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.NumberParseFloat);
+        IL.Emit(OpCodes.Box, Types.Double);
+    }
+
+    protected void EmitGlobalIsNaN(List<Expr> arguments)
+    {
+        if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.GlobalIsNaN);
+        IL.Emit(OpCodes.Box, Types.Boolean);
+    }
+
+    protected void EmitGlobalIsFinite(List<Expr> arguments)
+    {
+        if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.GlobalIsFinite);
+        IL.Emit(OpCodes.Box, Types.Boolean);
+    }
+
+    protected void EmitStructuredClone(List<Expr> arguments)
+    {
+        if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+        if (arguments.Count > 1) { EmitExpression(arguments[1]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.StructuredCloneClone);
+    }
+
+    protected void EmitSetTimeout(List<Expr> arguments)
+    {
+        if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+        if (arguments.Count > 1) { EmitExpression(arguments[1]); if (arguments[1] is not Expr.Literal { Value: double }) IL.Emit(OpCodes.Unbox_Any, Types.Double); } else { IL.Emit(OpCodes.Ldc_R8, 0.0); }
+        EmitTimerArgsArray(arguments, 2);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.SetTimeout);
+        SetStackUnknown();
+    }
+
+    protected void EmitClearTimeout(List<Expr> arguments)
+    {
+        if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.ClearTimeout);
+        IL.Emit(OpCodes.Ldnull);
+    }
+
+    protected void EmitSetInterval(List<Expr> arguments)
+    {
+        if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+        if (arguments.Count > 1) { EmitExpression(arguments[1]); if (arguments[1] is not Expr.Literal { Value: double }) IL.Emit(OpCodes.Unbox_Any, Types.Double); } else { IL.Emit(OpCodes.Ldc_R8, 0.0); }
+        EmitTimerArgsArray(arguments, 2);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.SetInterval);
+        SetStackUnknown();
+    }
+
+    protected void EmitClearInterval(List<Expr> arguments)
+    {
+        if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.ClearInterval);
+        IL.Emit(OpCodes.Ldnull);
+    }
+
+    protected void EmitQueueMicrotask(List<Expr> arguments)
+    {
+        if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.QueueMicrotask);
+        IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
+    }
+
+    private void EmitTimerArgsArray(List<Expr> arguments, int startIndex)
+    {
+        if (arguments.Count > startIndex)
+        {
+            IL.Emit(OpCodes.Ldc_I4, arguments.Count - startIndex);
+            IL.Emit(OpCodes.Newarr, Types.Object);
+            for (int i = startIndex; i < arguments.Count; i++)
+            {
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldc_I4, i - startIndex);
+                EmitExpression(arguments[i]);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Stelem_Ref);
+            }
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldc_I4_0);
+            IL.Emit(OpCodes.Newarr, Types.Object);
+        }
+    }
+
+    protected void EmitSymbolCall(List<Expr> arguments)
+    {
+        if (arguments.Count == 0) { IL.Emit(OpCodes.Ldnull); }
+        else { EmitExpression(arguments[0]); IL.Emit(OpCodes.Call, Ctx.Runtime!.Stringify); }
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSSymbolCtor);
+    }
+
+    protected void EmitBigIntCall(List<Expr> arguments)
+    {
+        if (arguments.Count != 1)
+            throw new Diagnostics.Exceptions.CompileException("BigInt() requires exactly one argument.");
+        EmitExpression(arguments[0]);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateBigInt);
+        SetStackUnknown();
+    }
+
+    protected void EmitErrorCall(string errorTypeName, List<Expr> arguments)
+    {
+        IL.Emit(OpCodes.Ldstr, errorTypeName);
+        IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+        IL.Emit(OpCodes.Newarr, typeof(object));
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldc_I4, i);
+            EmitExpression(arguments[i]);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Stelem_Ref);
+        }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateError);
+    }
+
+    #endregion
 
     protected void EmitFetchCall(List<Expr> arguments)
     {
