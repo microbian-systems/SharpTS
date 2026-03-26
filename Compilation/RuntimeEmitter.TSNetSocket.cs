@@ -569,30 +569,70 @@ public partial class RuntimeEmitter
 
         wil.BeginExceptionBlock();
 
-        // string pipeName = ConvertToWindowsPipeName(_connectHost)
-        var pipeNameLocal = wil.DeclareLocal(_types.String);
-        wil.Emit(OpCodes.Ldarg_0);
-        wil.Emit(OpCodes.Ldfld, _netSocketConnectHostField);
-        wil.Emit(OpCodes.Call, convertMethod);
-        wil.Emit(OpCodes.Stloc, pipeNameLocal);
+        // Branch on OS: Windows uses NamedPipeClientStream, Unix uses Socket + UnixDomainSocketEndPoint
+        var windowsPath = wil.DefineLabel();
+        var connectDone = wil.DefineLabel();
 
-        // var pipeClient = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous)
-        var pipeLocal = wil.DeclareLocal(typeof(NamedPipeClientStream));
-        wil.Emit(OpCodes.Ldstr, ".");
-        wil.Emit(OpCodes.Ldloc, pipeNameLocal);
-        wil.Emit(OpCodes.Ldc_I4_3);  // PipeDirection.InOut = 3
-        wil.Emit(OpCodes.Ldc_I4, (int)PipeOptions.Asynchronous);
-        wil.Emit(OpCodes.Newobj, typeof(NamedPipeClientStream).GetConstructor([_types.String, _types.String, typeof(PipeDirection), typeof(PipeOptions)])!);
-        wil.Emit(OpCodes.Stloc, pipeLocal);
+        wil.Emit(OpCodes.Call, typeof(OperatingSystem).GetMethod("IsWindows")!);
+        wil.Emit(OpCodes.Brtrue, windowsPath);
 
-        // pipeClient.Connect() — blocking connect
-        wil.Emit(OpCodes.Ldloc, pipeLocal);
-        wil.Emit(OpCodes.Callvirt, typeof(NamedPipeClientStream).GetMethod("Connect", Type.EmptyTypes)!);
+        // ── Unix path: Socket + UnixDomainSocketEndPoint + NetworkStream ──
+        {
+            // var unixSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
+            var unixSocketLocal = wil.DeclareLocal(typeof(Socket));
+            wil.Emit(OpCodes.Ldc_I4, (int)AddressFamily.Unix);
+            wil.Emit(OpCodes.Ldc_I4, (int)SocketType.Stream);
+            wil.Emit(OpCodes.Ldc_I4, (int)ProtocolType.Unspecified);
+            wil.Emit(OpCodes.Newobj, typeof(Socket).GetConstructor([typeof(AddressFamily), typeof(SocketType), typeof(ProtocolType)])!);
+            wil.Emit(OpCodes.Stloc, unixSocketLocal);
 
-        // _stream = pipeClient
-        wil.Emit(OpCodes.Ldarg_0);
-        wil.Emit(OpCodes.Ldloc, pipeLocal);
-        wil.Emit(OpCodes.Stfld, _netSocketStreamField);
+            // unixSocket.Connect(new UnixDomainSocketEndPoint(_connectHost))
+            wil.Emit(OpCodes.Ldloc, unixSocketLocal);
+            wil.Emit(OpCodes.Ldarg_0);
+            wil.Emit(OpCodes.Ldfld, _netSocketConnectHostField);
+            wil.Emit(OpCodes.Newobj, typeof(UnixDomainSocketEndPoint).GetConstructor([_types.String])!);
+            wil.Emit(OpCodes.Callvirt, typeof(Socket).GetMethod("Connect", [typeof(EndPoint)])!);
+
+            // _stream = new NetworkStream(unixSocket, ownsSocket: true)
+            wil.Emit(OpCodes.Ldarg_0);
+            wil.Emit(OpCodes.Ldloc, unixSocketLocal);
+            wil.Emit(OpCodes.Ldc_I4_1); // ownsSocket = true
+            wil.Emit(OpCodes.Newobj, typeof(NetworkStream).GetConstructor([typeof(Socket), _types.Boolean])!);
+            wil.Emit(OpCodes.Stfld, _netSocketStreamField);
+        }
+
+        wil.Emit(OpCodes.Br, connectDone);
+
+        // ── Windows path: NamedPipeClientStream ──
+        wil.MarkLabel(windowsPath);
+        {
+            // string pipeName = ConvertToWindowsPipeName(_connectHost)
+            var pipeNameLocal = wil.DeclareLocal(_types.String);
+            wil.Emit(OpCodes.Ldarg_0);
+            wil.Emit(OpCodes.Ldfld, _netSocketConnectHostField);
+            wil.Emit(OpCodes.Call, convertMethod);
+            wil.Emit(OpCodes.Stloc, pipeNameLocal);
+
+            // var pipeClient = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous)
+            var pipeLocal = wil.DeclareLocal(typeof(NamedPipeClientStream));
+            wil.Emit(OpCodes.Ldstr, ".");
+            wil.Emit(OpCodes.Ldloc, pipeNameLocal);
+            wil.Emit(OpCodes.Ldc_I4_3);  // PipeDirection.InOut = 3
+            wil.Emit(OpCodes.Ldc_I4, (int)PipeOptions.Asynchronous);
+            wil.Emit(OpCodes.Newobj, typeof(NamedPipeClientStream).GetConstructor([_types.String, _types.String, typeof(PipeDirection), typeof(PipeOptions)])!);
+            wil.Emit(OpCodes.Stloc, pipeLocal);
+
+            // pipeClient.Connect() — blocking connect
+            wil.Emit(OpCodes.Ldloc, pipeLocal);
+            wil.Emit(OpCodes.Callvirt, typeof(NamedPipeClientStream).GetMethod("Connect", Type.EmptyTypes)!);
+
+            // _stream = pipeClient
+            wil.Emit(OpCodes.Ldarg_0);
+            wil.Emit(OpCodes.Ldloc, pipeLocal);
+            wil.Emit(OpCodes.Stfld, _netSocketStreamField);
+        }
+
+        wil.MarkLabel(connectDone);
 
         // _connecting = false
         wil.Emit(OpCodes.Ldarg_0);
