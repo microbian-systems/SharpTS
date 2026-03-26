@@ -265,7 +265,7 @@ public partial class ILEmitter
     /// Uses OpCodes.Call instead of Callvirt to bypass virtual dispatch and invoke the
     /// base class implementation directly, preventing infinite recursion.
     /// </summary>
-    private bool TryEmitSuperMethodCall(string methodName, List<Expr> arguments)
+    protected override bool TryEmitSuperMethodCall(string methodName, List<Expr> arguments)
     {
         // Resolve the superclass name - try multiple sources:
         // 1. CurrentSuperclassName (set in constructor context)
@@ -378,7 +378,7 @@ public partial class ILEmitter
     /// Emits a Promise instance method call (.then, .catch, .finally).
     /// These methods take callbacks and return a new Promise (Task).
     /// </summary>
-    private void EmitPromiseInstanceMethodCall(Expr promise, string methodName, List<Expr> arguments)
+    private new void EmitPromiseInstanceMethodCall(Expr promise, string methodName, List<Expr> arguments)
     {
         // Emit the promise (should be Task<object?>)
         EmitExpression(promise);

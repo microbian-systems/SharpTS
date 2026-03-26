@@ -829,7 +829,7 @@ public partial class ILEmitter
     /// <summary>
     /// Resolves a type argument string to a .NET Type for generic instantiation.
     /// </summary>
-    private Type ResolveTypeArg(string typeArg)
+    protected override Type ResolveTypeArg(string typeArg)
     {
         return typeArg switch
         {

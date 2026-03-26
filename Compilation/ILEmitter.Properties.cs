@@ -657,7 +657,7 @@ public partial class ILEmitter
     /// Emits an object literal that has getter/setter accessors.
     /// Uses the $Object type which supports DefineGetter/DefineSetter.
     /// </summary>
-    private void EmitObjectLiteralWithAccessors(Expr.ObjectLiteral o)
+    protected override void EmitObjectLiteralWithAccessors(Expr.ObjectLiteral o)
     {
         // Create $Object: new $Object(new Dictionary<string, object?>())
         IL.Emit(OpCodes.Newobj, _ctx.Types.GetConstructor(_ctx.Types.DictionaryStringObject));
@@ -721,7 +721,7 @@ public partial class ILEmitter
     /// <summary>
     /// Extracts the string key from a property key expression.
     /// </summary>
-    private static string GetPropertyKeyString(Expr.PropertyKey key)
+    private static new string GetPropertyKeyString(Expr.PropertyKey key)
     {
         return key switch
         {
@@ -736,7 +736,7 @@ public partial class ILEmitter
     /// <summary>
     /// Emits a static property key (identifier, string literal, or number literal) as a string.
     /// </summary>
-    private void EmitStaticPropertyKey(Expr.PropertyKey key)
+    protected override void EmitStaticPropertyKey(Expr.PropertyKey key)
     {
         switch (key)
         {

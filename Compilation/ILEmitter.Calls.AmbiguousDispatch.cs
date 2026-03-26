@@ -8,7 +8,7 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class ILEmitter
 {
-    private void EmitAmbiguousMethodCall(Expr obj, string methodName, List<Expr> arguments)
+    private new void EmitAmbiguousMethodCall(Expr obj, string methodName, List<Expr> arguments)
     {
         // Emit the object
         EmitExpression(obj);
