@@ -141,51 +141,6 @@ public static class NumberBuiltIns
         return RuntimeValue.FromString(ToStringWithRadix(value, radix));
     }
 
-    // Instance method implementations (legacy)
-    private static object? ToFixed(Interpreter _, double value, List<object?> args)
-    {
-        var digits = args.Count > 0 && args[0] != null ? (int)(double)args[0]! : 0;
-        if (digits < 0 || digits > 100)
-            throw new Exception("Runtime Error: toFixed() digits argument must be between 0 and 100");
-        return value.ToString($"F{digits}", CultureInfo.InvariantCulture);
-    }
-
-    private static object? ToPrecision(Interpreter _, double value, List<object?> args)
-    {
-        if (args.Count == 0 || args[0] == null) return value.ToString(CultureInfo.InvariantCulture);
-        var precision = (int)(double)args[0]!;
-        if (precision < 1 || precision > 100)
-            throw new Exception("Runtime Error: toPrecision() argument must be between 1 and 100");
-        return ToPrecisionImpl(value, precision);
-    }
-
-    private static object? ToExponential(Interpreter _, double value, List<object?> args)
-    {
-        if (double.IsNaN(value)) return "NaN";
-        if (double.IsPositiveInfinity(value)) return "Infinity";
-        if (double.IsNegativeInfinity(value)) return "-Infinity";
-
-        var fractionDigits = args.Count > 0 && args[0] != null ? (int)(double)args[0]! : -1;
-        if (fractionDigits != -1 && (fractionDigits < 0 || fractionDigits > 100))
-            throw new Exception("Runtime Error: toExponential() argument must be between 0 and 100");
-
-        if (fractionDigits == -1)
-        {
-            // No argument: use default precision
-            return value.ToString("e", CultureInfo.InvariantCulture);
-        }
-        return value.ToString($"e{fractionDigits}", CultureInfo.InvariantCulture);
-    }
-
-    private static object? ToStringMethod(Interpreter _, double value, List<object?> args)
-    {
-        if (args.Count == 0 || args[0] == null) return value.ToString(CultureInfo.InvariantCulture);
-        var radix = (int)(double)args[0]!;
-        if (radix < 2 || radix > 36)
-            throw new Exception("Runtime Error: toString() radix must be between 2 and 36");
-        return ToStringWithRadix(value, radix);
-    }
-
     /// <summary>
     /// Parses a string as an integer with the specified radix.
     /// Implements JavaScript parseInt semantics.

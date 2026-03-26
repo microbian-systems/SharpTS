@@ -40,21 +40,6 @@ public static class ObjectBuiltIns
     public static object? GetStaticMethod(string name)
         => _staticLookup.GetMember(name);
 
-    private static object? Keys(Interpreter _, List<object?> args)
-    {
-        if (args[0] is SharpTSObject obj)
-        {
-            var keys = obj.Fields.Keys.Select(k => (object?)k).ToList();
-            return new SharpTSArray(keys);
-        }
-        if (args[0] is SharpTSInstance inst)
-        {
-            var keys = inst.GetFieldNames().Select(k => (object?)k).ToList();
-            return new SharpTSArray(keys);
-        }
-        throw new Exception("Object.keys() requires an object argument");
-    }
-
     private static RuntimeValue KeysV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var arg = args[0].ToObject();
@@ -71,21 +56,6 @@ public static class ObjectBuiltIns
         throw new Exception("Object.keys() requires an object argument");
     }
 
-    private static object? Values(Interpreter _, List<object?> args)
-    {
-        if (args[0] is SharpTSObject obj)
-        {
-            var values = obj.Fields.Values.ToList();
-            return new SharpTSArray(values);
-        }
-        if (args[0] is SharpTSInstance inst)
-        {
-            var values = inst.GetFieldNames().Select(n => inst.GetRawField(n)).ToList();
-            return new SharpTSArray(values);
-        }
-        throw new Exception("Object.values() requires an object argument");
-    }
-
     private static RuntimeValue ValuesV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var arg = args[0].ToObject();
@@ -100,23 +70,6 @@ public static class ObjectBuiltIns
             return RuntimeValue.FromObject(new SharpTSArray(values));
         }
         throw new Exception("Object.values() requires an object argument");
-    }
-
-    private static object? Entries(Interpreter _, List<object?> args)
-    {
-        if (args[0] is SharpTSObject obj)
-        {
-            var entries = obj.Fields.Select(kv =>
-                (object?)new SharpTSArray([(object?)kv.Key, kv.Value])).ToList();
-            return new SharpTSArray(entries);
-        }
-        if (args[0] is SharpTSInstance inst)
-        {
-            var entries = inst.GetFieldNames().Select(n =>
-                (object?)new SharpTSArray([(object?)n, inst.GetRawField(n)])).ToList();
-            return new SharpTSArray(entries);
-        }
-        throw new Exception("Object.entries() requires an object argument");
     }
 
     private static RuntimeValue EntriesV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
@@ -165,17 +118,6 @@ public static class ObjectBuiltIns
         return new SharpTSObject(result);
     }
 
-    private static object? HasOwn(Interpreter _, List<object?> args)
-    {
-        var key = args[1]?.ToString() ?? "";
-        return args[0] switch
-        {
-            SharpTSObject obj => obj.Fields.ContainsKey(key),
-            SharpTSInstance inst => inst.GetFieldNames().Contains(key),
-            _ => false
-        };
-    }
-
     private static RuntimeValue HasOwnV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var obj = args[0].ToObject();
@@ -186,56 +128,6 @@ public static class ObjectBuiltIns
             SharpTSInstance inst => inst.GetFieldNames().Contains(key),
             _ => false
         });
-    }
-
-    /// <summary>
-    /// Object.is(value1, value2) - determines whether two values are the same value.
-    /// Unlike === operator:
-    /// - Object.is(NaN, NaN) returns true
-    /// - Object.is(-0, +0) returns false
-    /// </summary>
-    private static object? Is(Interpreter _, List<object?> args)
-    {
-        var value1 = args[0];
-        var value2 = args[1];
-
-        // Handle null/undefined cases
-        if (value1 is null && value2 is null)
-            return true;
-        if (value1 is null || value2 is null)
-            return false;
-
-        // Handle number cases (NaN and -0/+0)
-        if (value1 is double d1 && value2 is double d2)
-        {
-            // NaN === NaN should be true for Object.is
-            if (double.IsNaN(d1) && double.IsNaN(d2))
-                return true;
-
-            // +0 and -0 should be different for Object.is
-            if (d1 == 0.0 && d2 == 0.0)
-            {
-                // Check if signs are the same using 1/x trick
-                // 1/+0 = +Infinity, 1/-0 = -Infinity
-                return 1.0 / d1 == 1.0 / d2;
-            }
-
-            return d1 == d2;
-        }
-
-        // Handle bigint cases
-        if (value1 is System.Numerics.BigInteger bi1 && value2 is System.Numerics.BigInteger bi2)
-            return bi1 == bi2;
-
-        // For all other types, use reference equality for objects, value equality for primitives
-        if (value1 is string s1 && value2 is string s2)
-            return s1 == s2;
-
-        if (value1 is bool b1 && value2 is bool b2)
-            return b1 == b2;
-
-        // Reference equality for objects
-        return ReferenceEquals(value1, value2);
     }
 
     private static RuntimeValue IsV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
@@ -336,33 +228,6 @@ public static class ObjectBuiltIns
         throw new Exception("Runtime Error: Object.assign() target must be an object");
     }
 
-    private static object? Freeze(Interpreter _, List<object?> args)
-    {
-        // Object.freeze(obj) - freezes the object and returns it
-        switch (args[0])
-        {
-            case SharpTSObject obj:
-                obj.Freeze();
-                return obj;
-            case SharpTSInstance inst:
-                inst.Freeze();
-                return inst;
-            case SharpTSArray arr:
-                arr.Freeze();
-                return arr;
-            case Dictionary<string, object?> dict:
-                // Use PropertyDescriptorStore for compiled dictionaries
-                PropertyDescriptorStore.Freeze(dict);
-                return dict;
-            case System.Collections.IDictionary idict:
-                PropertyDescriptorStore.Freeze(idict);
-                return idict;
-            default:
-                // Non-objects are returned unchanged (JavaScript behavior)
-                return args[0];
-        }
-    }
-
     private static RuntimeValue FreezeV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var arg = args[0].ToObject();
@@ -384,33 +249,6 @@ public static class ObjectBuiltIns
                 PropertyDescriptorStore.Freeze(idict);
                 return RuntimeValue.FromObject(idict);
             default:
-                return args[0];
-        }
-    }
-
-    private static object? Seal(Interpreter _, List<object?> args)
-    {
-        // Object.seal(obj) - seals the object and returns it
-        switch (args[0])
-        {
-            case SharpTSObject obj:
-                obj.Seal();
-                return obj;
-            case SharpTSInstance inst:
-                inst.Seal();
-                return inst;
-            case SharpTSArray arr:
-                arr.Seal();
-                return arr;
-            case Dictionary<string, object?> dict:
-                // Use PropertyDescriptorStore for compiled dictionaries
-                PropertyDescriptorStore.Seal(dict);
-                return dict;
-            case System.Collections.IDictionary idict:
-                PropertyDescriptorStore.Seal(idict);
-                return idict;
-            default:
-                // Non-objects are returned unchanged (JavaScript behavior)
                 return args[0];
         }
     }
@@ -440,21 +278,6 @@ public static class ObjectBuiltIns
         }
     }
 
-    private static object? IsFrozen(Interpreter _, List<object?> args)
-    {
-        // Object.isFrozen(obj) - returns true if the object is frozen
-        return args[0] switch
-        {
-            SharpTSObject obj => obj.IsFrozen,
-            SharpTSInstance inst => inst.IsFrozen,
-            SharpTSArray arr => arr.IsFrozen,
-            Dictionary<string, object?> dict => PropertyDescriptorStore.IsFrozen(dict),
-            System.Collections.IDictionary idict => PropertyDescriptorStore.IsFrozen(idict),
-            // Non-extensible primitives are considered frozen in JavaScript
-            _ => true
-        };
-    }
-
     private static RuntimeValue IsFrozenV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var arg = args[0].ToObject();
@@ -467,21 +290,6 @@ public static class ObjectBuiltIns
             System.Collections.IDictionary idict => PropertyDescriptorStore.IsFrozen(idict),
             _ => true
         });
-    }
-
-    private static object? IsSealed(Interpreter _, List<object?> args)
-    {
-        // Object.isSealed(obj) - returns true if the object is sealed
-        return args[0] switch
-        {
-            SharpTSObject obj => obj.IsSealed,
-            SharpTSInstance inst => inst.IsSealed,
-            SharpTSArray arr => arr.IsSealed,
-            Dictionary<string, object?> dict => PropertyDescriptorStore.IsSealed(dict),
-            System.Collections.IDictionary idict => PropertyDescriptorStore.IsSealed(idict),
-            // Non-extensible primitives are considered sealed in JavaScript
-            _ => true
-        };
     }
 
     private static RuntimeValue IsSealedV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
@@ -1522,24 +1330,6 @@ public static class ObjectBuiltIns
             _ => []
         };
         return new SharpTSArray(symbols);
-    }
-
-    /// <summary>
-    /// Object.getPrototypeOf(obj) - returns the prototype of an object.
-    /// </summary>
-    private static object? GetPrototypeOf(Interpreter _, List<object?> args)
-    {
-        if (args[0] == null)
-            throw new Exception("TypeError: Cannot convert null to object");
-
-        return args[0] switch
-        {
-            SharpTSObject obj => obj.Prototype,
-            SharpTSInstance inst => inst.Prototype,
-            SharpTSArray => null, // Arrays have Array.prototype (simplified to null)
-            Dictionary<string, object?> dict => PropertyDescriptorStore.GetPrototype(dict),
-            _ => null // Primitives return null (simplified)
-        };
     }
 
     private static RuntimeValue GetPrototypeOfV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)

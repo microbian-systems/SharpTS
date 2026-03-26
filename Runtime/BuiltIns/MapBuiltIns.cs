@@ -56,15 +56,6 @@ public static class MapBuiltIns
         return RuntimeValue.Undefined;
     }
 
-    private static object? Keys(Interpreter _, SharpTSMap map, List<object?> args)
-        => map.Keys();
-
-    private static object? Values(Interpreter _, SharpTSMap map, List<object?> args)
-        => map.Values();
-
-    private static object? Entries(Interpreter _, SharpTSMap map, List<object?> args)
-        => map.Entries();
-
     private static object? ForEach(Interpreter interp, SharpTSMap map, List<object?> args)
     {
         var callback = args[0] as ISharpTSCallable

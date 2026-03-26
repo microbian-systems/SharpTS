@@ -64,15 +64,6 @@ public static class SetBuiltIns
         return RuntimeValue.Undefined;
     }
 
-    private static object? Keys(Interpreter _, SharpTSSet set, List<object?> args)
-        => set.Keys();
-
-    private static object? Values(Interpreter _, SharpTSSet set, List<object?> args)
-        => set.Values();
-
-    private static object? Entries(Interpreter _, SharpTSSet set, List<object?> args)
-        => set.Entries();
-
     private static object? ForEach(Interpreter interp, SharpTSSet set, List<object?> args)
     {
         var callback = args[0] as ISharpTSCallable
@@ -91,25 +82,11 @@ public static class SetBuiltIns
     }
 
     // ES2025 Set Operations
-    private static object? Union(Interpreter _, SharpTSSet set, List<object?> args)
-    {
-        var other = args[0] as SharpTSSet
-            ?? throw new Exception("Runtime Error: union requires a Set argument.");
-        return set.Union(other);
-    }
-
     private static RuntimeValue UnionV2(Interpreter _, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
     {
         var other = args[0].ToObject() as SharpTSSet
             ?? throw new Exception("Runtime Error: union requires a Set argument.");
         return RuntimeValue.FromObject(set.Union(other));
-    }
-
-    private static object? Intersection(Interpreter _, SharpTSSet set, List<object?> args)
-    {
-        var other = args[0] as SharpTSSet
-            ?? throw new Exception("Runtime Error: intersection requires a Set argument.");
-        return set.Intersection(other);
     }
 
     private static RuntimeValue IntersectionV2(Interpreter _, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
@@ -119,25 +96,11 @@ public static class SetBuiltIns
         return RuntimeValue.FromObject(set.Intersection(other));
     }
 
-    private static object? Difference(Interpreter _, SharpTSSet set, List<object?> args)
-    {
-        var other = args[0] as SharpTSSet
-            ?? throw new Exception("Runtime Error: difference requires a Set argument.");
-        return set.Difference(other);
-    }
-
     private static RuntimeValue DifferenceV2(Interpreter _, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
     {
         var other = args[0].ToObject() as SharpTSSet
             ?? throw new Exception("Runtime Error: difference requires a Set argument.");
         return RuntimeValue.FromObject(set.Difference(other));
-    }
-
-    private static object? SymmetricDifference(Interpreter _, SharpTSSet set, List<object?> args)
-    {
-        var other = args[0] as SharpTSSet
-            ?? throw new Exception("Runtime Error: symmetricDifference requires a Set argument.");
-        return set.SymmetricDifference(other);
     }
 
     private static RuntimeValue SymmetricDifferenceV2(Interpreter _, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
