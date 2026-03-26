@@ -428,7 +428,7 @@ public class SharpTSAsyncGenerator
         }
 
         // For other expressions, evaluate asynchronously to support nested await
-        return await _interpreter.EvaluateAsync(expr);
+        return (await _interpreter.EvaluateAsync(expr)).ToObject();
     }
 
     /// <summary>

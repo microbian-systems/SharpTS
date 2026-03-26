@@ -158,7 +158,7 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable
             try
             {
                 interpreter.SetEnvironment(environment);
-                object? result = await interpreter.EvaluateAsync(_declaration.ExpressionBody);
+                object? result = (await interpreter.EvaluateAsync(_declaration.ExpressionBody)).ToObject();
                 // Unwrap Promise if returning a Promise from async arrow
                 return await SharpTSPromise.UnwrapIfPromise(result);
             }

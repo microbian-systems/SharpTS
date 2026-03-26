@@ -160,7 +160,7 @@ internal static class ParameterBinder
                 try
                 {
                     interpreter.SetEnvironment(environment);
-                    value = await interpreter.EvaluateAsync(defaultExpr);
+                    value = (await interpreter.EvaluateAsync(defaultExpr)).ToObject();
                 }
                 finally
                 {

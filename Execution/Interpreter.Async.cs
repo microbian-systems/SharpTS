@@ -34,7 +34,7 @@ public partial class Interpreter
 
     private async Task<ExecutionResult> ExecuteForOfAsync(Stmt.ForOf forOf)
     {
-        object? iterable = await EvaluateAsync(forOf.Iterable);
+        object? iterable = (await EvaluateAsync(forOf.Iterable)).ToObject();
 
         // For 'for await...of', check for async iterator protocol first
         if (forOf.IsAsync)
@@ -253,7 +253,7 @@ public partial class Interpreter
 
     private async Task<ExecutionResult> ExecuteForInAsync(Stmt.ForIn forIn)
     {
-        object? obj = await EvaluateAsync(forIn.Object);
+        object? obj = (await EvaluateAsync(forIn.Object)).ToObject();
 
         IEnumerable<string> keys = obj switch
         {
@@ -405,7 +405,7 @@ public partial class Interpreter
 
     internal async ValueTask<ExecutionResult> ExecuteThrowAsyncVT(Stmt.Throw throwStmt)
     {
-        return ExecutionResult.Throw(await EvaluateAsync(throwStmt.Value));
+        return ExecutionResult.Throw((await EvaluateAsync(throwStmt.Value)).ToObject());
     }
 
     internal async ValueTask<ExecutionResult> ExecuteVarAsyncVT(Stmt.Var varStmt)
@@ -413,7 +413,7 @@ public partial class Interpreter
         object? value = null;
         if (varStmt.Initializer != null)
         {
-            value = await EvaluateAsync(varStmt.Initializer);
+            value = (await EvaluateAsync(varStmt.Initializer)).ToObject();
         }
         _environment.Define(varStmt.Name.Lexeme, value);
         return ExecutionResult.Success();
@@ -421,7 +421,7 @@ public partial class Interpreter
 
     internal async ValueTask<ExecutionResult> ExecuteConstAsyncVT(Stmt.Const constStmt)
     {
-        object? constValue = await EvaluateAsync(constStmt.Initializer);
+        object? constValue = (await EvaluateAsync(constStmt.Initializer)).ToObject();
         _environment.Define(constStmt.Name.Lexeme, constValue);
         return ExecutionResult.Success();
     }
@@ -429,52 +429,53 @@ public partial class Interpreter
     internal async ValueTask<ExecutionResult> ExecuteReturnAsyncVT(Stmt.Return returnStmt)
     {
         object? returnValue = null;
-        if (returnStmt.Value != null) returnValue = await EvaluateAsync(returnStmt.Value);
+        if (returnStmt.Value != null) returnValue = (await EvaluateAsync(returnStmt.Value)).ToObject();
         return ExecutionResult.Return(returnValue);
     }
 
     internal async ValueTask<ExecutionResult> ExecutePrintAsyncVT(Stmt.Print printStmt)
     {
-        Out.WriteLine(Stringify(await EvaluateAsync(printStmt.Expr)));
+        Out.WriteLine(Stringify((await EvaluateAsync(printStmt.Expr)).ToObject()));
         return ExecutionResult.Success();
     }
 
     // ===================== Async Expression Helpers =====================
 
-    private async Task<object?> EvaluateBinaryAsync(Expr.Binary binary)
+    private async Task<RuntimeValue> EvaluateBinaryAsync(Expr.Binary binary)
     {
-        object? left = await EvaluateAsync(binary.Left);
-        object? right = await EvaluateAsync(binary.Right);
-        return EvaluateBinaryOperation(binary.Operator, left, right);
+        object? left = (await EvaluateAsync(binary.Left)).ToObject();
+        object? right = (await EvaluateAsync(binary.Right)).ToObject();
+        return RuntimeValue.FromBoxed(EvaluateBinaryOperation(binary.Operator, left, right));
     }
 
-    private Task<object?> EvaluateLogicalAsync(Expr.Logical logical) =>
+    private Task<RuntimeValue> EvaluateLogicalAsync(Expr.Logical logical) =>
         EvaluateLogicalCoreAsync(
             logical.Operator.Type,
             EvaluateAsync(logical.Left),
             () => EvaluateAsync(logical.Right));
 
-    private Task<object?> EvaluateNullishCoalescingAsync(Expr.NullishCoalescing nc) =>
+    private Task<RuntimeValue> EvaluateNullishCoalescingAsync(Expr.NullishCoalescing nc) =>
         EvaluateNullishCoalescingCoreAsync(
             EvaluateAsync(nc.Left),
             () => EvaluateAsync(nc.Right));
 
-    private Task<object?> EvaluateTernaryAsync(Expr.Ternary ternary) =>
+    private Task<RuntimeValue> EvaluateTernaryAsync(Expr.Ternary ternary) =>
         EvaluateTernaryCoreAsync(
             EvaluateAsync(ternary.Condition),
             () => EvaluateAsync(ternary.ThenBranch),
             () => EvaluateAsync(ternary.ElseBranch));
 
-    private async Task<object?> EvaluateUnaryAsync(Expr.Unary unary)
+    private async Task<RuntimeValue> EvaluateUnaryAsync(Expr.Unary unary)
     {
-        object? right = await EvaluateAsync(unary.Right);
-        return EvaluateUnaryOperation(unary.Operator, right);
+        object? right = (await EvaluateAsync(unary.Right)).ToObject();
+        return RuntimeValue.FromBoxed(EvaluateUnaryOperation(unary.Operator, right));
     }
 
-    private async ValueTask<object?> EvaluateAssignAsync(Expr.Assign assign)
+    private async ValueTask<RuntimeValue> EvaluateAssignAsync(Expr.Assign assign)
     {
-        object? value = await EvaluateAsync(assign.Value);
-        
+        var rv = await EvaluateAsync(assign.Value);
+        object? value = rv.ToObject();
+
         if (_locals.TryGetValue(assign, out int distance))
         {
             _environment.AssignAt(distance, assign.Name, value);
@@ -483,17 +484,17 @@ public partial class Interpreter
         {
             _environment.Assign(assign.Name, value);
         }
-        
-        return value;
+
+        return rv;
     }
 
-    private async Task<object?> EvaluateCallAsync(Expr.Call call)
+    private async Task<RuntimeValue> EvaluateCallAsync(Expr.Call call)
     {
         // Use async context with unified core - handles all special cases
-        return await EvaluateCallCore(_asyncContext, call);
+        return RuntimeValue.FromBoxed(await EvaluateCallCore(_asyncContext, call));
     }
 
-    private async Task<object?> EvaluateGetAsync(Expr.Get get)
+    private async Task<RuntimeValue> EvaluateGetAsync(Expr.Get get)
     {
         // Handle namespace static property access (e.g., Number.MAX_VALUE, Number.NaN)
         // These namespaces don't have runtime values, but have static properties
@@ -507,109 +508,109 @@ public partial class Interpreter
                 if (member is BuiltInMethod bm && bm.MinArity == 0 && bm.MaxArity == 0)
                 {
                     // It's a constant property, invoke it to get the value
-                    return bm.Call(this, []);
+                    return RuntimeValue.FromBoxed(bm.Call(this, []));
                 }
-                return member;
+                return RuntimeValue.FromObject(member);
             }
         }
 
-        object? obj = await EvaluateAsync(get.Object);
-        return EvaluateGetOnObject(get, obj);
+        object? obj = (await EvaluateAsync(get.Object)).ToObject();
+        return RuntimeValue.FromBoxed(EvaluateGetOnObject(get, obj));
     }
 
-    private async Task<object?> EvaluateSetAsync(Expr.Set set)
+    private async Task<RuntimeValue> EvaluateSetAsync(Expr.Set set)
     {
-        object? obj = await EvaluateAsync(set.Object);
-        object? value = await EvaluateAsync(set.Value);
-        return EvaluateSetOnObject(set, obj, value);
+        object? obj = (await EvaluateAsync(set.Object)).ToObject();
+        object? value = (await EvaluateAsync(set.Value)).ToObject();
+        return RuntimeValue.FromBoxed(EvaluateSetOnObject(set, obj, value));
     }
 
-    private async Task<object?> EvaluateNewAsync(Expr.New newExpr)
+    private async Task<RuntimeValue> EvaluateNewAsync(Expr.New newExpr)
     {
         // Use async context with unified core - handles all built-in types
-        return await EvaluateNewCore(_asyncContext, newExpr);
+        return RuntimeValue.FromBoxed(await EvaluateNewCore(_asyncContext, newExpr));
     }
 
-    private async Task<object?> EvaluateArrayAsync(Expr.ArrayLiteral array)
+    private async Task<RuntimeValue> EvaluateArrayAsync(Expr.ArrayLiteral array)
     {
         // Use async context with unified core
-        return await EvaluateArrayCore(_asyncContext, array);
+        return RuntimeValue.FromBoxed(await EvaluateArrayCore(_asyncContext, array));
     }
 
-    private async Task<object?> EvaluateObjectAsync(Expr.ObjectLiteral obj)
+    private async Task<RuntimeValue> EvaluateObjectAsync(Expr.ObjectLiteral obj)
     {
         // Use async context with unified core
-        return await EvaluateObjectCore(_asyncContext, obj);
+        return RuntimeValue.FromBoxed(await EvaluateObjectCore(_asyncContext, obj));
     }
 
-    private async Task<object?> EvaluateGetIndexAsync(Expr.GetIndex getIndex)
+    private async Task<RuntimeValue> EvaluateGetIndexAsync(Expr.GetIndex getIndex)
     {
-        object? obj = await EvaluateAsync(getIndex.Object);
-        object? index = await EvaluateAsync(getIndex.Index);
-        return EvaluateIndexGet(obj, index);
+        object? obj = (await EvaluateAsync(getIndex.Object)).ToObject();
+        object? index = (await EvaluateAsync(getIndex.Index)).ToObject();
+        return RuntimeValue.FromBoxed(EvaluateIndexGet(obj, index));
     }
 
-    private async Task<object?> EvaluateSetIndexAsync(Expr.SetIndex setIndex)
+    private async Task<RuntimeValue> EvaluateSetIndexAsync(Expr.SetIndex setIndex)
     {
-        object? obj = await EvaluateAsync(setIndex.Object);
-        object? index = await EvaluateAsync(setIndex.Index);
-        object? value = await EvaluateAsync(setIndex.Value);
-        return EvaluateIndexSet(obj, index, value);
+        object? obj = (await EvaluateAsync(setIndex.Object)).ToObject();
+        object? index = (await EvaluateAsync(setIndex.Index)).ToObject();
+        object? value = (await EvaluateAsync(setIndex.Value)).ToObject();
+        return RuntimeValue.FromBoxed(EvaluateIndexSet(obj, index, value));
     }
 
-    private async Task<object?> EvaluateCompoundAssignAsync(Expr.CompoundAssign compound)
+    private async Task<RuntimeValue> EvaluateCompoundAssignAsync(Expr.CompoundAssign compound)
     {
-        object? currentValue = _environment.Get(compound.Name).ToObject();
-        object? operandValue = await EvaluateAsync(compound.Value);
-        object? result = ApplyCompoundOperator(compound.Operator.Type, currentValue, operandValue);
-        _environment.Assign(compound.Name, result);
+        var currentRV = _environment.Get(compound.Name);
+        var operandRV = await EvaluateAsync(compound.Value);
+        var result = ApplyCompoundOperatorRV(compound.Operator.Type, currentRV, operandRV);
+        _environment.Assign(compound.Name, result.ToObject());
         return result;
     }
 
-    private async Task<object?> EvaluateCompoundSetAsync(Expr.CompoundSet compoundSet)
+    private async Task<RuntimeValue> EvaluateCompoundSetAsync(Expr.CompoundSet compoundSet)
     {
-        object? obj = await EvaluateAsync(compoundSet.Object);
+        object? obj = (await EvaluateAsync(compoundSet.Object)).ToObject();
         object? currentValue = EvaluateGetOnObject(new Expr.Get(compoundSet.Object, compoundSet.Name), obj);
-        object? operandValue = await EvaluateAsync(compoundSet.Value);
+        object? operandValue = (await EvaluateAsync(compoundSet.Value)).ToObject();
         object? result = ApplyCompoundOperator(compoundSet.Operator.Type, currentValue, operandValue);
-        return EvaluateSetOnObject(new Expr.Set(compoundSet.Object, compoundSet.Name, new Expr.Literal(result)), obj, result);
+        return RuntimeValue.FromBoxed(EvaluateSetOnObject(new Expr.Set(compoundSet.Object, compoundSet.Name, new Expr.Literal(result)), obj, result));
     }
 
-    private async Task<object?> EvaluateCompoundSetIndexAsync(Expr.CompoundSetIndex compoundSetIndex)
+    private async Task<RuntimeValue> EvaluateCompoundSetIndexAsync(Expr.CompoundSetIndex compoundSetIndex)
     {
-        object? obj = await EvaluateAsync(compoundSetIndex.Object);
-        object? index = await EvaluateAsync(compoundSetIndex.Index);
+        object? obj = (await EvaluateAsync(compoundSetIndex.Object)).ToObject();
+        object? index = (await EvaluateAsync(compoundSetIndex.Index)).ToObject();
         object? currentValue = EvaluateIndexGet(obj, index);
-        object? operandValue = await EvaluateAsync(compoundSetIndex.Value);
+        object? operandValue = (await EvaluateAsync(compoundSetIndex.Value)).ToObject();
         object? result = ApplyCompoundOperator(compoundSetIndex.Operator.Type, currentValue, operandValue);
-        return EvaluateIndexSet(obj, index, result);
+        return RuntimeValue.FromBoxed(EvaluateIndexSet(obj, index, result));
     }
 
-    private async Task<object?> EvaluateLogicalAssignAsync(Expr.LogicalAssign logical)
+    private async Task<RuntimeValue> EvaluateLogicalAssignAsync(Expr.LogicalAssign logical)
     {
-        object? currentValue = _environment.Get(logical.Name).ToObject();
+        var currentRV = _environment.Get(logical.Name);
 
         switch (logical.Operator.Type)
         {
             case TokenType.AND_AND_EQUAL:
-                if (!IsTruthy(currentValue)) return currentValue;
+                if (!IsTruthy(currentRV)) return currentRV;
                 break;
             case TokenType.OR_OR_EQUAL:
-                if (IsTruthy(currentValue)) return currentValue;
+                if (IsTruthy(currentRV)) return currentRV;
                 break;
             case TokenType.QUESTION_QUESTION_EQUAL:
-                if (currentValue != null) return currentValue;
+                if (!currentRV.IsNullish) return currentRV;
                 break;
         }
 
-        object? newValue = await EvaluateAsync(logical.Value);
-        _environment.Assign(logical.Name, newValue);
-        return newValue;
+        var newRV = await EvaluateAsync(logical.Value);
+        _environment.Assign(logical.Name, newRV.ToObject());
+        return newRV;
     }
 
-    private async Task<object?> EvaluateLogicalSetAsync(Expr.LogicalSet logical)
+    private async Task<RuntimeValue> EvaluateLogicalSetAsync(Expr.LogicalSet logical)
     {
-        object? obj = await EvaluateAsync(logical.Object);
+        object? obj = (await EvaluateAsync(logical.Object)).ToObject();
 
         if (!TryGetProperty(obj, logical.Name, out object? currentValue))
         {
@@ -619,60 +620,61 @@ public partial class Interpreter
         switch (logical.Operator.Type)
         {
             case TokenType.AND_AND_EQUAL:
-                if (!IsTruthy(currentValue)) return currentValue;
+                if (!IsTruthy(currentValue)) return RuntimeValue.FromBoxed(currentValue);
                 break;
             case TokenType.OR_OR_EQUAL:
-                if (IsTruthy(currentValue)) return currentValue;
+                if (IsTruthy(currentValue)) return RuntimeValue.FromBoxed(currentValue);
                 break;
             case TokenType.QUESTION_QUESTION_EQUAL:
-                if (currentValue != null) return currentValue;
+                if (currentValue != null) return RuntimeValue.FromBoxed(currentValue);
                 break;
         }
 
-        object? newValue = await EvaluateAsync(logical.Value);
+        var newRV = await EvaluateAsync(logical.Value);
+        object? newValue = newRV.ToObject();
         if (!TrySetProperty(obj, logical.Name, newValue))
         {
             throw new InterpreterException("Only instances and objects have fields.");
         }
-        return newValue;
+        return newRV;
     }
 
-    private async Task<object?> EvaluateLogicalSetIndexAsync(Expr.LogicalSetIndex logical)
+    private async Task<RuntimeValue> EvaluateLogicalSetIndexAsync(Expr.LogicalSetIndex logical)
     {
-        object? obj = await EvaluateAsync(logical.Object);
-        object? index = await EvaluateAsync(logical.Index);
+        object? obj = (await EvaluateAsync(logical.Object)).ToObject();
+        object? index = (await EvaluateAsync(logical.Index)).ToObject();
         object? currentValue = EvaluateIndexGet(obj, index);
 
         switch (logical.Operator.Type)
         {
             case TokenType.AND_AND_EQUAL:
-                if (!IsTruthy(currentValue)) return currentValue;
+                if (!IsTruthy(currentValue)) return RuntimeValue.FromBoxed(currentValue);
                 break;
             case TokenType.OR_OR_EQUAL:
-                if (IsTruthy(currentValue)) return currentValue;
+                if (IsTruthy(currentValue)) return RuntimeValue.FromBoxed(currentValue);
                 break;
             case TokenType.QUESTION_QUESTION_EQUAL:
-                if (currentValue != null) return currentValue;
+                if (currentValue != null) return RuntimeValue.FromBoxed(currentValue);
                 break;
         }
 
-        object? newValue = await EvaluateAsync(logical.Value);
-        return EvaluateIndexSet(obj, index, newValue);
+        object? newValue = (await EvaluateAsync(logical.Value)).ToObject();
+        return RuntimeValue.FromBoxed(EvaluateIndexSet(obj, index, newValue));
     }
 
-    private async Task<object?> EvaluateTemplateLiteralAsync(Expr.TemplateLiteral template)
+    private async Task<RuntimeValue> EvaluateTemplateLiteralAsync(Expr.TemplateLiteral template)
     {
         var evaluatedExprs = new List<object?>();
         foreach (var expr in template.Expressions)
         {
-            evaluatedExprs.Add(await EvaluateAsync(expr));
+            evaluatedExprs.Add((await EvaluateAsync(expr)).ToObject());
         }
-        return BuildTemplateLiteralString(template.Strings, evaluatedExprs);
+        return RuntimeValue.FromString(BuildTemplateLiteralString(template.Strings, evaluatedExprs));
     }
 
-    private async Task<object?> EvaluateTaggedTemplateLiteralAsync(Expr.TaggedTemplateLiteral tagged)
+    private async Task<RuntimeValue> EvaluateTaggedTemplateLiteralAsync(Expr.TaggedTemplateLiteral tagged)
     {
-        object? tag = await EvaluateAsync(tagged.Tag);
+        object? tag = (await EvaluateAsync(tagged.Tag)).ToObject();
 
         if (tag is not Runtime.Types.ISharpTSCallable callable)
             throw new InterpreterException("Tagged template tag must be a function.");
@@ -682,9 +684,9 @@ public partial class Interpreter
 
         List<object?> args = [stringsArray];
         foreach (var expr in tagged.Expressions)
-            args.Add(await EvaluateAsync(expr));
+            args.Add((await EvaluateAsync(expr)).ToObject());
 
-        return callable.Call(this, args);
+        return RuntimeValue.FromBoxed(callable.Call(this, args));
     }
 
     // Helper methods for index operations

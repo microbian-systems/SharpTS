@@ -357,7 +357,7 @@ public partial class Interpreter
     /// </summary>
     private async Task<bool> DeletePropertyAsync(Expr.Get get, bool strictMode)
     {
-        object? obj = await EvaluateAsync(get.Object);
+        object? obj = (await EvaluateAsync(get.Object)).ToObject();
         string name = get.Name.Lexeme;
 
         if (obj is SharpTSProxy proxy)
@@ -416,8 +416,8 @@ public partial class Interpreter
     /// </summary>
     private async Task<bool> DeleteIndexedPropertyAsync(Expr.GetIndex getIndex, bool strictMode)
     {
-        object? obj = await EvaluateAsync(getIndex.Object);
-        object? key = await EvaluateAsync(getIndex.Index);
+        object? obj = (await EvaluateAsync(getIndex.Object)).ToObject();
+        object? key = (await EvaluateAsync(getIndex.Index)).ToObject();
 
         // Handle proxy
         if (obj is SharpTSProxy proxy)

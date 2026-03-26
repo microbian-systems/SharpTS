@@ -586,10 +586,10 @@ public partial class Interpreter
     /// Async version of logical operation core logic.
     /// Uses lazy evaluation via Func delegate to preserve short-circuit semantics.
     /// </summary>
-    private async Task<object?> EvaluateLogicalCoreAsync(
+    private async Task<RuntimeValue> EvaluateLogicalCoreAsync(
         TokenType op,
-        Task<object?> leftTask,
-        Func<Task<object?>> evaluateRightAsync)
+        Task<RuntimeValue> leftTask,
+        Func<Task<RuntimeValue>> evaluateRightAsync)
     {
         var left = await leftTask;
         if (op == TokenType.OR_OR)
@@ -601,12 +601,12 @@ public partial class Interpreter
     /// Async version of nullish coalescing core logic.
     /// Uses lazy evaluation via Func delegate to preserve short-circuit semantics.
     /// </summary>
-    private async Task<object?> EvaluateNullishCoalescingCoreAsync(
-        Task<object?> leftTask,
-        Func<Task<object?>> evaluateRightAsync)
+    private async Task<RuntimeValue> EvaluateNullishCoalescingCoreAsync(
+        Task<RuntimeValue> leftTask,
+        Func<Task<RuntimeValue>> evaluateRightAsync)
     {
         var left = await leftTask;
-        return (left == null || left is Runtime.Types.SharpTSUndefined)
+        return left.IsNullish
             ? await evaluateRightAsync()
             : left;
     }
@@ -615,10 +615,10 @@ public partial class Interpreter
     /// Async version of ternary operation core logic.
     /// Uses lazy evaluation via Func delegates to ensure only one branch is evaluated.
     /// </summary>
-    private async Task<object?> EvaluateTernaryCoreAsync(
-        Task<object?> conditionTask,
-        Func<Task<object?>> evalThenAsync,
-        Func<Task<object?>> evalElseAsync)
+    private async Task<RuntimeValue> EvaluateTernaryCoreAsync(
+        Task<RuntimeValue> conditionTask,
+        Func<Task<RuntimeValue>> evalThenAsync,
+        Func<Task<RuntimeValue>> evalElseAsync)
     {
         var condition = await conditionTask;
         return IsTruthy(condition)

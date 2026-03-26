@@ -109,43 +109,43 @@ public partial class Interpreter
     /// Async version of Evaluate that properly handles await expressions without blocking.
     /// Used by async functions and arrow functions.
     /// </remarks>
-    internal async Task<object?> EvaluateAsync(Expr expr)
+    internal async Task<RuntimeValue> EvaluateAsync(Expr expr)
     {
         switch (expr)
         {
             case Expr.Comma comma: await EvaluateAsync(comma.Left); return await EvaluateAsync(comma.Right);
-            case Expr.Binary binary: return (await EvaluateBinaryAsync(binary));
+            case Expr.Binary binary: return await EvaluateBinaryAsync(binary);
             case Expr.Logical logical: return await EvaluateLogicalAsync(logical);
             case Expr.NullishCoalescing nc: return await EvaluateNullishCoalescingAsync(nc);
             case Expr.Ternary ternary: return await EvaluateTernaryAsync(ternary);
             case Expr.Grouping grouping: return await EvaluateAsync(grouping.Expression);
-            case Expr.Literal literal: return EvaluateLiteral(literal).ToObject();
+            case Expr.Literal literal: return EvaluateLiteral(literal);
             case Expr.Unary unary: return await EvaluateUnaryAsync(unary);
-            case Expr.Delete delete: return await EvaluateDeleteAsync(delete);
-            case Expr.Variable variable: return EvaluateVariable(variable);
+            case Expr.Delete delete: return RuntimeValue.FromBoxed(await EvaluateDeleteAsync(delete));
+            case Expr.Variable variable: return LookupVariableRV(variable.Name, variable);
             case Expr.Assign assign: return await EvaluateAssignAsync(assign);
             case Expr.Call call: return await EvaluateCallAsync(call);
             case Expr.Get get: return await EvaluateGetAsync(get);
             case Expr.Set set: return await EvaluateSetAsync(set);
-            case Expr.GetPrivate gp: return EvaluateGetPrivate(gp).ToObject();
-            case Expr.SetPrivate sp: return EvaluateSetPrivate(sp).ToObject();
-            case Expr.CallPrivate cp: return EvaluateCallPrivate(cp).ToObject();
-            case Expr.This thisExpr: return EvaluateThis(thisExpr).ToObject();
+            case Expr.GetPrivate gp: return EvaluateGetPrivate(gp);
+            case Expr.SetPrivate sp: return EvaluateSetPrivate(sp);
+            case Expr.CallPrivate cp: return EvaluateCallPrivate(cp);
+            case Expr.This thisExpr: return EvaluateThis(thisExpr);
             case Expr.New newExpr: return await EvaluateNewAsync(newExpr);
             case Expr.ArrayLiteral array: return await EvaluateArrayAsync(array);
             case Expr.ObjectLiteral obj: return await EvaluateObjectAsync(obj);
             case Expr.GetIndex getIndex: return await EvaluateGetIndexAsync(getIndex);
             case Expr.SetIndex setIndex: return await EvaluateSetIndexAsync(setIndex);
-            case Expr.Super super: return EvaluateSuper(super).ToObject();
+            case Expr.Super super: return EvaluateSuper(super);
             case Expr.CompoundAssign compound: return await EvaluateCompoundAssignAsync(compound);
             case Expr.CompoundSet compoundSet: return await EvaluateCompoundSetAsync(compoundSet);
             case Expr.CompoundSetIndex compoundSetIndex: return await EvaluateCompoundSetIndexAsync(compoundSetIndex);
             case Expr.LogicalAssign logical: return await EvaluateLogicalAssignAsync(logical);
             case Expr.LogicalSet logicalSet: return await EvaluateLogicalSetAsync(logicalSet);
             case Expr.LogicalSetIndex logicalSetIndex: return await EvaluateLogicalSetIndexAsync(logicalSetIndex);
-            case Expr.PrefixIncrement prefix: return EvaluatePrefixIncrement(prefix).ToObject();
-            case Expr.PostfixIncrement postfix: return EvaluatePostfixIncrement(postfix).ToObject();
-            case Expr.ArrowFunction arrow: return EvaluateArrowFunction(arrow).ToObject();
+            case Expr.PrefixIncrement prefix: return EvaluatePrefixIncrement(prefix);
+            case Expr.PostfixIncrement postfix: return EvaluatePostfixIncrement(postfix);
+            case Expr.ArrowFunction arrow: return EvaluateArrowFunction(arrow);
             case Expr.TemplateLiteral template: return await EvaluateTemplateLiteralAsync(template);
             case Expr.TaggedTemplateLiteral tagged: return await EvaluateTaggedTemplateLiteralAsync(tagged);
             case Expr.Spread spread: return await EvaluateAsync(spread.Expression);
@@ -153,11 +153,11 @@ public partial class Interpreter
             case Expr.Satisfies sat: return await EvaluateAsync(sat.Expression);
             case Expr.NonNullAssertion nna: return await EvaluateAsync(nna.Expression);
             case Expr.Await awaitExpr: return await EvaluateAwaitAsync(awaitExpr);
-            case Expr.DynamicImport di: return EvaluateDynamicImport(di).ToObject();
-            case Expr.ImportMeta im: return EvaluateImportMeta(im).ToObject();
-            case Expr.Yield yieldExpr: return EvaluateYield(yieldExpr).ToObject();
-            case Expr.RegexLiteral regex: return new SharpTSRegExp(regex.Pattern, regex.Flags);
-            case Expr.ClassExpr classExpr: return EvaluateClassExpression(classExpr).ToObject();
+            case Expr.DynamicImport di: return EvaluateDynamicImport(di);
+            case Expr.ImportMeta im: return EvaluateImportMeta(im);
+            case Expr.Yield yieldExpr: return EvaluateYield(yieldExpr);
+            case Expr.RegexLiteral regex: return RuntimeValue.FromObject(new SharpTSRegExp(regex.Pattern, regex.Flags));
+            case Expr.ClassExpr classExpr: return EvaluateClassExpression(classExpr);
             default: throw new InvalidOperationException($"Runtime Error: Unhandled expression type in async Interpreter: {expr.GetType().Name}");
         }
     }
@@ -181,18 +181,18 @@ public partial class Interpreter
     /// <summary>
     /// Evaluates an await expression, unwrapping the Promise value.
     /// </summary>
-    private async Task<object?> EvaluateAwaitAsync(Expr.Await awaitExpr)
+    private async Task<RuntimeValue> EvaluateAwaitAsync(Expr.Await awaitExpr)
     {
-        object? value = await EvaluateAsync(awaitExpr.Expression);
+        object? value = (await EvaluateAsync(awaitExpr.Expression)).ToObject();
 
         // Unwrap Promise
         if (value is SharpTSPromise promise)
         {
-            return await promise.GetValueAsync();
+            return RuntimeValue.FromBoxed(await promise.GetValueAsync());
         }
 
         // Await on non-Promise returns the value (TypeScript behavior)
-        return value;
+        return RuntimeValue.FromBoxed(value);
     }
 
     /// <summary>

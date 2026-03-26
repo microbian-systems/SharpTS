@@ -101,14 +101,8 @@ internal sealed class AsyncEvaluationContext : IEvaluationContext
 
     public ValueTask<RuntimeValue> EvaluateExprAsync(Expr expr)
     {
-        // Async path: use the async evaluator, wrap result as RuntimeValue
-        return new ValueTask<RuntimeValue>(EvaluateAsyncRV(expr));
-    }
-
-    private async Task<RuntimeValue> EvaluateAsyncRV(Expr expr)
-    {
-        var result = await _interpreter.EvaluateAsync(expr);
-        return RuntimeValue.FromBoxed(result);
+        // Async path: EvaluateAsync now returns Task<RuntimeValue> directly
+        return new ValueTask<RuntimeValue>(_interpreter.EvaluateAsync(expr));
     }
 
     public ValueTask<ExecutionResult> ExecuteStmtAsync(Stmt stmt)
