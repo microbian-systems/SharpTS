@@ -1542,6 +1542,23 @@ public static class ObjectBuiltIns
         };
     }
 
+    private static RuntimeValue GetPrototypeOfV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var target = args[0].ToObject()
+            ?? throw new Exception("TypeError: Cannot convert null to object");
+
+        var proto = target switch
+        {
+            SharpTSObject obj => obj.Prototype,
+            SharpTSInstance inst => inst.Prototype,
+            SharpTSArray => null,
+            Dictionary<string, object?> dict => PropertyDescriptorStore.GetPrototype(dict),
+            _ => null
+        };
+
+        return proto != null ? RuntimeValue.FromObject(proto) : RuntimeValue.Null;
+    }
+
     /// <summary>
     /// Object.setPrototypeOf(obj, proto) - sets the prototype of an object.
     /// </summary>

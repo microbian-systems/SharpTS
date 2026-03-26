@@ -26,18 +26,18 @@ public static class StringBuiltIns
             .MethodV2("endsWith", 1, EndsWithV2)
             .MethodV2("slice", 1, 2, SliceV2)
             .MethodV2("repeat", 1, RepeatV2)
-            .Method("padStart", 1, 2, PadStart)
-            .Method("padEnd", 1, 2, PadEnd)
+            .MethodV2("padStart", 1, 2, PadStartV2)
+            .MethodV2("padEnd", 1, 2, PadEndV2)
             .MethodV2("charCodeAt", 1, CharCodeAtV2)
-            .Method("codePointAt", 1, CodePointAt)
-            .Method("concat", 0, int.MaxValue, Concat)
+            .MethodV2("codePointAt", 1, CodePointAtV2)
+            .MethodV2("concat", 0, int.MaxValue, ConcatV2)
             .MethodV2("lastIndexOf", 1, LastIndexOfV2)
             .MethodV2("trimStart", 0, TrimStartV2)
             .MethodV2("trimEnd", 0, TrimEndV2)
-            .Method("replaceAll", 2, ReplaceAll)
+            .MethodV2("replaceAll", 2, ReplaceAllV2)
             .MethodV2("at", 1, AtV2)
-            .Method("normalize", 0, 1, Normalize)
-            .Method("localeCompare", 1, LocaleCompare)
+            .MethodV2("normalize", 0, 1, NormalizeV2)
+            .MethodV2("localeCompare", 1, LocaleCompareV2)
             .Build();
 
     private static readonly BuiltInStaticMemberLookup _staticLookup =
@@ -580,6 +580,98 @@ public static class StringBuiltIns
         if (index < 0) index = str.Length + index;
         if (index < 0 || index >= str.Length) return RuntimeValue.Null;
         return RuntimeValue.FromString(str[index].ToString());
+    }
+
+    private static RuntimeValue PadStartV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var targetLength = (int)args[0].AsNumber();
+        var padString = args.Length > 1 ? args[1].AsString() : " ";
+        if (targetLength <= str.Length || padString.Length == 0) return RuntimeValue.FromString(str);
+        var padLength = targetLength - str.Length;
+        return RuntimeValue.FromString(string.Create(targetLength, (str, padString, padLength), static (span, state) =>
+        {
+            var (s, pad, pLen) = state;
+            var padSpan = pad.AsSpan();
+            int pos = 0;
+            while (pos < pLen)
+            {
+                int copyLen = Math.Min(pad.Length, pLen - pos);
+                padSpan.Slice(0, copyLen).CopyTo(span.Slice(pos, copyLen));
+                pos += copyLen;
+            }
+            s.AsSpan().CopyTo(span.Slice(pLen));
+        }));
+    }
+
+    private static RuntimeValue PadEndV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var targetLength = (int)args[0].AsNumber();
+        var padString = args.Length > 1 ? args[1].AsString() : " ";
+        if (targetLength <= str.Length || padString.Length == 0) return RuntimeValue.FromString(str);
+        var padLength = targetLength - str.Length;
+        return RuntimeValue.FromString(string.Create(targetLength, (str, padString, padLength), static (span, state) =>
+        {
+            var (s, pad, pLen) = state;
+            s.AsSpan().CopyTo(span);
+            var padSpan = pad.AsSpan();
+            int pos = s.Length;
+            while (pos < span.Length)
+            {
+                int copyLen = Math.Min(pad.Length, span.Length - pos);
+                padSpan.Slice(0, copyLen).CopyTo(span.Slice(pos, copyLen));
+                pos += copyLen;
+            }
+        }));
+    }
+
+    private static RuntimeValue CodePointAtV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var index = (int)args[0].AsNumber();
+        if (index < 0 || index >= str.Length) return RuntimeValue.Null;
+        if (char.IsHighSurrogate(str[index]) && index + 1 < str.Length && char.IsLowSurrogate(str[index + 1]))
+            return RuntimeValue.FromNumber(char.ConvertToUtf32(str[index], str[index + 1]));
+        return RuntimeValue.FromNumber(str[index]);
+    }
+
+    private static RuntimeValue ReplaceAllV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var search = args[0].AsString();
+        var replacement = args[1].AsString();
+        if (search.Length == 0) return RuntimeValue.FromString(str);
+        return RuntimeValue.FromString(str.Replace(search, replacement));
+    }
+
+    private static RuntimeValue NormalizeV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var form = args.Length > 0 && args[0].IsString ? args[0].AsString() : "NFC";
+        var normForm = form switch
+        {
+            "NFC" => System.Text.NormalizationForm.FormC,
+            "NFD" => System.Text.NormalizationForm.FormD,
+            "NFKC" => System.Text.NormalizationForm.FormKC,
+            "NFKD" => System.Text.NormalizationForm.FormKD,
+            _ => throw new Exception($"RangeError: The normalization form should be one of NFC, NFD, NFKC, NFKD.")
+        };
+        return RuntimeValue.FromString(str.Normalize(normForm));
+    }
+
+    private static RuntimeValue LocaleCompareV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        var that = args[0].AsString();
+        var result = string.Compare(str, that, StringComparison.CurrentCulture);
+        return RuntimeValue.FromNumber(result < 0 ? -1 : result > 0 ? 1 : 0);
+    }
+
+    private static RuntimeValue ConcatV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length == 0) return RuntimeValue.FromString(str);
+        if (args.Length == 1) return RuntimeValue.FromString(string.Concat(str, args[0].AsString()));
+        var sb = new StringBuilder(str);
+        foreach (var arg in args)
+        {
+            sb.Append(arg.AsString());
+        }
+        return RuntimeValue.FromString(sb.ToString());
     }
 
     #endregion

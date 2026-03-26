@@ -59,9 +59,13 @@ public static class NumberBuiltIns
     private static readonly BuiltInTypeMemberLookup<double> _instanceLookup =
         BuiltInTypeBuilder<double>.ForInstanceType()
             .Method("toFixed", 0, 1, ToFixed)
+            .MethodV2("toFixed", 0, 1, ToFixedV2)
             .Method("toPrecision", 0, 1, ToPrecision)
+            .MethodV2("toPrecision", 0, 1, ToPrecisionV2)
             .Method("toExponential", 0, 1, ToExponential)
+            .MethodV2("toExponential", 0, 1, ToExponentialV2)
             .Method("toString", 0, 1, ToStringMethod)
+            .MethodV2("toString", 0, 1, ToStringMethodV2)
             .Build();
 
     /// <summary>
@@ -96,7 +100,52 @@ public static class NumberBuiltIns
         return RuntimeValue.FromNumber(ParseFloat(str));
     }
 
-    // Instance method implementations
+    // Instance method implementations (V2 — no boxing)
+    private static RuntimeValue ToFixedV2(Interpreter _, double value, ReadOnlySpan<RuntimeValue> args)
+    {
+        var digits = args.Length > 0 ? (int)args[0].AsNumber() : 0;
+        if (digits < 0 || digits > 100)
+            throw new Exception("Runtime Error: toFixed() digits argument must be between 0 and 100");
+        return RuntimeValue.FromString(value.ToString($"F{digits}", CultureInfo.InvariantCulture));
+    }
+
+    private static RuntimeValue ToPrecisionV2(Interpreter _, double value, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length == 0)
+            return RuntimeValue.FromString(value.ToString(CultureInfo.InvariantCulture));
+        var precision = (int)args[0].AsNumber();
+        if (precision < 1 || precision > 100)
+            throw new Exception("Runtime Error: toPrecision() argument must be between 1 and 100");
+        return RuntimeValue.FromString(ToPrecisionImpl(value, precision));
+    }
+
+    private static RuntimeValue ToExponentialV2(Interpreter _, double value, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (double.IsNaN(value)) return RuntimeValue.FromString("NaN");
+        if (double.IsPositiveInfinity(value)) return RuntimeValue.FromString("Infinity");
+        if (double.IsNegativeInfinity(value)) return RuntimeValue.FromString("-Infinity");
+
+        var fractionDigits = args.Length > 0 ? (int)args[0].AsNumber() : -1;
+        if (fractionDigits != -1 && (fractionDigits < 0 || fractionDigits > 100))
+            throw new Exception("Runtime Error: toExponential() argument must be between 0 and 100");
+
+        var result = fractionDigits == -1
+            ? value.ToString("e", CultureInfo.InvariantCulture)
+            : value.ToString($"e{fractionDigits}", CultureInfo.InvariantCulture);
+        return RuntimeValue.FromString(result);
+    }
+
+    private static RuntimeValue ToStringMethodV2(Interpreter _, double value, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length == 0)
+            return RuntimeValue.FromString(value.ToString(CultureInfo.InvariantCulture));
+        var radix = (int)args[0].AsNumber();
+        if (radix < 2 || radix > 36)
+            throw new Exception("Runtime Error: toString() radix must be between 2 and 36");
+        return RuntimeValue.FromString(ToStringWithRadix(value, radix));
+    }
+
+    // Instance method implementations (legacy)
     private static object? ToFixed(Interpreter _, double value, List<object?> args)
     {
         var digits = args.Count > 0 && args[0] != null ? (int)(double)args[0]! : 0;
