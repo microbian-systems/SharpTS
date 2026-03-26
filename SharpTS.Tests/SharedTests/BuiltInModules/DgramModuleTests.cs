@@ -341,8 +341,9 @@ public class DgramModuleTests
                     const port = receiver.address().port;
                     const sender = dgram.createSocket('udp4');
                     sender.connect(port, '127.0.0.1', () => {
-                        sender.send('connected-msg');
-                        setTimeout(() => { sender.close(); }, 100);
+                        sender.send('connected-msg', (err: any) => {
+                            sender.close();
+                        });
                     });
                 });
                 """

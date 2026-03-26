@@ -192,6 +192,7 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
         var sendPort = port;
         var sendAddress = address;
         var sendConnected = useConnected;
+        var sendClient = _client; // Capture locally so Close() can't null it mid-send
 
         Task.Run(async () =>
         {
@@ -199,12 +200,12 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
             {
                 if (sendConnected)
                 {
-                    await _client.SendAsync(sendData, sendData.Length);
+                    await sendClient.SendAsync(sendData, sendData.Length);
                 }
                 else
                 {
                     var ep = new IPEndPoint(IPAddress.Parse(sendAddress), sendPort);
-                    await _client.SendAsync(sendData, sendData.Length, ep);
+                    await sendClient.SendAsync(sendData, sendData.Length, ep);
                 }
                 if (sendCallback != null)
                 {
