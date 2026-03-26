@@ -44,10 +44,10 @@ public partial class Interpreter
     {
         object? obj = Evaluate(compound.Object);
 
-        if (TryGetProperty(obj, compound.Name, out object? currentValue))
+        if (TryGetPropertyRV(obj, compound.Name, out RuntimeValue currentRV))
         {
             RuntimeValue addValue = EvaluateRV(compound.Value);
-            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, RuntimeValue.FromBoxed(currentValue), addValue);
+            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, currentRV, addValue);
             if (TrySetProperty(obj, compound.Name, newValue.ToObject()))
             {
                 return newValue;
@@ -74,7 +74,7 @@ public partial class Interpreter
         if (obj is SharpTSArray array && index is double idx)
         {
             RuntimeValue addValue = EvaluateRV(compound.Value);
-            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, RuntimeValue.FromBoxed(array.Get((int)idx)), addValue);
+            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, array.GetRV((int)idx), addValue);
             array.Set((int)idx, newValue.ToObject());
             return newValue;
         }
@@ -123,12 +123,11 @@ public partial class Interpreter
     {
         object? obj = Evaluate(logical.Object);
 
-        if (!TryGetProperty(obj, logical.Name, out object? currentValue))
+        if (!TryGetPropertyRV(obj, logical.Name, out RuntimeValue currentRV))
         {
             throw new InterpreterException("Only instances and objects have fields.");
         }
 
-        RuntimeValue currentRV = RuntimeValue.FromBoxed(currentValue);
         switch (logical.Operator.Type)
         {
             case TokenType.AND_AND_EQUAL:
@@ -161,7 +160,7 @@ public partial class Interpreter
 
         if (obj is SharpTSArray array && index is double idx)
         {
-            RuntimeValue currentRV = RuntimeValue.FromBoxed(array.Get((int)idx));
+            RuntimeValue currentRV = array.GetRV((int)idx);
 
             switch (logical.Operator.Type)
             {

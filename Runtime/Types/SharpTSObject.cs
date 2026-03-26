@@ -1,3 +1,4 @@
+using SharpTS.Runtime;
 using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
@@ -97,6 +98,8 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
         // Non-existent properties return undefined, not null (JavaScript semantics)
         return SharpTSUndefined.Instance;
     }
+
+    public RuntimeValue GetPropertyRV(string name) => RuntimeValue.FromBoxed(GetProperty(name));
 
     /// <inheritdoc />
     public void SetProperty(string name, object? value)

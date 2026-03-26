@@ -41,6 +41,32 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// Attempts to get a property value from an object-like runtime value, returning RuntimeValue directly.
+    /// </summary>
+    private bool TryGetPropertyRV(object? obj, Token name, out RuntimeValue value)
+    {
+        switch (obj)
+        {
+            case SharpTSProxy proxy:
+                value = proxy.TrapGetRV(name.Lexeme, this);
+                return true;
+            case SharpTSClass klass:
+                value = RuntimeValue.FromBoxed(klass.GetStaticProperty(name.Lexeme));
+                return true;
+            case SharpTSInstance instance:
+                instance.SetInterpreter(this);
+                value = instance.GetRV(name);
+                return true;
+            case SharpTSObject simpleObj:
+                value = simpleObj.GetPropertyRV(name.Lexeme);
+                return true;
+            default:
+                value = RuntimeValue.Undefined;
+                return false;
+        }
+    }
+
+    /// <summary>
     /// Attempts to get a property value from an object-like runtime value using a string key.
     /// Uses <see cref="ISharpTSPropertyAccessor"/> interface for unified dispatch.
     /// </summary>

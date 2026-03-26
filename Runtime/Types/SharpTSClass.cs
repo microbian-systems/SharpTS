@@ -1,5 +1,6 @@
 using SharpTS.Execution;
 using SharpTS.Parsing;
+using SharpTS.Runtime;
 using SharpTS.TypeSystem;
 using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
@@ -505,6 +506,19 @@ public class SharpTSClass(
         return _staticAutoAccessorStorage.ContainsKey(name) ||
                (Superclass?.HasStaticAutoAccessor(name) ?? false);
     }
+
+    #endregion
+
+    #region RuntimeValue Overloads
+
+    public RuntimeValue CallRV(Interpreter interpreter, List<object?> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, arguments));
+
+    public RuntimeValue GetStaticPrivateFieldRV(string name)
+        => RuntimeValue.FromBoxed(GetStaticPrivateField(name));
+
+    public RuntimeValue GetPrivateFieldRV(SharpTSInstance instance, string name)
+        => RuntimeValue.FromBoxed(GetPrivateField(instance, name));
 
     #endregion
 

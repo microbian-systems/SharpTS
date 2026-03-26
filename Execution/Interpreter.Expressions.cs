@@ -724,7 +724,7 @@ public partial class Interpreter
         if (obj is SharpTSProxy proxy)
         {
             string key = index?.ToString() ?? "";
-            return RuntimeValue.FromBoxed(proxy.TrapGet(key, this));
+            return proxy.TrapGetRV(key, this);
         }
 
         return RuntimeValue.FromBoxed(ResolveIndexTarget(obj, index) switch
@@ -766,7 +766,7 @@ public partial class Interpreter
         if (obj is SharpTSProxy proxy)
         {
             string key = index?.ToString() ?? "";
-            return RuntimeValue.FromBoxed(proxy.TrapSet(key, value, this));
+            return proxy.TrapSetRV(key, value, this);
         }
 
         var target = ResolveIndexTarget(obj, index);

@@ -1,3 +1,4 @@
+using SharpTS.Runtime;
 using SharpTS.TypeSystem;
 using System.Collections.Frozen;
 
@@ -28,6 +29,8 @@ public class SharpTSEnum(string name, Dictionary<string, object> members, EnumKi
     public object GetMember(string name) =>
         _members.TryGetValue(name, out var v) ? v
         : throw new Exception($"Runtime Error: '{name}' not in enum '{Name}'.");
+
+    public RuntimeValue GetMemberRV(string name) => RuntimeValue.FromBoxed(GetMember(name));
 
     public string GetReverse(double value) =>
         _reverse.TryGetValue(value, out var n) ? n

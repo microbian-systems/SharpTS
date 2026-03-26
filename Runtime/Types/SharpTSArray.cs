@@ -1,3 +1,4 @@
+using SharpTS.Runtime;
 using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
@@ -80,6 +81,8 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
         }
         return Elements[index];
     }
+
+    public RuntimeValue GetRV(int index) => RuntimeValue.FromBoxed(Get(index));
 
     public void Set(int index, object? value)
     {

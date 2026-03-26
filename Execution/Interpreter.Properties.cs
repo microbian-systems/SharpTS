@@ -137,7 +137,7 @@ public partial class Interpreter
                 {
                     args.Add(Evaluate(arg));
                 }
-                return RuntimeValue.FromBoxed(BuiltInConstructorFactory.TryCreate(simpleClassName, args, this));
+                return BuiltInConstructorFactory.TryCreateRV(simpleClassName, args, this);
             }
         }
 
@@ -152,7 +152,7 @@ public partial class Interpreter
             {
                 proxyArgs.Add(Evaluate(arg));
             }
-            return RuntimeValue.FromBoxed(proxy.TrapConstruct(proxyArgs, this));
+            return proxy.TrapConstructRV(proxyArgs, this);
         }
 
         // Handle callable constructors (like SharpTSEventEmitterConstructor)
@@ -189,7 +189,7 @@ public partial class Interpreter
         {
             arguments.Add(Evaluate(arg));
         }
-        return RuntimeValue.FromBoxed(sharpClass.Call(this, arguments));
+        return sharpClass.CallRV(this, arguments);
     }
 
     /// <summary>
@@ -240,25 +240,25 @@ public partial class Interpreter
         }
 
         object? obj = Evaluate(get.Object);
-        return RuntimeValue.FromBoxed(EvaluateGetOnObject(get, obj));
+        return EvaluateGetOnObject(get, obj);
     }
 
     /// <summary>
     /// Core property access logic, shared between sync and async evaluation.
     /// Uses TypeCategoryResolver for unified type dispatch.
     /// </summary>
-    private object? EvaluateGetOnObject(Expr.Get get, object? obj)
+    private RuntimeValue EvaluateGetOnObject(Expr.Get get, object? obj)
     {
         // Handle optional chaining - return undefined if object is null or undefined
         if (get.Optional && (obj == null || obj is Runtime.Types.SharpTSUndefined))
         {
-            return Runtime.Types.SharpTSUndefined.Instance;
+            return RuntimeValue.Undefined;
         }
 
         // Proxy interception - must be before any other dispatch
         if (obj is SharpTSProxy proxy)
         {
-            return proxy.TrapGet(get.Name.Lexeme, this);
+            return proxy.TrapGetRV(get.Name.Lexeme, this);
         }
 
         var category = TypeCategoryResolver.ClassifyRuntime(obj);
@@ -268,18 +268,18 @@ public partial class Interpreter
         return category switch
         {
             TypeCategory.Class when obj is SharpTSClass klass =>
-                EvaluateGetOnClass(klass, memberName),
+                RuntimeValue.FromBoxed(EvaluateGetOnClass(klass, memberName)),
             TypeCategory.Namespace when obj is SharpTSNamespace nsObj =>
-                EvaluateGetOnNamespace(nsObj, memberName),
+                RuntimeValue.FromBoxed(EvaluateGetOnNamespace(nsObj, memberName)),
             TypeCategory.Enum when obj is SharpTSEnum enumObj =>
-                enumObj.GetMember(memberName),
+                enumObj.GetMemberRV(memberName),
             TypeCategory.Enum when obj is ConstEnumValues constEnumObj =>
-                constEnumObj.GetMember(memberName),
+                constEnumObj.GetMemberRV(memberName),
             TypeCategory.Instance when obj is SharpTSInstance instance =>
-                EvaluateGetOnInstance(instance, get.Name),
+                EvaluateGetOnInstanceRV(instance, get.Name),
             TypeCategory.Record when obj is SharpTSObject simpleObj =>
-                EvaluateGetOnRecord(simpleObj, memberName),
-            _ => EvaluateGetOnFallback(obj, memberName)
+                EvaluateGetOnRecordRV(simpleObj, memberName),
+            _ => RuntimeValue.FromBoxed(EvaluateGetOnFallback(obj, memberName))
         };
     }
 
@@ -329,6 +329,15 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// Evaluates property access on a class instance, returning RuntimeValue directly.
+    /// </summary>
+    private RuntimeValue EvaluateGetOnInstanceRV(SharpTSInstance instance, Token memberName)
+    {
+        instance.SetInterpreter(this);
+        return instance.GetRV(memberName);
+    }
+
+    /// <summary>
     /// Evaluates property access on a record/object literal.
     /// </summary>
     private object? EvaluateGetOnRecord(SharpTSObject simpleObj, string memberName)
@@ -349,6 +358,29 @@ public partial class Interpreter
             return arrowFunc.Bind(simpleObj);
         }
         return value;
+    }
+
+    /// <summary>
+    /// Evaluates property access on a record/object literal, returning RuntimeValue directly.
+    /// </summary>
+    private RuntimeValue EvaluateGetOnRecordRV(SharpTSObject simpleObj, string memberName)
+    {
+        // Check for getter first
+        var getter = simpleObj.GetGetter(memberName);
+        if (getter != null)
+        {
+            // Invoke the getter with 'this' bound to the object
+            var boundGetter = BindAccessorToObject(getter, simpleObj);
+            return RuntimeValue.FromBoxed(boundGetter.Call(this, []));
+        }
+
+        // Check for arrow functions needing 'this' binding before returning RV
+        var value = simpleObj.GetProperty(memberName);
+        if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
+        {
+            return RuntimeValue.FromObject(arrowFunc.Bind(simpleObj));
+        }
+        return RuntimeValue.FromBoxed(value);
     }
 
     /// <summary>
@@ -443,6 +475,15 @@ public partial class Interpreter
     {
         object? obj = Evaluate(set.Object);
         object? value = Evaluate(set.Value);
+        return EvaluateSetOnObjectRV(set, obj, value);
+    }
+
+    /// <summary>
+    /// Core property assignment logic, shared between sync and async evaluation.
+    /// Returns RuntimeValue directly to avoid boxing.
+    /// </summary>
+    private RuntimeValue EvaluateSetOnObjectRV(Expr.Set set, object? obj, object? value)
+    {
         return RuntimeValue.FromBoxed(EvaluateSetOnObject(set, obj, value));
     }
 
@@ -633,7 +674,7 @@ public partial class Interpreter
             // The type checker already verified we're inside this class
             if (klass.HasStaticPrivateField(fieldName))
             {
-                return RuntimeValue.FromBoxed(klass.GetStaticPrivateField(fieldName));
+                return klass.GetStaticPrivateFieldRV(fieldName);
             }
 
             throw new InterpreterException($"Static private field '{fieldName}' does not exist on class '{klass.Name}'.");
@@ -645,7 +686,7 @@ public partial class Interpreter
             // For instance private fields, use the instance's class as the declaring class
             // The type checker already verified brand checking
             var declaringClass = instance.RuntimeClass;
-            return RuntimeValue.FromBoxed(declaringClass.GetPrivateField(instance, fieldName));
+            return declaringClass.GetPrivateFieldRV(instance, fieldName);
         }
 
         throw new InterpreterException($"Cannot read private field '{fieldName}' from non-class value.");

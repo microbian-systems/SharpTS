@@ -1,5 +1,6 @@
 using SharpTS.Parsing;
 using SharpTS.Execution;
+using SharpTS.Runtime;
 using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
@@ -177,6 +178,8 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             _ => throw new InvalidOperationException("Unknown resolution type")
         };
     }
+
+    public RuntimeValue GetRV(Token name) => RuntimeValue.FromBoxed(Get(name));
 
     /// <summary>
     /// Gets a cached bound method or creates and caches a new one.

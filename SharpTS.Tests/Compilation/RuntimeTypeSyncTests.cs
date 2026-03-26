@@ -105,7 +105,9 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
              "HasNamedProperty", "PreventExtensions", "SetNamedProperty",
              "TryAdd", "TryAddStrict", "TryPop", "TryPopStrict",
              "TryReverse", "TryReverseStrict", "TryShift", "TryShiftStrict",
-             "TryUnshift", "TryUnshiftStrict"]),
+             "TryUnshift", "TryUnshiftStrict",
+             // RuntimeValue overloads used only by interpreter, not emitted IL
+             "GetRV"]),
 
         new(typeof(SharpTSObject), "Object",
             [.. BaseIgnored, "GetMember",
@@ -115,7 +117,9 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
              "HasSymbolProperty", "GetSymbolPropertyNames",
              // Object internals accessed via runtime helpers
              "DefineProperty", "GetOwnPropertyDescriptor", "GetPropertyFlags",
-             "PreventExtensions"]),
+             "PreventExtensions",
+             // RuntimeValue overloads used only by interpreter, not emitted IL
+             "GetPropertyRV"]),
 
         new(typeof(SharpTSBuffer), "Buffer",
             [.. BaseIgnored, "GetMember"]),

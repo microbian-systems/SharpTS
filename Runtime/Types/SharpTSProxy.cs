@@ -327,6 +327,19 @@ public class SharpTSProxy : ISharpTSCallable
         || _target?.GetType().Name is "$TSFunction" or "$BoundTSFunction"
             or "$PromisifiedFunction" or "$DeprecatedFunction";
 
+    #region RuntimeValue Overloads
+
+    public RuntimeValue TrapGetRV(string property, Interpreter? interpreter)
+        => RuntimeValue.FromBoxed(TrapGet(property, interpreter));
+
+    public RuntimeValue TrapSetRV(string property, object? value, Interpreter? interpreter)
+        => RuntimeValue.FromBoxed(TrapSet(property, value, interpreter));
+
+    public RuntimeValue TrapConstructRV(List<object?> args, Interpreter? interpreter)
+        => RuntimeValue.FromBoxed(TrapConstruct(args, interpreter));
+
+    #endregion
+
     public override string ToString() => "Proxy {}";
 
     /// <summary>

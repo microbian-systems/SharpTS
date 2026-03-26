@@ -113,6 +113,12 @@ public static class BuiltInConstructorFactory
         return null;
     }
 
+    /// <summary>
+    /// RuntimeValue-returning overload of TryCreate.
+    /// </summary>
+    public static RuntimeValue TryCreateRV(string className, List<object?> args, Interpreter interpreter)
+        => RuntimeValue.FromBoxed(TryCreate(className, args, interpreter));
+
     #region Constructor Implementations
 
     private static object CreateDate(IReadOnlyList<object?> args)

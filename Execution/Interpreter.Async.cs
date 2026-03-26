@@ -515,14 +515,14 @@ public partial class Interpreter
         }
 
         object? obj = (await EvaluateAsync(get.Object)).ToObject();
-        return RuntimeValue.FromBoxed(EvaluateGetOnObject(get, obj));
+        return EvaluateGetOnObject(get, obj);
     }
 
     private async Task<RuntimeValue> EvaluateSetAsync(Expr.Set set)
     {
         object? obj = (await EvaluateAsync(set.Object)).ToObject();
         object? value = (await EvaluateAsync(set.Value)).ToObject();
-        return RuntimeValue.FromBoxed(EvaluateSetOnObject(set, obj, value));
+        return EvaluateSetOnObjectRV(set, obj, value);
     }
 
     private async Task<RuntimeValue> EvaluateNewAsync(Expr.New newExpr)
@@ -570,10 +570,12 @@ public partial class Interpreter
     private async Task<RuntimeValue> EvaluateCompoundSetAsync(Expr.CompoundSet compoundSet)
     {
         object? obj = (await EvaluateAsync(compoundSet.Object)).ToObject();
-        object? currentValue = EvaluateGetOnObject(new Expr.Get(compoundSet.Object, compoundSet.Name), obj);
-        object? operandValue = (await EvaluateAsync(compoundSet.Value)).ToObject();
-        object? result = ApplyCompoundOperator(compoundSet.Operator.Type, currentValue, operandValue);
-        return RuntimeValue.FromBoxed(EvaluateSetOnObject(new Expr.Set(compoundSet.Object, compoundSet.Name, new Expr.Literal(result)), obj, result));
+        RuntimeValue currentRV = EvaluateGetOnObject(new Expr.Get(compoundSet.Object, compoundSet.Name), obj);
+        var operandRV = await EvaluateAsync(compoundSet.Value);
+        RuntimeValue result = ApplyCompoundOperatorRV(compoundSet.Operator.Type, currentRV, operandRV);
+        object? resultObj = result.ToObject();
+        EvaluateSetOnObject(new Expr.Set(compoundSet.Object, compoundSet.Name, new Expr.Literal(resultObj)), obj, resultObj);
+        return result;
     }
 
     private async Task<RuntimeValue> EvaluateCompoundSetIndexAsync(Expr.CompoundSetIndex compoundSetIndex)
@@ -612,7 +614,7 @@ public partial class Interpreter
     {
         object? obj = (await EvaluateAsync(logical.Object)).ToObject();
 
-        if (!TryGetProperty(obj, logical.Name, out object? currentValue))
+        if (!TryGetPropertyRV(obj, logical.Name, out RuntimeValue currentRV))
         {
             throw new InterpreterException("Only instances and objects have fields.");
         }
@@ -620,13 +622,13 @@ public partial class Interpreter
         switch (logical.Operator.Type)
         {
             case TokenType.AND_AND_EQUAL:
-                if (!IsTruthy(currentValue)) return RuntimeValue.FromBoxed(currentValue);
+                if (!currentRV.IsTruthy()) return currentRV;
                 break;
             case TokenType.OR_OR_EQUAL:
-                if (IsTruthy(currentValue)) return RuntimeValue.FromBoxed(currentValue);
+                if (currentRV.IsTruthy()) return currentRV;
                 break;
             case TokenType.QUESTION_QUESTION_EQUAL:
-                if (currentValue != null) return RuntimeValue.FromBoxed(currentValue);
+                if (!currentRV.IsNullish) return currentRV;
                 break;
         }
 

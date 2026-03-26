@@ -1,3 +1,4 @@
+using SharpTS.Runtime;
 using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
@@ -21,6 +22,8 @@ public class ConstEnumValues(string name, Dictionary<string, object> members) : 
     public object GetMember(string name) =>
         _members.TryGetValue(name, out var v) ? v
         : throw new Exception($"Runtime Error: '{name}' not in const enum '{Name}'.");
+
+    public RuntimeValue GetMemberRV(string name) => RuntimeValue.FromBoxed(GetMember(name));
 
     public bool HasMember(string name) => _members.ContainsKey(name);
 
