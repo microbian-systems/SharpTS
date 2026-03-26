@@ -598,7 +598,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     /// </summary>
     public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
     {
-        if (!_fields.ContainsKey(name))
+        if (!_fields.TryGetValue(name, out var fieldValue))
         {
             return null;
         }
@@ -612,7 +612,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
         return new SharpTSPropertyDescriptor
         {
-            Value = _fields[name],
+            Value = fieldValue,
             Writable = flags.Writable,
             Enumerable = flags.Enumerable,
             Configurable = flags.Configurable

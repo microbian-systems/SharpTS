@@ -483,7 +483,7 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
     /// </summary>
     public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
     {
-        bool hasDataProperty = _fields.ContainsKey(name);
+        bool hasDataProperty = _fields.TryGetValue(name, out var fieldValue);
         bool hasGetter = HasGetter(name);
         bool hasSetter = HasSetter(name);
 
@@ -515,7 +515,7 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             // Data property
             return new SharpTSPropertyDescriptor
             {
-                Value = _fields[name],
+                Value = fieldValue,
                 Writable = flags.Writable,
                 Enumerable = flags.Enumerable,
                 Configurable = flags.Configurable

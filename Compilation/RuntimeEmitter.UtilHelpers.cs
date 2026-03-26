@@ -1690,9 +1690,9 @@ public static class UtilHelpers
 
             foreach (var key in dictA.Keys)
             {
-                if (!dictB.ContainsKey(key))
+                if (!dictB.TryGetValue(key, out var bValue))
                     return false;
-                if (!DeepStrictEqualImpl(dictA[key], dictB[key], seen))
+                if (!DeepStrictEqualImpl(dictA[key], bValue, seen))
                     return false;
             }
             return true;
