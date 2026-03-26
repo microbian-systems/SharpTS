@@ -28,7 +28,24 @@ public partial class CompilationContext
     public string? CurrentSuperclassName { get; set; }
 
     // Current class name being compiled (needed for private member access)
-    public string? CurrentClassName { get; set; }
+    private string? _currentClassName;
+    private string? _currentClassShortName;
+
+    public string? CurrentClassName
+    {
+        get => _currentClassName;
+        set
+        {
+            _currentClassName = value;
+            _currentClassShortName = value?.Split('.').Last().Split('_').Last();
+        }
+    }
+
+    /// <summary>
+    /// The last segment of CurrentClassName after splitting on '.' and '_'.
+    /// Cached to avoid repeated string allocations in private member access checks.
+    /// </summary>
+    public string? CurrentClassShortName => _currentClassShortName;
 
     // ============================================
     // @lock Decorator Support: Thread-safe Method Execution

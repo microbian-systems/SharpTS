@@ -319,6 +319,11 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public SharpTSClass GetClass() => _klass;
 
     /// <summary>
+    /// Check whether a field exists by name. O(1) dictionary lookup.
+    /// </summary>
+    public bool HasField(string name) => _fields.ContainsKey(name);
+
+    /// <summary>
     /// Get all field names for Object.keys() support
     /// </summary>
     public IEnumerable<string> GetFieldNames() => _fields.Keys;

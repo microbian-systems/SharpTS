@@ -496,7 +496,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         }
 
         if (gp.Object is Expr.Variable classVar &&
-            classVar.Name.Lexeme == Ctx.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            classVar.Name.Lexeme == Ctx.CurrentClassShortName &&
             Ctx.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var staticField))
         {
             IL.Emit(OpCodes.Ldsfld, staticField!);
@@ -565,7 +565,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         }
 
         if (sp.Object is Expr.Variable classVar &&
-            classVar.Name.Lexeme == Ctx.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            classVar.Name.Lexeme == Ctx.CurrentClassShortName &&
             Ctx.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var staticField))
         {
             EmitExpression(sp.Value);
@@ -646,7 +646,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         }
 
         if (cp.Object is Expr.Variable classVar &&
-            classVar.Name.Lexeme == Ctx.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            classVar.Name.Lexeme == Ctx.CurrentClassShortName &&
             Ctx.ClassRegistry!.TryGetStaticPrivateMethod(className, methodName, out var staticMethod))
         {
             foreach (var arg in cp.Arguments)

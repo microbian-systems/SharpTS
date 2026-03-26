@@ -125,7 +125,7 @@ public static class ObjectBuiltIns
         return RuntimeValue.FromBoolean(obj switch
         {
             SharpTSObject tsObj => tsObj.Fields.ContainsKey(key),
-            SharpTSInstance inst => inst.GetFieldNames().Contains(key),
+            SharpTSInstance inst => inst.HasField(key),
             _ => false
         });
     }

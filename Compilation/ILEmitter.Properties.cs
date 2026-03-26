@@ -1429,7 +1429,7 @@ public partial class ILEmitter
         }
 
         // Check if it's a static private field access (ClassName.#field)
-        if (gp.Object is Expr.Variable classVar && classVar.Name.Lexeme == _ctx.CurrentClassName?.Split('.').Last()?.Split('_').Last())
+        if (gp.Object is Expr.Variable classVar && classVar.Name.Lexeme == _ctx.CurrentClassShortName)
         {
             // Try static private field
             if (_ctx.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var staticField))
@@ -1519,7 +1519,7 @@ public partial class ILEmitter
         }
 
         // Check if it's a static private field
-        if (sp.Object is Expr.Variable classVar && classVar.Name.Lexeme == _ctx.CurrentClassName?.Split('.').Last()?.Split('_').Last())
+        if (sp.Object is Expr.Variable classVar && classVar.Name.Lexeme == _ctx.CurrentClassShortName)
         {
             if (_ctx.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var staticField))
             {
@@ -1624,7 +1624,7 @@ public partial class ILEmitter
         }
 
         // Check for static private method (ClassName.#method())
-        if (cp.Object is Expr.Variable classVar && classVar.Name.Lexeme == _ctx.CurrentClassName?.Split('.').Last()?.Split('_').Last())
+        if (cp.Object is Expr.Variable classVar && classVar.Name.Lexeme == _ctx.CurrentClassShortName)
         {
             if (_ctx.ClassRegistry!.TryGetStaticPrivateMethod(className, methodName, out var staticMethod))
             {

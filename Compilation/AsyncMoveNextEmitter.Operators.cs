@@ -173,7 +173,7 @@ public partial class AsyncMoveNextEmitter
 
         // Static private field: ClassName.#field
         if (gp.Object is Expr.Variable classVar &&
-            classVar.Name.Lexeme == _ctx!.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            classVar.Name.Lexeme == _ctx!.CurrentClassShortName &&
             _ctx!.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var staticField))
         {
             _il.Emit(OpCodes.Ldsfld, staticField!);
@@ -242,7 +242,7 @@ public partial class AsyncMoveNextEmitter
 
         // Static private field assignment: ClassName.#field = value
         if (sp.Object is Expr.Variable classVar &&
-            classVar.Name.Lexeme == _ctx!.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            classVar.Name.Lexeme == _ctx!.CurrentClassShortName &&
             _ctx!.ClassRegistry!.TryGetStaticPrivateField(className, fieldName, out var staticField))
         {
             EmitExpression(sp.Value);
@@ -324,7 +324,7 @@ public partial class AsyncMoveNextEmitter
 
         // Static private method: ClassName.#method(...)
         if (cp.Object is Expr.Variable classVar &&
-            classVar.Name.Lexeme == _ctx!.CurrentClassName!.Split('.').Last().Split('_').Last() &&
+            classVar.Name.Lexeme == _ctx!.CurrentClassShortName &&
             _ctx!.ClassRegistry!.TryGetStaticPrivateMethod(className, methodName, out var staticMethod))
         {
             foreach (var arg in cp.Arguments)

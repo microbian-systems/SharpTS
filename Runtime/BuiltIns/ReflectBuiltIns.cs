@@ -138,7 +138,7 @@ public static class ReflectBuiltIns
                         obj.DeleteProperty(propertyKey);
                         return true;
                     case SharpTSInstance inst:
-                        if ((inst.IsFrozen || inst.IsSealed) && inst.GetFieldNames().Contains(propertyKey))
+                        if ((inst.IsFrozen || inst.IsSealed) && inst.HasField(propertyKey))
                             return false;
                         inst.DeleteField(propertyKey);
                         return true;
