@@ -8,6 +8,7 @@ namespace SharpTS.Tests.SharedTests.BuiltInModules;
 /// </summary>
 public class FsModuleTests
 {
+    private static string Uid() => Guid.NewGuid().ToString("N")[..8];
     /// <summary>
     /// Compiled-only: the compiled executable runs from the temp directory where main.ts
     /// was written; the interpreter's CWD may differ.
@@ -49,11 +50,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_WriteFileSync_And_ReadFileSync_WorkTogether(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_write_read.txt';
+                const testFile = 'test_write_read_{{uid}}.txt';
                 const testContent = 'Hello, SharpTS!';
 
                 fs.writeFileSync(testFile, testContent);
@@ -73,11 +75,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_AppendFileSync_AppendsToFile(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_append.txt';
+                const testFile = 'test_append_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'Line1');
                 fs.appendFileSync(testFile, '\nLine2');
@@ -98,11 +101,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_MkdirSync_And_RmdirSync_WorkTogether(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_dir_fs';
+                const testDir = 'test_dir_fs_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 console.log(fs.existsSync(testDir));
@@ -120,11 +124,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_ReaddirSync_ListsDirectoryContents(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_readdir';
+                const testDir = 'test_readdir_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 fs.writeFileSync(testDir + '/file1.txt', 'content1');
@@ -148,11 +153,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_StatSync_ReturnsFileInfo(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_stat.txt';
+                const testFile = 'test_stat_{{uid}}.txt';
                 const content = 'Test content for stat';
 
                 fs.writeFileSync(testFile, content);
@@ -175,11 +181,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_StatSync_ReturnsDirectoryInfo(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_stat_dir';
+                const testDir = 'test_stat_dir_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 const stat = fs.statSync(testDir);
@@ -200,12 +207,13 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_CopyFileSync_CopiesFile(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const srcFile = 'test_copy_src.txt';
-                const destFile = 'test_copy_dest.txt';
+                const srcFile = 'test_copy_src_{{uid}}.txt';
+                const destFile = 'test_copy_dest_{{uid}}.txt';
                 const content = 'Content to copy';
 
                 fs.writeFileSync(srcFile, content);
@@ -229,12 +237,13 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_RenameSync_RenamesFile(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const oldName = 'test_rename_old.txt';
-                const newName = 'test_rename_new.txt';
+                const oldName = 'test_rename_old_{{uid}}.txt';
+                const newName = 'test_rename_new_{{uid}}.txt';
 
                 fs.writeFileSync(oldName, 'content');
                 fs.renameSync(oldName, newName);
@@ -255,11 +264,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_UnlinkSync_DeletesFile(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_unlink.txt';
+                const testFile = 'test_unlink_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
                 console.log(fs.existsSync(testFile));
@@ -277,11 +287,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_AccessSync_DoesNotThrowForExistingFile(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_access.txt';
+                const testFile = 'test_access_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
 
@@ -329,11 +340,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_RmdirSync_WithRecursive_DeletesNestedDirectories(ExecutionMode mode)
     {
+        var uniqueDir = $"test_rmdir_recursive_{Guid.NewGuid():N}";
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_rmdir_recursive';
+                const testDir = '{{uniqueDir}}';
 
                 fs.mkdirSync(testDir);
                 fs.mkdirSync(testDir + '/subdir');
@@ -371,11 +383,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_TruncateSync_TruncatesFile(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_truncate.txt';
+                const testFile = 'test_truncate_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'Hello World!');
                 const beforeSize = fs.statSync(testFile).size;
@@ -401,11 +414,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_TruncateSync_ExtendsFileWithZeros(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_truncate_extend.txt';
+                const testFile = 'test_truncate_extend_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'Hi');
                 fs.truncateSync(testFile, 10);
@@ -426,12 +440,13 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_SymlinkSync_CreatesSymbolicLink(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_symlink_target.txt';
-                const linkPath = 'test_symlink_link.txt';
+                const testFile = 'test_symlink_target_{{uid}}.txt';
+                const linkPath = 'test_symlink_link_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
                 fs.symlinkSync(testFile, linkPath);
@@ -452,17 +467,18 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_RealpathSync_ResolvesAbsolutePath(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_realpath.txt';
+                const testFile = 'test_realpath_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
 
                 const realPath = fs.realpathSync(testFile);
                 // realPath should be an absolute path
-                console.log(realPath.includes('test_realpath.txt'));
+                console.log(realPath.includes(testFile));
                 console.log(realPath.length > testFile.length);
 
                 // Cleanup
@@ -478,11 +494,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_UtimesSync_SetsFileTimes(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_utimes.txt';
+                const testFile = 'test_utimes_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
 
@@ -506,12 +523,13 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_LstatSync_ReturnsSymlinkInfo(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_lstat_target.txt';
-                const linkPath = 'test_lstat_link.txt';
+                const testFile = 'test_lstat_target_{{uid}}.txt';
+                const linkPath = 'test_lstat_link_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
                 fs.symlinkSync(testFile, linkPath);
@@ -533,11 +551,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_ReaddirSync_WithFileTypes_ReturnsDirentObjects(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_readdir_dirent';
+                const testDir = 'test_readdir_dirent_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 fs.writeFileSync(testDir + '/file.txt', 'content');
@@ -582,11 +601,12 @@ public class FsModuleTests
     {
         // This test checks that chmodSync doesn't throw on Unix
         // On Windows it's a no-op
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_chmod.txt';
+                const testFile = 'test_chmod_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
 
@@ -611,11 +631,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_ReadlinkSync_ThrowsForNonSymlink(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_readlink_regular.txt';
+                const testFile = 'test_readlink_regular_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
 
@@ -688,11 +709,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_OpenSync_ReturnsFileDescriptor(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_open_fd.txt';
+                const testFile = 'test_open_fd_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
                 const fd = fs.openSync(testFile, 'r');
@@ -712,11 +734,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_CloseSync_ClosesDescriptor(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_close_fd.txt';
+                const testFile = 'test_close_fd_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
                 const fd = fs.openSync(testFile, 'r');
@@ -764,12 +787,13 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_ReadSync_ReadsIntoBuffer(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
                 import { Buffer } from 'buffer';
-                const testFile = 'test_read_fd.txt';
+                const testFile = 'test_read_fd_{{uid}}.txt';
                 const content = 'Hello, World!';
 
                 fs.writeFileSync(testFile, content);
@@ -793,12 +817,13 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_WriteSync_WritesFromBuffer(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
                 import { Buffer } from 'buffer';
-                const testFile = 'test_write_fd.txt';
+                const testFile = 'test_write_fd_{{uid}}.txt';
 
                 const fd = fs.openSync(testFile, 'w');
                 const buffer = Buffer.from('Hello');
@@ -822,11 +847,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_FstatSync_ReturnsStats(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_fstat.txt';
+                const testFile = 'test_fstat_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, '12345');
                 const fd = fs.openSync(testFile, 'r');
@@ -849,11 +875,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_FtruncateSync_TruncatesFile(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_ftruncate.txt';
+                const testFile = 'test_ftruncate_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'Hello World!');
                 const fd = fs.openSync(testFile, 'r+');
@@ -902,11 +929,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_ReaddirSync_Recursive_ListsAllEntries(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_readdir_recursive';
+                const testDir = 'test_readdir_recursive_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 fs.mkdirSync(testDir + '/subdir');
@@ -933,11 +961,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_OpendirSync_ReturnsDir(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_opendir';
+                const testDir = 'test_opendir_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 fs.writeFileSync(testDir + '/file.txt', 'content');
@@ -965,11 +994,12 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_Dir_ReadSync_ReturnsNullWhenDone(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_dir_readall';
+                const testDir = 'test_dir_readall_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 fs.writeFileSync(testDir + '/only.txt', 'content');
@@ -1004,12 +1034,13 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_LinkSync_CreatesHardLink(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const srcFile = 'test_link_src.txt';
-                const linkFile = 'test_link_dest.txt';
+                const srcFile = 'test_link_src_{{uid}}.txt';
+                const linkFile = 'test_link_dest_{{uid}}.txt';
                 const content = 'Hello, Hard Link!';
 
                 fs.writeFileSync(srcFile, content);
@@ -1056,12 +1087,13 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_LinkSync_ThrowsForExistingDest(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const srcFile = 'test_link_src2.txt';
-                const destFile = 'test_link_dest2.txt';
+                const srcFile = 'test_link_src2_{{uid}}.txt';
+                const destFile = 'test_link_dest2_{{uid}}.txt';
 
                 fs.writeFileSync(srcFile, 'source');
                 fs.writeFileSync(destFile, 'dest');
@@ -1092,15 +1124,16 @@ public class FsModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void MixedModuleImports_WorkTogether(ExecutionMode mode)
     {
+        var uid = Uid();
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as path from 'path';
                 import * as os from 'os';
                 import * as fs from 'fs';
 
                 const tempDir = os.tmpdir();
-                const testFile = path.join(tempDir, 'sharpts_test_mixed.txt');
+                const testFile = path.join(tempDir, 'sharpts_test_mixed_{{uid}}.txt');
                 fs.writeFileSync(testFile, 'mixed test');
                 const content = fs.readFileSync(testFile, 'utf8');
                 console.log(content);
