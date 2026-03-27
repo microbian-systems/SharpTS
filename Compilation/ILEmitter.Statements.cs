@@ -910,7 +910,6 @@ public partial class ILEmitter
             var builder = _ctx.ILBuilder;
             if (_ctx.ReturnValueLocal == null)
             {
-                // Use the appropriate type for the return value local
                 _ctx.ReturnValueLocal = IL.DeclareLocal(returnType);
                 _ctx.ReturnLabel = builder.DefineLabel("deferred_return");
             }
@@ -921,6 +920,14 @@ public partial class ILEmitter
         {
             IL.Emit(OpCodes.Ret);
         }
+
+        // Reset stack type after return consumes the value. Without this,
+        // _stackType remains stale (e.g., Double from 'return 0') and dead code
+        // emitted after the return (like the 'br endLabel' in EmitIf) preserves
+        // the stale type. When the branch target is reached and new code emits
+        // EmitBoxIfNeeded, it sees StackType.Double and incorrectly boxes the
+        // next value (e.g., an array reference) as a Double.
+        SetStackUnknown();
     }
 
     protected override void EmitBreak(Stmt.Break b)
