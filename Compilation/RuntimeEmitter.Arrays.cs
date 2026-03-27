@@ -63,6 +63,118 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits SetArrayElementDouble(List&lt;double&gt; list, int index, double value):
+    /// Auto-extends the list with 0.0 entries if index &gt;= Count (JS semantics).
+    /// </summary>
+    private void EmitSetArrayElementDouble(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "SetArrayElementDouble",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.ListOfDouble, _types.Int32, _types.Double]
+        );
+        runtime.SetArrayElementDouble = method;
+
+        var il = method.GetILGenerator();
+        var setExistingLabel = il.DefineLabel();
+        var loopCheckLabel = il.DefineLabel();
+        var loopBodyLabel = il.DefineLabel();
+
+        var countGetter = _types.GetProperty(_types.ListOfDouble, "Count").GetGetMethod()!;
+        var addMethod = _types.ListOfDouble.GetMethod("Add", [_types.Double])!;
+        var setItemMethod = _types.ListOfDouble.GetMethod("set_Item", [_types.Int32, _types.Double])!;
+
+        // if (index < list.Count) goto setExisting
+        il.Emit(OpCodes.Ldarg_1); // index
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Callvirt, countGetter);
+        il.Emit(OpCodes.Blt, setExistingLabel);
+
+        // Auto-extend: while (list.Count < index) list.Add(0.0)
+        il.Emit(OpCodes.Br, loopCheckLabel);
+        il.MarkLabel(loopBodyLabel);
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Callvirt, addMethod);
+        il.MarkLabel(loopCheckLabel);
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Callvirt, countGetter);
+        il.Emit(OpCodes.Ldarg_1); // index
+        il.Emit(OpCodes.Blt, loopBodyLabel);
+
+        // list.Add(value)
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Ldarg_2); // value
+        il.Emit(OpCodes.Callvirt, addMethod);
+        il.Emit(OpCodes.Ret);
+
+        // setExisting: list[index] = value
+        il.MarkLabel(setExistingLabel);
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Ldarg_1); // index
+        il.Emit(OpCodes.Ldarg_2); // value
+        il.Emit(OpCodes.Callvirt, setItemMethod);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits SetArrayElementBool(List&lt;bool&gt; list, int index, bool value):
+    /// Auto-extends the list with false entries if index &gt;= Count (JS semantics).
+    /// </summary>
+    private void EmitSetArrayElementBool(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "SetArrayElementBool",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.ListOfBool, _types.Int32, _types.Boolean]
+        );
+        runtime.SetArrayElementBool = method;
+
+        var il = method.GetILGenerator();
+        var setExistingLabel = il.DefineLabel();
+        var loopCheckLabel = il.DefineLabel();
+        var loopBodyLabel = il.DefineLabel();
+
+        var countGetter = _types.GetProperty(_types.ListOfBool, "Count").GetGetMethod()!;
+        var addMethod = _types.ListOfBool.GetMethod("Add", [_types.Boolean])!;
+        var setItemMethod = _types.ListOfBool.GetMethod("set_Item", [_types.Int32, _types.Boolean])!;
+
+        // if (index < list.Count) goto setExisting
+        il.Emit(OpCodes.Ldarg_1); // index
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Callvirt, countGetter);
+        il.Emit(OpCodes.Blt, setExistingLabel);
+
+        // Auto-extend: while (list.Count < index) list.Add(false)
+        il.Emit(OpCodes.Br, loopCheckLabel);
+        il.MarkLabel(loopBodyLabel);
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, addMethod);
+        il.MarkLabel(loopCheckLabel);
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Callvirt, countGetter);
+        il.Emit(OpCodes.Ldarg_1); // index
+        il.Emit(OpCodes.Blt, loopBodyLabel);
+
+        // list.Add(value)
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Ldarg_2); // value
+        il.Emit(OpCodes.Callvirt, addMethod);
+        il.Emit(OpCodes.Ret);
+
+        // setExisting: list[index] = value
+        il.MarkLabel(setExistingLabel);
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Ldarg_1); // index
+        il.Emit(OpCodes.Ldarg_2); // value
+        il.Emit(OpCodes.Callvirt, setItemMethod);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitCreateArray(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
@@ -101,7 +213,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSArrayType);
         il.Emit(OpCodes.Brtrue, tsArrayLabel);
 
-        // List
+        // List<double> (typed number array)
+        var listDoubleLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfDouble);
+        il.Emit(OpCodes.Brtrue, listDoubleLabel);
+
+        // List<bool> (typed boolean array)
+        var listBoolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfBool);
+        il.Emit(OpCodes.Brtrue, listBoolLabel);
+
+        // List<object?>
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brtrue, listLabel);
@@ -121,6 +245,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, runtime.TSArrayType);
         il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+
+        // List<double> handler
+        il.MarkLabel(listDoubleLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfDouble);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfDouble, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+
+        // List<bool> handler
+        il.MarkLabel(listBoolLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfBool);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfBool, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(listLabel);

@@ -368,6 +368,13 @@ public class TypeProvider
 
     #endregion
 
+    #region List<double> and List<bool> Types (typed array backing stores)
+
+    public Type ListOfDouble => MakeGenericType(ListOpen, Double);
+    public Type ListOfBool => MakeGenericType(ListOpen, Boolean);
+
+    #endregion
+
     #region List<byte> Types
 
     public Type ListOfByte => MakeGenericType(ListOpen, Byte);

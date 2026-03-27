@@ -55,7 +55,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSArrayType);
         il.Emit(OpCodes.Brtrue, tsArrayLabel);
 
-        // List
+        // List<double> (typed number array) - check before List<object?>
+        var listDoubleGetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfDouble);
+        il.Emit(OpCodes.Brtrue, listDoubleGetLabel);
+
+        // List<bool> (typed boolean array) - check before List<object?>
+        var listBoolGetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfBool);
+        il.Emit(OpCodes.Brtrue, listBoolGetLabel);
+
+        // List<object?>
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brtrue, listLabel);
@@ -151,6 +163,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Ret);
+
+        // List<double> handler: cast, convert index, get_Item, box result
+        il.MarkLabel(listDoubleGetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfDouble);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfDouble, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+
+        // List<bool> handler: cast, convert index, get_Item, box result
+        il.MarkLabel(listBoolGetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfBool);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfBool, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(listLabel);
@@ -309,7 +341,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSArrayType);
         il.Emit(OpCodes.Brtrue, tsArraySetLabel);
 
-        // List
+        // List<double> (typed number array) - check before List<object?>
+        var listDoubleSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfDouble);
+        il.Emit(OpCodes.Brtrue, listDoubleSetLabel);
+
+        // List<bool> (typed boolean array) - check before List<object?>
+        var listBoolSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfBool);
+        il.Emit(OpCodes.Brtrue, listBoolSetLabel);
+
+        // List<object?>
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brtrue, listLabel);
@@ -365,6 +409,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "set_Item", _types.Int32, _types.Object));
+        il.Emit(OpCodes.Ret);
+
+        // List<double> handler: cast, convert index, unbox value to double, set_Item
+        il.MarkLabel(listDoubleSetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfDouble);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
+        il.Emit(OpCodes.Call, runtime.SetArrayElementDouble);
+        il.Emit(OpCodes.Ret);
+
+        // List<bool> handler: cast, convert index, unbox value to bool, set_Item
+        il.MarkLabel(listBoolSetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfBool);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToBoolean", _types.Object));
+        il.Emit(OpCodes.Call, runtime.SetArrayElementBool);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(listLabel);

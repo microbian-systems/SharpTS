@@ -107,6 +107,8 @@ public class EmittedRuntime
 
     // Array methods
     public MethodBuilder SetArrayElement { get; set; } = null!;
+    public MethodBuilder SetArrayElementDouble { get; set; } = null!;
+    public MethodBuilder SetArrayElementBool { get; set; } = null!;
     public MethodBuilder CreateArray { get; set; } = null!;
     public MethodBuilder GetLength { get; set; } = null!;
     public MethodBuilder GetElement { get; set; } = null!;

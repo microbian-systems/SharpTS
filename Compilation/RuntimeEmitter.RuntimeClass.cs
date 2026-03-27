@@ -215,6 +215,9 @@ public partial class RuntimeEmitter
         EmitDisposeResource(typeBuilder, runtime);
         // HasIn operator depends on IsSymbol and GetSymbolDict
         EmitHasIn(typeBuilder, runtime);
+        // Typed array SetElement helpers - must come BEFORE GetIndex/SetIndex which reference them
+        EmitSetArrayElementDouble(typeBuilder, runtime);
+        EmitSetArrayElementBool(typeBuilder, runtime);
         // Note: TypedArray detection helpers are emitted earlier (before GetProperty)
         EmitGetIndex(typeBuilder, runtime);
         EmitSetIndex(typeBuilder, runtime);
@@ -232,6 +235,9 @@ public partial class RuntimeEmitter
         // ES2025 Iterator Helper methods and lazy wrapper types
         EmitIteratorHelperMethods(typeBuilder, moduleBuilder, runtime);
         // Arrays - must come AFTER iterator methods since ConcatArrays/ExpandCallArgs use IterateToList
+        // Note: SetArrayElement* helpers must be emitted BEFORE GetIndex/SetIndex (above)
+        // since SetIndex references SetArrayElementDouble/SetArrayElementBool.
+        // They were moved up before the Objects section to satisfy this dependency.
         EmitSetArrayElement(typeBuilder, runtime);
         EmitCreateArray(typeBuilder, runtime);
         EmitGetLength(typeBuilder, runtime);

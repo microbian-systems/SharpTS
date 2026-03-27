@@ -495,7 +495,7 @@ public partial class ILEmitter
         // Uses runtime isinst guard to handle edge cases (e.g., variable slot
         // corruption after early returns — a pre-existing compiler bug).
         TypeInfo? objType = _ctx.TypeMap?.Get(gi.Object);
-        if (objType is TypeInfo.Array)
+        if (objType is TypeInfo.Array arrayTypeGi)
         {
             var fallbackLabel = IL.DefineLabel();
             var endLabel = IL.DefineLabel();
@@ -503,10 +503,51 @@ public partial class ILEmitter
             EmitExpression(gi.Object);
             EnsureBoxed();
 
-            // Runtime guard: if not a List or $Array, fall through to generic dispatch
+            // Runtime guard: store obj, then check typed lists first
             var objLocal = IL.DeclareLocal(_ctx.Types.Object);
             IL.Emit(OpCodes.Dup);
             IL.Emit(OpCodes.Stloc, objLocal);
+
+            // Typed number[] fast path: isinst List<double> before List<object?>
+            if (arrayTypeGi.ElementType is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER })
+            {
+                var notDoubleListLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfDouble);
+                IL.Emit(OpCodes.Brfalse, notDoubleListLabel);
+
+                // List<double> path: cast, index, get_Item → native double on stack
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfDouble);
+                EmitExpressionAsDouble(gi.Index);
+                IL.Emit(OpCodes.Conv_I4);
+                IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.ListOfDouble, "get_Item", _ctx.Types.Int32));
+                SetStackType(StackType.Double);
+                IL.Emit(OpCodes.Br, endLabel);
+
+                IL.MarkLabel(notDoubleListLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+            }
+            // Typed boolean[] fast path: isinst List<bool> before List<object?>
+            else if (arrayTypeGi.ElementType is TypeInfo.Primitive { Type: TokenType.TYPE_BOOLEAN })
+            {
+                var notBoolListLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfBool);
+                IL.Emit(OpCodes.Brfalse, notBoolListLabel);
+
+                // List<bool> path: cast, index, get_Item → native bool on stack
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfBool);
+                EmitExpressionAsDouble(gi.Index);
+                IL.Emit(OpCodes.Conv_I4);
+                IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.ListOfBool, "get_Item", _ctx.Types.Int32));
+                SetStackType(StackType.Boolean);
+                IL.Emit(OpCodes.Br, endLabel);
+
+                IL.MarkLabel(notBoolListLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+            }
+
+            // Existing List<object?> / $Array path
             IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfObject);
             var isListLabel = IL.DefineLabel();
             IL.Emit(OpCodes.Brtrue, isListLabel);
@@ -560,84 +601,292 @@ public partial class ILEmitter
         // type dispatch, index boxing, and Convert.ToInt32(object) overhead.
         // Uses runtime isinst guard for safety (see GetIndex comment above).
         TypeInfo? objType = _ctx.TypeMap?.Get(si.Object);
-        if (objType is TypeInfo.Array)
+        if (objType is TypeInfo.Array arrayTypeSi)
         {
             var fallbackLabel = IL.DefineLabel();
             var endLabel = IL.DefineLabel();
 
-            EmitExpression(si.Value);
-            EmitBoxIfNeeded(si.Value);
-            var valueLocal = IL.DeclareLocal(_ctx.Types.Object);
-            IL.Emit(OpCodes.Stloc, valueLocal);
-
-            EmitExpression(si.Object);
-            EnsureBoxed();
-
-            // Runtime guard: if not a List or $Array, fall through to generic dispatch
-            var objLocal = IL.DeclareLocal(_ctx.Types.Object);
-            IL.Emit(OpCodes.Dup);
-            IL.Emit(OpCodes.Stloc, objLocal);
-            IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfObject);
-            var isListLabel = IL.DefineLabel();
-            IL.Emit(OpCodes.Brtrue, isListLabel);
-            IL.Emit(OpCodes.Ldloc, objLocal);
-            IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
-            IL.Emit(OpCodes.Brfalse, fallbackLabel);
-
-            // $Array path: check frozen, then extract Elements list
-            IL.Emit(OpCodes.Ldloc, objLocal);
-            IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
-            var tsArrayLocal = IL.DeclareLocal(_ctx.Runtime!.TSArrayType);
-            IL.Emit(OpCodes.Stloc, tsArrayLocal);
-            IL.Emit(OpCodes.Ldloc, tsArrayLocal);
-            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayIsFrozenGetter);
-            IL.Emit(OpCodes.Brtrue, fallbackLabel); // Clean stack — no leftover
-            IL.Emit(OpCodes.Ldloc, tsArrayLocal);
-            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayElementsGetter);
-            var doSetLabel = IL.DefineLabel();
-            IL.Emit(OpCodes.Br, doSetLabel);
-
-            // List path: check frozen (via ConditionalWeakTable), then cast
-            IL.MarkLabel(isListLabel);
-            var frozenCheckLocal = IL.DeclareLocal(_ctx.Types.Object);
-            IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.FrozenObjectsField);
-            IL.Emit(OpCodes.Ldloc, objLocal);
-            IL.Emit(OpCodes.Ldloca, frozenCheckLocal);
-            IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(
-                _ctx.Types.ConditionalWeakTable, "TryGetValue",
-                _ctx.Types.Object, _ctx.Types.Object.MakeByRefType()));
-            IL.Emit(OpCodes.Brtrue, fallbackLabel); // Frozen — use generic path
-            IL.Emit(OpCodes.Ldloc, objLocal);
-            IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfObject);
-
-            // Common: SetArrayElement(list, index, value)
-            IL.MarkLabel(doSetLabel);
-            EmitExpressionAsDouble(si.Index);
-            IL.Emit(OpCodes.Conv_I4);
-            IL.Emit(OpCodes.Ldloc, valueLocal);
-            IL.Emit(OpCodes.Call, _ctx.Runtime!.SetArrayElement);
-            IL.Emit(OpCodes.Ldloc, valueLocal);
-            IL.Emit(OpCodes.Br, endLabel);
-
-            // Fallback: generic dispatch
-            IL.MarkLabel(fallbackLabel);
-            IL.Emit(OpCodes.Ldloc, objLocal);
-            EmitExpression(si.Index);
-            EmitBoxIfNeeded(si.Index);
-            IL.Emit(OpCodes.Ldloc, valueLocal);
-            if (_ctx.IsStrictMode)
+            // For typed number[]: store value as double to avoid boxing
+            if (arrayTypeSi.ElementType is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER })
             {
-                IL.Emit(OpCodes.Ldc_I4_1);
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndexStrict);
-            }
-            else
-            {
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndex);
-            }
-            IL.Emit(OpCodes.Ldloc, valueLocal);
+                EmitExpression(si.Value);
+                EnsureDouble();
+                var doubleValueLocal = IL.DeclareLocal(_ctx.Types.Double);
+                IL.Emit(OpCodes.Stloc, doubleValueLocal);
 
-            IL.MarkLabel(endLabel);
-            return;
+                EmitExpression(si.Object);
+                EnsureBoxed();
+
+                var objLocal = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Stloc, objLocal);
+
+                // Check List<double> first
+                var notDoubleListLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfDouble);
+                IL.Emit(OpCodes.Brfalse, notDoubleListLabel);
+
+                // List<double> path: SetArrayElementDouble(list, index, doubleValue)
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfDouble);
+                EmitExpressionAsDouble(si.Index);
+                IL.Emit(OpCodes.Conv_I4);
+                IL.Emit(OpCodes.Ldloc, doubleValueLocal);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.SetArrayElementDouble);
+                IL.Emit(OpCodes.Ldloc, doubleValueLocal);
+                SetStackType(StackType.Double);
+                IL.Emit(OpCodes.Br, endLabel);
+
+                // Not List<double>: box the double value and fall through to existing paths
+                IL.MarkLabel(notDoubleListLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Ldloc, doubleValueLocal);
+                IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                var valueLocal = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Stloc, valueLocal);
+
+                // Check List<object?>
+                IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfObject);
+                var isListLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Brtrue, isListLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
+                IL.Emit(OpCodes.Brfalse, fallbackLabel);
+
+                // $Array path: check frozen, then extract Elements list
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
+                var tsArrayLocal = IL.DeclareLocal(_ctx.Runtime!.TSArrayType);
+                IL.Emit(OpCodes.Stloc, tsArrayLocal);
+                IL.Emit(OpCodes.Ldloc, tsArrayLocal);
+                IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayIsFrozenGetter);
+                IL.Emit(OpCodes.Brtrue, fallbackLabel);
+                IL.Emit(OpCodes.Ldloc, tsArrayLocal);
+                IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayElementsGetter);
+                var doSetLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Br, doSetLabel);
+
+                // List path: check frozen, then cast
+                IL.MarkLabel(isListLabel);
+                var frozenCheckLocal = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.FrozenObjectsField);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Ldloca, frozenCheckLocal);
+                IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(
+                    _ctx.Types.ConditionalWeakTable, "TryGetValue",
+                    _ctx.Types.Object, _ctx.Types.Object.MakeByRefType()));
+                IL.Emit(OpCodes.Brtrue, fallbackLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfObject);
+
+                // Common: SetArrayElement(list, index, value)
+                IL.MarkLabel(doSetLabel);
+                EmitExpressionAsDouble(si.Index);
+                IL.Emit(OpCodes.Conv_I4);
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.SetArrayElement);
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+                IL.Emit(OpCodes.Br, endLabel);
+
+                // Fallback: generic dispatch
+                IL.MarkLabel(fallbackLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                EmitExpression(si.Index);
+                EmitBoxIfNeeded(si.Index);
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+                if (_ctx.IsStrictMode)
+                {
+                    IL.Emit(OpCodes.Ldc_I4_1);
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndexStrict);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndex);
+                }
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+
+                IL.MarkLabel(endLabel);
+                return;
+            }
+
+            // For typed boolean[]: store value as bool to avoid boxing
+            if (arrayTypeSi.ElementType is TypeInfo.Primitive { Type: TokenType.TYPE_BOOLEAN })
+            {
+                EmitExpression(si.Value);
+                EnsureBoolean();
+                var boolValueLocal = IL.DeclareLocal(_ctx.Types.Boolean);
+                IL.Emit(OpCodes.Stloc, boolValueLocal);
+
+                EmitExpression(si.Object);
+                EnsureBoxed();
+
+                var objLocal = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Stloc, objLocal);
+
+                // Check List<bool> first
+                var notBoolListLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfBool);
+                IL.Emit(OpCodes.Brfalse, notBoolListLabel);
+
+                // List<bool> path: SetArrayElementBool(list, index, boolValue)
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfBool);
+                EmitExpressionAsDouble(si.Index);
+                IL.Emit(OpCodes.Conv_I4);
+                IL.Emit(OpCodes.Ldloc, boolValueLocal);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.SetArrayElementBool);
+                IL.Emit(OpCodes.Ldloc, boolValueLocal);
+                SetStackType(StackType.Boolean);
+                IL.Emit(OpCodes.Br, endLabel);
+
+                // Not List<bool>: box the bool value and fall through to existing paths
+                IL.MarkLabel(notBoolListLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Ldloc, boolValueLocal);
+                IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
+                var valueLocal = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Stloc, valueLocal);
+
+                // Check List<object?>
+                IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfObject);
+                var isListLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Brtrue, isListLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
+                IL.Emit(OpCodes.Brfalse, fallbackLabel);
+
+                // $Array path: check frozen, then extract Elements list
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
+                var tsArrayLocal = IL.DeclareLocal(_ctx.Runtime!.TSArrayType);
+                IL.Emit(OpCodes.Stloc, tsArrayLocal);
+                IL.Emit(OpCodes.Ldloc, tsArrayLocal);
+                IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayIsFrozenGetter);
+                IL.Emit(OpCodes.Brtrue, fallbackLabel);
+                IL.Emit(OpCodes.Ldloc, tsArrayLocal);
+                IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayElementsGetter);
+                var doSetLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Br, doSetLabel);
+
+                // List path: check frozen, then cast
+                IL.MarkLabel(isListLabel);
+                var frozenCheckLocal = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.FrozenObjectsField);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Ldloca, frozenCheckLocal);
+                IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(
+                    _ctx.Types.ConditionalWeakTable, "TryGetValue",
+                    _ctx.Types.Object, _ctx.Types.Object.MakeByRefType()));
+                IL.Emit(OpCodes.Brtrue, fallbackLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfObject);
+
+                // Common: SetArrayElement(list, index, value)
+                IL.MarkLabel(doSetLabel);
+                EmitExpressionAsDouble(si.Index);
+                IL.Emit(OpCodes.Conv_I4);
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.SetArrayElement);
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+                IL.Emit(OpCodes.Br, endLabel);
+
+                // Fallback: generic dispatch
+                IL.MarkLabel(fallbackLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                EmitExpression(si.Index);
+                EmitBoxIfNeeded(si.Index);
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+                if (_ctx.IsStrictMode)
+                {
+                    IL.Emit(OpCodes.Ldc_I4_1);
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndexStrict);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndex);
+                }
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+
+                IL.MarkLabel(endLabel);
+                return;
+            }
+
+            // Generic array path (element type not number or boolean)
+            {
+                EmitExpression(si.Value);
+                EmitBoxIfNeeded(si.Value);
+                var valueLocal = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Stloc, valueLocal);
+
+                EmitExpression(si.Object);
+                EnsureBoxed();
+
+                var objLocal = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Stloc, objLocal);
+                IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfObject);
+                var isListLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Brtrue, isListLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
+                IL.Emit(OpCodes.Brfalse, fallbackLabel);
+
+                // $Array path: check frozen, then extract Elements list
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
+                var tsArrayLocal = IL.DeclareLocal(_ctx.Runtime!.TSArrayType);
+                IL.Emit(OpCodes.Stloc, tsArrayLocal);
+                IL.Emit(OpCodes.Ldloc, tsArrayLocal);
+                IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayIsFrozenGetter);
+                IL.Emit(OpCodes.Brtrue, fallbackLabel);
+                IL.Emit(OpCodes.Ldloc, tsArrayLocal);
+                IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayElementsGetter);
+                var doSetLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Br, doSetLabel);
+
+                // List path: check frozen, then cast
+                IL.MarkLabel(isListLabel);
+                var frozenCheckLocal = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.FrozenObjectsField);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Ldloca, frozenCheckLocal);
+                IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(
+                    _ctx.Types.ConditionalWeakTable, "TryGetValue",
+                    _ctx.Types.Object, _ctx.Types.Object.MakeByRefType()));
+                IL.Emit(OpCodes.Brtrue, fallbackLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfObject);
+
+                // Common: SetArrayElement(list, index, value)
+                IL.MarkLabel(doSetLabel);
+                EmitExpressionAsDouble(si.Index);
+                IL.Emit(OpCodes.Conv_I4);
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.SetArrayElement);
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+                IL.Emit(OpCodes.Br, endLabel);
+
+                // Fallback: generic dispatch
+                IL.MarkLabel(fallbackLabel);
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                EmitExpression(si.Index);
+                EmitBoxIfNeeded(si.Index);
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+                if (_ctx.IsStrictMode)
+                {
+                    IL.Emit(OpCodes.Ldc_I4_1);
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndexStrict);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndex);
+                }
+                IL.Emit(OpCodes.Ldloc, valueLocal);
+
+                IL.MarkLabel(endLabel);
+                return;
+            }
         }
 
         // Store value in a temp local so we can use it twice:

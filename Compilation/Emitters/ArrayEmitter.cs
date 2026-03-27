@@ -245,10 +245,67 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         il.Emit(OpCodes.Isinst, ctx.Types.ListOfObject);
         il.Emit(OpCodes.Brtrue, isListLabel);
 
-        // Not a List - assume it's $Array, get Elements
+        // Check if it's $Array - get Elements
+        var tsArrayLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Isinst, ctx.Runtime!.TSArrayType);
+        il.Emit(OpCodes.Brtrue, tsArrayLabel);
+
+        // Check if it's a typed array (List<double>, List<bool>) via IList interface.
+        // Convert to List<object?> by iterating and boxing elements.
+        // This is a slow path only hit when array methods are called on typed arrays.
+        var ilistType = typeof(System.Collections.IList);
+        var typedListLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Isinst, ilistType);
+        il.Emit(OpCodes.Brtrue, typedListLabel);
+
+        // Unknown type - push null as fallback (shouldn't happen)
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // $Array path
+        il.MarkLabel(tsArrayLabel);
         il.Emit(OpCodes.Ldloc, objLocal);
         il.Emit(OpCodes.Castclass, ctx.Runtime!.TSArrayType);
         il.Emit(OpCodes.Callvirt, ctx.Runtime.TSArrayElementsGetter);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Typed list path: convert IList to List<object?> via boxing loop
+        il.MarkLabel(typedListLabel);
+        var ilistLocal = il.DeclareLocal(ilistType);
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Castclass, ilistType);
+        il.Emit(OpCodes.Stloc, ilistLocal);
+        // new List<object?>(ilist.Count)
+        il.Emit(OpCodes.Ldloc, ilistLocal);
+        il.Emit(OpCodes.Callvirt, ilistType.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Newobj, ctx.Types.GetConstructor(ctx.Types.ListOfObject, ctx.Types.Int32));
+        var resultLocal = il.DeclareLocal(ctx.Types.ListOfObject);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        // for (int i = 0; i < ilist.Count; i++) result.Add(ilist[i]);
+        var idxLocal = il.DeclareLocal(ctx.Types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        var loopCheck = il.DefineLabel();
+        var loopBody = il.DefineLabel();
+        il.Emit(OpCodes.Br, loopCheck);
+        il.MarkLabel(loopBody);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, ilistLocal);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Callvirt, ilistType.GetMethod("get_Item", [typeof(int)])!); // returns boxed object
+        il.Emit(OpCodes.Callvirt, ctx.Types.ListOfObject.GetMethod("Add", [ctx.Types.Object])!);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.MarkLabel(loopCheck);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldloc, ilistLocal);
+        il.Emit(OpCodes.Callvirt, ilistType.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Blt, loopBody);
+        il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Br, endLabel);
 
         // Already a List - cast it
