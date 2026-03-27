@@ -6,6 +6,63 @@ namespace SharpTS.Compilation;
 
 public partial class RuntimeEmitter
 {
+    /// <summary>
+    /// Emits SetArrayElement(List&lt;object?&gt; list, int index, object? value):
+    /// Auto-extends the list with null entries if index &gt;= Count (JS semantics).
+    /// </summary>
+    private void EmitSetArrayElement(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "SetArrayElement",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.ListOfObject, _types.Int32, _types.Object]
+        );
+        runtime.SetArrayElement = method;
+
+        var il = method.GetILGenerator();
+        var setExistingLabel = il.DefineLabel();
+        var loopCheckLabel = il.DefineLabel();
+        var loopBodyLabel = il.DefineLabel();
+        var addValueLabel = il.DefineLabel();
+
+        var countGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var addMethod = _types.ListOfObject.GetMethod("Add", [_types.Object])!;
+        var setItemMethod = _types.ListOfObject.GetMethod("set_Item", [_types.Int32, _types.Object])!;
+
+        // if (index < list.Count) goto setExisting
+        il.Emit(OpCodes.Ldarg_1); // index
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Callvirt, countGetter);
+        il.Emit(OpCodes.Blt, setExistingLabel);
+
+        // Auto-extend: while (list.Count < index) list.Add(null)
+        il.Emit(OpCodes.Br, loopCheckLabel);
+        il.MarkLabel(loopBodyLabel);
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Callvirt, addMethod);
+        il.MarkLabel(loopCheckLabel);
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Callvirt, countGetter);
+        il.Emit(OpCodes.Ldarg_1); // index
+        il.Emit(OpCodes.Blt, loopBodyLabel);
+
+        // list.Add(value)
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Ldarg_2); // value
+        il.Emit(OpCodes.Callvirt, addMethod);
+        il.Emit(OpCodes.Ret);
+
+        // setExisting: list[index] = value
+        il.MarkLabel(setExistingLabel);
+        il.Emit(OpCodes.Ldarg_0); // list
+        il.Emit(OpCodes.Ldarg_1); // index
+        il.Emit(OpCodes.Ldarg_2); // value
+        il.Emit(OpCodes.Callvirt, setItemMethod);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitCreateArray(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(

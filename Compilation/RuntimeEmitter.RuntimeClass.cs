@@ -232,6 +232,7 @@ public partial class RuntimeEmitter
         // ES2025 Iterator Helper methods and lazy wrapper types
         EmitIteratorHelperMethods(typeBuilder, moduleBuilder, runtime);
         // Arrays - must come AFTER iterator methods since ConcatArrays/ExpandCallArgs use IterateToList
+        EmitSetArrayElement(typeBuilder, runtime);
         EmitCreateArray(typeBuilder, runtime);
         EmitGetLength(typeBuilder, runtime);
         EmitGetElement(typeBuilder, runtime);

@@ -1,6 +1,4 @@
 function countPrimes(n: number): number {
-    if (n <= 2) return 0;
-
     let isPrime: boolean[] = [];
     for (let i: number = 0; i < n; i++) {
         isPrime[i] = true;

@@ -489,6 +489,63 @@ public partial class ILEmitter
             return;
         }
 
+        // Fast path: when receiver is statically known to be an array,
+        // emit direct List<object?> access — skips runtime type dispatch,
+        // index boxing, and Convert.ToInt32(object) overhead.
+        // Uses runtime isinst guard to handle edge cases (e.g., variable slot
+        // corruption after early returns — a pre-existing compiler bug).
+        TypeInfo? objType = _ctx.TypeMap?.Get(gi.Object);
+        if (objType is TypeInfo.Array)
+        {
+            var fallbackLabel = IL.DefineLabel();
+            var endLabel = IL.DefineLabel();
+
+            EmitExpression(gi.Object);
+            EnsureBoxed();
+
+            // Runtime guard: if not a List or $Array, fall through to generic dispatch
+            var objLocal = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Stloc, objLocal);
+            IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfObject);
+            var isListLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Brtrue, isListLabel);
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
+            IL.Emit(OpCodes.Brfalse, fallbackLabel);
+
+            // $Array path: extract Elements list
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
+            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayElementsGetter);
+            var doGetLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Br, doGetLabel);
+
+            // List path: cast directly
+            IL.MarkLabel(isListLabel);
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfObject);
+
+            // Common: list[index]
+            IL.MarkLabel(doGetLabel);
+            EmitExpressionAsDouble(gi.Index);
+            IL.Emit(OpCodes.Conv_I4);
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.ListOfObject, "get_Item", _ctx.Types.Int32));
+            SetStackUnknown();
+            IL.Emit(OpCodes.Br, endLabel);
+
+            // Fallback: generic dispatch
+            IL.MarkLabel(fallbackLabel);
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            EmitExpression(gi.Index);
+            EmitBoxIfNeeded(gi.Index);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GetIndex);
+            SetStackUnknown();
+
+            IL.MarkLabel(endLabel);
+            return;
+        }
+
         EmitExpression(gi.Object);
         EmitBoxIfNeeded(gi.Object);
         EmitExpression(gi.Index);
@@ -498,19 +555,104 @@ public partial class ILEmitter
 
     protected override void EmitSetIndex(Expr.SetIndex si)
     {
+        // Fast path: when receiver is statically known to be an array,
+        // emit direct List<object?> access with auto-extension — skips runtime
+        // type dispatch, index boxing, and Convert.ToInt32(object) overhead.
+        // Uses runtime isinst guard for safety (see GetIndex comment above).
+        TypeInfo? objType = _ctx.TypeMap?.Get(si.Object);
+        if (objType is TypeInfo.Array)
+        {
+            var fallbackLabel = IL.DefineLabel();
+            var endLabel = IL.DefineLabel();
+
+            EmitExpression(si.Value);
+            EmitBoxIfNeeded(si.Value);
+            var valueLocal = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, valueLocal);
+
+            EmitExpression(si.Object);
+            EnsureBoxed();
+
+            // Runtime guard: if not a List or $Array, fall through to generic dispatch
+            var objLocal = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Stloc, objLocal);
+            IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfObject);
+            var isListLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Brtrue, isListLabel);
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
+            IL.Emit(OpCodes.Brfalse, fallbackLabel);
+
+            // $Array path: check frozen, then extract Elements list
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
+            var tsArrayLocal = IL.DeclareLocal(_ctx.Runtime!.TSArrayType);
+            IL.Emit(OpCodes.Stloc, tsArrayLocal);
+            IL.Emit(OpCodes.Ldloc, tsArrayLocal);
+            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayIsFrozenGetter);
+            IL.Emit(OpCodes.Brtrue, fallbackLabel); // Clean stack — no leftover
+            IL.Emit(OpCodes.Ldloc, tsArrayLocal);
+            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayElementsGetter);
+            var doSetLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Br, doSetLabel);
+
+            // List path: check frozen (via ConditionalWeakTable), then cast
+            IL.MarkLabel(isListLabel);
+            var frozenCheckLocal = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.FrozenObjectsField);
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Ldloca, frozenCheckLocal);
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(
+                _ctx.Types.ConditionalWeakTable, "TryGetValue",
+                _ctx.Types.Object, _ctx.Types.Object.MakeByRefType()));
+            IL.Emit(OpCodes.Brtrue, fallbackLabel); // Frozen — use generic path
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfObject);
+
+            // Common: SetArrayElement(list, index, value)
+            IL.MarkLabel(doSetLabel);
+            EmitExpressionAsDouble(si.Index);
+            IL.Emit(OpCodes.Conv_I4);
+            IL.Emit(OpCodes.Ldloc, valueLocal);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.SetArrayElement);
+            IL.Emit(OpCodes.Ldloc, valueLocal);
+            IL.Emit(OpCodes.Br, endLabel);
+
+            // Fallback: generic dispatch
+            IL.MarkLabel(fallbackLabel);
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            EmitExpression(si.Index);
+            EmitBoxIfNeeded(si.Index);
+            IL.Emit(OpCodes.Ldloc, valueLocal);
+            if (_ctx.IsStrictMode)
+            {
+                IL.Emit(OpCodes.Ldc_I4_1);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndexStrict);
+            }
+            else
+            {
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndex);
+            }
+            IL.Emit(OpCodes.Ldloc, valueLocal);
+
+            IL.MarkLabel(endLabel);
+            return;
+        }
+
         // Store value in a temp local so we can use it twice:
         // once for SetIndex, once for the expression result
         EmitExpression(si.Value);
         EmitBoxIfNeeded(si.Value);
-        var valueLocal = IL.DeclareLocal(_ctx.Types.Object);
-        IL.Emit(OpCodes.Stloc, valueLocal);
+        var valueLocalGeneric = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, valueLocalGeneric);
 
         // Call SetIndex(object, index, value) or SetIndexStrict(object, index, value, strictMode)
         EmitExpression(si.Object);
         EmitBoxIfNeeded(si.Object);
         EmitExpression(si.Index);
         EmitBoxIfNeeded(si.Index);
-        IL.Emit(OpCodes.Ldloc, valueLocal);
+        IL.Emit(OpCodes.Ldloc, valueLocalGeneric);
 
         if (_ctx.IsStrictMode)
         {
@@ -523,7 +665,7 @@ public partial class ILEmitter
         }
 
         // Push value back for expression result
-        IL.Emit(OpCodes.Ldloc, valueLocal);
+        IL.Emit(OpCodes.Ldloc, valueLocalGeneric);
     }
 
     /// <summary>
