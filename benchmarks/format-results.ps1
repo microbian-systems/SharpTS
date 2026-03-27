@@ -25,7 +25,7 @@ Write-Output @"
 ## SharpTS Cross-Runtime Benchmark Results
 
 **Environment:** .NET $DotNetVersion | Node.js $NodeVersion | $os $arch
-**Date:** $(Get-Date -Format 'yyyy-MM-dd' -AsUTC)
+**Date:** $(Get-Date -Format 'yyyy-MM-dd')
 
 | Benchmark | Param | Interpreter (ms) | Compiled (ms) | Node.js (ms) | Compiled vs Node |
 |-----------|-------|------------------:|--------------:|--------------:|-----------------:|

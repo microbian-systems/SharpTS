@@ -208,13 +208,53 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
     /// <summary>
     /// Attempts to emit IL for a property get on an array receiver.
-    /// Currently not implemented - array.length is handled by the runtime.
+    /// Handles .length by emitting direct List&lt;T&gt;.Count access,
+    /// bypassing the full GetProperty runtime dispatch chain.
     /// </summary>
     public bool TryEmitPropertyGet(IEmitterContext emitter, Expr receiver, string propertyName)
     {
-        // Array length is handled by the runtime GetProperty method
-        // TODO: Could optimize by directly accessing List<object>.Count
-        return false;
+        if (propertyName != "length") return false;
+
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // Resolve the descriptor from the receiver's static type
+        var desc = ArrayElements.Resolve(ctx.TypeMap?.Get(receiver));
+        if (desc == null) return false;
+
+        var listType = desc.GetListType(ctx.Types);
+
+        emitter.EmitExpression(receiver);
+        emitter.EmitBoxIfNeeded(receiver);
+
+        var objLocal = il.DeclareLocal(ctx.Types.Object);
+        il.Emit(OpCodes.Stloc, objLocal);
+
+        var fallbackLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // Fast path: isinst List<T> → direct Count access (no string comparison, no boxing)
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Isinst, listType);
+        il.Emit(OpCodes.Brfalse, fallbackLabel);
+
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Castclass, listType);
+        il.Emit(OpCodes.Callvirt, ctx.Types.GetProperty(listType, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, ctx.Types.Double);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Fallback: use runtime GetLength (handles $Array, string, etc.)
+        il.MarkLabel(fallbackLabel);
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Call, ctx.Runtime!.GetLength);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, ctx.Types.Double);
+
+        il.MarkLabel(endLabel);
+        // Caller sets SetStackUnknown() after TryEmitPropertyGet returns true
+        return true;
     }
 
     /// <summary>
@@ -279,7 +319,7 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         il.Emit(OpCodes.Stloc, ilistLocal);
         // new List<object?>(ilist.Count)
         il.Emit(OpCodes.Ldloc, ilistLocal);
-        il.Emit(OpCodes.Callvirt, ilistType.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, typeof(System.Collections.ICollection).GetProperty("Count")!.GetGetMethod()!);
         il.Emit(OpCodes.Newobj, ctx.Types.GetConstructor(ctx.Types.ListOfObject, ctx.Types.Int32));
         var resultLocal = il.DeclareLocal(ctx.Types.ListOfObject);
         il.Emit(OpCodes.Stloc, resultLocal);
@@ -303,7 +343,7 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         il.MarkLabel(loopCheck);
         il.Emit(OpCodes.Ldloc, idxLocal);
         il.Emit(OpCodes.Ldloc, ilistLocal);
-        il.Emit(OpCodes.Callvirt, ilistType.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, typeof(System.Collections.ICollection).GetProperty("Count")!.GetGetMethod()!);
         il.Emit(OpCodes.Blt, loopBody);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Br, endLabel);

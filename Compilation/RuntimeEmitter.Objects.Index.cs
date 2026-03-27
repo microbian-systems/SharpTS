@@ -16,7 +16,6 @@ public partial class RuntimeEmitter
         runtime.GetIndex = method;
 
         var il = method.GetILGenerator();
-        var listLabel = il.DefineLabel();
         var arrayLabel = il.DefineLabel();
         var stringLabel = il.DefineLabel();
         var dictLabel = il.DefineLabel();
@@ -55,22 +54,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSArrayType);
         il.Emit(OpCodes.Brtrue, tsArrayLabel);
 
-        // List<double> (typed number array) - check before List<object?>
-        var listDoubleGetLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.ListOfDouble);
-        il.Emit(OpCodes.Brtrue, listDoubleGetLabel);
-
-        // List<bool> (typed boolean array) - check before List<object?>
-        var listBoolGetLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.ListOfBool);
-        il.Emit(OpCodes.Brtrue, listBoolGetLabel);
-
-        // List<object?>
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.ListOfObject);
-        il.Emit(OpCodes.Brtrue, listLabel);
+        // Descriptor-driven: check each array backing type
+        var listGetLabels = new List<(ArrayElementsDescriptor desc, Label label)>();
+        foreach (var desc in ArrayElements.All)
+        {
+            var label = il.DefineLabel();
+            listGetLabels.Add((desc, label));
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, desc.GetListType(_types));
+            il.Emit(OpCodes.Brtrue, label);
+        }
 
         // Native .NET Array (e.g., string[] from command line args)
         il.Emit(OpCodes.Ldarg_0);
@@ -165,33 +158,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
         il.Emit(OpCodes.Ret);
 
-        // List<double> handler: cast, convert index, get_Item, box result
-        il.MarkLabel(listDoubleGetLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.ListOfDouble);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfDouble, "get_Item", _types.Int32));
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Ret);
-
-        // List<bool> handler: cast, convert index, get_Item, box result
-        il.MarkLabel(listBoolGetLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.ListOfBool);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfBool, "get_Item", _types.Int32));
-        il.Emit(OpCodes.Box, _types.Boolean);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(listLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.ListOfObject);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
-        il.Emit(OpCodes.Ret);
+        // Descriptor-driven: emit get handler for each backing type
+        foreach (var (desc, label) in listGetLabels)
+        {
+            var listType = desc.GetListType(_types);
+            il.MarkLabel(label);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, listType);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(listType, "get_Item", _types.Int32));
+            desc.EmitBoxElement(il, _types);
+            il.Emit(OpCodes.Ret);
+        }
 
         // Native .NET Array handler (e.g., string[] from command line args)
         il.MarkLabel(arrayLabel);
@@ -305,7 +284,6 @@ public partial class RuntimeEmitter
         runtime.SetIndex = method;
 
         var il = method.GetILGenerator();
-        var listLabel = il.DefineLabel();
         var dictLabel = il.DefineLabel();
         var dictStringKeyLabel = il.DefineLabel();
         var dictNumericKeyLabel = il.DefineLabel();
@@ -341,22 +319,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSArrayType);
         il.Emit(OpCodes.Brtrue, tsArraySetLabel);
 
-        // List<double> (typed number array) - check before List<object?>
-        var listDoubleSetLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.ListOfDouble);
-        il.Emit(OpCodes.Brtrue, listDoubleSetLabel);
-
-        // List<bool> (typed boolean array) - check before List<object?>
-        var listBoolSetLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.ListOfBool);
-        il.Emit(OpCodes.Brtrue, listBoolSetLabel);
-
-        // List<object?>
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.ListOfObject);
-        il.Emit(OpCodes.Brtrue, listLabel);
+        // Descriptor-driven: check each array backing type
+        var listSetLabels = new List<(ArrayElementsDescriptor desc, Label label)>();
+        foreach (var desc in ArrayElements.All)
+        {
+            var label = il.DefineLabel();
+            listSetLabels.Add((desc, label));
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, desc.GetListType(_types));
+            il.Emit(OpCodes.Brtrue, label);
+        }
 
         // Dict
         il.Emit(OpCodes.Ldarg_0);
@@ -411,45 +383,44 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "set_Item", _types.Int32, _types.Object));
         il.Emit(OpCodes.Ret);
 
-        // List<double> handler: cast, convert index, unbox value to double, set_Item
-        il.MarkLabel(listDoubleSetLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.ListOfDouble);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
-        il.Emit(OpCodes.Call, runtime.SetArrayElementDouble);
-        il.Emit(OpCodes.Ret);
+        // Descriptor-driven: emit set handler for each backing type
+        foreach (var (desc, label) in listSetLabels)
+        {
+            var listType = desc.GetListType(_types);
+            il.MarkLabel(label);
 
-        // List<bool> handler: cast, convert index, unbox value to bool, set_Item
-        il.MarkLabel(listBoolSetLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.ListOfBool);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToBoolean", _types.Object));
-        il.Emit(OpCodes.Call, runtime.SetArrayElementBool);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(listLabel);
-        // Check if list is frozen (silently ignore in non-strict mode)
-        var listSetLabel = il.DefineLabel();
-        var listFrozenCheckLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloca, listFrozenCheckLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
-        il.Emit(OpCodes.Brtrue, nullLabel); // Frozen - silently return
-        // Check if sealed (sealed allows modifications but not additions - for array index, allow it)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.ListOfObject);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "set_Item", _types.Int32, _types.Object));
-        il.Emit(OpCodes.Ret);
+            if (desc.Kind == ArrayElementsKind.Object)
+            {
+                // Object list has frozen check before mutation
+                var listFrozenCheckLocal = il.DeclareLocal(_types.Object);
+                il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldloca, listFrozenCheckLocal);
+                il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+                il.Emit(OpCodes.Brtrue, nullLabel); // Frozen - silently return
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Castclass, listType);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+                il.Emit(OpCodes.Ldarg_2);
+                il.Emit(OpCodes.Callvirt, _types.GetMethod(listType, "set_Item", _types.Int32, _types.Object));
+            }
+            else
+            {
+                // Typed list: cast, convert index, convert value to element type, use SetArrayElement helper
+                var convertMethod = desc.Kind == ArrayElementsKind.Double
+                    ? _types.GetMethod(_types.Convert, "ToDouble", _types.Object)
+                    : _types.GetMethod(_types.Convert, "ToBoolean", _types.Object);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Castclass, listType);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+                il.Emit(OpCodes.Ldarg_2);
+                il.Emit(OpCodes.Call, convertMethod);
+                il.Emit(OpCodes.Call, desc.GetSetArrayElementMethod(runtime));
+            }
+            il.Emit(OpCodes.Ret);
+        }
 
         il.MarkLabel(dictLabel);
         // Check if index is string

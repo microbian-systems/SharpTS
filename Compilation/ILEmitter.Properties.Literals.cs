@@ -1,7 +1,6 @@
 using System.Reflection.Emit;
 using SharpTS.Diagnostics.Exceptions;
 using SharpTS.Parsing;
-using SharpTS.TypeSystem;
 
 namespace SharpTS.Compilation;
 
@@ -15,16 +14,12 @@ public partial class ILEmitter
         // Typed array optimization: emit List<double> or List<bool> for empty typed arrays.
         // Only for empty arrays (populated via index assignment) to avoid issues with
         // array methods (flatMap, map, etc.) that expect List<object?>.
-        if (!hasSpreads && a.Elements.Count == 0 && _ctx.TypeMap?.Get(a) is TypeInfo.Array arrayType)
+        if (!hasSpreads && a.Elements.Count == 0)
         {
-            if (arrayType.ElementType is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER })
+            var desc = ArrayElements.Resolve(_ctx.TypeMap?.Get(a));
+            if (desc != null && desc.Kind != ArrayElementsKind.Object)
             {
-                EmitTypedDoubleArrayLiteral(a);
-                return;
-            }
-            if (arrayType.ElementType is TypeInfo.Primitive { Type: TokenType.TYPE_BOOLEAN })
-            {
-                EmitTypedBoolArrayLiteral(a);
+                EmitTypedArrayLiteral(a, desc);
                 return;
             }
         }
@@ -258,51 +253,34 @@ public partial class ILEmitter
     }
 
     /// <summary>
-    /// Emits an array literal as List&lt;double&gt; to eliminate element boxing for number[].
+    /// Emits a typed array literal using the given descriptor.
+    /// Eliminates element boxing by using List&lt;double&gt; or List&lt;bool&gt; directly.
     /// </summary>
-    private void EmitTypedDoubleArrayLiteral(Expr.ArrayLiteral a)
+    private void EmitTypedArrayLiteral(Expr.ArrayLiteral a, ArrayElementsDescriptor desc)
     {
+        var listType = desc.GetListType(_ctx.Types);
+        var elemType = desc.GetElementType(_ctx.Types);
+
         if (a.Elements.Count == 0)
         {
-            IL.Emit(OpCodes.Newobj, _ctx.Types.GetDefaultConstructor(_ctx.Types.ListOfDouble));
+            IL.Emit(OpCodes.Newobj, _ctx.Types.GetDefaultConstructor(listType));
         }
         else
         {
             IL.Emit(OpCodes.Ldc_I4, a.Elements.Count);
-            IL.Emit(OpCodes.Newobj, _ctx.Types.GetConstructor(_ctx.Types.ListOfDouble, _ctx.Types.Int32));
+            IL.Emit(OpCodes.Newobj, _ctx.Types.GetConstructor(listType, _ctx.Types.Int32));
 
-            var addMethod = _ctx.Types.GetMethod(_ctx.Types.ListOfDouble, "Add", _ctx.Types.Double);
+            var addMethod = _ctx.Types.GetMethod(listType, "Add", elemType);
             for (int i = 0; i < a.Elements.Count; i++)
             {
                 IL.Emit(OpCodes.Dup);
-                EmitExpressionAsDouble(a.Elements[i]);
-                IL.Emit(OpCodes.Callvirt, addMethod);
-            }
-        }
-
-        SetStackUnknown();
-    }
-
-    /// <summary>
-    /// Emits an array literal as List&lt;bool&gt; to eliminate element boxing for boolean[].
-    /// </summary>
-    private void EmitTypedBoolArrayLiteral(Expr.ArrayLiteral a)
-    {
-        if (a.Elements.Count == 0)
-        {
-            IL.Emit(OpCodes.Newobj, _ctx.Types.GetDefaultConstructor(_ctx.Types.ListOfBool));
-        }
-        else
-        {
-            IL.Emit(OpCodes.Ldc_I4, a.Elements.Count);
-            IL.Emit(OpCodes.Newobj, _ctx.Types.GetConstructor(_ctx.Types.ListOfBool, _ctx.Types.Int32));
-
-            var addMethod = _ctx.Types.GetMethod(_ctx.Types.ListOfBool, "Add", _ctx.Types.Boolean);
-            for (int i = 0; i < a.Elements.Count; i++)
-            {
-                IL.Emit(OpCodes.Dup);
-                EmitExpression(a.Elements[i]);
-                EnsureBoolean();
+                if (desc.Kind == ArrayElementsKind.Double)
+                    EmitExpressionAsDouble(a.Elements[i]);
+                else
+                {
+                    EmitExpression(a.Elements[i]);
+                    EnsureBoolean();
+                }
                 IL.Emit(OpCodes.Callvirt, addMethod);
             }
         }

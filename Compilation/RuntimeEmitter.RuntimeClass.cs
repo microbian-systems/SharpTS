@@ -216,8 +216,8 @@ public partial class RuntimeEmitter
         // HasIn operator depends on IsSymbol and GetSymbolDict
         EmitHasIn(typeBuilder, runtime);
         // Typed array SetElement helpers - must come BEFORE GetIndex/SetIndex which reference them
-        EmitSetArrayElementDouble(typeBuilder, runtime);
-        EmitSetArrayElementBool(typeBuilder, runtime);
+        foreach (var desc in ArrayElements.Typed)
+            EmitSetArrayElementFor(typeBuilder, runtime, desc);
         // Note: TypedArray detection helpers are emitted earlier (before GetProperty)
         EmitGetIndex(typeBuilder, runtime);
         EmitSetIndex(typeBuilder, runtime);
@@ -238,7 +238,7 @@ public partial class RuntimeEmitter
         // Note: SetArrayElement* helpers must be emitted BEFORE GetIndex/SetIndex (above)
         // since SetIndex references SetArrayElementDouble/SetArrayElementBool.
         // They were moved up before the Objects section to satisfy this dependency.
-        EmitSetArrayElement(typeBuilder, runtime);
+        EmitSetArrayElementFor(typeBuilder, runtime, ArrayElements.Object);
         EmitCreateArray(typeBuilder, runtime);
         EmitGetLength(typeBuilder, runtime);
         EmitGetElement(typeBuilder, runtime);
