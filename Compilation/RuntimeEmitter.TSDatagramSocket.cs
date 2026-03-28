@@ -725,8 +725,9 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(isConnected);
 
-        // Disconnect by connecting socket to Any:0
-        // _client.Client.Connect(new IPEndPoint(IPAddress.Any, 0))
+        // Disconnect by connecting socket to Any:0 (may throw on macOS/BSD — swallow)
+        // try { _client.Client.Connect(new IPEndPoint(IPAddress.Any, 0)) } catch { }
+        il.BeginExceptionBlock();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _dgramClientField);
         il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetProperty("Client")!.GetGetMethod()!);
@@ -734,8 +735,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newobj, typeof(IPEndPoint).GetConstructor([typeof(IPAddress), _types.Int32])!);
         il.Emit(OpCodes.Callvirt, typeof(Socket).GetMethod("Connect", [typeof(EndPoint)])!);
+        var afterDisconnect = il.DefineLabel();
+        il.Emit(OpCodes.Leave, afterDisconnect);
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Pop); // On macOS/BSD, connecting to Any:0 may throw
+        il.Emit(OpCodes.Leave, afterDisconnect);
+        il.EndExceptionBlock();
+        il.MarkLabel(afterDisconnect);
 
-        // _connected = false
+        // _connected = false (always, regardless of socket-level result)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, _dgramConnectedField);

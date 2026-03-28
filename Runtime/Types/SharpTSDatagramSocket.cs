@@ -420,13 +420,14 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
         {
             _client?.Client.Connect(new IPEndPoint(
                 _family == AddressFamily.InterNetworkV6 ? IPAddress.IPv6Any : IPAddress.Any, 0));
-            _connected = false;
-            _connectedRemote = null;
         }
-        catch (Exception ex)
+        catch
         {
-            EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
+            // On macOS/BSD, connecting to Any:0 may throw — socket is still logically disconnected
         }
+
+        _connected = false;
+        _connectedRemote = null;
 
         return null;
     }

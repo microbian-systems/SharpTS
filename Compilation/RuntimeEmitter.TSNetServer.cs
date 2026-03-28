@@ -372,13 +372,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
         il.Emit(OpCodes.Call, runtime.EventLoopRef);
 
-        // Call callback if provided
-        var noUnixCb = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, callbackLocal);
-        il.Emit(OpCodes.Brfalse, noUnixCb);
-        EmitDgramCallbackInvocation(il, runtime,
-            () => il.Emit(OpCodes.Ldloc, callbackLocal), 0);
-        il.MarkLabel(noUnixCb);
+        // Start Unix IPC accept worker on ThreadPool BEFORE callback
+        // (callback may trigger client connect; accept worker must be ready)
+        EmitIpcAcceptWorkerUnixStart(il, runtime);
 
         // Emit 'listening' event
         il.Emit(OpCodes.Ldarg_0);
@@ -388,8 +384,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
         il.Emit(OpCodes.Pop);
 
-        // Start Unix IPC accept worker on ThreadPool
-        EmitIpcAcceptWorkerUnixStart(il, runtime);
+        // Call callback if provided
+        var noUnixCb = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Brfalse, noUnixCb);
+        EmitDgramCallbackInvocation(il, runtime,
+            () => il.Emit(OpCodes.Ldloc, callbackLocal), 0);
+        il.MarkLabel(noUnixCb);
 
         il.Emit(OpCodes.Br, ipcListenDone);
 
