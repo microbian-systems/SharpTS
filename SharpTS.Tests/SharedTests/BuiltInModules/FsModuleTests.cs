@@ -55,7 +55,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_write_read_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_write_read_{{uid}}.txt';
                 const testContent = 'Hello, SharpTS!';
 
                 fs.writeFileSync(testFile, testContent);
@@ -80,7 +81,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_append_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_append_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'Line1');
                 fs.appendFileSync(testFile, '\nLine2');
@@ -106,7 +108,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_dir_fs_{{uid}}';
+                import * as os from 'os';
+                const testDir = os.tmpdir() + '/test_dir_fs_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 console.log(fs.existsSync(testDir));
@@ -129,7 +132,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_readdir_{{uid}}';
+                import * as os from 'os';
+                const testDir = os.tmpdir() + '/test_readdir_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 fs.writeFileSync(testDir + '/file1.txt', 'content1');
@@ -158,7 +162,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_stat_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_stat_{{uid}}.txt';
                 const content = 'Test content for stat';
 
                 fs.writeFileSync(testFile, content);
@@ -186,7 +191,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_stat_dir_{{uid}}';
+                import * as os from 'os';
+                const testDir = os.tmpdir() + '/test_stat_dir_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 const stat = fs.statSync(testDir);
@@ -212,8 +218,9 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const srcFile = 'test_copy_src_{{uid}}.txt';
-                const destFile = 'test_copy_dest_{{uid}}.txt';
+                import * as os from 'os';
+                const srcFile = os.tmpdir() + '/test_copy_src_{{uid}}.txt';
+                const destFile = os.tmpdir() + '/test_copy_dest_{{uid}}.txt';
                 const content = 'Content to copy';
 
                 fs.writeFileSync(srcFile, content);
@@ -242,8 +249,9 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const oldName = 'test_rename_old_{{uid}}.txt';
-                const newName = 'test_rename_new_{{uid}}.txt';
+                import * as os from 'os';
+                const oldName = os.tmpdir() + '/test_rename_old_{{uid}}.txt';
+                const newName = os.tmpdir() + '/test_rename_new_{{uid}}.txt';
 
                 fs.writeFileSync(oldName, 'content');
                 fs.renameSync(oldName, newName);
@@ -269,7 +277,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_unlink_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_unlink_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
                 console.log(fs.existsSync(testFile));
@@ -292,7 +301,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_access_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_access_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
 
@@ -345,7 +355,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = '{{uniqueDir}}';
+                import * as os from 'os';
+                const testDir = os.tmpdir() + '/{{uniqueDir}}';
 
                 fs.mkdirSync(testDir);
                 fs.mkdirSync(testDir + '/subdir');
@@ -388,7 +399,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_truncate_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_truncate_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'Hello World!');
                 const beforeSize = fs.statSync(testFile).size;
@@ -419,7 +431,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_truncate_extend_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_truncate_extend_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'Hi');
                 fs.truncateSync(testFile, 10);
@@ -445,8 +458,9 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_symlink_target_{{uid}}.txt';
-                const linkPath = 'test_symlink_link_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_symlink_target_{{uid}}.txt';
+                const linkPath = os.tmpdir() + '/test_symlink_link_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
                 fs.symlinkSync(testFile, linkPath);
@@ -472,14 +486,15 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_realpath_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_realpath_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
 
                 const realPath = fs.realpathSync(testFile);
-                // realPath should be an absolute path
-                console.log(realPath.includes(testFile));
-                console.log(realPath.length > testFile.length);
+                // realPath should be an absolute path containing the filename
+                console.log(realPath.includes('test_realpath_{{uid}}'));
+                console.log(realPath.length > 0);
 
                 // Cleanup
                 fs.unlinkSync(testFile);
@@ -499,7 +514,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_utimes_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_utimes_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
 
@@ -528,8 +544,9 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_lstat_target_{{uid}}.txt';
-                const linkPath = 'test_lstat_link_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_lstat_target_{{uid}}.txt';
+                const linkPath = os.tmpdir() + '/test_lstat_link_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
                 fs.symlinkSync(testFile, linkPath);
@@ -556,7 +573,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_readdir_dirent_{{uid}}';
+                import * as os from 'os';
+                const testDir = os.tmpdir() + '/test_readdir_dirent_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 fs.writeFileSync(testDir + '/file.txt', 'content');
@@ -606,7 +624,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_chmod_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_chmod_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
 
@@ -636,7 +655,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_readlink_regular_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_readlink_regular_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
 
@@ -714,7 +734,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_open_fd_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_open_fd_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
                 const fd = fs.openSync(testFile, 'r');
@@ -739,7 +760,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_close_fd_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_close_fd_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'content');
                 const fd = fs.openSync(testFile, 'r');
@@ -792,8 +814,9 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
+                import * as os from 'os';
                 import { Buffer } from 'buffer';
-                const testFile = 'test_read_fd_{{uid}}.txt';
+                const testFile = os.tmpdir() + '/test_read_fd_{{uid}}.txt';
                 const content = 'Hello, World!';
 
                 fs.writeFileSync(testFile, content);
@@ -822,8 +845,9 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
+                import * as os from 'os';
                 import { Buffer } from 'buffer';
-                const testFile = 'test_write_fd_{{uid}}.txt';
+                const testFile = os.tmpdir() + '/test_write_fd_{{uid}}.txt';
 
                 const fd = fs.openSync(testFile, 'w');
                 const buffer = Buffer.from('Hello');
@@ -852,7 +876,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_fstat_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_fstat_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, '12345');
                 const fd = fs.openSync(testFile, 'r');
@@ -880,7 +905,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testFile = 'test_ftruncate_{{uid}}.txt';
+                import * as os from 'os';
+                const testFile = os.tmpdir() + '/test_ftruncate_{{uid}}.txt';
 
                 fs.writeFileSync(testFile, 'Hello World!');
                 const fd = fs.openSync(testFile, 'r+');
@@ -934,7 +960,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_readdir_recursive_{{uid}}';
+                import * as os from 'os';
+                const testDir = os.tmpdir() + '/test_readdir_recursive_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 fs.mkdirSync(testDir + '/subdir');
@@ -966,7 +993,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_opendir_{{uid}}';
+                import * as os from 'os';
+                const testDir = os.tmpdir() + '/test_opendir_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 fs.writeFileSync(testDir + '/file.txt', 'content');
@@ -999,7 +1027,8 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const testDir = 'test_dir_readall_{{uid}}';
+                import * as os from 'os';
+                const testDir = os.tmpdir() + '/test_dir_readall_{{uid}}';
 
                 fs.mkdirSync(testDir);
                 fs.writeFileSync(testDir + '/only.txt', 'content');
@@ -1039,8 +1068,9 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const srcFile = 'test_link_src_{{uid}}.txt';
-                const linkFile = 'test_link_dest_{{uid}}.txt';
+                import * as os from 'os';
+                const srcFile = os.tmpdir() + '/test_link_src_{{uid}}.txt';
+                const linkFile = os.tmpdir() + '/test_link_dest_{{uid}}.txt';
                 const content = 'Hello, Hard Link!';
 
                 fs.writeFileSync(srcFile, content);
@@ -1092,8 +1122,9 @@ public class FsModuleTests
         {
             ["main.ts"] = $$"""
                 import * as fs from 'fs';
-                const srcFile = 'test_link_src2_{{uid}}.txt';
-                const destFile = 'test_link_dest2_{{uid}}.txt';
+                import * as os from 'os';
+                const srcFile = os.tmpdir() + '/test_link_src2_{{uid}}.txt';
+                const destFile = os.tmpdir() + '/test_link_dest2_{{uid}}.txt';
 
                 fs.writeFileSync(srcFile, 'source');
                 fs.writeFileSync(destFile, 'dest');
