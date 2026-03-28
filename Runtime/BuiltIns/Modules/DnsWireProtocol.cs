@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace SharpTS.Runtime.BuiltIns.Modules;
@@ -120,11 +121,24 @@ public static class DnsWireProtocol
             {
                 // Try UDP first
                 using var udp = new UdpClient();
-                udp.Client.ReceiveTimeout = TimeoutMs;
                 udp.Client.SendTimeout = TimeoutMs;
                 udp.Send(query, query.Length, endpoint);
-                var remoteEp = new IPEndPoint(IPAddress.Any, 0);
-                var response = udp.Receive(ref remoteEp);
+
+                // Use ReceiveAsync + CancellationToken for reliable timeout.
+                // Socket.ReceiveTimeout (SO_RCVTIMEO) is unreliable on macOS ARM64
+                // (dotnet/runtime#81378, #64551).
+                using var cts = new CancellationTokenSource(TimeoutMs);
+                UdpReceiveResult udpResult;
+                try
+                {
+                    udpResult = udp.ReceiveAsync(cts.Token).AsTask().GetAwaiter().GetResult();
+                }
+                catch (OperationCanceledException)
+                {
+                    throw new SocketException((int)SocketError.TimedOut);
+                }
+
+                var response = udpResult.Buffer;
 
                 // Check TC (truncation) bit — byte 2, bit 1
                 if (response.Length >= 3 && (response[2] & 0x02) != 0)
@@ -151,13 +165,22 @@ public static class DnsWireProtocol
     private static byte[] SendViaTcp(byte[] query, IPEndPoint endpoint)
     {
         using var tcp = new TcpClient();
-        tcp.ReceiveTimeout = TimeoutMs;
+        using var cts = new CancellationTokenSource(TimeoutMs);
         tcp.SendTimeout = TimeoutMs;
-        tcp.Connect(endpoint);
+
+        try
+        {
+            tcp.ConnectAsync(endpoint.Address, endpoint.Port, cts.Token)
+               .AsTask().GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            throw new SocketException((int)SocketError.TimedOut);
+        }
 
         var stream = tcp.GetStream();
 
-        // Send: 2-byte length prefix + query
+        // Send: 2-byte length prefix + query (writes are fast and reliable)
         var lengthPrefix = new byte[2];
         lengthPrefix[0] = (byte)(query.Length >> 8);
         lengthPrefix[1] = (byte)(query.Length & 0xFF);
@@ -167,24 +190,33 @@ public static class DnsWireProtocol
 
         // Receive: 2-byte length prefix + response
         var respLenBuf = new byte[2];
-        ReadExact(stream, respLenBuf, 0, 2);
+        ReadExactAsync(stream, respLenBuf, 0, 2, cts.Token);
         var respLen = (respLenBuf[0] << 8) | respLenBuf[1];
 
         var response = new byte[respLen];
-        ReadExact(stream, response, 0, respLen);
+        ReadExactAsync(stream, response, 0, respLen, cts.Token);
 
         return response;
     }
 
-    private static void ReadExact(NetworkStream stream, byte[] buffer, int offset, int count)
+    private static void ReadExactAsync(NetworkStream stream, byte[] buffer, int offset, int count,
+        CancellationToken ct)
     {
-        while (count > 0)
+        try
         {
-            var read = stream.Read(buffer, offset, count);
-            if (read == 0)
-                throw new Exception("Runtime Error: dns.resolve connection closed unexpectedly");
-            offset += read;
-            count -= read;
+            while (count > 0)
+            {
+                var read = stream.ReadAsync(buffer.AsMemory(offset, count), ct)
+                                .AsTask().GetAwaiter().GetResult();
+                if (read == 0)
+                    throw new Exception("Runtime Error: dns.resolve connection closed unexpectedly");
+                offset += read;
+                count -= read;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw new SocketException((int)SocketError.TimedOut);
         }
     }
 
