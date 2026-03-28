@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 
 namespace SharpTS.Compilation;
 
@@ -663,11 +664,17 @@ public partial class RuntimeEmitter
             wil.Emit(OpCodes.Ldfld, _netServerUnixSocketField);
             wil.Emit(OpCodes.Brfalse, loopExit);
 
-            // try { clientSocket = _unixSocket.Accept() } catch { break }
+            // try { clientSocket = _unixSocket.AcceptAsync().GetAwaiter().GetResult() } catch { break }
+            // Use async path — synchronous Socket.Accept may hang on macOS for Unix domain sockets
             wil.BeginExceptionBlock();
             wil.Emit(OpCodes.Ldarg_0);
             wil.Emit(OpCodes.Ldfld, _netServerUnixSocketField);
-            wil.Emit(OpCodes.Callvirt, typeof(Socket).GetMethod("Accept", Type.EmptyTypes)!);
+            wil.Emit(OpCodes.Callvirt, typeof(Socket).GetMethod("AcceptAsync", Type.EmptyTypes)!);
+            wil.Emit(OpCodes.Callvirt, typeof(Task<Socket>).GetMethod("GetAwaiter")!);
+            var acceptAwaiterLocal = wil.DeclareLocal(typeof(TaskAwaiter<Socket>));
+            wil.Emit(OpCodes.Stloc, acceptAwaiterLocal);
+            wil.Emit(OpCodes.Ldloca, acceptAwaiterLocal);
+            wil.Emit(OpCodes.Call, typeof(TaskAwaiter<Socket>).GetMethod("GetResult")!);
             wil.Emit(OpCodes.Stloc, clientSocketLocal);
 
             var afterAccept = wil.DefineLabel();

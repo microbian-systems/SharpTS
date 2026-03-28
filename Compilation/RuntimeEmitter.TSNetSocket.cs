@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace SharpTS.Compilation;
@@ -586,12 +587,18 @@ public partial class RuntimeEmitter
             wil.Emit(OpCodes.Newobj, typeof(Socket).GetConstructor([typeof(AddressFamily), typeof(SocketType), typeof(ProtocolType)])!);
             wil.Emit(OpCodes.Stloc, unixSocketLocal);
 
-            // unixSocket.Connect(new UnixDomainSocketEndPoint(_connectHost))
+            // unixSocket.ConnectAsync(new UnixDomainSocketEndPoint(_connectHost)).GetAwaiter().GetResult()
+            // Use async path — synchronous Socket.Connect may hang on macOS for Unix domain sockets
             wil.Emit(OpCodes.Ldloc, unixSocketLocal);
             wil.Emit(OpCodes.Ldarg_0);
             wil.Emit(OpCodes.Ldfld, _netSocketConnectHostField);
             wil.Emit(OpCodes.Newobj, typeof(UnixDomainSocketEndPoint).GetConstructor([_types.String])!);
-            wil.Emit(OpCodes.Callvirt, typeof(Socket).GetMethod("Connect", [typeof(EndPoint)])!);
+            wil.Emit(OpCodes.Callvirt, typeof(Socket).GetMethod("ConnectAsync", [typeof(EndPoint)])!);
+            wil.Emit(OpCodes.Callvirt, typeof(Task).GetMethod("GetAwaiter")!);
+            var awaiterLocal = wil.DeclareLocal(typeof(TaskAwaiter));
+            wil.Emit(OpCodes.Stloc, awaiterLocal);
+            wil.Emit(OpCodes.Ldloca, awaiterLocal);
+            wil.Emit(OpCodes.Call, typeof(TaskAwaiter).GetMethod("GetResult")!);
 
             // _stream = new NetworkStream(unixSocket, ownsSocket: true)
             wil.Emit(OpCodes.Ldarg_0);
