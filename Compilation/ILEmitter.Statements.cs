@@ -197,8 +197,13 @@ public partial class ILEmitter
     private string? _optimizedLoopCounterName;
 
     /// <summary>
-    /// Conservative check: use unboxed double for variables with explicit ': number' annotation
-    /// or for optimized for loop counters.
+    /// Check whether a local variable can use an unboxed double (float64) IL type
+    /// instead of the default object. Eligible when:
+    ///   1. It is an optimized for-loop counter, OR
+    ///   2. It has an explicit ': number' annotation with a numeric initializer, OR
+    ///   3. The TypeChecker inferred its initializer type as 'number'.
+    /// By the time this method is called, captured variables have already been
+    /// routed to display-class fields (always object), so no capture check is needed.
     /// </summary>
     private bool CanUseUnboxedLocal(Stmt.Var v)
     {
@@ -206,20 +211,38 @@ public partial class ILEmitter
         if (_optimizedLoopCounterName != null && v.Name.Lexeme == _optimizedLoopCounterName)
             return true;
 
-        // Must have explicit 'number' type annotation
-        if (v.TypeAnnotation != "number")
-            return false;
-
-        // If there's an initializer, it must be a known number expression
-        if (v.Initializer != null)
+        // Explicit 'number' type annotation
+        if (v.TypeAnnotation == "number")
         {
-            var exprType = _ctx.TypeMap?.Get(v.Initializer);
-            if (exprType is not TypeSystem.TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER })
-                return false;
+            // If there's an initializer, it must be a known number expression
+            if (v.Initializer != null)
+            {
+                var exprType = _ctx.TypeMap?.Get(v.Initializer);
+                if (!IsNumericType(exprType))
+                    return false;
+            }
+            return true;
         }
 
-        return true;
+        // Infer from TypeMap: if the initializer is statically typed as 'number'
+        // (including number literal types like '1', '42'), the TypeChecker
+        // guarantees all assignments stay 'number'.
+        if (v.TypeAnnotation == null && v.Initializer != null && _ctx.TypeMap != null)
+        {
+            var exprType = _ctx.TypeMap.Get(v.Initializer);
+            if (IsNumericType(exprType))
+                return true;
+        }
+
+        return false;
     }
+
+    /// <summary>
+    /// Returns true if the type is a numeric type (number primitive or number literal).
+    /// </summary>
+    private static bool IsNumericType(TypeSystem.TypeInfo? type) =>
+        type is TypeSystem.TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER }
+            or TypeSystem.TypeInfo.NumberLiteral;
 
     /// <summary>
     /// Emits a for loop with unboxed counter and array hoist optimizations.

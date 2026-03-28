@@ -660,13 +660,13 @@ public class StateMachineEmitHelpers
         _il.Emit(OpCodes.Ldloc, rightLocal);
         _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
         _il.Emit(compareOp);
-        _il.Emit(OpCodes.Box, _types.Boolean);
-        SetStackUnknown();
+        // Leave as unboxed bool — EnsureBoxed() will auto-box if needed.
+        _stackType = StackType.Boolean;
     }
 
     /// <summary>
     /// Emit less-than-or-equal comparison (a <= b).
-    /// Stack: [left, right] -> [bool_boxed]
+    /// Stack: [left, right] -> [bool_unboxed (int32)]
     /// </summary>
     public void EmitNumericComparisonLe()
     {
@@ -679,13 +679,13 @@ public class StateMachineEmitHelpers
         _il.Emit(OpCodes.Cgt);
         _il.Emit(OpCodes.Ldc_I4_0);
         _il.Emit(OpCodes.Ceq);
-        _il.Emit(OpCodes.Box, _types.Boolean);
-        SetStackUnknown();
+        // Leave as unboxed bool — EnsureBoxed() will auto-box if needed.
+        _stackType = StackType.Boolean;
     }
 
     /// <summary>
     /// Emit greater-than-or-equal comparison (a >= b).
-    /// Stack: [left, right] -> [bool_boxed]
+    /// Stack: [left, right] -> [bool_unboxed (int32)]
     /// </summary>
     public void EmitNumericComparisonGe()
     {
@@ -698,8 +698,8 @@ public class StateMachineEmitHelpers
         _il.Emit(OpCodes.Clt);
         _il.Emit(OpCodes.Ldc_I4_0);
         _il.Emit(OpCodes.Ceq);
-        _il.Emit(OpCodes.Box, _types.Boolean);
-        SetStackUnknown();
+        // Leave as unboxed bool — EnsureBoxed() will auto-box if needed.
+        _stackType = StackType.Boolean;
     }
 
     /// <summary>

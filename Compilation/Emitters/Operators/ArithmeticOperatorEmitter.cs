@@ -46,9 +46,8 @@ public sealed class ArithmeticOperatorEmitter : IOperatorEmitter
         // Emit the arithmetic opcode (Sub, Mul, Div, Rem)
         il.Emit(arith.Opcode);
 
-        // Box the result
-        il.Emit(OpCodes.Box, ctx.Types.Double);
-        emitter.SetStackUnknown();
+        // Leave as unboxed double — consumers auto-box via EmitBoxIfNeeded/EnsureBoxed
+        emitter.SetStackType(StackType.Double);
 
         return true;
     }

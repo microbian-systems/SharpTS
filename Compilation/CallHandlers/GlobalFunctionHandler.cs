@@ -1,3 +1,4 @@
+using SharpTS.Compilation.Emitters;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation.CallHandlers;
@@ -36,7 +37,7 @@ public class GlobalFunctionHandler : ICallHandler
         if (call.Arguments.Count > 0) { emitter.EmitExpression(call.Arguments[0]); emitter.EmitBoxIfNeeded(call.Arguments[0]); } else { il.Emit(System.Reflection.Emit.OpCodes.Ldnull); }
         if (call.Arguments.Count > 1) { emitter.EmitExpression(call.Arguments[1]); emitter.EmitBoxIfNeeded(call.Arguments[1]); } else { il.Emit(System.Reflection.Emit.OpCodes.Ldc_I4, 10); il.Emit(System.Reflection.Emit.OpCodes.Box, ctx.Types.Int32); }
         il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.NumberParseInt);
-        il.Emit(System.Reflection.Emit.OpCodes.Box, ctx.Types.Double);
+        ((IEmitterContext)emitter).SetStackType(StackType.Double);
         return true;
     }
 
@@ -44,7 +45,7 @@ public class GlobalFunctionHandler : ICallHandler
     {
         if (call.Arguments.Count > 0) { emitter.EmitExpression(call.Arguments[0]); emitter.EmitBoxIfNeeded(call.Arguments[0]); } else { il.Emit(System.Reflection.Emit.OpCodes.Ldnull); }
         il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.NumberParseFloat);
-        il.Emit(System.Reflection.Emit.OpCodes.Box, ctx.Types.Double);
+        ((IEmitterContext)emitter).SetStackType(StackType.Double);
         return true;
     }
 
@@ -52,7 +53,7 @@ public class GlobalFunctionHandler : ICallHandler
     {
         if (call.Arguments.Count > 0) { emitter.EmitExpression(call.Arguments[0]); emitter.EmitBoxIfNeeded(call.Arguments[0]); } else { il.Emit(System.Reflection.Emit.OpCodes.Ldnull); }
         il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.GlobalIsNaN);
-        il.Emit(System.Reflection.Emit.OpCodes.Box, ctx.Types.Boolean);
+        ((IEmitterContext)emitter).SetStackType(StackType.Boolean);
         return true;
     }
 
@@ -60,7 +61,7 @@ public class GlobalFunctionHandler : ICallHandler
     {
         if (call.Arguments.Count > 0) { emitter.EmitExpression(call.Arguments[0]); emitter.EmitBoxIfNeeded(call.Arguments[0]); } else { il.Emit(System.Reflection.Emit.OpCodes.Ldnull); }
         il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.GlobalIsFinite);
-        il.Emit(System.Reflection.Emit.OpCodes.Box, ctx.Types.Boolean);
+        ((IEmitterContext)emitter).SetStackType(StackType.Boolean);
         return true;
     }
 }

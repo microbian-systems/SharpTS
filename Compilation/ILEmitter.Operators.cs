@@ -33,7 +33,17 @@ public partial class ILEmitter
                 if (TryEmitStringConcatChain(b))
                     return;
 
-                // Use runtime Add() which handles both string concat and numeric add
+                // If both operands are known numeric, emit direct IL add (no Runtime.Add overhead)
+                if (IsNumericPlusOperation(b))
+                {
+                    EmitExpressionAsDouble(b.Left);
+                    EmitExpressionAsDouble(b.Right);
+                    IL.Emit(OpCodes.Add);
+                    SetStackType(StackType.Double);
+                    break;
+                }
+
+                // Fallback: Use runtime Add() which handles string concat and mixed types
                 EmitExpression(b.Left);
                 EmitBoxIfNeeded(b.Left);
                 EmitExpression(b.Right);
@@ -46,7 +56,7 @@ public partial class ILEmitter
                 EmitExpressionAsDouble(b.Left);
                 EmitExpressionAsDouble(b.Right);
                 IL.Emit(arith.Opcode);
-                EmitBoxDouble();
+                SetStackType(StackType.Double);
                 break;
 
             case Power:
@@ -63,7 +73,9 @@ public partial class ILEmitter
                     IL.Emit(OpCodes.Ldc_I4_0);
                     IL.Emit(OpCodes.Ceq);
                 }
-                EmitBoxBool();
+                // Leave as unboxed bool (int32 0/1) — consumers that need
+                // object? will auto-box via EmitBoxIfNeeded/EnsureBoxed.
+                SetStackType(StackType.Boolean);
                 break;
 
             case Equality eq:
@@ -101,7 +113,7 @@ public partial class ILEmitter
         EmitExpressionAsDouble(b.Left);
         EmitExpressionAsDouble(b.Right);
         IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Math, "Pow", _ctx.Types.Double, _ctx.Types.Double));
-        EmitBoxDouble();
+        SetStackType(StackType.Double);
     }
 
     /// <summary>
@@ -361,8 +373,13 @@ public partial class ILEmitter
             return;
         }
 
+        // Check if target is a typed double local (for boxing elimination)
+        var localType = local != null ? _ctx.Locals.GetLocalType(ca.Name.Lexeme) : null;
+        bool isTypedDouble = localType != null && _ctx.Types.IsDouble(localType);
+
         // For += with unknown right-hand side types, use runtime Add (handles both string concat and numeric add)
-        if (ca.Operator.Type == TokenType.PLUS_EQUAL)
+        // When the target is a typed double local, we know it's numeric — skip runtime Add.
+        if (!isTypedDouble && ca.Operator.Type == TokenType.PLUS_EQUAL)
         {
             // Load current value as object
             EmitVariable(new Expr.Variable(ca.Name));
@@ -396,9 +413,10 @@ public partial class ILEmitter
         // Numeric compound assignment
         bool isBitwise = CompoundOperatorHelper.IsBitwise(ca.Operator.Type);
 
-        // Get current value
+        // Get current value as double — EnsureDouble() is stack-type-aware
+        // and avoids emitting Convert.ToDouble when the value is already unboxed.
         EmitVariable(new Expr.Variable(ca.Name));
-        EmitUnboxToDouble();
+        EnsureDouble();
 
         if (isBitwise)
         {
@@ -426,23 +444,33 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Conv_R8);
         }
 
-        IL.Emit(OpCodes.Box, _ctx.Types.Double);
-        IL.Emit(OpCodes.Dup);
-
-        // Store result
-        if (local != null)
+        // Store result — keep unboxed for typed double locals
+        if (isTypedDouble && local != null)
         {
+            IL.Emit(OpCodes.Dup);
             IL.Emit(OpCodes.Stloc, local);
-        }
-        else if (topLevelField != null)
-        {
-            IL.Emit(OpCodes.Stsfld, topLevelField);
+            SetStackType(StackType.Double);
         }
         else
         {
-            _resolver.TryStoreVariable(ca.Name.Lexeme);
+            IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            IL.Emit(OpCodes.Dup);
+
+            // Store result
+            if (local != null)
+            {
+                IL.Emit(OpCodes.Stloc, local);
+            }
+            else if (topLevelField != null)
+            {
+                IL.Emit(OpCodes.Stsfld, topLevelField);
+            }
+            else
+            {
+                _resolver.TryStoreVariable(ca.Name.Lexeme);
+            }
+            SetStackUnknown();
         }
-        SetStackUnknown();
     }
 
     protected override void EmitLogicalAssign(Expr.LogicalAssign la)
@@ -810,12 +838,15 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Stsfld, topLevelField);
             }
 
-            // Box result if needed
+            // Result is on stack — leave as unboxed double for lazy boxing
             if (isTypedDouble)
             {
-                IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                SetStackType(StackType.Double);
             }
-            SetStackUnknown();
+            else
+            {
+                SetStackUnknown();
+            }
             return;
         }
 
@@ -1049,9 +1080,9 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Stsfld, topLevelField);
             }
 
-            // Original value is still on stack, box it for the expression result
-            IL.Emit(OpCodes.Box, _ctx.Types.Double);
-            SetStackUnknown();
+            // Original value is still on stack — leave as unboxed double,
+            // consumers auto-box via EmitBoxIfNeeded/EnsureBoxed when needed.
+            SetStackType(StackType.Double);
             return;
         }
 
@@ -1282,6 +1313,17 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Box, _ctx.Types.Double);
+    }
+
+    private bool IsNumericPlusOperation(Expr.Binary b)
+    {
+        // Check if both operands are known numeric — safe to emit direct IL add
+        if (_ctx.TypeMap == null) return false;
+
+        var leftType = _ctx.TypeMap.Get(b.Left);
+        var rightType = _ctx.TypeMap.Get(b.Right);
+
+        return IsNumericType(leftType) && IsNumericType(rightType);
     }
 
     private bool IsBigIntOperation(Expr.Binary b)

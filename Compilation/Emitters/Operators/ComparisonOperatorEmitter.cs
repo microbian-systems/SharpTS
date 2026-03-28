@@ -47,9 +47,9 @@ public sealed class ComparisonOperatorEmitter : IOperatorEmitter
             il.Emit(OpCodes.Ceq);
         }
 
-        // Box the boolean result
-        il.Emit(OpCodes.Box, ctx.Types.Boolean);
-        emitter.SetStackUnknown();
+        // Leave as unboxed bool (int32 0/1) — consumers that need
+        // object? will auto-box via EmitBoxIfNeeded/EnsureBoxed.
+        emitter.SetStackType(StackType.Boolean);
 
         return true;
     }

@@ -1,4 +1,5 @@
 using System.Reflection.Emit;
+using SharpTS.Compilation.Emitters;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation.CallHandlers;
@@ -25,7 +26,7 @@ public class DateStaticHandler : ICallHandler
         var ctx = emitter.Context;
 
         il.Emit(OpCodes.Call, ctx.Runtime!.DateNow);
-        il.Emit(OpCodes.Box, ctx.Types.Double);
+        ((IEmitterContext)emitter).SetStackType(StackType.Double);
         return true;
     }
 }

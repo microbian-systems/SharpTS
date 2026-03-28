@@ -42,15 +42,13 @@ public partial class ILEmitter
         }
         else if (_ctx.Types.IsDouble(returnType))
         {
-            // Return is unboxed double - box it for callers expecting object
-            IL.Emit(OpCodes.Box, _ctx.Types.Double);
-            SetStackUnknown();
+            // Return is unboxed double — leave unboxed, consumers auto-box via EmitBoxIfNeeded/EnsureBoxed
+            SetStackType(StackType.Double);
         }
         else if (_ctx.Types.IsBoolean(returnType))
         {
-            // Return is unboxed bool - box it for callers expecting object
-            IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
-            SetStackUnknown();
+            // Return is unboxed bool — leave unboxed, consumers auto-box via EmitBoxIfNeeded/EnsureBoxed
+            SetStackType(StackType.Boolean);
         }
         else if (returnType.IsValueType)
         {
@@ -142,10 +140,10 @@ public partial class ILEmitter
             // fall through to the literal check - only literals produce unboxed values
         }
 
-        // Only Expr.Literal with double/bool produces unboxed value types on the stack.
-        // All other expressions (Variable, Call, Binary, etc.) already produce boxed objects.
-        // IMPORTANT: Never add boxing for non-literals - their results are already boxed,
-        // and Box(double) on an object reference causes garbage output.
+        // Expressions may produce unboxed value types: literals, arithmetic (StackType.Double),
+        // comparisons (StackType.Boolean), and typed locals. The _stackType checks above
+        // handle these cases. The literal check below is a fallback for when _stackType
+        // tracking doesn't catch a literal (e.g., in complex expression trees).
         if (expr is Expr.Literal lit)
         {
             if (lit.Value is double)
