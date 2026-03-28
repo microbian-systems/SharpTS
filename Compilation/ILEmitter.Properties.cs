@@ -485,8 +485,46 @@ public partial class ILEmitter
         var desc = ArrayElements.Resolve(_ctx.TypeMap?.Get(gi.Object));
         if (desc != null)
         {
-            var fallbackLabel = IL.DefineLabel();
-            var endLabel = IL.DefineLabel();
+            // Hoisted path: if the array's isinst was hoisted out of a loop,
+            // use the cached typed local — no isinst/castclass per access.
+            if (gi.Object is Expr.Variable arrVarGi)
+            {
+                var hoisted = _ctx.TryGetHoistedArray(arrVarGi.Name.Lexeme);
+                if (hoisted.HasValue)
+                {
+                    var h = hoisted.Value;
+                    var listType = h.Descriptor.GetListType(_ctx.Types);
+                    var fallbackLabel = IL.DefineLabel();
+                    var endLabel = IL.DefineLabel();
+
+                    IL.Emit(OpCodes.Ldloc, h.TypedLocal);
+                    IL.Emit(OpCodes.Brfalse, fallbackLabel);
+
+                    // Fast path: typed local is valid
+                    IL.Emit(OpCodes.Ldloc, h.TypedLocal);
+                    EmitExpressionAsDouble(gi.Index);
+                    IL.Emit(OpCodes.Conv_I4);
+                    IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(listType, "get_Item", _ctx.Types.Int32));
+                    SetStackType(h.Descriptor.StackType);
+                    IL.Emit(OpCodes.Br, endLabel);
+
+                    // Fallback: type didn't match at loop entry
+                    IL.MarkLabel(fallbackLabel);
+                    EmitExpression(gi.Object);
+                    EmitBoxIfNeeded(gi.Object);
+                    EmitExpression(gi.Index);
+                    EmitBoxIfNeeded(gi.Index);
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.GetIndex);
+                    SetStackUnknown();
+
+                    IL.MarkLabel(endLabel);
+                    return;
+                }
+            }
+
+            // Non-hoisted path: per-access isinst guard
+            var fallbackLabelNH = IL.DefineLabel();
+            var endLabelNH = IL.DefineLabel();
 
             EmitExpression(gi.Object);
             EnsureBoxed();
@@ -509,7 +547,7 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Conv_I4);
                 IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(listType, "get_Item", _ctx.Types.Int32));
                 SetStackType(desc.StackType);
-                IL.Emit(OpCodes.Br, endLabel);
+                IL.Emit(OpCodes.Br, endLabelNH);
 
                 IL.MarkLabel(notTypedLabel);
                 IL.Emit(OpCodes.Ldloc, objLocal);
@@ -521,7 +559,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Brtrue, isListLabel);
             IL.Emit(OpCodes.Ldloc, objLocal);
             IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
-            IL.Emit(OpCodes.Brfalse, fallbackLabel);
+            IL.Emit(OpCodes.Brfalse, fallbackLabelNH);
 
             // $Array path: extract Elements list
             IL.Emit(OpCodes.Ldloc, objLocal);
@@ -541,17 +579,17 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Conv_I4);
             IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.ListOfObject, "get_Item", _ctx.Types.Int32));
             SetStackUnknown();
-            IL.Emit(OpCodes.Br, endLabel);
+            IL.Emit(OpCodes.Br, endLabelNH);
 
             // Fallback: generic dispatch
-            IL.MarkLabel(fallbackLabel);
+            IL.MarkLabel(fallbackLabelNH);
             IL.Emit(OpCodes.Ldloc, objLocal);
             EmitExpression(gi.Index);
             EmitBoxIfNeeded(gi.Index);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GetIndex);
             SetStackUnknown();
 
-            IL.MarkLabel(endLabel);
+            IL.MarkLabel(endLabelNH);
             return;
         }
 
@@ -567,11 +605,75 @@ public partial class ILEmitter
         // Descriptor-driven fast path: when receiver is statically known to be an array,
         // emit direct List<T> access with auto-extension — skips runtime type dispatch,
         // index boxing, and Convert.ToInt32(object) overhead.
-        var desc = ArrayElements.Resolve(_ctx.TypeMap?.Get(si.Object));
+        // Try hoisted path first — works even when TypeMap doesn't have the receiver type
+        if (si.Object is Expr.Variable arrVarSiEarly)
+        {
+            var hoistedEarly = _ctx.TryGetHoistedArray(arrVarSiEarly.Name.Lexeme);
+            if (hoistedEarly.HasValue)
+            {
+                var h = hoistedEarly.Value;
+                var listType = h.Descriptor.GetListType(_ctx.Types);
+                var fallbackLabel = IL.DefineLabel();
+                var endLabel = IL.DefineLabel();
+
+                // Emit and coerce value
+                EmitExpression(si.Value);
+                if (h.Descriptor.Kind == ArrayElementsKind.Double) EnsureDouble();
+                else if (h.Descriptor.Kind == ArrayElementsKind.Bool) EnsureBoolean();
+                else EmitBoxIfNeeded(si.Value);
+                var typedValueLocal = IL.DeclareLocal(h.Descriptor.GetElementType(_ctx.Types));
+                IL.Emit(OpCodes.Stloc, typedValueLocal);
+
+                IL.Emit(OpCodes.Ldloc, h.TypedLocal);
+                IL.Emit(OpCodes.Brfalse, fallbackLabel);
+
+                // Fast path: typed local is valid
+                IL.Emit(OpCodes.Ldloc, h.TypedLocal);
+                EmitExpressionAsDouble(si.Index);
+                IL.Emit(OpCodes.Conv_I4);
+                IL.Emit(OpCodes.Ldloc, typedValueLocal);
+                IL.Emit(OpCodes.Call, h.Descriptor.GetSetArrayElementMethod(_ctx.Runtime!));
+                IL.Emit(OpCodes.Ldloc, typedValueLocal);
+                SetStackType(h.Descriptor.StackType);
+                IL.Emit(OpCodes.Br, endLabel);
+
+                // Fallback: type didn't match at loop entry
+                IL.MarkLabel(fallbackLabel);
+                IL.Emit(OpCodes.Ldloc, typedValueLocal);
+                if (h.Descriptor.NeedsBoxOnGet)
+                    IL.Emit(OpCodes.Box, h.Descriptor.GetElementType(_ctx.Types));
+                var fallbackValueLocal = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Stloc, fallbackValueLocal);
+                EmitExpression(si.Object);
+                EmitBoxIfNeeded(si.Object);
+                EmitExpression(si.Index);
+                EmitBoxIfNeeded(si.Index);
+                IL.Emit(OpCodes.Ldloc, fallbackValueLocal);
+                if (_ctx.IsStrictMode)
+                {
+                    IL.Emit(OpCodes.Ldc_I4_1);
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndexStrict);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndex);
+                }
+                IL.Emit(OpCodes.Ldloc, fallbackValueLocal);
+                SetStackUnknown();
+
+                IL.MarkLabel(endLabel);
+                return;
+            }
+        }
+
+        var siTypeInfo = _ctx.TypeMap?.Get(si.Object);
+        var desc = ArrayElements.Resolve(siTypeInfo);
+
         if (desc != null)
         {
-            var fallbackLabel = IL.DefineLabel();
-            var endLabel = IL.DefineLabel();
+            // Non-hoisted path: per-access isinst guard
+            var fallbackLabelNH = IL.DefineLabel();
+            var endLabelNH = IL.DefineLabel();
 
             // Emit and coerce value based on descriptor
             EmitExpression(si.Value);
@@ -579,8 +681,8 @@ public partial class ILEmitter
             else if (desc.Kind == ArrayElementsKind.Bool) EnsureBoolean();
             else EmitBoxIfNeeded(si.Value);
 
-            var typedValueLocal = IL.DeclareLocal(desc.GetElementType(_ctx.Types));
-            IL.Emit(OpCodes.Stloc, typedValueLocal);
+            var typedValueLocalNH = IL.DeclareLocal(desc.GetElementType(_ctx.Types));
+            IL.Emit(OpCodes.Stloc, typedValueLocalNH);
 
             EmitExpression(si.Object);
             EnsureBoxed();
@@ -601,26 +703,26 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Castclass, listType);
                 EmitExpressionAsDouble(si.Index);
                 IL.Emit(OpCodes.Conv_I4);
-                IL.Emit(OpCodes.Ldloc, typedValueLocal);
+                IL.Emit(OpCodes.Ldloc, typedValueLocalNH);
                 IL.Emit(OpCodes.Call, desc.GetSetArrayElementMethod(_ctx.Runtime!));
-                IL.Emit(OpCodes.Ldloc, typedValueLocal);
+                IL.Emit(OpCodes.Ldloc, typedValueLocalNH);
                 SetStackType(desc.StackType);
-                IL.Emit(OpCodes.Br, endLabel);
+                IL.Emit(OpCodes.Br, endLabelNH);
 
                 // Not typed list: box value and fall through to List<object?> path
                 IL.MarkLabel(notTypedLabel);
                 IL.Emit(OpCodes.Ldloc, objLocal);
-                IL.Emit(OpCodes.Ldloc, typedValueLocal);
+                IL.Emit(OpCodes.Ldloc, typedValueLocalNH);
                 IL.Emit(OpCodes.Box, desc.GetElementType(_ctx.Types));
                 var boxedValueLocal = IL.DeclareLocal(_ctx.Types.Object);
                 IL.Emit(OpCodes.Stloc, boxedValueLocal);
 
-                EmitSetIndexListObjectPath(si, objLocal, boxedValueLocal, fallbackLabel, endLabel);
+                EmitSetIndexListObjectPath(si, objLocal, boxedValueLocal, fallbackLabelNH, endLabelNH);
                 return;
             }
 
             // Object descriptor: go straight to List<object?> path
-            EmitSetIndexListObjectPath(si, objLocal, typedValueLocal, fallbackLabel, endLabel);
+            EmitSetIndexListObjectPath(si, objLocal, typedValueLocalNH, fallbackLabelNH, endLabelNH);
             return;
         }
 

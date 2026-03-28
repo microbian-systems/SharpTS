@@ -222,7 +222,40 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         var desc = ArrayElements.Resolve(ctx.TypeMap?.Get(receiver));
         if (desc == null) return false;
 
-        var listType = desc.GetListType(ctx.Types);
+        // Hoisted path: use cached typed local from loop preamble
+        if (receiver is Expr.Variable arrVar)
+        {
+            var hoisted = ctx.TryGetHoistedArray(arrVar.Name.Lexeme);
+            if (hoisted.HasValue)
+            {
+                var h = hoisted.Value;
+                var listType = h.Descriptor.GetListType(ctx.Types);
+                var fallbackLabel = il.DefineLabel();
+                var endLabel = il.DefineLabel();
+
+                il.Emit(OpCodes.Ldloc, h.TypedLocal);
+                il.Emit(OpCodes.Brfalse, fallbackLabel);
+
+                il.Emit(OpCodes.Ldloc, h.TypedLocal);
+                il.Emit(OpCodes.Callvirt, ctx.Types.GetProperty(listType, "Count").GetGetMethod()!);
+                il.Emit(OpCodes.Conv_R8);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                il.Emit(OpCodes.Br, endLabel);
+
+                il.MarkLabel(fallbackLabel);
+                emitter.EmitExpression(receiver);
+                emitter.EmitBoxIfNeeded(receiver);
+                il.Emit(OpCodes.Call, ctx.Runtime!.GetLength);
+                il.Emit(OpCodes.Conv_R8);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+
+                il.MarkLabel(endLabel);
+                return true;
+            }
+        }
+
+        // Non-hoisted path: per-access isinst guard
+        var listTypeNH = desc.GetListType(ctx.Types);
 
         emitter.EmitExpression(receiver);
         emitter.EmitBoxIfNeeded(receiver);
@@ -230,30 +263,27 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         var objLocal = il.DeclareLocal(ctx.Types.Object);
         il.Emit(OpCodes.Stloc, objLocal);
 
-        var fallbackLabel = il.DefineLabel();
-        var endLabel = il.DefineLabel();
-
-        // Fast path: isinst List<T> → direct Count access (no string comparison, no boxing)
-        il.Emit(OpCodes.Ldloc, objLocal);
-        il.Emit(OpCodes.Isinst, listType);
-        il.Emit(OpCodes.Brfalse, fallbackLabel);
+        var fallbackLabelNH = il.DefineLabel();
+        var endLabelNH = il.DefineLabel();
 
         il.Emit(OpCodes.Ldloc, objLocal);
-        il.Emit(OpCodes.Castclass, listType);
-        il.Emit(OpCodes.Callvirt, ctx.Types.GetProperty(listType, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Isinst, listTypeNH);
+        il.Emit(OpCodes.Brfalse, fallbackLabelNH);
+
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Castclass, listTypeNH);
+        il.Emit(OpCodes.Callvirt, ctx.Types.GetProperty(listTypeNH, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Box, ctx.Types.Double);
-        il.Emit(OpCodes.Br, endLabel);
+        il.Emit(OpCodes.Br, endLabelNH);
 
-        // Fallback: use runtime GetLength (handles $Array, string, etc.)
-        il.MarkLabel(fallbackLabel);
+        il.MarkLabel(fallbackLabelNH);
         il.Emit(OpCodes.Ldloc, objLocal);
         il.Emit(OpCodes.Call, ctx.Runtime!.GetLength);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Box, ctx.Types.Double);
 
-        il.MarkLabel(endLabel);
-        // Caller sets SetStackUnknown() after TryEmitPropertyGet returns true
+        il.MarkLabel(endLabelNH);
         return true;
     }
 

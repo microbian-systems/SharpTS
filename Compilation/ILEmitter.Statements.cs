@@ -222,7 +222,7 @@ public partial class ILEmitter
     }
 
     /// <summary>
-    /// Emits a for loop with unboxed counter optimization when applicable.
+    /// Emits a for loop with unboxed counter and array hoist optimizations.
     /// </summary>
     protected override void EmitFor(Stmt.For f)
     {
@@ -230,24 +230,58 @@ public partial class ILEmitter
         var analysis = ForLoopAnalyzer.Analyze(f, _ctx.ClosureAnalyzer);
 
         if (analysis.CanUseUnboxedCounter && analysis.VariableName != null)
-        {
-            // Set the flag so CanUseUnboxedLocal will return true for this variable
             _optimizedLoopCounterName = analysis.VariableName;
-            try
-            {
-                // Emit the loop with the optimization enabled
-                base.EmitFor(f);
-            }
-            finally
-            {
-                // Clear the flag
-                _optimizedLoopCounterName = null;
-            }
-        }
-        else
+
+        try
         {
-            // No optimization - emit normally
-            base.EmitFor(f);
+            // Inline base.EmitFor to insert array hoist preamble between
+            // initializer and loop start.
+            _ctx.Locals.EnterScope();
+
+            // Emit initializer (declares loop variable in current scope)
+            if (f.Initializer != null)
+                EmitStatement(f.Initializer);
+
+            // Array hoist preamble: emit isinst checks for loop-invariant arrays
+            var hoisted = EmitArrayHoistPreamble(f.Body, f.Condition, f.Increment);
+
+            var builder = _ctx.ILBuilder;
+            var startLabel = builder.DefineLabel("for_start");
+            var endLabel = builder.DefineLabel("for_end");
+            var continueLabel = builder.DefineLabel("for_continue");
+
+            _ctx.EnterLoop(endLabel, continueLabel);
+
+            builder.MarkLabel(startLabel);
+
+            if (f.Condition != null)
+            {
+                EmitConditionCheck(f.Condition);
+                builder.Emit_Brfalse(endLabel);
+            }
+
+            EmitStatement(f.Body);
+
+            builder.MarkLabel(continueLabel);
+            if (f.Increment != null)
+            {
+                EmitExpression(f.Increment);
+                IL.Emit(OpCodes.Pop);
+            }
+
+            builder.Emit_Br(startLabel);
+
+            builder.MarkLabel(endLabel);
+            _ctx.ExitLoop();
+
+            // Pop hoisted cache
+            if (hoisted) _ctx.HoistedArrayCaches.Pop();
+
+            _ctx.Locals.ExitScope();
+        }
+        finally
+        {
+            _optimizedLoopCounterName = null;
         }
     }
 
@@ -294,6 +328,9 @@ public partial class ILEmitter
 
     protected override void EmitWhile(Stmt.While w)
     {
+        // Array hoist preamble before loop
+        var hoisted = EmitArrayHoistPreamble(w.Body, w.Condition, increment: null);
+
         var builder = _ctx.ILBuilder;
         var startLabel = builder.DefineLabel("while_start");
         var endLabel = builder.DefineLabel("while_end");
@@ -309,6 +346,49 @@ public partial class ILEmitter
 
         builder.MarkLabel(endLabel);
         _ctx.ExitLoop();
+
+        if (hoisted) _ctx.HoistedArrayCaches.Pop();
+    }
+
+    /// <summary>
+    /// Emits isinst preamble for loop-invariant array variables.
+    /// Returns true if any arrays were hoisted (caller must pop the cache).
+    /// </summary>
+    private bool EmitArrayHoistPreamble(Stmt body, Expr? condition, Expr? increment)
+    {
+        var candidates = ArrayHoistAnalyzer.AnalyzeFor(body, condition, increment, _ctx.TypeMap);
+        if (candidates.Count == 0) return false;
+
+        // Exclude variables already hoisted by an outer loop
+        foreach (var name in candidates.Keys.ToList())
+        {
+            if (_ctx.TryGetHoistedArray(name) != null)
+                candidates.Remove(name);
+        }
+        if (candidates.Count == 0) return false;
+
+        var cache = new Dictionary<string, HoistedArrayEntry>();
+
+        foreach (var (varName, desc) in candidates)
+        {
+            var listType = desc.GetListType(_ctx.Types);
+            var typedLocal = IL.DeclareLocal(listType);
+
+            // Load array variable, isinst to typed list, store in local
+            // If the variable holds a different type, typedLocal will be null
+            // Use the local directly to avoid stack type tracking complications
+            var arrLocal = _ctx.Locals.GetLocal(varName);
+            if (arrLocal == null) continue; // Variable not found in locals — skip
+            IL.Emit(OpCodes.Ldloc, arrLocal);
+            // Array locals are always typed as object — no boxing needed
+            IL.Emit(OpCodes.Isinst, listType);
+            IL.Emit(OpCodes.Stloc, typedLocal);
+
+            cache[varName] = new HoistedArrayEntry(typedLocal, desc);
+        }
+
+        _ctx.HoistedArrayCaches.Push(cache);
+        return true;
     }
 
     protected override void EmitDoWhile(Stmt.DoWhile dw)

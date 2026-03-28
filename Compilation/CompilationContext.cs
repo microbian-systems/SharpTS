@@ -25,6 +25,11 @@ public enum StackType
 }
 
 /// <summary>
+/// Entry in the hoisted array cache: a typed local variable and its descriptor.
+/// </summary>
+public record struct HoistedArrayEntry(LocalBuilder TypedLocal, ArrayElementsDescriptor Descriptor);
+
+/// <summary>
 /// Holds compilation state passed between ILCompiler and ILEmitter.
 /// </summary>
 /// <remarks>
@@ -157,6 +162,25 @@ public partial class CompilationContext
 
     // Loop control labels (with optional label name for labeled statements)
     public Stack<(Label BreakLabel, Label ContinueLabel, string? LabelName)> LoopLabels { get; } = new();
+
+    // Hoisted array type caches: stack of per-loop dictionaries mapping
+    // variable name → (typed local, descriptor) for arrays whose isinst
+    // check has been hoisted to the loop preamble.
+    public Stack<Dictionary<string, HoistedArrayEntry>> HoistedArrayCaches { get; } = new();
+
+    /// <summary>
+    /// Looks up a hoisted array cache entry for the given variable name,
+    /// searching from innermost to outermost loop scope.
+    /// </summary>
+    public HoistedArrayEntry? TryGetHoistedArray(string variableName)
+    {
+        foreach (var cache in HoistedArrayCaches)
+        {
+            if (cache.TryGetValue(variableName, out var entry))
+                return entry;
+        }
+        return null;
+    }
 
     // Exception block tracking for proper return handling
     public int ExceptionBlockDepth { get; set; } = 0;
