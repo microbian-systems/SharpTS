@@ -3666,7 +3666,8 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits a single DNS record type callback wrapper.
-    /// Pattern: (hostname, callback) -> calls DnsResolveRecord(hostname, rrtype), then callback(null, result) or callback(error, null).
+    /// Runs DNS resolution on a ThreadPool thread and schedules the callback on the EventLoop,
+    /// matching the interpreter's async behavior and preventing main-thread blocking.
     /// </summary>
     private void EmitDnsRecordTypeWrapper(TypeBuilder typeBuilder, EmittedRuntime runtime, string methodName, string rrtype)
     {
@@ -3676,63 +3677,169 @@ public partial class RuntimeEmitter
             _types.Object,
             [_types.Object, _types.Object]);
 
+        // Emit the async closure class for this record type
+        var closureType = EmitDnsAsyncClosure(typeBuilder, runtime, methodName, rrtype);
+
         var il = method.GetILGenerator();
-        var resultLocal = il.DeclareLocal(_types.Object);
-        var endLabel = il.DefineLabel();
 
-        il.BeginExceptionBlock();
+        // EventLoop.Ref() — keep event loop alive during async DNS
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopRef);
 
-        // Call DnsResolveRecord(hostname, rrtype)
+        // ThreadPool.QueueUserWorkItem(new $DnsAsyncClosure_xxx(hostname, callback).Worker)
         il.Emit(OpCodes.Ldarg_0); // hostname
-        il.Emit(OpCodes.Ldstr, rrtype); // rrtype constant
-        il.Emit(OpCodes.Call, runtime.DnsResolveRecord);
-        il.Emit(OpCodes.Stloc, resultLocal);
-
-        // callback(null, result)
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Ldarg_1); // callback
+        il.Emit(OpCodes.Newobj, closureType.ctor);
         il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Ldftn, closureType.worker);
+        il.Emit(OpCodes.Newobj, typeof(WaitCallback).GetConstructor([_types.Object, typeof(IntPtr)])!);
+        il.Emit(OpCodes.Call, typeof(ThreadPool).GetMethod("QueueUserWorkItem", [typeof(WaitCallback)])!);
         il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Leave, endLabel);
+        il.Emit(OpCodes.Pop); // pop the dup'd closure
 
-        // catch
-        il.BeginCatchBlock(typeof(Exception));
-        var exLocal = il.DeclareLocal(typeof(Exception));
-        il.Emit(OpCodes.Stloc, exLocal);
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldloc, exLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(Exception), "get_Message"));
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Leave, endLabel);
-
-        il.EndExceptionBlock();
-
-        il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
         runtime.RegisterBuiltInModuleMethod("dns", methodName, method);
+    }
+
+    /// <summary>
+    /// Emits a closure class for async DNS resolution.
+    /// Has Worker(object) for ThreadPool and Callback() for EventLoop dispatch.
+    /// </summary>
+    private (ConstructorBuilder ctor, MethodBuilder worker) EmitDnsAsyncClosure(
+        TypeBuilder parentType, EmittedRuntime runtime, string methodName, string rrtype)
+    {
+        var closureType = ((ModuleBuilder)parentType.Module).DefineType(
+            "$DnsAsyncClosure_" + methodName,
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            typeof(object));
+
+        var hostnameField = closureType.DefineField("_hostname", _types.Object, FieldAttributes.Private);
+        var callbackField = closureType.DefineField("_callback", _types.Object, FieldAttributes.Private);
+        var resultField = closureType.DefineField("_result", _types.Object, FieldAttributes.Private);
+        var errorField = closureType.DefineField("_error", _types.String, FieldAttributes.Private);
+
+        // Constructor: (hostname, callback)
+        var ctor = closureType.DefineConstructor(
+            MethodAttributes.Public, CallingConventions.Standard,
+            [_types.Object, _types.Object]);
+        {
+            var il = ctor.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Stfld, hostnameField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stfld, callbackField);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // Callback() — runs on event loop, invokes the JS callback
+        var callbackMethod = closureType.DefineMethod(
+            "Callback", MethodAttributes.Public, typeof(void), Type.EmptyTypes);
+        {
+            var il = callbackMethod.GetILGenerator();
+
+            // if (_error != null) → error path
+            var errorPath = il.DefineLabel();
+            var done = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, errorField);
+            il.Emit(OpCodes.Brtrue, errorPath);
+
+            // Success: callback.Invoke([null, _result])
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, callbackField);
+            il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, resultField);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Br, done);
+
+            // Error: callback.Invoke([_error, null])
+            il.MarkLabel(errorPath);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, callbackField);
+            il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, errorField);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+            il.Emit(OpCodes.Pop);
+
+            il.MarkLabel(done);
+
+            // EventLoop.Unref()
+            il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+            il.Emit(OpCodes.Call, runtime.EventLoopUnref);
+
+            il.Emit(OpCodes.Ret);
+        }
+
+        // Worker(object state) — runs on ThreadPool
+        var worker = closureType.DefineMethod(
+            "Worker", MethodAttributes.Public, typeof(void), [_types.Object]);
+        {
+            var il = worker.GetILGenerator();
+            var afterTry = il.DefineLabel();
+
+            il.BeginExceptionBlock();
+
+            // _result = DnsResolveRecord((string)_hostname, rrtype)
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, hostnameField);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Ldstr, rrtype);
+            il.Emit(OpCodes.Call, runtime.DnsResolveRecord);
+            il.Emit(OpCodes.Stfld, resultField);
+            il.Emit(OpCodes.Leave, afterTry);
+
+            il.BeginCatchBlock(typeof(Exception));
+            // _error = ex.Message
+            var exLocal = il.DeclareLocal(typeof(Exception));
+            il.Emit(OpCodes.Stloc, exLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, exLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(Exception), "get_Message"));
+            il.Emit(OpCodes.Stfld, errorField);
+            il.Emit(OpCodes.Leave, afterTry);
+
+            il.EndExceptionBlock();
+            il.MarkLabel(afterTry);
+
+            // EventLoop.Schedule(new Action(this.Callback))
+            il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldftn, callbackMethod);
+            il.Emit(OpCodes.Newobj, typeof(Action).GetConstructor([_types.Object, typeof(IntPtr)])!);
+            il.Emit(OpCodes.Call, runtime.EventLoopSchedule);
+
+            il.Emit(OpCodes.Ret);
+        }
+
+        closureType.CreateType();
+        return (ctor, worker);
     }
 }

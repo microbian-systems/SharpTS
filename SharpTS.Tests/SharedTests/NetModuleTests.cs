@@ -278,24 +278,15 @@ public class NetModuleTests
         {
             ["./main.ts"] = $$"""
                 import * as net from 'net';
-                console.log('DIAG:start');
                 const server = net.createServer((socket) => {
-                    console.log('DIAG:server-connection');
                     socket.on('data', (data: string) => {
-                        console.log('DIAG:server-data:' + data);
                         socket.write('pong');
                     });
-                    socket.on('error', (e: any) => console.log('DIAG:server-socket-error:' + e));
                 });
-                server.on('error', (e: any) => console.log('DIAG:server-error:' + e));
-                console.log('DIAG:before-listen');
                 server.listen('{{pipePath}}', () => {
-                    console.log('DIAG:listen-callback');
                     const client = net.createConnection({ path: '{{pipePath}}' });
-                    console.log('DIAG:client-created');
                     client.setEncoding('utf8');
                     client.on('connect', () => {
-                        console.log('DIAG:client-connect');
                         client.write('ping');
                     });
                     client.on('data', (data: string) => {
@@ -303,9 +294,7 @@ public class NetModuleTests
                         client.destroy();
                         server.close();
                     });
-                    client.on('error', (e: any) => console.log('DIAG:client-error:' + e));
                 });
-                console.log('DIAG:after-listen');
                 """
         };
         var output = TestHarness.RunModules(files, "./main.ts", mode);
