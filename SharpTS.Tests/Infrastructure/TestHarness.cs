@@ -643,9 +643,12 @@ public static class TestHarness
 
             if (!process.WaitForExit((int)DefaultTimeout.TotalMilliseconds))
             {
+                var partialOut = outputTask.IsCompleted ? outputTask.Result : "(reading)";
+                var partialErr = errorTask.IsCompleted ? errorTask.Result : "(reading)";
                 process.Kill();
                 throw new TimeoutException(
-                    $"Compiled module execution exceeded {DefaultTimeout.TotalSeconds}s timeout.");
+                    $"Compiled module execution exceeded {DefaultTimeout.TotalSeconds}s timeout. " +
+                    $"Stdout: [{partialOut}] Stderr: [{partialErr}]");
             }
 
             var output = outputTask.Result;
