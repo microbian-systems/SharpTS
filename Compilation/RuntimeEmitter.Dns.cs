@@ -1962,6 +1962,7 @@ public partial class RuntimeEmitter
 
         var retryLoopStart = il.DefineLabel();
         var retryLoopCond = il.DefineLabel();
+        var retryIncrement = il.DefineLabel();
         var returnLabel = il.DefineLabel();
         il.Emit(OpCodes.Br, retryLoopCond);
 
@@ -2091,10 +2092,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(retryLabel);
-        il.Emit(OpCodes.Leave, retryLoopCond); // continue to next attempt
+        il.Emit(OpCodes.Leave, retryIncrement); // continue to next attempt
 
         il.EndExceptionBlock();
 
+        il.MarkLabel(retryIncrement);
         // attempt++
         il.Emit(OpCodes.Ldloc, attemptLocal);
         il.Emit(OpCodes.Ldc_I4_1);
