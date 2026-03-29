@@ -26,6 +26,8 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
         // Hard links
         "linkSync",
         "constants",
+        // Stream factories
+        "createReadStream", "createWriteStream",
         // fs.promises namespace
         "promises"
     ];
@@ -69,6 +71,9 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
             "opendirSync" => EmitOpendirSync(emitter, arguments),
             // Hard links
             "linkSync" => EmitLinkSync(emitter, arguments),
+            // Stream factories
+            "createReadStream" => EmitCreateReadStream(emitter, arguments),
+            "createWriteStream" => EmitCreateWriteStream(emitter, arguments),
             _ => false
         };
     }
@@ -939,6 +944,66 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
         // Call runtime helper: FsLinkSync(object existingPath, object newPath)
         il.Emit(OpCodes.Call, ctx.Runtime!.FsLinkSync);
         il.Emit(OpCodes.Ldnull); // undefined return
+        return true;
+    }
+
+    #endregion
+
+    #region Stream Factories
+
+    private static bool EmitCreateReadStream(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        if (arguments.Count == 0)
+        {
+            il.Emit(OpCodes.Ldnull);
+            return true;
+        }
+
+        emitter.EmitExpression(arguments[0]);
+        emitter.EmitBoxIfNeeded(arguments[0]);
+
+        if (arguments.Count >= 2)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.FsCreateReadStream);
+        return true;
+    }
+
+    private static bool EmitCreateWriteStream(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        if (arguments.Count == 0)
+        {
+            il.Emit(OpCodes.Ldnull);
+            return true;
+        }
+
+        emitter.EmitExpression(arguments[0]);
+        emitter.EmitBoxIfNeeded(arguments[0]);
+
+        if (arguments.Count >= 2)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.FsCreateWriteStream);
         return true;
     }
 

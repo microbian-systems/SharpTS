@@ -51,6 +51,29 @@ public partial class AsyncGeneratorMoveNextEmitter
         // 5. Mark the resume label (jumped to from state switch)
         _il.MarkLabel(resumeLabel);
 
+        // 5a. Check __returnRequested flag (set by generator.return())
+        // If true, jump to the enclosing finally cleanup path or complete the generator
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, _builder.ReturnRequestedField);
+        var continueNormalLabel = _il.DefineLabel();
+        _il.Emit(OpCodes.Brfalse, continueNormalLabel);
+
+        if (_returnCleanupLabel != null)
+        {
+            // Inside a try/finally - jump to the afterTryBody label to execute finally
+            _il.Emit(OpCodes.Br, _returnCleanupLabel.Value);
+        }
+        else
+        {
+            // Not inside try/finally - just complete the generator
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldc_I4, -2);
+            _il.Emit(OpCodes.Stfld, _builder.StateField);
+            EmitReturnValueTaskBool(false);
+        }
+
+        _il.MarkLabel(continueNormalLabel);
+
         // 6. Reset state to -1 (running)
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4_M1);

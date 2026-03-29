@@ -13,7 +13,7 @@ public class FsStreamTests
     #region createReadStream
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void CreateReadStream_ReadsFile(ExecutionMode mode)
     {
         var tempFile = Path.GetTempFileName();
@@ -41,7 +41,7 @@ public class FsStreamTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void CreateReadStream_EndEvent(ExecutionMode mode)
     {
         var tempFile = Path.GetTempFileName();
@@ -70,7 +70,7 @@ public class FsStreamTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void CreateReadStream_Path_Property(ExecutionMode mode)
     {
         var tempFile = Path.GetTempFileName();
@@ -100,7 +100,7 @@ public class FsStreamTests
     #region createWriteStream
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void CreateWriteStream_WritesFile(ExecutionMode mode)
     {
         var tempFile = Path.GetTempFileName();
@@ -131,7 +131,7 @@ public class FsStreamTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void CreateWriteStream_End_WritesAndCloses(ExecutionMode mode)
     {
         var tempFile = Path.GetTempFileName();
@@ -161,7 +161,7 @@ public class FsStreamTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void CreateWriteStream_Path_Property(ExecutionMode mode)
     {
         var tempFile = Path.GetTempFileName();
@@ -187,7 +187,7 @@ public class FsStreamTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void CreateReadStream_PipeToWriteStream(ExecutionMode mode)
     {
         var srcFile = Path.GetTempFileName();

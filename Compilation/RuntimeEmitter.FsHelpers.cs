@@ -83,6 +83,9 @@ public partial class RuntimeEmitter
         // Hard links
         EmitFsLinkSync(typeBuilder, runtime);
 
+        // Stream factory methods (types already defined in Phase 1)
+        EmitFsStreamFactories(typeBuilder, runtime);
+
         // Async fs methods (fs.promises and fs/promises)
         EmitFsAsyncMethods(typeBuilder, runtime);
         EmitFsGetPromisesNamespace(typeBuilder, runtime);

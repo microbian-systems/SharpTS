@@ -29,6 +29,10 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
     // Current suspension point being processed
     private int _currentSuspensionState = 0;
 
+    // Label to jump to when __returnRequested is detected at a yield resume point.
+    // Set to the afterTryBody label of the enclosing try/finally block (if any).
+    private Label? _returnCleanupLabel;
+
     // Compilation context for access to functions, classes, etc.
     private CompilationContext? _ctx;
 

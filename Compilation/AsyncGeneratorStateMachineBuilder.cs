@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 
 namespace SharpTS.Compilation;
 
@@ -42,6 +43,9 @@ public class AsyncGeneratorStateMachineBuilder
 
     // Delegated async enumerator field for yield* expressions
     public FieldBuilder? DelegatedAsyncEnumeratorField { get; private set; }
+
+    // Flag set by return() to trigger finally blocks during MoveNextAsync resume
+    public FieldBuilder ReturnRequestedField { get; private set; } = null!;
 
     // Constructor
     public ConstructorBuilder Constructor { get; private set; } = null!;
@@ -123,6 +127,13 @@ public class AsyncGeneratorStateMachineBuilder
                 FieldAttributes.Public
             );
         }
+
+        // Define __returnRequested flag field for generator.return() to trigger finally blocks
+        ReturnRequestedField = _stateMachineType.DefineField(
+            "__returnRequested",
+            _types.Boolean,
+            FieldAttributes.Public
+        );
 
         // Define delegated enumerator field for yield* expressions (typed as object to hold either sync or async enumerators)
         if (analysis.HasYieldStar)
@@ -429,6 +440,47 @@ public class AsyncGeneratorStateMachineBuilder
     private void EmitReturnMethodBody()
     {
         var il = ReturnMethod.GetILGenerator();
+
+        // If state >= 0 (suspended at a yield point), we need to trigger finally blocks
+        // by setting __returnRequested and calling MoveNextAsync
+        var simpleReturnLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, StateField);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, simpleReturnLabel); // state < 0 → simple return
+
+        // Set __returnRequested = true
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, ReturnRequestedField);
+
+        // Store return value in CurrentField for later retrieval
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, CurrentField);
+
+        // Call MoveNextAsync() to resume the generator and trigger finally blocks
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, MoveNextAsyncMethod);
+
+        // Await the ValueTask<bool>: .AsTask().GetAwaiter().GetResult()
+        var vtLocal = il.DeclareLocal(_types.ValueTaskOfBool);
+        il.Emit(OpCodes.Stloc, vtLocal);
+        il.Emit(OpCodes.Ldloca, vtLocal);
+        var asTask = _types.GetMethodNoParams(_types.ValueTaskOfBool, "AsTask");
+        il.Emit(OpCodes.Call, asTask);
+        var taskBoolType = typeof(Task<bool>);
+        var getAwaiter = _types.GetMethodNoParams(taskBoolType, "GetAwaiter");
+        il.Emit(OpCodes.Call, getAwaiter);
+        var awaiterType = typeof(TaskAwaiter<bool>);
+        var getResult = _types.GetMethodNoParams(awaiterType, "GetResult");
+        var awaiterLocal = il.DeclareLocal(awaiterType);
+        il.Emit(OpCodes.Stloc, awaiterLocal);
+        il.Emit(OpCodes.Ldloca, awaiterLocal);
+        il.Emit(OpCodes.Call, getResult);
+        il.Emit(OpCodes.Pop); // Discard result
+
+        il.MarkLabel(simpleReturnLabel);
 
         // Set state to -2 (completed)
         il.Emit(OpCodes.Ldarg_0);

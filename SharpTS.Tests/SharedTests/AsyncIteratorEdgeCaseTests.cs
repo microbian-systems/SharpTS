@@ -88,7 +88,7 @@ public class AsyncIteratorEdgeCaseTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_TryFinally_CleanupRuns(ExecutionMode mode)
     {
         // Compiled mode: for-await-of break doesn't call generator.return() yet,

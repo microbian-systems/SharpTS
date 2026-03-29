@@ -1755,6 +1755,10 @@ public class EmittedRuntime
     public MethodBuilder StreamPromisePipeline { get; set; } = null!;
     public MethodBuilder StreamPromiseFinished { get; set; } = null!;
 
+    // fs.createReadStream / fs.createWriteStream factory methods
+    public MethodBuilder FsCreateReadStream { get; set; } = null!;
+    public MethodBuilder FsCreateWriteStream { get; set; } = null!;
+
     // Built-in module methods (module name -> method name -> MethodBuilder)
     // Used for creating TSFunction wrappers when importing named exports
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _builtInModuleMethods = new();

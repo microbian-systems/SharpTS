@@ -221,6 +221,24 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Call, runtime.FsUtimesSync);
                 il.Emit(OpCodes.Ldnull);
             });
+
+        // createReadStream(path, options?) -> $FsReadStream
+        EmitFsMethodWrapperSimple(typeBuilder, runtime, "createReadStream", 2,
+            il =>
+            {
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, runtime.FsCreateReadStream);
+            });
+
+        // createWriteStream(path, options?) -> $FsWriteStream
+        EmitFsMethodWrapperSimple(typeBuilder, runtime, "createWriteStream", 2,
+            il =>
+            {
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, runtime.FsCreateWriteStream);
+            });
     }
 
     /// <summary>

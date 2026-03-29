@@ -306,7 +306,7 @@ public class FsAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void FsPromises_Access_NonExistent_Throws(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -435,7 +435,7 @@ public class FsAsyncTests
     // async try/catch — the exception propagates as unhandled instead of being caught.
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void FsPromises_ReadFile_NonExistent_Throws(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -461,7 +461,7 @@ public class FsAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void FsPromises_Unlink_NonExistent_Throws(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

@@ -164,9 +164,11 @@ public partial class AsyncMoveNextEmitter
 
             var genStartLabel = _il.DefineLabel();
             var genEndLabel = _il.DefineLabel();
+            var genCleanupLabel = _il.DefineLabel();
             var genContinueLabel = _il.DefineLabel();
 
-            EnterLoop(genEndLabel, genContinueLabel);
+            // Break goes to cleanup (calls generator.return()), not directly to end
+            EnterLoop(genCleanupLabel, genContinueLabel);
 
             _il.MarkLabel(genStartLabel);
 
@@ -195,7 +197,7 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Ldstr, "done");
             _il.Emit(OpCodes.Call, _ctx.Runtime.GetProperty);
 
-            // Convert to bool and check
+            // Convert to bool and check - natural done exits directly (no cleanup needed)
             _il.Emit(OpCodes.Call, _ctx.Runtime.IsTruthy);
             _il.Emit(OpCodes.Brtrue, genEndLabel);
 
@@ -224,6 +226,23 @@ public partial class AsyncMoveNextEmitter
 
             _il.MarkLabel(genContinueLabel);
             _il.Emit(OpCodes.Br, genStartLabel);
+
+            // Cleanup on break: call generator.return(null) to trigger finally blocks
+            _il.MarkLabel(genCleanupLabel);
+            _il.Emit(OpCodes.Ldloc, asyncGenLocal);
+            _il.Emit(OpCodes.Ldnull);
+            _il.Emit(OpCodes.Callvirt, _ctx.Runtime.AsyncGeneratorReturnMethod);
+            // Await the Task<object> result and discard it
+            var cleanupTaskLocal = _il.DeclareLocal(_types.TaskOfObject);
+            _il.Emit(OpCodes.Stloc, cleanupTaskLocal);
+            _il.Emit(OpCodes.Ldloc, cleanupTaskLocal);
+            _il.Emit(OpCodes.Call, genGetAwaiter);
+            var cleanupAwaiterLocal = _il.DeclareLocal(_types.TaskAwaiterOfObject);
+            _il.Emit(OpCodes.Stloc, cleanupAwaiterLocal);
+            _il.Emit(OpCodes.Ldloca, cleanupAwaiterLocal);
+            _il.Emit(OpCodes.Call, genGetResult);
+            _il.Emit(OpCodes.Pop);
+            _il.Emit(OpCodes.Br, genEndLabel);
 
             _il.MarkLabel(genEndLabel);
             ExitLoop();

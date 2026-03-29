@@ -282,6 +282,10 @@ public partial class RuntimeEmitter
         // Must come before EmitRuntimeClass so Register can use the constructor
         EmitFinRegEntryTypeDefinition(moduleBuilder, runtime);
 
+        // Emit $FsReadStream and $FsWriteStream types
+        // Must come after TSFunction (uses TSFunctionInvoke) and before EmitRuntimeClass
+        EmitFsStreamTypeDefinitions(moduleBuilder, runtime);
+
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime);
 

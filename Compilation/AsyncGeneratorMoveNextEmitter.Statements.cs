@@ -145,9 +145,11 @@ public partial class AsyncGeneratorMoveNextEmitter
 
         var startLabel = _il.DefineLabel();
         var endLabel = _il.DefineLabel();
+        var cleanupLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        EnterLoop(endLabel, continueLabel);
+        // Break goes to cleanup (calls generator.return()), not directly to end
+        EnterLoop(cleanupLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
 
@@ -207,7 +209,7 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldstr, "done");
         _il.Emit(OpCodes.Call, _ctx.Runtime.GetProperty);
         _il.Emit(OpCodes.Unbox_Any, typeof(bool));
-        _il.Emit(OpCodes.Brtrue, endLabel);  // done === true -> exit loop
+        _il.Emit(OpCodes.Brtrue, endLabel);  // done === true -> exit loop (no cleanup needed)
 
         _il.MarkLabel(notDoneLabel);
 
@@ -236,6 +238,23 @@ public partial class AsyncGeneratorMoveNextEmitter
 
         _il.MarkLabel(continueLabel);
         _il.Emit(OpCodes.Br, startLabel);
+
+        // Cleanup on break: call generator.return(null) to trigger finally blocks
+        _il.MarkLabel(cleanupLabel);
+        _il.Emit(OpCodes.Ldloc, asyncGenLocal);
+        _il.Emit(OpCodes.Ldnull);
+        _il.Emit(OpCodes.Callvirt, _ctx.Runtime.AsyncGeneratorReturnMethod);
+        // Await the Task<object> result and discard it
+        var cleanupTaskLocal = _il.DeclareLocal(_types.TaskOfObject);
+        _il.Emit(OpCodes.Stloc, cleanupTaskLocal);
+        _il.Emit(OpCodes.Ldloc, cleanupTaskLocal);
+        _il.Emit(OpCodes.Call, getAwaiter);
+        var cleanupAwaiterLocal = _il.DeclareLocal(_types.TaskAwaiterOfObject);
+        _il.Emit(OpCodes.Stloc, cleanupAwaiterLocal);
+        _il.Emit(OpCodes.Ldloca, cleanupAwaiterLocal);
+        _il.Emit(OpCodes.Call, getResult);
+        _il.Emit(OpCodes.Pop);
+        _il.Emit(OpCodes.Br, endLabel);
 
         _il.MarkLabel(endLabel);
         ExitLoop();
@@ -331,8 +350,19 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
 
+        // Set the return cleanup label so yields inside this try block
+        // can jump to afterTryBody when __returnRequested is set
+        var previousCleanupLabel = _returnCleanupLabel;
+        if (t.FinallyBlock != null)
+        {
+            _returnCleanupLabel = afterTryBodyLabel;
+        }
+
         // Emit try body with segmented exception handling
         EmitTryBodyWithSuspensions(t.TryBlock, caughtExceptionLocal, afterTryBodyLabel);
+
+        // Restore previous cleanup label
+        _returnCleanupLabel = previousCleanupLabel;
 
         _il.MarkLabel(afterTryBodyLabel);
 
@@ -368,6 +398,20 @@ public partial class AsyncGeneratorMoveNextEmitter
         {
             foreach (var stmt in t.FinallyBlock)
                 EmitStatement(stmt);
+
+            // After finally, if __returnRequested, complete the generator
+            var noReturnRequestedLabel = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.ReturnRequestedField);
+            _il.Emit(OpCodes.Brfalse, noReturnRequestedLabel);
+
+            // Return requested and finally has run - complete the generator
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldc_I4, -2);
+            _il.Emit(OpCodes.Stfld, _builder.StateField);
+            EmitReturnValueTaskBool(false);
+
+            _il.MarkLabel(noReturnRequestedLabel);
 
             // After finally, rethrow if exception was not handled by catch
             if (t.CatchBlock == null)
