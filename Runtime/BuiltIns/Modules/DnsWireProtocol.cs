@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace SharpTS.Runtime.BuiltIns.Modules;
@@ -117,28 +116,26 @@ public static class DnsWireProtocol
 
         for (var attempt = 0; attempt <= MaxRetries; attempt++)
         {
+            UdpClient? udp = null;
             try
             {
                 // Try UDP first
-                using var udp = new UdpClient();
+                udp = new UdpClient();
                 udp.Client.SendTimeout = TimeoutMs;
                 udp.Send(query, query.Length, endpoint);
 
-                // Use ReceiveAsync + CancellationToken for reliable timeout.
-                // Socket.ReceiveTimeout (SO_RCVTIMEO) is unreliable on macOS ARM64
+                // Use Task.Wait(timeout) for reliable cross-platform timeout.
+                // Neither Socket.ReceiveTimeout (SO_RCVTIMEO) nor CancellationToken-based
+                // cancellation of ReceiveAsync works reliably on macOS ARM64
                 // (dotnet/runtime#81378, #64551).
-                using var cts = new CancellationTokenSource(TimeoutMs);
-                UdpReceiveResult udpResult;
-                try
+                var receiveTask = udp.ReceiveAsync(CancellationToken.None).AsTask();
+                if (!receiveTask.Wait(TimeoutMs))
                 {
-                    udpResult = udp.ReceiveAsync(cts.Token).AsTask().GetAwaiter().GetResult();
-                }
-                catch (OperationCanceledException)
-                {
+                    udp.Close(); // Force-close unblocks the pending async receive
                     throw new SocketException((int)SocketError.TimedOut);
                 }
 
-                var response = udpResult.Buffer;
+                var response = receiveTask.Result.Buffer;
 
                 // Check TC (truncation) bit — byte 2, bit 1
                 if (response.Length >= 3 && (response[2] & 0x02) != 0)
@@ -153,6 +150,10 @@ public static class DnsWireProtocol
             {
                 // Retry
             }
+            finally
+            {
+                udp?.Dispose();
+            }
         }
 
         throw new Exception("Runtime Error: dns.resolve ETIMEOUT DNS query timed out");
@@ -165,15 +166,15 @@ public static class DnsWireProtocol
     private static byte[] SendViaTcp(byte[] query, IPEndPoint endpoint)
     {
         using var tcp = new TcpClient();
-        using var cts = new CancellationTokenSource(TimeoutMs);
         tcp.SendTimeout = TimeoutMs;
 
+        // Use Task.Wait for reliable cross-platform timeout (see SendReceive comment).
+        var connectTask = tcp.ConnectAsync(endpoint.Address, endpoint.Port).WaitAsync(TimeSpan.FromMilliseconds(TimeoutMs));
         try
         {
-            tcp.ConnectAsync(endpoint.Address, endpoint.Port, cts.Token)
-               .AsTask().GetAwaiter().GetResult();
+            connectTask.GetAwaiter().GetResult();
         }
-        catch (OperationCanceledException)
+        catch (TimeoutException)
         {
             throw new SocketException((int)SocketError.TimedOut);
         }
@@ -190,33 +191,29 @@ public static class DnsWireProtocol
 
         // Receive: 2-byte length prefix + response
         var respLenBuf = new byte[2];
-        ReadExactAsync(stream, respLenBuf, 0, 2, cts.Token);
+        ReadExactWithTimeout(stream, respLenBuf, 0, 2);
         var respLen = (respLenBuf[0] << 8) | respLenBuf[1];
 
         var response = new byte[respLen];
-        ReadExactAsync(stream, response, 0, respLen, cts.Token);
+        ReadExactWithTimeout(stream, response, 0, respLen);
 
         return response;
     }
 
-    private static void ReadExactAsync(NetworkStream stream, byte[] buffer, int offset, int count,
-        CancellationToken ct)
+    private static void ReadExactWithTimeout(NetworkStream stream, byte[] buffer, int offset, int count)
     {
-        try
+        while (count > 0)
         {
-            while (count > 0)
+            var readTask = stream.ReadAsync(buffer, offset, count, CancellationToken.None);
+            if (!readTask.Wait(TimeoutMs))
             {
-                var read = stream.ReadAsync(buffer.AsMemory(offset, count), ct)
-                                .AsTask().GetAwaiter().GetResult();
-                if (read == 0)
-                    throw new Exception("Runtime Error: dns.resolve connection closed unexpectedly");
-                offset += read;
-                count -= read;
+                throw new SocketException((int)SocketError.TimedOut);
             }
-        }
-        catch (OperationCanceledException)
-        {
-            throw new SocketException((int)SocketError.TimedOut);
+            var read = readTask.Result;
+            if (read == 0)
+                throw new Exception("Runtime Error: dns.resolve connection closed unexpectedly");
+            offset += read;
+            count -= read;
         }
     }
 

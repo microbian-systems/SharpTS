@@ -1018,23 +1018,21 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitDnsReadExact(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Signature: void DnsReadExact(NetworkStream stream, byte[] buf, int offset, int count)
+        // Uses Task.Wait(5000) for reliable cross-platform timeout.
         var method = typeBuilder.DefineMethod(
             "DnsReadExact",
             MethodAttributes.Public | MethodAttributes.Static,
             typeof(void),
-            [typeof(System.Net.Sockets.NetworkStream), typeof(byte[]), _types.Int32, _types.Int32, typeof(CancellationToken)]);
+            [typeof(System.Net.Sockets.NetworkStream), typeof(byte[]), _types.Int32, _types.Int32]);
         runtime.DnsReadExact = method;
 
         var il = method.GetILGenerator();
 
         var taskInt = typeof(Task<>).MakeGenericType(_types.Int32);
-        var awaiterInt = typeof(TaskAwaiter<>).MakeGenericType(_types.Int32);
 
         var readLocal = il.DeclareLocal(_types.Int32);       // 0: read count
-        var awaiterLocal = il.DeclareLocal(awaiterInt);       // 1: TaskAwaiter<int>
-
-        // Outer try for OperationCanceledException → SocketException conversion
-        il.BeginExceptionBlock();
+        var readTaskLocal = il.DeclareLocal(taskInt);         // 1: Task<int>
 
         // while (count > 0)
         var loopStart = il.DefineLabel();
@@ -1043,18 +1041,34 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(loopStart);
 
-        // int read = stream.ReadAsync(buf, offset, count, ct).GetAwaiter().GetResult()
+        // Task<int> readTask = stream.ReadAsync(buf, offset, count, CancellationToken.None)
         il.Emit(OpCodes.Ldarg_0); // stream
         il.Emit(OpCodes.Ldarg_1); // buf
         il.Emit(OpCodes.Ldarg_2); // offset
         il.Emit(OpCodes.Ldarg_3); // count
-        il.Emit(OpCodes.Ldarg_S, (byte)4); // ct
+        var ctNoneLocal = il.DeclareLocal(typeof(CancellationToken));
+        il.Emit(OpCodes.Ldloca, ctNoneLocal);
+        il.Emit(OpCodes.Initobj, typeof(CancellationToken));
+        il.Emit(OpCodes.Ldloc, ctNoneLocal);
         il.Emit(OpCodes.Callvirt, typeof(System.IO.Stream).GetMethod("ReadAsync",
             [typeof(byte[]), _types.Int32, _types.Int32, typeof(CancellationToken)])!);
-        il.Emit(OpCodes.Callvirt, taskInt.GetMethod("GetAwaiter")!);
-        il.Emit(OpCodes.Stloc, awaiterLocal);
-        il.Emit(OpCodes.Ldloca, awaiterLocal);
-        il.Emit(OpCodes.Call, awaiterInt.GetMethod("GetResult")!);
+        il.Emit(OpCodes.Stloc, readTaskLocal);
+
+        // if (!readTask.Wait(5000)) throw SocketException(TimedOut)
+        il.Emit(OpCodes.Ldloc, readTaskLocal);
+        il.Emit(OpCodes.Ldc_I4, 5000);
+        il.Emit(OpCodes.Callvirt, typeof(Task).GetMethod("Wait", [_types.Int32])!);
+        var waitOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, waitOkLabel);
+        il.Emit(OpCodes.Ldc_I4, (int)SocketError.TimedOut);
+        il.Emit(OpCodes.Newobj, typeof(SocketException).GetConstructor([_types.Int32])!);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(waitOkLabel);
+
+        // int read = readTask.Result
+        il.Emit(OpCodes.Ldloc, readTaskLocal);
+        il.Emit(OpCodes.Callvirt, taskInt.GetProperty("Result")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, readLocal);
 
         // if (read == 0) throw
@@ -1085,16 +1099,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Bgt, loopStart);
 
         var doneLabel = il.DefineLabel();
-        il.Emit(OpCodes.Leave, doneLabel);
-
-        // catch (OperationCanceledException) → SocketException(TimedOut)
-        il.BeginCatchBlock(typeof(OperationCanceledException));
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ldc_I4, (int)SocketError.TimedOut);
-        il.Emit(OpCodes.Newobj, typeof(SocketException).GetConstructor([_types.Int32])!);
-        il.Emit(OpCodes.Throw);
-
-        il.EndExceptionBlock();
 
         il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Ret);
@@ -1782,18 +1786,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, typeof(TcpClient).GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, tcpLocal);
 
-        // var cts = new CancellationTokenSource(5000)
-        var ctsLocal = il.DeclareLocal(typeof(CancellationTokenSource));
-        il.Emit(OpCodes.Ldc_I4, 5000);
-        il.Emit(OpCodes.Newobj, typeof(CancellationTokenSource).GetConstructor([_types.Int32])!);
-        il.Emit(OpCodes.Stloc, ctsLocal);
-
-        // var token = cts.Token
-        var tokenLocal = il.DeclareLocal(typeof(CancellationToken));
-        il.Emit(OpCodes.Ldloc, ctsLocal);
-        il.Emit(OpCodes.Callvirt, typeof(CancellationTokenSource).GetProperty("Token")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, tokenLocal);
-
         il.BeginExceptionBlock();
 
         // tcp.SendTimeout = 5000
@@ -1801,17 +1793,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4, 5000);
         il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetProperty("SendTimeout")!.GetSetMethod()!);
 
-        // tcp.ConnectAsync(server, 53, token).AsTask().GetAwaiter().GetResult()
+        // tcp.ConnectAsync(server, 53).WaitAsync(TimeSpan.FromMilliseconds(5000)).GetAwaiter().GetResult()
         il.Emit(OpCodes.Ldloc, tcpLocal);
         il.Emit(OpCodes.Ldarg_1); // server
         il.Emit(OpCodes.Ldc_I4, 53);
-        il.Emit(OpCodes.Ldloc, tokenLocal);
-        il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetMethod("ConnectAsync", [_types.String, _types.Int32, typeof(CancellationToken)])!);
-        // Returns ValueTask — AsTask().GetAwaiter().GetResult()
-        var connectVtLocal = il.DeclareLocal(typeof(ValueTask));
-        il.Emit(OpCodes.Stloc, connectVtLocal);
-        il.Emit(OpCodes.Ldloca, connectVtLocal);
-        il.Emit(OpCodes.Call, typeof(ValueTask).GetMethod("AsTask")!);
+        il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetMethod("ConnectAsync", [_types.String, _types.Int32])!);
+        // Task.WaitAsync(TimeSpan) for reliable timeout
+        il.Emit(OpCodes.Ldc_R8, 5000.0);
+        il.Emit(OpCodes.Call, typeof(TimeSpan).GetMethod("FromMilliseconds", [typeof(double)])!);
+        il.Emit(OpCodes.Callvirt, typeof(Task).GetMethod("WaitAsync", [typeof(TimeSpan)])!);
         var connectAwaiterLocal = il.DeclareLocal(typeof(TaskAwaiter));
         il.Emit(OpCodes.Callvirt, typeof(Task).GetMethod("GetAwaiter")!);
         il.Emit(OpCodes.Stloc, connectAwaiterLocal);
@@ -1880,12 +1870,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newarr, _types.Byte);
         il.Emit(OpCodes.Stloc, respLenBufLocal);
 
-        // DnsReadExact(stream, respLenBuf, 0, 2, token)
+        // DnsReadExact(stream, respLenBuf, 0, 2)
         il.Emit(OpCodes.Ldloc, streamLocal);
         il.Emit(OpCodes.Ldloc, respLenBufLocal);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldloc, tokenLocal);
         il.Emit(OpCodes.Call, runtime.DnsReadExact);
 
         // int respLen = (respLenBuf[0] << 8) | respLenBuf[1]
@@ -1906,20 +1895,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newarr, _types.Byte);
         il.Emit(OpCodes.Stloc, resultLocal);
 
-        // DnsReadExact(stream, response, 0, respLen, token)
+        // DnsReadExact(stream, response, 0, respLen)
         il.Emit(OpCodes.Ldloc, streamLocal);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldloc, respLenLocal);
-        il.Emit(OpCodes.Ldloc, tokenLocal);
         il.Emit(OpCodes.Call, runtime.DnsReadExact);
 
         il.Emit(OpCodes.Leave, returnLabel);
 
-        // finally: cts.Dispose(); tcp.Dispose()
+        // catch (TimeoutException) → convert to SocketException for outer retry
+        il.BeginCatchBlock(typeof(TimeoutException));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4, (int)SocketError.TimedOut);
+        il.Emit(OpCodes.Newobj, typeof(SocketException).GetConstructor([_types.Int32])!);
+        il.Emit(OpCodes.Throw);
+
+        // finally: tcp.Dispose()
         il.BeginFinallyBlock();
-        il.Emit(OpCodes.Ldloc, ctsLocal);
-        il.Emit(OpCodes.Callvirt, typeof(CancellationTokenSource).GetMethod("Dispose", Type.EmptyTypes)!);
         il.Emit(OpCodes.Ldloc, tcpLocal);
         il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetMethod("Dispose", Type.EmptyTypes)!);
         il.EndExceptionBlock();
@@ -1998,61 +1991,60 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetMethod("Send", [typeof(byte[]), _types.Int32, typeof(IPEndPoint)])!);
         il.Emit(OpCodes.Pop); // discard send count
 
-        // Use ReceiveAsync + CancellationToken for reliable timeout.
-        // Socket.ReceiveTimeout (SO_RCVTIMEO) is unreliable on macOS ARM64
+        // Use Task.Wait(timeout) for reliable cross-platform timeout.
+        // Neither Socket.ReceiveTimeout (SO_RCVTIMEO) nor CancellationToken-based
+        // cancellation of ReceiveAsync works reliably on macOS ARM64
         // (dotnet/runtime#81378, #64551).
-
-        // var cts = new CancellationTokenSource(5000)
-        var ctsLocal = il.DeclareLocal(typeof(CancellationTokenSource)); // 5
-        il.Emit(OpCodes.Ldc_I4, 5000);
-        il.Emit(OpCodes.Newobj, typeof(CancellationTokenSource).GetConstructor([_types.Int32])!);
-        il.Emit(OpCodes.Stloc, ctsLocal);
-
-        // var token = cts.Token
-        var tokenLocal = il.DeclareLocal(typeof(CancellationToken)); // 6
-        il.Emit(OpCodes.Ldloc, ctsLocal);
-        il.Emit(OpCodes.Callvirt, typeof(CancellationTokenSource).GetProperty("Token")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, tokenLocal);
 
         var udpReceiveResultType = typeof(UdpReceiveResult);
         var valueTaskType = typeof(ValueTask<>).MakeGenericType(udpReceiveResultType);
         var taskType = typeof(Task<>).MakeGenericType(udpReceiveResultType);
-        var awaiterType = typeof(TaskAwaiter<>).MakeGenericType(udpReceiveResultType);
 
-        // ValueTask<UdpReceiveResult> vt = udp.ReceiveAsync(token)
-        var vtLocal = il.DeclareLocal(valueTaskType); // 7
+        // ValueTask<UdpReceiveResult> vt = udp.ReceiveAsync(CancellationToken.None)
+        var vtLocal = il.DeclareLocal(valueTaskType); // 5
+        var ctNoneLocal = il.DeclareLocal(typeof(CancellationToken)); // 6
+        il.Emit(OpCodes.Ldloca, ctNoneLocal);
+        il.Emit(OpCodes.Initobj, typeof(CancellationToken));
         il.Emit(OpCodes.Ldloc, udpLocal);
-        il.Emit(OpCodes.Ldloc, tokenLocal);
+        il.Emit(OpCodes.Ldloc, ctNoneLocal);
         il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetMethod("ReceiveAsync", [typeof(CancellationToken)])!);
         il.Emit(OpCodes.Stloc, vtLocal);
 
         // Task<UdpReceiveResult> task = vt.AsTask()
-        var taskLocal = il.DeclareLocal(taskType); // 8
+        var taskLocal = il.DeclareLocal(taskType); // 7
         il.Emit(OpCodes.Ldloca, vtLocal);
         il.Emit(OpCodes.Call, valueTaskType.GetMethod("AsTask")!);
         il.Emit(OpCodes.Stloc, taskLocal);
 
-        // TaskAwaiter<UdpReceiveResult> awaiter = task.GetAwaiter()
-        var awaiterLocal = il.DeclareLocal(awaiterType); // 9
+        // if (!task.Wait(5000)) { udp.Close(); throw SocketException(TimedOut); }
         il.Emit(OpCodes.Ldloc, taskLocal);
-        il.Emit(OpCodes.Callvirt, taskType.GetMethod("GetAwaiter")!);
-        il.Emit(OpCodes.Stloc, awaiterLocal);
+        il.Emit(OpCodes.Ldc_I4, 5000);
+        il.Emit(OpCodes.Callvirt, typeof(Task).GetMethod("Wait", [_types.Int32])!);
+        var waitOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, waitOkLabel);
 
-        // UdpReceiveResult udpResult = awaiter.GetResult()
-        var udpResultLocal = il.DeclareLocal(udpReceiveResultType); // 10
-        il.Emit(OpCodes.Ldloca, awaiterLocal);
-        il.Emit(OpCodes.Call, awaiterType.GetMethod("GetResult")!);
+        // Timeout: close socket and throw
+        il.Emit(OpCodes.Ldloc, udpLocal);
+        il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetMethod("Close", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ldc_I4, (int)SocketError.TimedOut);
+        il.Emit(OpCodes.Newobj, typeof(SocketException).GetConstructor([_types.Int32])!);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(waitOkLabel);
+
+        // UdpReceiveResult udpResult = task.Result
+        var udpResultLocal = il.DeclareLocal(udpReceiveResultType); // 8
+        il.Emit(OpCodes.Ldloc, taskLocal);
+        il.Emit(OpCodes.Callvirt, taskType.GetProperty("Result")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, udpResultLocal);
 
         // byte[] response = udpResult.Buffer
-        var responseLocal = il.DeclareLocal(typeof(byte[])); // 11
+        var responseLocal = il.DeclareLocal(typeof(byte[])); // 9
         il.Emit(OpCodes.Ldloca, udpResultLocal);
         il.Emit(OpCodes.Call, udpReceiveResultType.GetProperty("Buffer")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, responseLocal);
 
-        // cts.Dispose(); udp.Dispose()
-        il.Emit(OpCodes.Ldloc, ctsLocal);
-        il.Emit(OpCodes.Callvirt, typeof(CancellationTokenSource).GetMethod("Dispose", Type.EmptyTypes)!);
+        // udp.Dispose()
         il.Emit(OpCodes.Ldloc, udpLocal);
         il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetMethod("Dispose", Type.EmptyTypes)!);
 
@@ -2085,13 +2077,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, responseLocal);
         il.Emit(OpCodes.Stloc, resultLocal);
         il.Emit(OpCodes.Leave, returnLabel);
-
-        // catch (OperationCanceledException) → convert to SocketException for retry logic
-        il.BeginCatchBlock(typeof(OperationCanceledException));
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ldc_I4, (int)SocketError.TimedOut);
-        il.Emit(OpCodes.Newobj, typeof(SocketException).GetConstructor([_types.Int32])!);
-        il.Emit(OpCodes.Throw);
 
         // catch (SocketException) when (attempt < MaxRetries)
         il.BeginCatchBlock(typeof(SocketException));

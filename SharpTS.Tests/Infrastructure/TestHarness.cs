@@ -532,19 +532,42 @@ public static class TestHarness
 
             string entryPath = Path.Combine(tempDir, entryPoint.TrimStart('.', '/', '\\'));
 
-            var sw = new StringWriter();
+            // Run in a task with timeout to prevent infinite hangs (e.g., DNS on macOS)
+            var task = Task.Run(() =>
+            {
+                var sw = new StringWriter();
 
-            var resolver = new ModuleResolver(entryPath);
-            var entryModule = resolver.LoadModule(entryPath);
-            var allModules = resolver.GetModulesInOrder(entryModule);
+                var resolver = new ModuleResolver(entryPath);
+                var entryModule = resolver.LoadModule(entryPath);
+                var allModules = resolver.GetModulesInOrder(entryModule);
 
-            var checker = new TypeChecker();
-            var typeMap = checker.CheckModules(allModules, resolver);
+                var checker = new TypeChecker();
+                var typeMap = checker.CheckModules(allModules, resolver);
 
-            using var interpreter = new Interpreter(stdout: sw, stderr: TextWriter.Null);
-            interpreter.InterpretModules(allModules, resolver, typeMap);
+                using var interpreter = new Interpreter(stdout: sw, stderr: TextWriter.Null);
+                interpreter.InterpretModules(allModules, resolver, typeMap);
 
-            return sw.ToString().Replace("\r\n", "\n");
+                return sw.ToString().Replace("\r\n", "\n");
+            });
+
+            try
+            {
+                if (task.Wait(DefaultTimeout))
+                {
+                    return task.Result;
+                }
+
+                throw new TimeoutException(
+                    $"Interpreted module execution exceeded {DefaultTimeout.TotalSeconds}s timeout.");
+            }
+            catch (AggregateException ex)
+            {
+                if (ex.InnerExceptions.Count == 1)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
+                }
+                throw;
+            }
         }
         finally
         {

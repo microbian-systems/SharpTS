@@ -41,3 +41,4 @@ jobs:
 
       - name: Test
         run: dotnet test --no-build --configuration Release --verbosity normal
+        timeout-minutes: 10
