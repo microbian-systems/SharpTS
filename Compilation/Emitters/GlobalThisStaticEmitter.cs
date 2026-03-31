@@ -19,13 +19,43 @@ public sealed class GlobalThisStaticEmitter : IStaticTypeEmitterStrategy
 
     /// <summary>
     /// Attempts to emit IL for a globalThis method call.
-    /// Delegates to the appropriate static emitter for known built-ins.
+    /// Emits direct runtime calls for parseInt/parseFloat/isNaN/isFinite.
     /// </summary>
     public bool TryEmitStaticCall(IEmitterContext emitter, string methodName, List<Expr> arguments)
     {
-        // globalThis doesn't have direct methods - calls like globalThis.parseInt()
-        // are handled through property access (globalThis.parseInt) then call
-        return false;
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        switch (methodName)
+        {
+            case "parseInt":
+                if (arguments.Count > 0) { emitter.EmitExpression(arguments[0]); emitter.EmitBoxIfNeeded(arguments[0]); } else { il.Emit(OpCodes.Ldnull); }
+                if (arguments.Count > 1) { emitter.EmitExpression(arguments[1]); emitter.EmitBoxIfNeeded(arguments[1]); } else { il.Emit(OpCodes.Ldc_I4, 10); il.Emit(OpCodes.Box, ctx.Types.Int32); }
+                il.Emit(OpCodes.Call, ctx.Runtime!.NumberParseInt);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "parseFloat":
+                if (arguments.Count > 0) { emitter.EmitExpression(arguments[0]); emitter.EmitBoxIfNeeded(arguments[0]); } else { il.Emit(OpCodes.Ldnull); }
+                il.Emit(OpCodes.Call, ctx.Runtime!.NumberParseFloat);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "isNaN":
+                if (arguments.Count > 0) { emitter.EmitExpression(arguments[0]); emitter.EmitBoxIfNeeded(arguments[0]); } else { il.Emit(OpCodes.Ldnull); }
+                il.Emit(OpCodes.Call, ctx.Runtime!.GlobalIsNaN);
+                il.Emit(OpCodes.Box, ctx.Types.Boolean);
+                return true;
+
+            case "isFinite":
+                if (arguments.Count > 0) { emitter.EmitExpression(arguments[0]); emitter.EmitBoxIfNeeded(arguments[0]); } else { il.Emit(OpCodes.Ldnull); }
+                il.Emit(OpCodes.Call, ctx.Runtime!.GlobalIsFinite);
+                il.Emit(OpCodes.Box, ctx.Types.Boolean);
+                return true;
+
+            default:
+                return false;
+        }
     }
 
     /// <summary>

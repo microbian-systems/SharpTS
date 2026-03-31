@@ -1556,6 +1556,13 @@ public partial class ILEmitter
         if (expr is not Expr.Get g || g.Object is not Expr.Variable v)
             return false;
 
+        var varName = v.Name.Lexeme;
+
+        // globalThis is a general-purpose object — typeof globalThis.X must evaluate at runtime
+        // because properties can be objects, functions, or undefined depending on the name.
+        if (varName == "globalThis")
+            return false;
+
         // If the type checker resolved this expression as a function type, it's a method
         if (_ctx.TypeMap != null)
         {
@@ -1564,7 +1571,6 @@ public partial class ILEmitter
                 return true;
         }
 
-        var varName = v.Name.Lexeme;
         var memberName = g.Name.Lexeme;
 
         // Check module namespace methods (util.format, readline.questionSync, etc.)

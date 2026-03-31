@@ -319,6 +319,17 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitGetIndex(Expr.GetIndex gi)
     {
+        // globalThis[key] → GlobalThisGetProperty(key)
+        if (gi.Object is Expr.Variable gtGetIdx && gtGetIdx.Name.Lexeme == "globalThis")
+        {
+            EmitExpression(gi.Index);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Callvirt, Types.Object.GetMethod("ToString")!);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GlobalThisGetProperty);
+            SetStackUnknown();
+            return;
+        }
+
         EmitExpression(gi.Object);
         EnsureBoxed();
         EmitExpression(gi.Index);
@@ -334,6 +345,23 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitSetIndex(Expr.SetIndex si)
     {
+        // globalThis[key] = value → GlobalThisSetProperty(key, value)
+        if (si.Object is Expr.Variable gtSetIdx && gtSetIdx.Name.Lexeme == "globalThis")
+        {
+            EmitExpression(si.Value);
+            EnsureBoxed();
+            var valueTemp = IL.DeclareLocal(typeof(object));
+            IL.Emit(OpCodes.Stloc, valueTemp);
+            EmitExpression(si.Index);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Callvirt, Types.Object.GetMethod("ToString")!);
+            IL.Emit(OpCodes.Ldloc, valueTemp);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GlobalThisSetProperty);
+            IL.Emit(OpCodes.Ldloc, valueTemp);
+            SetStackUnknown();
+            return;
+        }
+
         EmitExpression(si.Value);
         EnsureBoxed();
         var valueLocal = IL.DeclareLocal(typeof(object));
@@ -441,6 +469,21 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitSet(Expr.Set s)
     {
+        // Handle globalThis.x = value
+        if (s.Object is Expr.Variable gtVar && gtVar.Name.Lexeme == "globalThis")
+        {
+            EmitExpression(s.Value);
+            EnsureBoxed();
+            var gtResultTemp = IL.DeclareLocal(typeof(object));
+            IL.Emit(OpCodes.Stloc, gtResultTemp);
+            IL.Emit(OpCodes.Ldstr, s.Name.Lexeme);
+            IL.Emit(OpCodes.Ldloc, gtResultTemp);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GlobalThisSetProperty);
+            IL.Emit(OpCodes.Ldloc, gtResultTemp);
+            SetStackUnknown();
+            return;
+        }
+
         // Handle static field assignment: Class.field = value
         if (s.Object is Expr.Variable classVar &&
             Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out _))

@@ -16,6 +16,33 @@ public partial class RuntimeEmitter
             _types.Object,
             FieldAttributes.Private | FieldAttributes.Static);
 
+        // Static fields for cached global function TSFunction objects
+        runtime.CachedParseIntFunction = typeBuilder.DefineField(
+            "_cachedParseIntFunction",
+            _types.Object,
+            FieldAttributes.Private | FieldAttributes.Static);
+
+        runtime.CachedParseFloatFunction = typeBuilder.DefineField(
+            "_cachedParseFloatFunction",
+            _types.Object,
+            FieldAttributes.Private | FieldAttributes.Static);
+
+        runtime.CachedIsNaNFunction = typeBuilder.DefineField(
+            "_cachedIsNaNFunction",
+            _types.Object,
+            FieldAttributes.Private | FieldAttributes.Static);
+
+        runtime.CachedIsFiniteFunction = typeBuilder.DefineField(
+            "_cachedIsFiniteFunction",
+            _types.Object,
+            FieldAttributes.Private | FieldAttributes.Static);
+
+        // Static dictionary for user-assigned globalThis properties
+        runtime.GlobalThisProperties = typeBuilder.DefineField(
+            "_globalThisProperties",
+            _types.DictionaryStringObject,
+            FieldAttributes.Private | FieldAttributes.Static);
+
         EmitGlobalThisGetProperty(typeBuilder, runtime);
         EmitGlobalThisSetProperty(typeBuilder, runtime);
     }
@@ -37,18 +64,32 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // For now, a simple implementation that returns undefined for unknown properties
-        // In a full implementation, this would:
-        // 1. Check user-assigned properties stored in a dictionary
-        // 2. Check for built-in globals (Math, JSON, etc.)
-        // 3. Return undefined if not found
-
         var selfRefLabel = il.DefineLabel();
         var undefinedPropLabel = il.DefineLabel();
         var nanLabel = il.DefineLabel();
         var infinityLabel = il.DefineLabel();
         var fetchLabel = il.DefineLabel();
+        var parseIntLabel = il.DefineLabel();
+        var parseFloatLabel = il.DefineLabel();
+        var isNaNLabel = il.DefineLabel();
+        var isFiniteLabel = il.DefineLabel();
         var returnLabel = il.DefineLabel();
+        var checkBuiltInsLabel = il.DefineLabel();
+
+        // --- Check user-assigned properties dictionary first ---
+        var valueLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisProperties);
+        il.Emit(OpCodes.Brfalse, checkBuiltInsLabel); // dict not initialized yet
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisProperties);
+        il.Emit(OpCodes.Ldarg_0); // name
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        var dictTryGetValue = _types.GetMethod(_types.DictionaryStringObject, "TryGetValue", _types.String, _types.Object.MakeByRefType());
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        il.Emit(OpCodes.Brfalse, checkBuiltInsLabel); // not found in dict
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Br, returnLabel);
+
+        il.MarkLabel(checkBuiltInsLabel);
 
         // Check for "globalThis" (self-reference)
         il.Emit(OpCodes.Ldarg_0);
@@ -80,6 +121,48 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brtrue, fetchLabel);
 
+        // Check for "parseInt"
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "parseInt");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, parseIntLabel);
+
+        // Check for "parseFloat"
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "parseFloat");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, parseFloatLabel);
+
+        // Check for "isNaN"
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "isNaN");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, isNaNLabel);
+
+        // Check for "isFinite"
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "isFinite");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, isFiniteLabel);
+
+        // Check for known built-in namespaces — return null (namespace marker) for dynamic access
+        // These are normally resolved statically at compile time, but dynamic index access
+        // (e.g., globalThis["Math"]) needs runtime dispatch.
+        var strEquals = _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String);
+        string[] namespaces =
+        [
+            "Math", "JSON", "console", "Object", "Array", "Date", "RegExp",
+            "Map", "Set", "WeakMap", "WeakSet", "Error", "Reflect",
+            "process", "Number", "String", "Boolean", "Symbol", "Promise", "Buffer"
+        ];
+        foreach (var ns in namespaces)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, ns);
+            il.Emit(OpCodes.Call, strEquals);
+            il.Emit(OpCodes.Brtrue, selfRefLabel); // null marker, same as static namespace access
+        }
+
         // Default: return undefined
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Br, returnLabel);
@@ -106,20 +189,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // fetch property - return cached fetch TSFunction for reference equality
+        // fetch property - return cached fetch TSFunction
         il.MarkLabel(fetchLabel);
-        var fetchCachedLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldsfld, runtime.CachedFetchFunction);
-        il.Emit(OpCodes.Brtrue, fetchCachedLabel);
-        // Create and cache the fetch TSFunction
-        il.Emit(OpCodes.Ldnull); // target (static method)
-        il.Emit(OpCodes.Ldtoken, runtime.Fetch);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle", _types.RuntimeMethodHandle));
-        il.Emit(OpCodes.Castclass, _types.MethodInfo);
-        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
-        il.Emit(OpCodes.Stsfld, runtime.CachedFetchFunction);
-        il.MarkLabel(fetchCachedLabel);
-        il.Emit(OpCodes.Ldsfld, runtime.CachedFetchFunction);
+        EmitCachedTSFunction(il, runtime.CachedFetchFunction, runtime.Fetch, runtime);
+        il.Emit(OpCodes.Br, returnLabel);
+
+        // parseInt - return cached TSFunction wrapping NumberParseInt
+        il.MarkLabel(parseIntLabel);
+        EmitCachedTSFunction(il, runtime.CachedParseIntFunction, runtime.NumberParseInt, runtime);
+        il.Emit(OpCodes.Br, returnLabel);
+
+        // parseFloat - return cached TSFunction wrapping NumberParseFloat
+        il.MarkLabel(parseFloatLabel);
+        EmitCachedTSFunction(il, runtime.CachedParseFloatFunction, runtime.NumberParseFloat, runtime);
+        il.Emit(OpCodes.Br, returnLabel);
+
+        // isNaN - return cached TSFunction wrapping NumberIsNaN
+        il.MarkLabel(isNaNLabel);
+        EmitCachedTSFunction(il, runtime.CachedIsNaNFunction, runtime.NumberIsNaN, runtime);
+        il.Emit(OpCodes.Br, returnLabel);
+
+        // isFinite - return cached TSFunction wrapping NumberIsFinite
+        il.MarkLabel(isFiniteLabel);
+        EmitCachedTSFunction(il, runtime.CachedIsFiniteFunction, runtime.NumberIsFinite, runtime);
         il.Emit(OpCodes.Br, returnLabel);
 
         il.MarkLabel(returnLabel);
@@ -127,8 +219,28 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits IL to load a cached TSFunction, creating it lazily if null.
+    /// Pattern: if (cachedField == null) { cachedField = new TSFunction(null, methodInfo); } push cachedField;
+    /// </summary>
+    private void EmitCachedTSFunction(ILGenerator il, FieldBuilder cachedField, MethodBuilder wrappedMethod, EmittedRuntime runtime)
+    {
+        var alreadyCachedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, cachedField);
+        il.Emit(OpCodes.Brtrue, alreadyCachedLabel);
+        // Create and cache the TSFunction
+        il.Emit(OpCodes.Ldnull); // target (static method)
+        il.Emit(OpCodes.Ldtoken, wrappedMethod);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle", _types.RuntimeMethodHandle));
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Stsfld, cachedField);
+        il.MarkLabel(alreadyCachedLabel);
+        il.Emit(OpCodes.Ldsfld, cachedField);
+    }
+
+    /// <summary>
     /// Emits: public static void GlobalThisSetProperty(string name, object value)
-    /// Sets a property on globalThis (user-assigned properties).
+    /// Sets a property on globalThis, storing in a static dictionary.
     /// </summary>
     private void EmitGlobalThisSetProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -142,11 +254,21 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // For now, a no-op implementation
-        // In a full implementation, this would store the property in a static dictionary
-        // Note: This is intentionally a no-op for compiled code since there's no persistent
-        // globalThis object in compiled assemblies. User-assigned properties would be
-        // lost between executions anyway.
+        // Lazily initialize the dictionary: if (_globalThisProperties == null) _globalThisProperties = new();
+        var dictReadyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisProperties);
+        il.Emit(OpCodes.Brtrue, dictReadyLabel);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Stsfld, runtime.GlobalThisProperties);
+        il.MarkLabel(dictReadyLabel);
+
+        // _globalThisProperties[name] = value
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisProperties);
+        il.Emit(OpCodes.Ldarg_0); // name
+        il.Emit(OpCodes.Ldarg_1); // value
+        var dictSetItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object);
+        il.Emit(OpCodes.Callvirt, dictSetItem);
+
         il.Emit(OpCodes.Ret);
     }
 }

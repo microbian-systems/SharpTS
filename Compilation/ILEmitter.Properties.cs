@@ -262,6 +262,21 @@ public partial class ILEmitter
 
     protected override void EmitSet(Expr.Set s)
     {
+        // Handle globalThis.x = value
+        if (s.Object is Expr.Variable gtVar && gtVar.Name.Lexeme == "globalThis")
+        {
+            EmitExpression(s.Value);
+            EnsureBoxed();
+            var gtResultTemp = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, gtResultTemp);
+            IL.Emit(OpCodes.Ldstr, s.Name.Lexeme);
+            IL.Emit(OpCodes.Ldloc, gtResultTemp);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GlobalThisSetProperty);
+            IL.Emit(OpCodes.Ldloc, gtResultTemp); // expression result
+            SetStackUnknown();
+            return;
+        }
+
         // Handle process.exitCode assignment
         if (s.Object is Expr.Variable processVar && processVar.Name.Lexeme == "process" && s.Name.Lexeme == "exitCode")
         {
@@ -438,6 +453,17 @@ public partial class ILEmitter
 
     protected override void EmitGetIndex(Expr.GetIndex gi)
     {
+        // globalThis[key] → GlobalThisGetProperty(key)
+        if (gi.Object is Expr.Variable gtGetIdx && gtGetIdx.Name.Lexeme == "globalThis")
+        {
+            EmitExpression(gi.Index);
+            EmitBoxIfNeeded(gi.Index);
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.Object.GetMethod("ToString")!);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GlobalThisGetProperty);
+            SetStackUnknown();
+            return;
+        }
+
         // Enum reverse mapping: Direction[0] -> "Up"
         if (gi.Object is Expr.Variable enumVar &&
             _ctx.EnumReverse?.TryGetValue(_ctx.ResolveEnumName(enumVar.Name.Lexeme), out var reverse) == true)
@@ -602,6 +628,23 @@ public partial class ILEmitter
 
     protected override void EmitSetIndex(Expr.SetIndex si)
     {
+        // globalThis[key] = value → GlobalThisSetProperty(key, value)
+        if (si.Object is Expr.Variable gtSetIdx && gtSetIdx.Name.Lexeme == "globalThis")
+        {
+            EmitExpression(si.Value);
+            EnsureBoxed();
+            var valueTemp = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, valueTemp);
+            EmitExpression(si.Index);
+            EmitBoxIfNeeded(si.Index);
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.Object.GetMethod("ToString")!);
+            IL.Emit(OpCodes.Ldloc, valueTemp);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GlobalThisSetProperty);
+            IL.Emit(OpCodes.Ldloc, valueTemp); // expression result
+            SetStackUnknown();
+            return;
+        }
+
         // Descriptor-driven fast path: when receiver is statically known to be an array,
         // emit direct List<T> access with auto-extension — skips runtime type dispatch,
         // index boxing, and Convert.ToInt32(object) overhead.
@@ -1119,23 +1162,45 @@ public partial class ILEmitter
     }
 
     /// <summary>
+    /// Returns true if the expression statically resolves to globalThis.
+    /// Handles Var("globalThis") and any chain of globalThis.globalThis.globalThis...
+    /// </summary>
+    private static bool IsGlobalThisExpression(Expr expr) => expr switch
+    {
+        Expr.Variable v when v.Name.Lexeme == "globalThis" => true,
+        Expr.Get g when g.Name.Lexeme == "globalThis" => IsGlobalThisExpression(g.Object),
+        _ => false
+    };
+
+    /// <summary>
     /// Tries to emit IL for globalThis chained property access like globalThis.Math.PI, globalThis.console.log, etc.
     /// Returns true if the property was handled.
     /// </summary>
     private bool TryEmitGlobalThisChainedProperty(Expr.Get g)
     {
-        // Pattern: globalThis.Math.PI, globalThis.console.log, etc.
-        // g.Object is Expr.Get { Object: Expr.Variable("globalThis"), Name: "Math/JSON/console/etc" }
+        // Pattern: globalThis.Math.PI, globalThis.globalThis.Math.PI, etc.
+        // g.Object is Expr.Get { Object: <globalThis-expression>, Name: "Math/JSON/console/etc" }
         // g.Name.Lexeme is "PI/parse/log/etc"
 
         if (g.Object is not Expr.Get innerGet)
             return false;
 
-        if (innerGet.Object is not Expr.Variable globalThisVar || globalThisVar.Name.Lexeme != "globalThis")
+        if (!IsGlobalThisExpression(innerGet.Object))
             return false;
 
         string namespaceName = innerGet.Name.Lexeme;
         string propertyName = g.Name.Lexeme;
+
+        // Handle globalThis.globalThis.X case (self-reference chain)
+        if (namespaceName == "globalThis")
+        {
+            var selfStrategy = _ctx.TypeEmitterRegistry?.GetStaticStrategy("globalThis");
+            if (selfStrategy != null && selfStrategy.TryEmitStaticPropertyGet(this, propertyName))
+            {
+                SetStackUnknown();
+                return true;
+            }
+        }
 
         // Try to use the static emitter for the inner namespace
         var staticStrategy = _ctx.TypeEmitterRegistry?.GetStaticStrategy(namespaceName);
@@ -1143,18 +1208,6 @@ public partial class ILEmitter
         {
             SetStackUnknown();
             return true;
-        }
-
-        // Handle globalThis.globalThis.X case (self-reference)
-        if (namespaceName == "globalThis")
-        {
-            // Treat globalThis.globalThis as just globalThis
-            var selfStrategy = _ctx.TypeEmitterRegistry?.GetStaticStrategy("globalThis");
-            if (selfStrategy != null && selfStrategy.TryEmitStaticPropertyGet(this, propertyName))
-            {
-                SetStackUnknown();
-                return true;
-            }
         }
 
         return false;

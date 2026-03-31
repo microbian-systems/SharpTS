@@ -1052,6 +1052,11 @@ public class EmittedRuntime
     public MethodBuilder GlobalThisGetProperty { get; set; } = null!;
     public MethodBuilder GlobalThisSetProperty { get; set; } = null!;
     public FieldBuilder CachedFetchFunction { get; set; } = null!;
+    public FieldBuilder CachedParseIntFunction { get; set; } = null!;
+    public FieldBuilder CachedParseFloatFunction { get; set; } = null!;
+    public FieldBuilder CachedIsNaNFunction { get; set; } = null!;
+    public FieldBuilder CachedIsFiniteFunction { get; set; } = null!;
+    public FieldBuilder GlobalThisProperties { get; set; } = null!;
 
     // Crypto module methods
     public MethodBuilder CryptoCreateHash { get; set; } = null!;

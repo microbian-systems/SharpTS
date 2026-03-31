@@ -110,6 +110,21 @@ public partial class AsyncMoveNextEmitter
 
     protected override void EmitSet(Expr.Set s)
     {
+        // Handle globalThis.x = value
+        if (s.Object is Expr.Variable gtVar && gtVar.Name.Lexeme == "globalThis")
+        {
+            EmitExpression(s.Value);
+            EnsureBoxed();
+            var gtResultTemp = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Stloc, gtResultTemp);
+            _il.Emit(OpCodes.Ldstr, s.Name.Lexeme);
+            _il.Emit(OpCodes.Ldloc, gtResultTemp);
+            _il.Emit(OpCodes.Call, _ctx!.Runtime!.GlobalThisSetProperty);
+            _il.Emit(OpCodes.Ldloc, gtResultTemp);
+            SetStackUnknown();
+            return;
+        }
+
         // Handle static field assignment: Class.field = value
         if (s.Object is Expr.Variable classVar &&
             _ctx!.Classes.TryGetValue(_ctx.ResolveClassName(classVar.Name.Lexeme), out var classBuilder))
