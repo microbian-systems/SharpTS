@@ -7,20 +7,15 @@ namespace SharpTS.Tests.SharedTests;
 
 /// <summary>
 /// Tests for TypeScript decorators (both Legacy Stage 2 and TC39 Stage 3).
-/// Migrated from InterpreterTests.
-///
-/// Note: Compiled mode maps decorators to .NET attributes (see CompilerTests/DecoratorAttributeTests)
-/// rather than executing decorator functions at runtime. These tests cover the runtime execution
-/// semantics and are currently interpreter-only. When the compiler gains runtime decorator execution,
-/// these should be switched to ExecutionModes.All.
+/// Core decorator tests run in both interpreter and compiled modes.
+/// Reflect.metadata tests remain interpreter-only (separate effort).
 /// </summary>
 public class DecoratorTests
 {
     #region Legacy (Stage 2) Decorators
 
-    /// <summary>Compiled mode: decorators map to .NET attributes, not runtime function calls.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void LegacyClassDecorator_Simple(ExecutionMode mode)
     {
         const string source = """
@@ -38,9 +33,8 @@ public class DecoratorTests
         Assert.Equal("Class decorated\n", output);
     }
 
-    /// <summary>Compiled mode: decorators map to .NET attributes, not runtime function calls.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void LegacyClassDecorator_Factory(ExecutionMode mode)
     {
         const string source = """
@@ -61,9 +55,8 @@ public class DecoratorTests
         Assert.Equal("Tagged with: important\n", output);
     }
 
-    /// <summary>Compiled mode: decorators map to .NET attributes, not runtime function calls.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void LegacyMethodDecorator_Simple(ExecutionMode mode)
     {
         const string source = """
@@ -86,9 +79,8 @@ public class DecoratorTests
         Assert.Equal("Method decorated: greet\nHello!\n", output);
     }
 
-    /// <summary>Compiled mode: decorators map to .NET attributes, not runtime function calls.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void LegacyFieldDecorator_Simple(ExecutionMode mode)
     {
         const string source = """
@@ -109,9 +101,8 @@ public class DecoratorTests
         Assert.Equal("Field decorated: name\ntest\n", output);
     }
 
-    /// <summary>Compiled mode: decorators map to .NET attributes, not runtime function calls.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void LegacyMultipleDecorators_RightToLeft(ExecutionMode mode)
     {
         const string source = """
@@ -135,9 +126,8 @@ public class DecoratorTests
         Assert.Equal("second\nfirst\n", output);
     }
 
-    /// <summary>Compiled mode: decorators map to .NET attributes, not runtime function calls.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void LegacyParameterDecorator_Simple(ExecutionMode mode)
     {
         const string source = """
@@ -163,9 +153,8 @@ public class DecoratorTests
 
     #region TC39 Stage 3 Decorators
 
-    /// <summary>Compiled mode: decorators map to .NET attributes, not runtime function calls.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stage3ClassDecorator_Simple(ExecutionMode mode)
     {
         const string source = """
@@ -183,9 +172,8 @@ public class DecoratorTests
         Assert.Equal("Class class: MyClass\n", output);
     }
 
-    /// <summary>Compiled mode: decorators map to .NET attributes, not runtime function calls.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stage3MethodDecorator_Simple(ExecutionMode mode)
     {
         const string source = """
@@ -208,9 +196,8 @@ public class DecoratorTests
         Assert.Equal("Method method: greet\nHello!\n", output);
     }
 
-    /// <summary>Compiled mode: decorators map to .NET attributes, not runtime function calls.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stage3FieldDecorator_Simple(ExecutionMode mode)
     {
         const string source = """
@@ -231,9 +218,8 @@ public class DecoratorTests
         Assert.Equal("Field field: name\ntest\n", output);
     }
 
-    /// <summary>Compiled mode: decorators map to .NET attributes, not runtime function calls.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stage3Decorator_ContextStatic(ExecutionMode mode)
     {
         const string source = """

@@ -549,7 +549,16 @@ public partial class ILCompiler
         {
             // Skip class, function, interface, and enum declarations (already handled)
             // Note: Namespace statements are NOT skipped - they need to emit member storage
-            if (stmt is Stmt.Class or Stmt.Function or Stmt.Interface or Stmt.Enum)
+            if (stmt is Stmt.Class classDecl)
+            {
+                // Emit runtime decorator execution if decorators are present
+                if (_decoratorMode != DecoratorMode.None && HasAnyRuntimeDecorators(classDecl))
+                {
+                    EmitRuntimeDecorators(classDecl, emitter, il);
+                }
+                continue;
+            }
+            if (stmt is Stmt.Function or Stmt.Interface or Stmt.Enum)
             {
                 continue;
             }
