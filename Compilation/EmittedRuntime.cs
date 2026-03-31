@@ -1983,6 +1983,10 @@ public class EmittedRuntime
     public MethodBuilder DnsReadExact { get; set; } = null!;
     public MethodBuilder DnsEncodeName { get; set; } = null!;
 
+    // DNS promises namespace
+    public MethodBuilder DnsGetPromisesNamespace { get; set; } = null!;
+    public Dictionary<string, MethodBuilder> DnsPromisesWrapperMethods { get; set; } = new();
+
     // ============================================================
     // Private Field/Method Access Helpers for Async Contexts
     // ============================================================

@@ -659,6 +659,7 @@ public partial class ILCompiler
         _builtInModuleEmitterRegistry.Register(new HttpModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new WorkerThreadsModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new DnsModuleEmitter());
+        _builtInModuleEmitterRegistry.Register(new DnsPromisesModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new FsPromisesModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new NetModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new TlsModuleEmitter());

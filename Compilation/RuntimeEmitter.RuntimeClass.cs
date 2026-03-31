@@ -400,6 +400,7 @@ public partial class RuntimeEmitter
         EmitFsModuleMethods(typeBuilder, runtime);
         EmitOsModuleMethods(typeBuilder, runtime);
         EmitDnsModuleMethods(typeBuilder, runtime);
+        EmitDnsPromisesMethods(typeBuilder, runtime);
         // Emit wrapper methods for named imports
         EmitFsModuleMethodWrappers(typeBuilder, runtime);
         EmitPathModulePropertyWrappers(typeBuilder, runtime);

@@ -1,0 +1,126 @@
+using System.Reflection.Emit;
+using SharpTS.Parsing;
+
+namespace SharpTS.Compilation.Emitters.Modules;
+
+/// <summary>
+/// Emits IL code for the Node.js 'dns/promises' module.
+/// Promise-based async DNS resolution operations.
+/// </summary>
+public sealed class DnsPromisesModuleEmitter : IBuiltInModuleEmitter
+{
+    public string ModuleName => "dns/promises";
+
+    private static readonly string[] _exportedMembers =
+    [
+        "lookup", "resolve", "resolve4", "resolve6", "reverse",
+        "resolveMx", "resolveTxt", "resolveSrv", "resolveCname",
+        "resolveNs", "resolveSoa", "resolvePtr", "resolveCaa", "resolveNaptr"
+    ];
+
+    public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
+
+    public bool TryEmitMethodCall(IEmitterContext emitter, string methodName, List<Expr> arguments)
+    {
+        return methodName switch
+        {
+            "lookup" => EmitLookup(emitter, arguments),
+            "resolve" => EmitResolve(emitter, arguments),
+            "resolve4" => EmitSingleArg(emitter, arguments, "DnsPromisesResolve4"),
+            "resolve6" => EmitSingleArg(emitter, arguments, "DnsPromisesResolve6"),
+            "reverse" => EmitSingleArg(emitter, arguments, "DnsPromisesReverse"),
+            "resolveMx" => EmitSingleArg(emitter, arguments, "DnsPromisesResolveMx"),
+            "resolveTxt" => EmitSingleArg(emitter, arguments, "DnsPromisesResolveTxt"),
+            "resolveSrv" => EmitSingleArg(emitter, arguments, "DnsPromisesResolveSrv"),
+            "resolveCname" => EmitSingleArg(emitter, arguments, "DnsPromisesResolveCname"),
+            "resolveNs" => EmitSingleArg(emitter, arguments, "DnsPromisesResolveNs"),
+            "resolveSoa" => EmitSingleArg(emitter, arguments, "DnsPromisesResolveSoa"),
+            "resolvePtr" => EmitSingleArg(emitter, arguments, "DnsPromisesResolvePtr"),
+            "resolveCaa" => EmitSingleArg(emitter, arguments, "DnsPromisesResolveCaa"),
+            "resolveNaptr" => EmitSingleArg(emitter, arguments, "DnsPromisesResolveNaptr"),
+            _ => false
+        };
+    }
+
+    public bool TryEmitPropertyGet(IEmitterContext emitter, string propertyName)
+    {
+        return false;
+    }
+
+    /// <summary>Emits: RuntimeTypes.DnsPromisesXxx(hostname) → Task → WrapTaskAsPromise</summary>
+    private static bool EmitSingleArg(IEmitterContext emitter, List<Expr> arguments, string runtimeMethod)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        if (arguments.Count == 0)
+            il.Emit(OpCodes.Ldnull);
+        else
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+
+        // Wrappers already return $Promise (they call WrapTaskAsPromise internally)
+        il.Emit(OpCodes.Call, ctx.Runtime!.DnsPromisesWrapperMethods[runtimeMethod]);
+        return true;
+    }
+
+    /// <summary>Emits: RuntimeTypes.DnsPromisesLookup(hostname, options) → Task → WrapTaskAsPromise</summary>
+    private static bool EmitLookup(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // hostname
+        if (arguments.Count == 0)
+            il.Emit(OpCodes.Ldnull);
+        else
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+
+        // options
+        if (arguments.Count >= 2)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+            il.Emit(OpCodes.Ldnull);
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.DnsPromisesWrapperMethods["DnsPromisesLookup"]);
+        il.Emit(OpCodes.Call, ctx.Runtime!.WrapTaskAsPromise);
+        return true;
+    }
+
+    /// <summary>Emits: RuntimeTypes.DnsPromisesResolve(hostname, rrtype) → Task → WrapTaskAsPromise</summary>
+    private static bool EmitResolve(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // hostname
+        if (arguments.Count == 0)
+            il.Emit(OpCodes.Ldnull);
+        else
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+
+        // rrtype
+        if (arguments.Count >= 2)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+            il.Emit(OpCodes.Ldnull);
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.DnsPromisesWrapperMethods["DnsPromisesResolve"]);
+        il.Emit(OpCodes.Call, ctx.Runtime!.WrapTaskAsPromise);
+        return true;
+    }
+}

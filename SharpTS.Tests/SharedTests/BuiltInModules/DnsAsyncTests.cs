@@ -89,7 +89,7 @@ public class DnsAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void DnsPromises_Resolve4(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

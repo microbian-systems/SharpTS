@@ -20,6 +20,7 @@ public sealed class DnsModuleEmitter : IBuiltInModuleEmitter
         "resolve", "resolve4", "resolve6", "reverse",
         "resolveMx", "resolveTxt", "resolveSrv", "resolveCname", "resolveNs",
         "resolveSoa", "resolvePtr", "resolveCaa", "resolveNaptr",
+        "promises",
         "ADDRCONFIG", "V4MAPPED", "ALL",
         "NODATA", "FORMERR", "SERVFAIL", "NOTFOUND", "NOTIMP", "REFUSED",
         "BADQUERY", "BADNAME", "BADFAMILY", "BADRESP", "CONNREFUSED", "TIMEOUT",
@@ -48,6 +49,7 @@ public sealed class DnsModuleEmitter : IBuiltInModuleEmitter
         {
             "lookup" => EmitLookupProperty(emitter),
             "lookupService" => EmitLookupServiceProperty(emitter),
+            "promises" => EmitPromisesProperty(emitter),
             "ADDRCONFIG" => EmitConstant(il, 1.0),
             "V4MAPPED" => EmitConstant(il, 2.0),
             "ALL" => EmitConstant(il, 4.0),
@@ -77,6 +79,14 @@ public sealed class DnsModuleEmitter : IBuiltInModuleEmitter
             "CANCELLED" => EmitStringConstant(il, "ECANCELLED"),
             _ => false
         };
+    }
+
+    private static bool EmitPromisesProperty(IEmitterContext emitter)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        il.Emit(OpCodes.Call, ctx.Runtime!.DnsGetPromisesNamespace);
+        return true;
     }
 
     private static bool EmitLookupProperty(IEmitterContext emitter)
