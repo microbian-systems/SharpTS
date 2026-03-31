@@ -1226,6 +1226,14 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual bool TryEmitGlobalVariable(string name)
     {
+        // JavaScript global constants — must be checked before user-defined variables
+        // ILEmitter.EmitVariable handles these too, but state machine emitters
+        // (Async/Generator/AsyncGenerator MoveNextEmitter, AsyncArrowMoveNextEmitter)
+        // inherit from this base class and need them here.
+        if (name == "NaN") { EmitDoubleConstant(double.NaN); return true; }
+        if (name == "Infinity") { EmitDoubleConstant(double.PositiveInfinity); return true; }
+        if (name == "undefined") { EmitUndefinedConstant(); return true; }
+
         if (Ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
         {
             IL.Emit(OpCodes.Ldsfld, topLevelField);

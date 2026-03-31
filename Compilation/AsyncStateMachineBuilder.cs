@@ -40,6 +40,9 @@ public class AsyncStateMachineBuilder
     // Self-reference field (boxed) for passing to nested async arrows
     public FieldBuilder? SelfBoxedField { get; private set; }
 
+    // Function display class field for captured-by-closure locals
+    public FieldBuilder? FunctionDCField { get; private set; }
+
     // Flag to track if default parameters have been applied (prevents re-evaluation on resume)
     public FieldBuilder? DefaultsAppliedField { get; private set; }
 
@@ -260,6 +263,17 @@ public class AsyncStateMachineBuilder
         // Mark as implementing IAsyncStateMachine.SetStateMachine
         var interfaceMethod = _types.GetMethod(_types.IAsyncStateMachine, "SetStateMachine", [_types.IAsyncStateMachine]);
         _stateMachineType.DefineMethodOverride(SetStateMachineMethod, interfaceMethod);
+    }
+
+    /// <summary>
+    /// Adds a field to hold the function display class instance for closure mutation sharing.
+    /// </summary>
+    public void DefineFunctionDisplayClassField(Type dcType)
+    {
+        FunctionDCField = _stateMachineType.DefineField(
+            "<>__functionDC",
+            dcType,
+            FieldAttributes.Public);
     }
 
     /// <summary>

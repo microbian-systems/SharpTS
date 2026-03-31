@@ -57,6 +57,11 @@ public class EmitterSyncTests
             "EmitNullishCoalescing", // Nullish coalescing with await-safe evaluation
             "EmitTemplateLiteral",  // Template literals with await-safe temp storage
             "EmitTaggedTemplateLiteral", // Tagged template literals in async context
+            // --- Closure mutation sharing ---
+            "EmitVariable",         // Route captured function locals through function DC
+            "EmitAssign",           // Route captured function locals through function DC
+            "EmitStoreVariable",    // Route captured function locals through function DC
+            "EmitVarDeclaration",   // Route captured function locals through function DC
         },
         [typeof(AsyncArrowMoveNextEmitter)] = new()
         {

@@ -499,7 +499,7 @@ public class PerfHooksModuleTests
         {
             ["main.ts"] = """
                 import { performance, PerformanceObserver } from 'perf_hooks';
-                // Use console.log directly from callback to avoid closure limitations in compiled mode
+                // Use console.log directly from callback
                 const observer = new PerformanceObserver((list: any) => {
                     console.log('callback-fired');
                 });

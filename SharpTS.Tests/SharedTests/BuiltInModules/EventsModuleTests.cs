@@ -5,8 +5,6 @@ namespace SharpTS.Tests.SharedTests.BuiltInModules;
 
 /// <summary>
 /// Tests for the events module EventEmitter class.
-/// Note: Due to compiler closure limitations, some tests use arrays (reference types)
-/// instead of captured primitives for verification.
 /// </summary>
 public class EventsModuleTests
 {

@@ -119,6 +119,10 @@ public partial class ILCompiler
         // Maps function to its display class fields (variable name -> field)
         public Dictionary<string, Dictionary<string, FieldBuilder>> FunctionDisplayClassFields { get; } = [];
 
+        // Variables captured by async arrows that should be excluded from function DCs
+        // (they use the hoisted field mechanism and would conflict with the DC)
+        public Dictionary<string, HashSet<string>> AsyncCapturedVarsExclusion { get; } = [];
+
         // Maps function to its AST node (needed for ClosureAnalyzer lookups)
         public Dictionary<string, object> FunctionAstNodes { get; } = [];
 

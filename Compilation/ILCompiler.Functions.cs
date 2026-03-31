@@ -135,6 +135,16 @@ public partial class ILCompiler
         if (capturedLocals.Count == 0)
             return;
 
+        // For async functions, exclude variables that are also captured by async arrows.
+        // Those use the hoisted field mechanism and would conflict with the function DC.
+        if (_closures.AsyncCapturedVarsExclusion.TryGetValue(qualifiedFunctionName, out var exclusions))
+        {
+            capturedLocals = new HashSet<string>(capturedLocals);
+            capturedLocals.ExceptWith(exclusions);
+            if (capturedLocals.Count == 0)
+                return;
+        }
+
         // Create display class type
         var displayClass = _moduleBuilder.DefineType(
             $"<>c__FuncDisplayClass_{qualifiedFunctionName.Replace(".", "_")}_{_closures.DisplayClassCounter++}",

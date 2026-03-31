@@ -65,20 +65,45 @@ public class LocalVariableResolver : IVariableResolver
                 // Direct access from function body - use the local
                 _il.Emit(OpCodes.Ldloc, _ctx.FunctionDisplayClassLocal);
                 _il.Emit(OpCodes.Ldfld, funcDCField);
+                return StackType.Unknown;
             }
-            else if (_ctx.CurrentArrowFunctionDCField != null)
+
+            if (_ctx.CurrentArrowFunctionDCField != null)
             {
-                // Access from arrow body - go through $functionDC field
-                _il.Emit(OpCodes.Ldarg_0); // Load display class instance
-                _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowFunctionDCField); // Load function display class
-                _il.Emit(OpCodes.Ldfld, funcDCField); // Load the variable field
+                // Access from arrow body - go through $functionDC field.
+                // For arrows inside async arrows, $functionDC might be null at runtime
+                // (not populated by the intermediary). Emit a null check and fall through
+                // to CapturedFields if null.
+                if (_ctx.CapturedFields?.ContainsKey(name) == true)
+                {
+                    // Emit: if (this.$functionDC != null) use DC, else use own field
+                    var fallbackLabel = _il.DefineLabel();
+                    var doneLabel = _il.DefineLabel();
+                    _il.Emit(OpCodes.Ldarg_0);
+                    _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowFunctionDCField);
+                    _il.Emit(OpCodes.Dup);
+                    _il.Emit(OpCodes.Brfalse, fallbackLabel);
+                    // DC is non-null — load from it
+                    _il.Emit(OpCodes.Ldfld, funcDCField);
+                    _il.Emit(OpCodes.Br, doneLabel);
+                    // Fallback — load from own captured field
+                    _il.MarkLabel(fallbackLabel);
+                    _il.Emit(OpCodes.Pop); // discard null DC
+                    _il.Emit(OpCodes.Ldarg_0);
+                    _il.Emit(OpCodes.Ldfld, _ctx.CapturedFields[name]);
+                    _il.MarkLabel(doneLabel);
+                }
+                else
+                {
+                    // No fallback field — assume DC is populated
+                    _il.Emit(OpCodes.Ldarg_0);
+                    _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowFunctionDCField);
+                    _il.Emit(OpCodes.Ldfld, funcDCField);
+                }
+                return StackType.Unknown;
             }
-            else
-            {
-                // Fallback - shouldn't happen
-                return null;
-            }
-            return StackType.Unknown;
+
+            // No DC access available — fall through to other checks
         }
 
         // 2b. Arrow scope display class fields (captured arrow-local vars)
@@ -188,7 +213,6 @@ public class LocalVariableResolver : IVariableResolver
         if (_ctx.CapturedFunctionLocals?.Contains(name) == true &&
             _ctx.FunctionDisplayClassFields?.TryGetValue(name, out var funcDCField) == true)
         {
-            // Use temp local pattern for storing to fields
             var temp = _il.DeclareLocal(_types.Object);
             _il.Emit(OpCodes.Stloc, temp);
 
@@ -196,22 +220,47 @@ public class LocalVariableResolver : IVariableResolver
             {
                 // Direct access from function body - use the local
                 _il.Emit(OpCodes.Ldloc, _ctx.FunctionDisplayClassLocal);
-            }
-            else if (_ctx.CurrentArrowFunctionDCField != null)
-            {
-                // Access from arrow body - go through $functionDC field
-                _il.Emit(OpCodes.Ldarg_0); // Load display class instance
-                _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowFunctionDCField); // Load function display class
-            }
-            else
-            {
-                // Fallback - shouldn't happen
-                return false;
+                _il.Emit(OpCodes.Ldloc, temp);
+                _il.Emit(OpCodes.Stfld, funcDCField);
+                return true;
             }
 
+            if (_ctx.CurrentArrowFunctionDCField != null)
+            {
+                if (_ctx.CapturedFields?.ContainsKey(name) == true)
+                {
+                    // Emit: if (this.$functionDC != null) store to DC, else store to own field
+                    var fallbackLabel = _il.DefineLabel();
+                    var doneLabel = _il.DefineLabel();
+                    _il.Emit(OpCodes.Ldarg_0);
+                    _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowFunctionDCField);
+                    _il.Emit(OpCodes.Dup);
+                    _il.Emit(OpCodes.Brfalse, fallbackLabel);
+                    // DC is non-null — store to it
+                    _il.Emit(OpCodes.Ldloc, temp);
+                    _il.Emit(OpCodes.Stfld, funcDCField);
+                    _il.Emit(OpCodes.Br, doneLabel);
+                    // Fallback — store to own captured field
+                    _il.MarkLabel(fallbackLabel);
+                    _il.Emit(OpCodes.Pop); // discard null DC
+                    _il.Emit(OpCodes.Ldarg_0);
+                    _il.Emit(OpCodes.Ldloc, temp);
+                    _il.Emit(OpCodes.Stfld, _ctx.CapturedFields[name]);
+                    _il.MarkLabel(doneLabel);
+                }
+                else
+                {
+                    // No fallback field — assume DC is populated
+                    _il.Emit(OpCodes.Ldarg_0);
+                    _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowFunctionDCField);
+                    _il.Emit(OpCodes.Ldloc, temp);
+                    _il.Emit(OpCodes.Stfld, funcDCField);
+                }
+                return true;
+            }
+
+            // No DC access available — restore value to stack and fall through
             _il.Emit(OpCodes.Ldloc, temp);
-            _il.Emit(OpCodes.Stfld, funcDCField);
-            return true;
         }
 
         // 1b. Arrow scope display class fields (captured arrow-local vars)

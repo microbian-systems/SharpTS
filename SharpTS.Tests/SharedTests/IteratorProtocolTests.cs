@@ -7,10 +7,6 @@ namespace SharpTS.Tests.SharedTests;
 /// Tests for custom iterator protocol support.
 /// Verifies that objects with [Symbol.iterator] work in for...of loops
 /// and objects with [Symbol.asyncIterator] work in for await...of loops.
-///
-/// Note: Tests use this-based state storage on the iterator object rather than
-/// closure captures because there is a pre-existing compiler bug with closures
-/// that write to captured variables.
 /// </summary>
 public class IteratorProtocolTests
 {

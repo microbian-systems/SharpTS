@@ -746,18 +746,17 @@ public class SyncAsyncEquivalenceTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void PropertyAccess_BuiltIn_Number_AsyncPath(ExecutionMode mode)
     {
-        // Note: Number.isNaN(NaN) has a separate pre-existing issue in async compiled mode
-        // (NaN global variable resolution), so we test MAX_VALUE and isFinite here
         var source = """
             async function test() {
                 console.log(Number.MAX_VALUE > 0);
+                console.log(Number.isNaN(NaN));
                 console.log(Number.isFinite(42));
             }
             test();
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("true\ntrue\n", output);
+        Assert.Equal("true\ntrue\ntrue\n", output);
     }
 
     [Theory]
@@ -1163,5 +1162,23 @@ public class SyncAsyncEquivalenceTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("20\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClosureMutation_InsideAsyncFunction(ExecutionMode mode)
+    {
+        var source = """
+            async function test() {
+                let count: number = 0;
+                const arr: number[] = [1, 2, 3];
+                arr.forEach((x: number) => { count = count + x; });
+                console.log(count);
+            }
+            test();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("6\n", output);
     }
 }

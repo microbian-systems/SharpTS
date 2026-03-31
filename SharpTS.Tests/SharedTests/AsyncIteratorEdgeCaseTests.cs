@@ -91,9 +91,6 @@ public class AsyncIteratorEdgeCaseTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_TryFinally_CleanupRuns(ExecutionMode mode)
     {
-        // Compiled mode: for-await-of break doesn't call generator.return() yet,
-        // so finally doesn't trigger on early exit. Kept InterpretedOnly until
-        // generator.return() semantics are implemented for for-await-of break.
         var source = """
             let cleanupRan = false;
 
@@ -119,10 +116,7 @@ public class AsyncIteratorEdgeCaseTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Contains("1\n", output);
-        Assert.Contains("2\n", output);
-        // In interpreter mode, finally runs because generator executes eagerly
-        Assert.Contains("cleanup: true\n", output);
+        Assert.Equal("1\n2\ncleanup: true\n", output);
     }
 
     #endregion

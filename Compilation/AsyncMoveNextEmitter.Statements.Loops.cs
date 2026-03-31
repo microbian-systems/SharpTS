@@ -67,9 +67,11 @@ public partial class AsyncMoveNextEmitter
 
             var startLabel = _il.DefineLabel();
             var endLabel = _il.DefineLabel();
+            var cleanupLabel = _il.DefineLabel();
             var continueLabel = _il.DefineLabel();
 
-            EnterLoop(endLabel, continueLabel);
+            // Break goes to cleanup (calls iterator.return()), not directly to end
+            EnterLoop(cleanupLabel, continueLabel);
 
             _il.MarkLabel(startLabel);
 
@@ -144,6 +146,50 @@ public partial class AsyncMoveNextEmitter
 
             _il.MarkLabel(continueLabel);
             _il.Emit(OpCodes.Br, startLabel);
+
+            // Cleanup on break: call iterator.return() to trigger finally blocks in generators
+            _il.MarkLabel(cleanupLabel);
+            {
+                // Get the "return" method from the async iterator
+                _il.Emit(OpCodes.Ldloc, asyncIteratorLocal);
+                _il.Emit(OpCodes.Ldstr, "return");
+                _il.Emit(OpCodes.Call, _ctx.Runtime.GetProperty);
+
+                var returnFnLocal = _il.DeclareLocal(_types.Object);
+                _il.Emit(OpCodes.Stloc, returnFnLocal);
+
+                // If no return method, skip cleanup
+                _il.Emit(OpCodes.Ldloc, returnFnLocal);
+                _il.Emit(OpCodes.Brfalse, endLabel);
+
+                // Call: InvokeMethodValue(asyncIterator, returnFn, [])
+                _il.Emit(OpCodes.Ldloc, asyncIteratorLocal);
+                _il.Emit(OpCodes.Ldloc, returnFnLocal);
+                _il.Emit(OpCodes.Ldc_I4_0);
+                _il.Emit(OpCodes.Newarr, _types.Object);
+                _il.Emit(OpCodes.Call, _ctx.Runtime.InvokeMethodValue);
+
+                // If result is a Task, await it
+                var returnResultLocal = _il.DeclareLocal(_types.Object);
+                _il.Emit(OpCodes.Stloc, returnResultLocal);
+                _il.Emit(OpCodes.Ldloc, returnResultLocal);
+                _il.Emit(OpCodes.Isinst, _types.TaskOfObject);
+                _il.Emit(OpCodes.Brfalse, endLabel);
+
+                _il.Emit(OpCodes.Ldloc, returnResultLocal);
+                _il.Emit(OpCodes.Castclass, _types.TaskOfObject);
+                var cleanupTaskLocal = _il.DeclareLocal(_types.TaskOfObject);
+                _il.Emit(OpCodes.Stloc, cleanupTaskLocal);
+                _il.Emit(OpCodes.Ldloc, cleanupTaskLocal);
+                var cleanupGetAwaiter = _types.GetMethodNoParams(_types.TaskOfObject, "GetAwaiter");
+                _il.Emit(OpCodes.Call, cleanupGetAwaiter);
+                var cleanupAwaiterLocal = _il.DeclareLocal(_types.TaskAwaiterOfObject);
+                _il.Emit(OpCodes.Stloc, cleanupAwaiterLocal);
+                _il.Emit(OpCodes.Ldloca, cleanupAwaiterLocal);
+                var cleanupGetResult = _types.GetMethodNoParams(_types.TaskAwaiterOfObject, "GetResult");
+                _il.Emit(OpCodes.Call, cleanupGetResult);
+                _il.Emit(OpCodes.Pop); // Discard return result
+            }
 
             _il.MarkLabel(endLabel);
             ExitLoop();

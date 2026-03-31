@@ -189,10 +189,14 @@ public partial class ILCompiler
                     if (_closures.CapturedTopLevelVars.Contains(capturedVar))
                         continue;
 
-                    // Skip function-level captured vars - they'll be accessed through $functionDC
+                    // Skip function-level captured vars - they'll be accessed through $functionDC.
+                    // But only skip if the function DC is from a SYNC function (always populated).
+                    // For ASYNC functions, the arrow might be nested inside an async arrow where
+                    // $functionDC won't be populated, so keep the arrow's own field as fallback.
                     if (needsFunctionDC && sourceFunction != null &&
                         _closures.FunctionDisplayClassFields.TryGetValue(sourceFunction, out var funcFields) &&
-                        funcFields.ContainsKey(capturedVar))
+                        funcFields.ContainsKey(capturedVar) &&
+                        !_async.StateMachines.ContainsKey(sourceFunction))
                         continue;
 
                     // Skip arrow-scope captured vars - they'll be accessed through $arrowDC

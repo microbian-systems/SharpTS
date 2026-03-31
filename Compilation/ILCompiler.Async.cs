@@ -34,6 +34,33 @@ public partial class ILCompiler
         _async.StateMachines[funcStmt.Name.Lexeme] = smBuilder;
         _async.Functions[funcStmt.Name.Lexeme] = funcStmt;
 
+        // Create function-level display class for captured locals (same as sync functions).
+        // This enables closure mutation sharing between the async state machine and sync inner arrows.
+        // Variables also captured by async arrows are excluded since they use the hoisted field mechanism.
+        var ctx = GetDefinitionContext();
+        string qualifiedFunctionName = ctx.GetQualifiedFunctionName(funcStmt.Name.Lexeme);
+        _closures.FunctionAstNodes[qualifiedFunctionName] = funcStmt;
+
+        // Collect variables captured by async arrows (these can't use the function DC)
+        var asyncCapturedVars = new HashSet<string>();
+        foreach (var arrowInfo in analysis.AsyncArrows)
+        {
+            foreach (var capture in arrowInfo.Captures)
+                asyncCapturedVars.Add(capture);
+        }
+
+        // Filter out async-captured vars before creating the DC
+        if (asyncCapturedVars.Count > 0)
+            _closures.AsyncCapturedVarsExclusion[qualifiedFunctionName] = asyncCapturedVars;
+
+        DefineFunctionDisplayClass(funcStmt, qualifiedFunctionName);
+
+        // If a function DC was created, add a field on the state machine to hold it
+        if (_closures.FunctionDisplayClasses.TryGetValue(qualifiedFunctionName, out var funcDC))
+        {
+            smBuilder.DefineFunctionDisplayClassField(funcDC);
+        }
+
         // Build state machines for any async arrows found in this function
         DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder);
     }
@@ -481,8 +508,18 @@ public partial class ILCompiler
                 EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
                 CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
                 ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
-                EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
+                EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+                // Function display class for captured locals (closure mutation sharing with arrows)
+                ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
             };
+
+            // Set function DC info if this async function has captured locals
+            var qualifiedName = GetDefinitionContext().GetQualifiedFunctionName(funcName);
+            if (_closures.FunctionDisplayClassFields.TryGetValue(qualifiedName, out var funcDCFields))
+            {
+                ctx.FunctionDisplayClassFields = funcDCFields;
+                ctx.CapturedFunctionLocals = new HashSet<string>(funcDCFields.Keys);
+            }
 
             // Emit MoveNext body
             var moveNextEmitter = new AsyncMoveNextEmitter(smBuilder, analysis, _types);
@@ -663,6 +700,37 @@ public partial class ILCompiler
                     il.Emit(OpCodes.Box, stubParams[i].ParameterType);
                 }
                 il.Emit(OpCodes.Stfld, field);
+            }
+        }
+
+        // Initialize function display class for closure mutation sharing
+        if (smBuilder.FunctionDCField != null)
+        {
+            var funcName = stubMethod.Name;
+            var qualifiedName = GetDefinitionContext().GetQualifiedFunctionName(funcName);
+            if (_closures.FunctionDisplayClassCtors.TryGetValue(qualifiedName, out var dcCtor))
+            {
+                il.Emit(OpCodes.Ldloca, smLocal);
+                il.Emit(OpCodes.Newobj, dcCtor);
+                il.Emit(OpCodes.Stfld, smBuilder.FunctionDCField);
+
+                // Copy captured parameters into the function DC
+                if (_closures.FunctionDisplayClassFields.TryGetValue(qualifiedName, out var dcFields))
+                {
+                    for (int j = 0; j < parameters.Count; j++)
+                    {
+                        string pName = parameters[j].Name.Lexeme;
+                        if (dcFields.TryGetValue(pName, out var dcField))
+                        {
+                            il.Emit(OpCodes.Ldloca, smLocal);
+                            il.Emit(OpCodes.Ldfld, smBuilder.FunctionDCField);
+                            il.Emit(OpCodes.Ldarg, j + paramOffset);
+                            if (j < stubParams.Length && stubParams[j].ParameterType.IsValueType)
+                                il.Emit(OpCodes.Box, stubParams[j].ParameterType);
+                            il.Emit(OpCodes.Stfld, dcField);
+                        }
+                    }
+                }
             }
         }
 

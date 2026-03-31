@@ -79,6 +79,16 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Stfld, entryPointDCField);
         }
 
+        // Populate $functionDC field if this arrow captures function-level variables
+        if (_ctx.ArrowFunctionDCFields?.TryGetValue(af, out var functionDCField) == true &&
+            _builder.FunctionDCField != null)
+        {
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Ldarg_0); // state machine
+            _il.Emit(OpCodes.Ldfld, _builder.FunctionDCField);
+            _il.Emit(OpCodes.Stfld, functionDCField);
+        }
+
         if (_ctx.DisplayClassFields == null || !_ctx.DisplayClassFields.TryGetValue(af, out var fieldMap))
         {
             _il.Emit(OpCodes.Ldtoken, method);

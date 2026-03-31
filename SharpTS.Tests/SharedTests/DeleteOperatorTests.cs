@@ -90,7 +90,6 @@ public class DeleteOperatorTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Delete_MultipleProperties(ExecutionMode mode)
     {
-        // Note: Using 'any' type because optional property types have a bug with delete in compiled mode
         var source = """
             let obj: any = { a: 1, b: 2, c: 3 };
             delete obj.a;
