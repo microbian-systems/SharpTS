@@ -25,6 +25,13 @@ public partial class RuntimeEmitter
     // Cached HttpClient helper (emitted during fetch emission)
     private MethodBuilder? _getOrCreateHttpClientMethod;
 
+    // Fetch display class for async Task.Run dispatch
+    private TypeBuilder _fetchDisplayClass = null!;
+    private FieldBuilder _fetchDisplayUrl = null!;
+    private FieldBuilder _fetchDisplayOptions = null!;
+    private ConstructorBuilder _fetchDisplayCtor = null!;
+    private MethodBuilder _fetchDisplayInvoke = null!;
+
     // HTTP types from BCL
     private Type? _httpClientType;
     private Type? _httpRequestMessageType;
@@ -78,7 +85,8 @@ public partial class RuntimeEmitter
         // Emit Response static methods
         EmitResponseStaticMethods(typeBuilder, runtime);
 
-        // Emit fetch function
+        // Emit fetch display class (for async Task.Run dispatch) and fetch function
+        EmitFetchDisplayClass(moduleBuilder, runtime);
         EmitFetch(typeBuilder, runtime);
 
         // Emit http module methods
@@ -1207,9 +1215,130 @@ public partial class RuntimeEmitter
     /// Emits: public static object Fetch(object url, object? options)
     /// Returns a Promise that resolves to a $FetchResponse.
     /// </summary>
+    /// <summary>
+    /// Emits $FetchDisplayClass: captures _url and _options, Invoke() calls FetchHelper
+    /// and constructs $FetchResponse from the result. Used with Task.Run for async dispatch.
+    /// </summary>
+    private void EmitFetchDisplayClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        if (_httpClientType == null || _httpRequestMessageType == null)
+            return; // No HttpClient available, Fetch will return rejected promise
+
+        _fetchDisplayClass = moduleBuilder.DefineType(
+            "$FetchDisplayClass",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit);
+
+        _fetchDisplayUrl = _fetchDisplayClass.DefineField("_url", _types.Object, FieldAttributes.Public);
+        _fetchDisplayOptions = _fetchDisplayClass.DefineField("_options", _types.Object, FieldAttributes.Public);
+        // FetchHelper MethodInfo stored at runtime via ldtoken
+        var methodField = _fetchDisplayClass.DefineField("_fetchHelper", typeof(MethodInfo), FieldAttributes.Public);
+
+        _fetchDisplayCtor = _fetchDisplayClass.DefineConstructor(
+            MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+        {
+            var il = _fetchDisplayCtor.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // Invoke(): calls FetchHelper(_url, _options), constructs $FetchResponse or throws
+        _fetchDisplayInvoke = _fetchDisplayClass.DefineMethod(
+            "Invoke",
+            MethodAttributes.Public,
+            _types.Object,
+            Type.EmptyTypes);
+        {
+            var il = _fetchDisplayInvoke.GetILGenerator();
+            var resultLocal = il.DeclareLocal(_types.ObjectArray);
+
+            // object[] result = (object[]) _fetchHelper.Invoke(null, new object[] { _url, _options })
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, methodField);
+            il.Emit(OpCodes.Ldnull); // target (static method)
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _fetchDisplayUrl);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _fetchDisplayOptions);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Callvirt, typeof(MethodBase).GetMethod("Invoke", [typeof(object), typeof(object[])])!);
+            il.Emit(OpCodes.Castclass, _types.ObjectArray);
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            // Check if result[0] (success) is true
+            var errorLabel = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+            il.Emit(OpCodes.Brfalse, errorLabel);
+
+            // Success: construct $FetchResponse(status, statusText, ok, url, headers, bodyBytes)
+            // Array indices: 0=success, 1=status, 2=statusText, 3=ok, 4=url, 5=headers, 6=bodyBytes
+
+            // status (double)
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Unbox_Any, _types.Double);
+
+            // statusText (string)
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Castclass, _types.String);
+
+            // ok (bool)
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldc_I4_3);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+
+            // url (string)
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldc_I4_4);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Castclass, _types.String);
+
+            // headers - wrap in $Headers
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldc_I4_5);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Newobj, runtime.TSHeadersCtor);
+
+            // bodyBytes (byte[])
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldc_I4_6);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Castclass, _types.ByteArray);
+
+            il.Emit(OpCodes.Newobj, runtime.TSFetchResponseCtor);
+            il.Emit(OpCodes.Ret);
+
+            // Error path: throw exception with error message
+            il.MarkLabel(errorLabel);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldc_I4_7);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+            il.Emit(OpCodes.Throw);
+        }
+
+        _fetchDisplayClass.CreateType();
+    }
+
     /// <remarks>
     /// Emits a helper method to perform the HTTP request with try/catch,
-    /// then calls that helper and wraps result in a Promise.
+    /// then dispatches it asynchronously via Task.Run and wraps in a Promise.
     /// </remarks>
     private void EmitFetch(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1240,7 +1369,8 @@ public partial class RuntimeEmitter
         // Then emit the helper that does the actual fetch work
         var fetchHelperMethod = EmitFetchHelper(typeBuilder, runtime, applyHeadersMethod);
 
-        // Now emit the Fetch method that calls the helper and wraps result
+        // Now emit the Fetch method: creates display class, dispatches via Task.Run,
+        // returns a pending Promise that resolves when the HTTP call completes.
         var fetchMethod = typeBuilder.DefineMethod(
             "Fetch",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -1251,76 +1381,36 @@ public partial class RuntimeEmitter
 
         var fetchIL = fetchMethod.GetILGenerator();
 
-        var resultLocal = fetchIL.DeclareLocal(_types.ObjectArray);
+        // var dc = new $FetchDisplayClass();
+        fetchIL.Emit(OpCodes.Newobj, _fetchDisplayCtor);
+        var dcLocal = fetchIL.DeclareLocal(_fetchDisplayClass);
+        fetchIL.Emit(OpCodes.Stloc, dcLocal);
 
-        // Call helper method
+        // dc._url = arg0;
+        fetchIL.Emit(OpCodes.Ldloc, dcLocal);
         fetchIL.Emit(OpCodes.Ldarg_0);
+        fetchIL.Emit(OpCodes.Stfld, _fetchDisplayUrl);
+
+        // dc._options = arg1;
+        fetchIL.Emit(OpCodes.Ldloc, dcLocal);
         fetchIL.Emit(OpCodes.Ldarg_1);
-        fetchIL.Emit(OpCodes.Call, fetchHelperMethod);
-        fetchIL.Emit(OpCodes.Stloc, resultLocal);
+        fetchIL.Emit(OpCodes.Stfld, _fetchDisplayOptions);
 
-        // Check if result[0] (success) is true
-        var errorLabel = fetchIL.DefineLabel();
+        // dc._fetchHelper = FetchHelper method (via ldtoken)
+        fetchIL.Emit(OpCodes.Ldloc, dcLocal);
+        fetchIL.Emit(OpCodes.Ldtoken, fetchHelperMethod);
+        fetchIL.Emit(OpCodes.Call, typeof(System.Reflection.MethodBase).GetMethod("GetMethodFromHandle", [typeof(RuntimeMethodHandle)])!);
+        fetchIL.Emit(OpCodes.Castclass, typeof(System.Reflection.MethodInfo));
+        fetchIL.Emit(OpCodes.Stfld, _fetchDisplayClass.GetField("_fetchHelper")!);
 
-        fetchIL.Emit(OpCodes.Ldloc, resultLocal);
-        fetchIL.Emit(OpCodes.Ldc_I4_0);
-        fetchIL.Emit(OpCodes.Ldelem_Ref);
-        fetchIL.Emit(OpCodes.Unbox_Any, _types.Boolean);
-        fetchIL.Emit(OpCodes.Brfalse, errorLabel);
+        // Task.Run<object?>(new Func<object?>(dc.Invoke))
+        fetchIL.Emit(OpCodes.Ldloc, dcLocal);
+        fetchIL.Emit(OpCodes.Ldftn, _fetchDisplayInvoke);
+        fetchIL.Emit(OpCodes.Newobj, typeof(Func<object?>).GetConstructors()[0]);
+        fetchIL.Emit(OpCodes.Call, typeof(Task).GetMethod("Run", 1, [typeof(Func<>).MakeGenericType(Type.MakeGenericMethodParameter(0))])!.MakeGenericMethod(typeof(object)));
 
-        // Success path: create $FetchResponse and wrap in resolved Promise
-        // Array indices: 0=success, 1=status, 2=statusText, 3=ok, 4=url, 5=headers, 6=bodyBytes, 7=errorMessage
-
-        // status (double)
-        fetchIL.Emit(OpCodes.Ldloc, resultLocal);
-        fetchIL.Emit(OpCodes.Ldc_I4_1);
-        fetchIL.Emit(OpCodes.Ldelem_Ref);
-        fetchIL.Emit(OpCodes.Unbox_Any, _types.Double);
-
-        // statusText (string)
-        fetchIL.Emit(OpCodes.Ldloc, resultLocal);
-        fetchIL.Emit(OpCodes.Ldc_I4_2);
-        fetchIL.Emit(OpCodes.Ldelem_Ref);
-        fetchIL.Emit(OpCodes.Castclass, _types.String);
-
-        // ok (bool)
-        fetchIL.Emit(OpCodes.Ldloc, resultLocal);
-        fetchIL.Emit(OpCodes.Ldc_I4_3);
-        fetchIL.Emit(OpCodes.Ldelem_Ref);
-        fetchIL.Emit(OpCodes.Unbox_Any, _types.Boolean);
-
-        // url (string)
-        fetchIL.Emit(OpCodes.Ldloc, resultLocal);
-        fetchIL.Emit(OpCodes.Ldc_I4_4);
-        fetchIL.Emit(OpCodes.Ldelem_Ref);
-        fetchIL.Emit(OpCodes.Castclass, _types.String);
-
-        // headers (object) - wrap in $Headers
-        fetchIL.Emit(OpCodes.Ldloc, resultLocal);
-        fetchIL.Emit(OpCodes.Ldc_I4_5);
-        fetchIL.Emit(OpCodes.Ldelem_Ref);
-        fetchIL.Emit(OpCodes.Newobj, runtime.TSHeadersCtor);
-
-        // bodyBytes (byte[])
-        fetchIL.Emit(OpCodes.Ldloc, resultLocal);
-        fetchIL.Emit(OpCodes.Ldc_I4_6);
-        fetchIL.Emit(OpCodes.Ldelem_Ref);
-        fetchIL.Emit(OpCodes.Castclass, _types.ByteArray);
-
-        fetchIL.Emit(OpCodes.Newobj, runtime.TSFetchResponseCtor);
-
-        // Wrap in resolved Promise
-        fetchIL.Emit(OpCodes.Call, runtime.TSPromiseResolve);
-        fetchIL.Emit(OpCodes.Ret);
-
-        // Error path: return rejected Promise with error message
-        fetchIL.MarkLabel(errorLabel);
-
-        // errorMessage is at index 7
-        fetchIL.Emit(OpCodes.Ldloc, resultLocal);
-        fetchIL.Emit(OpCodes.Ldc_I4_7);
-        fetchIL.Emit(OpCodes.Ldelem_Ref);
-        fetchIL.Emit(OpCodes.Call, runtime.TSPromiseReject);
+        // WrapTaskAsPromise(task) — returns pending $Promise
+        fetchIL.Emit(OpCodes.Call, runtime.WrapTaskAsPromise);
         fetchIL.Emit(OpCodes.Ret);
     }
 

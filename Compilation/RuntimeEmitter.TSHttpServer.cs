@@ -47,7 +47,7 @@ public partial class RuntimeEmitter
         var typeBuilder = moduleBuilder.DefineType(
             "$HttpRequest",
             TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.BeforeFieldInit,
-            _types.Object
+            runtime.TSEventEmitterType
         );
         runtime.TSHttpRequestType = typeBuilder;
 
@@ -64,7 +64,7 @@ public partial class RuntimeEmitter
 
         var ctorIL = ctor.GetILGenerator();
         ctorIL.Emit(OpCodes.Ldarg_0);
-        ctorIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        ctorIL.Emit(OpCodes.Call, runtime.TSEventEmitterCtor);
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldarg_1);
         ctorIL.Emit(OpCodes.Stfld, _httpRequestRequestField);
@@ -119,6 +119,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
         il.Emit(OpCodes.Brtrue, headersLabel);
 
+        // Check "rawHeaders"
+        var rawHeadersLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "rawHeaders");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, rawHeadersLabel);
+
         il.Emit(OpCodes.Br, defaultLabel);
 
         // "method" - return _request.HttpMethod
@@ -161,6 +168,11 @@ public partial class RuntimeEmitter
         // "headers" - return dictionary of headers
         il.MarkLabel(headersLabel);
         EmitExtractRequestHeaders(il, httpListenerRequestType);
+        il.Emit(OpCodes.Ret);
+
+        // "rawHeaders" - return List<object?> with alternating key/value pairs
+        il.MarkLabel(rawHeadersLabel);
+        EmitExtractRawHeaders(il, httpListenerRequestType);
         il.Emit(OpCodes.Ret);
 
         // default - return undefined
@@ -242,6 +254,78 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits IL to build a List&lt;object?&gt; of alternating [key, value, key, value, ...]
+    /// from the HttpListenerRequest headers — matches Node.js rawHeaders format.
+    /// </summary>
+    private void EmitExtractRawHeaders(ILGenerator il, Type httpListenerRequestType)
+    {
+        var resultLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObject));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // Get headers NameValueCollection
+        var headersLocal = il.DeclareLocal(typeof(System.Collections.Specialized.NameValueCollection));
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpRequestRequestField);
+        il.Emit(OpCodes.Callvirt, httpListenerRequestType.GetProperty("Headers")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, headersLocal);
+
+        // string[] keys = headers.AllKeys
+        var keysLocal = il.DeclareLocal(_types.StringArray);
+        il.Emit(OpCodes.Ldloc, headersLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Collections.Specialized.NameValueCollection).GetProperty("AllKeys")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, keysLocal);
+
+        // Loop: for each key, add key and value
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, keysLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // Skip null keys
+        var skipNull = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, keysLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Brfalse, skipNull);
+
+        // result.Add(key)
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, keysLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
+
+        // result.Add(headers[key])
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, headersLocal);
+        il.Emit(OpCodes.Ldloc, keysLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, typeof(System.Collections.Specialized.NameValueCollection).GetMethod("Get", [_types.String])!);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
+
+        il.MarkLabel(skipNull);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+    }
+
+    /// <summary>
     /// Emits: public class $HttpResponse
     /// Wraps HttpListenerResponse for standalone HTTP server support.
     /// </summary>
@@ -252,7 +336,7 @@ public partial class RuntimeEmitter
         var typeBuilder = moduleBuilder.DefineType(
             "$HttpResponse",
             TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.BeforeFieldInit,
-            _types.Object
+            runtime.TSEventEmitterType
         );
         runtime.TSHttpResponseType = typeBuilder;
 
@@ -272,7 +356,7 @@ public partial class RuntimeEmitter
 
         var ctorIL = ctor.GetILGenerator();
         ctorIL.Emit(OpCodes.Ldarg_0);
-        ctorIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        ctorIL.Emit(OpCodes.Call, runtime.TSEventEmitterCtor);
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldarg_1);
         ctorIL.Emit(OpCodes.Stfld, _httpResponseResponseField);
@@ -286,6 +370,10 @@ public partial class RuntimeEmitter
         EmitHttpResponseWrite(typeBuilder, runtime);
         EmitHttpResponseEnd(typeBuilder, runtime, httpListenerResponseType);
         EmitHttpResponseSetHeader(typeBuilder, runtime, httpListenerResponseType);
+        EmitHttpResponseHasHeader(typeBuilder, runtime, httpListenerResponseType);
+        EmitHttpResponseGetHeader(typeBuilder, runtime, httpListenerResponseType);
+        EmitHttpResponseGetHeaderNames(typeBuilder, runtime, httpListenerResponseType);
+        EmitHttpResponseRemoveHeader(typeBuilder, runtime, httpListenerResponseType);
         EmitHttpResponseGetMember(typeBuilder, runtime, httpListenerResponseType);
         EmitHttpResponseSetMember(typeBuilder, runtime, httpListenerResponseType);
 
@@ -604,6 +692,255 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    private void EmitHttpResponseHasHeader(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerResponseType)
+    {
+        // public object HasHeader(object name) — returns boxed bool
+        var method = typeBuilder.DefineMethod(
+            "HasHeader",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var nameLocal = il.DeclareLocal(_types.String);
+
+        // string name = arg?.ToString() ?? ""
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Dup);
+        var notNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "");
+        var storeNameLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, storeNameLabel);
+        il.MarkLabel(notNullLabel);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.MarkLabel(storeNameLabel);
+        il.Emit(OpCodes.Stloc, nameLocal);
+
+        // Check Content-Type special case
+        var notContentType = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldstr, "Content-Type");
+        il.Emit(OpCodes.Ldc_I4, (int)StringComparison.OrdinalIgnoreCase);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String, _types.String, typeof(StringComparison)])!);
+        il.Emit(OpCodes.Brfalse, notContentType);
+
+        // return _response.ContentType != null
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpResponseResponseField);
+        il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("ContentType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notContentType);
+
+        // return _response.Headers[name] != null
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpResponseResponseField);
+        il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("Headers")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Callvirt, typeof(WebHeaderCollection).GetMethod("Get", [_types.String])!);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitHttpResponseGetHeader(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerResponseType)
+    {
+        // public object GetHeader(object name) — returns header value or undefined
+        var method = typeBuilder.DefineMethod(
+            "GetHeader",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var nameLocal = il.DeclareLocal(_types.String);
+
+        // string name = arg?.ToString() ?? ""
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Dup);
+        var notNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "");
+        var storeNameLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, storeNameLabel);
+        il.MarkLabel(notNullLabel);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.MarkLabel(storeNameLabel);
+        il.Emit(OpCodes.Stloc, nameLocal);
+
+        // Check Content-Type special case
+        var notContentType = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldstr, "Content-Type");
+        il.Emit(OpCodes.Ldc_I4, (int)StringComparison.OrdinalIgnoreCase);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String, _types.String, typeof(StringComparison)])!);
+        il.Emit(OpCodes.Brfalse, notContentType);
+
+        // return _response.ContentType ?? undefined
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpResponseResponseField);
+        il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("ContentType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Dup);
+        var hasContentType = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, hasContentType);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.MarkLabel(hasContentType);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notContentType);
+
+        // return _response.Headers[name] ?? undefined
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpResponseResponseField);
+        il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("Headers")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Callvirt, typeof(WebHeaderCollection).GetMethod("Get", [_types.String])!);
+        il.Emit(OpCodes.Dup);
+        var hasValue = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, hasValue);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.MarkLabel(hasValue);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitHttpResponseGetHeaderNames(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerResponseType)
+    {
+        // public object GetHeaderNames() — returns List<object?> of lowercase header names
+        var method = typeBuilder.DefineMethod(
+            "GetHeaderNames",
+            MethodAttributes.Public,
+            _types.Object,
+            Type.EmptyTypes
+        );
+
+        var il = method.GetILGenerator();
+
+        // var result = new List<object?>()
+        var resultLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObject));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // string[] keys = _response.Headers.AllKeys
+        var keysLocal = il.DeclareLocal(_types.StringArray);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpResponseResponseField);
+        il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("Headers")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, typeof(System.Collections.Specialized.NameValueCollection).GetProperty("AllKeys")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, keysLocal);
+
+        // for (int i = 0; i < keys.Length; i++)
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, keysLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // Skip null keys
+        var skipNull = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, keysLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Brfalse, skipNull);
+
+        // result.Add(keys[i].ToLowerInvariant())
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, keysLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("ToLowerInvariant")!);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
+
+        il.MarkLabel(skipNull);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitHttpResponseRemoveHeader(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerResponseType)
+    {
+        // public object RemoveHeader(object name)
+        var method = typeBuilder.DefineMethod(
+            "RemoveHeader",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var nameLocal = il.DeclareLocal(_types.String);
+
+        // string name = arg?.ToString() ?? ""
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Dup);
+        var notNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "");
+        var storeNameLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, storeNameLabel);
+        il.MarkLabel(notNullLabel);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.MarkLabel(storeNameLabel);
+        il.Emit(OpCodes.Stloc, nameLocal);
+
+        // Check Content-Type special case
+        var notContentType = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldstr, "Content-Type");
+        il.Emit(OpCodes.Ldc_I4, (int)StringComparison.OrdinalIgnoreCase);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String, _types.String, typeof(StringComparison)])!);
+        il.Emit(OpCodes.Brfalse, notContentType);
+
+        // _response.ContentType = null
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpResponseResponseField);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("ContentType")!.GetSetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notContentType);
+
+        // _response.Headers.Remove(name)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpResponseResponseField);
+        il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("Headers")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Callvirt, typeof(WebHeaderCollection).GetMethod("Remove", [_types.String])!);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+
     /// <summary>
     /// Emits: public class $HttpServer : $EventEmitter
     /// Standalone HTTP server implementation.
@@ -740,6 +1077,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, typeof(CancellationTokenSource).GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stfld, _httpServerCtsField);
 
+        // EventLoop.Ref() to keep process alive
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopRef);
+
+        // Start HTTP accept loop on ThreadPool BEFORE callback,
+        // so the server can accept connections even if the callback
+        // fires a synchronous request (e.g., http.get).
+        EmitHttpServerStartAccepting(typeBuilder, il, runtime);
+
+        // Emit 'listening' event
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "listening");
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
+
         // Call listening callback if provided
         var noCallbackLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_2);
@@ -773,21 +1127,6 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notBound);
         il.MarkLabel(noCallbackLabel);
-
-        // Emit 'listening' event
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldstr, "listening");
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
-        il.Emit(OpCodes.Pop);
-
-        // EventLoop.Ref() to keep process alive
-        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
-        il.Emit(OpCodes.Call, runtime.EventLoopRef);
-
-        // Start HTTP accept loop on ThreadPool
-        EmitHttpServerStartAccepting(typeBuilder, il, runtime);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
@@ -1057,6 +1396,8 @@ public partial class RuntimeEmitter
 
         wil.MarkLabel(afterAccept);
 
+        // Schedule the accept closure on the EventLoop for single-threaded dispatch.
+        // This is safe because Fetch is now non-blocking (uses Task.Run + Promise).
         // EventLoop.Schedule(new Action(new $HttpAcceptClosure(this, ctx).Run))
         wil.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
         wil.Emit(OpCodes.Ldarg_0);

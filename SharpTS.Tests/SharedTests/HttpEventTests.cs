@@ -25,7 +25,7 @@ public class HttpEventTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpServerRequestEvent(ExecutionMode mode)
     {
         var port = GetAvailablePort();
@@ -57,7 +57,7 @@ public class HttpEventTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpServerResponseWriteHead(ExecutionMode mode)
     {
         var port = GetAvailablePort();
@@ -81,7 +81,7 @@ public class HttpEventTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpServerSetHeader(ExecutionMode mode)
     {
         var port = GetAvailablePort();
@@ -112,7 +112,7 @@ public class HttpEventTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpServerResponseStatusCode(ExecutionMode mode)
     {
         var port = GetAvailablePort();
@@ -140,7 +140,7 @@ public class HttpEventTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpRequestDataEvent(ExecutionMode mode)
     {
         var port = GetAvailablePort();
@@ -169,7 +169,7 @@ public class HttpEventTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpRequestHeaders(ExecutionMode mode)
     {
         var port = GetAvailablePort();
@@ -194,7 +194,7 @@ public class HttpEventTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpServerListeningAndCloseEvents(ExecutionMode mode)
     {
         var port = GetAvailablePort();
@@ -222,7 +222,7 @@ public class HttpEventTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpServerRequestEventEmitter(ExecutionMode mode)
     {
         var port = GetAvailablePort();
@@ -246,7 +246,7 @@ public class HttpEventTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpResponseWriteMultiple(ExecutionMode mode)
     {
         var port = GetAvailablePort();
@@ -272,7 +272,7 @@ public class HttpEventTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpRequestRawHeaders(ExecutionMode mode)
     {
         var port = GetAvailablePort();
@@ -297,7 +297,7 @@ public class HttpEventTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpResponseWriteHeadStatusMessage(ExecutionMode mode)
     {
         var port = GetAvailablePort();

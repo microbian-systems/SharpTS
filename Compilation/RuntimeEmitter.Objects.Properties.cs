@@ -597,6 +597,35 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notErrorLabel);
 
+        // Fallback: Try SetMember(string, object) method for types like $HttpResponse
+        // that expose property setters through their SetMember dispatch method.
+        var setMemberLocal = il.DeclareLocal(_types.MethodInfo);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "SetMember");
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Stloc, setMemberLocal);
+
+        il.Emit(OpCodes.Ldloc, setMemberLocal);
+        il.Emit(OpCodes.Brfalse, endLabel);
+
+        // Call SetMember(name, value): methodInfo.Invoke(obj, new object[] { name, value })
+        il.Emit(OpCodes.Ldloc, setMemberLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1); // name
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_2); // value
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Pop);
+
         il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);
     }
@@ -743,6 +772,34 @@ public partial class RuntimeEmitter
         il.MarkLabel(notErrorStackLabel);
 
         il.MarkLabel(notErrorLabel);
+
+        // Fallback: Try SetMember(string, object) method for types like $HttpResponse
+        var setMemberLocal = il.DeclareLocal(_types.MethodInfo);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "SetMember");
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Stloc, setMemberLocal);
+
+        il.Emit(OpCodes.Ldloc, setMemberLocal);
+        il.Emit(OpCodes.Brfalse, endLabel);
+
+        // Call SetMember(name, value): methodInfo.Invoke(obj, new object[] { name, value })
+        il.Emit(OpCodes.Ldloc, setMemberLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1); // name
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_2); // value
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Pop);
 
         il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);

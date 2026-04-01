@@ -729,6 +729,15 @@ public partial class RuntimeEmitter
                 });
 
             il.MarkLabel(noCb);
+
+            // Emit 'end' event on request so req.on('end', ...) works
+            il.Emit(OpCodes.Ldloc, reqLocal);
+            il.Emit(OpCodes.Ldstr, "end");
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
+            il.Emit(OpCodes.Pop);
+
             il.Emit(OpCodes.Ret);
         }
 
