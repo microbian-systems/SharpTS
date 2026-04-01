@@ -92,6 +92,13 @@ public class EmittedRuntime
     public MethodBuilder InstanceOf { get; set; } = null!;
     public MethodBuilder HasIn { get; set; } = null!;
 
+    // Reflect metadata API
+    public MethodBuilder ReflectDefineMetadata { get; set; } = null!;
+    public MethodBuilder ReflectGetMetadata { get; set; } = null!;
+    public MethodBuilder ReflectHasMetadata { get; set; } = null!;
+    public MethodBuilder ReflectGetMetadataKeys { get; set; } = null!;
+    public MethodBuilder ReflectDeleteMetadata { get; set; } = null!;
+
     // Console format specifier methods
     public MethodBuilder HasFormatSpecifiers { get; set; } = null!;
     public MethodBuilder FormatConsoleArgs { get; set; } = null!;

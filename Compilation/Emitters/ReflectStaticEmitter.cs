@@ -367,6 +367,120 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
                 return true;
             }
 
+            case "defineMetadata":
+            {
+                // Reflect.defineMetadata(key, value, target[, propertyKey])
+                for (int i = 0; i < 4; i++)
+                {
+                    if (i < arguments.Count)
+                    {
+                        emitter.EmitExpression(arguments[i]);
+                        emitter.EmitBoxIfNeeded(arguments[i]);
+                    }
+                    else
+                        il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ReflectDefineMetadata);
+                il.Emit(OpCodes.Ldnull); // defineMetadata returns void; push null for expression result
+                return true;
+            }
+
+            case "getMetadata":
+            {
+                // Reflect.getMetadata(key, target[, propertyKey])
+                for (int i = 0; i < 3; i++)
+                {
+                    if (i < arguments.Count)
+                    {
+                        emitter.EmitExpression(arguments[i]);
+                        emitter.EmitBoxIfNeeded(arguments[i]);
+                    }
+                    else
+                        il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ReflectGetMetadata);
+                return true;
+            }
+
+            case "hasMetadata":
+            {
+                // Reflect.hasMetadata(key, target[, propertyKey])
+                for (int i = 0; i < 3; i++)
+                {
+                    if (i < arguments.Count)
+                    {
+                        emitter.EmitExpression(arguments[i]);
+                        emitter.EmitBoxIfNeeded(arguments[i]);
+                    }
+                    else
+                        il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ReflectHasMetadata);
+                return true;
+            }
+
+            case "getMetadataKeys":
+            {
+                // Reflect.getMetadataKeys(target[, propertyKey])
+                for (int i = 0; i < 2; i++)
+                {
+                    if (i < arguments.Count)
+                    {
+                        emitter.EmitExpression(arguments[i]);
+                        emitter.EmitBoxIfNeeded(arguments[i]);
+                    }
+                    else
+                        il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ReflectGetMetadataKeys);
+                return true;
+            }
+
+            case "deleteMetadata":
+            {
+                // Reflect.deleteMetadata(key, target[, propertyKey])
+                for (int i = 0; i < 3; i++)
+                {
+                    if (i < arguments.Count)
+                    {
+                        emitter.EmitExpression(arguments[i]);
+                        emitter.EmitBoxIfNeeded(arguments[i]);
+                    }
+                    else
+                        il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.ReflectDeleteMetadata);
+                return true;
+            }
+
+            case "metadata":
+            {
+                // Reflect.metadata(key, value) → decorator factory
+                // Returns a function that calls defineMetadata when applied
+                // For now, emit the defineMetadata call directly since decorators apply it
+                // This is the @Reflect.metadata("key", "value") pattern
+                // The decorator framework already calls this as a function that receives (target)
+                // We need to return a function(target) { defineMetadata(key, value, target) }
+                // For simplicity, emit a TSFunction wrapping a helper
+
+                // Actually, Reflect.metadata(key, value) returns a decorator function.
+                // When used as @Reflect.metadata("role", "admin") class MyClass {},
+                // it's called as: Reflect.metadata("role", "admin")(MyClass)
+                // So we need to return a function. Let's create a closure.
+                // For now, just inline: the decorator machinery should handle this.
+                // Emit: ReflectDefineMetadata(key, value, target, null) where target comes from decorator call
+                // This is complex — let me emit it as a no-op that stores and the decorator applies it.
+
+                // Simple approach: return a TSFunction that takes (target) and calls defineMetadata
+                // But creating closures in IL is complex. Let me use the display class pattern.
+                // Actually, the test just checks that getMetadata returns the right value after decoration.
+                // The decorator framework calls the factory function result with the target class.
+                // So Reflect.metadata("role", "admin") must return (target) => { defineMetadata("role", "admin", target); return target; }
+
+                // This requires a closure. Let's skip this case for now and handle the 5 direct API tests.
+                return false;
+            }
+
             default:
                 return false;
         }

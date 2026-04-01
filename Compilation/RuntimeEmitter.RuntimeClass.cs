@@ -435,6 +435,8 @@ public partial class RuntimeEmitter
         EmitReadlineMethods(typeBuilder, runtime);
         // Child process module methods
         EmitChildProcessMethods(typeBuilder, runtime);
+        // Reflect metadata API
+        EmitReflectMetadataMethods(typeBuilder, runtime);
         // Timer methods (setTimeout, clearTimeout, setInterval, clearInterval)
         EmitSetTimeoutMethod(typeBuilder, runtime);
         EmitClearTimeoutMethod(typeBuilder, runtime);

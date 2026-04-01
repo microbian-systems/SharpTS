@@ -246,7 +246,7 @@ public class DecoratorTests
 
     /// <summary>Compiled mode: Reflect metadata API is not available.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ReflectMetadata_DefineAndGet(ExecutionMode mode)
     {
         const string source = """
@@ -264,7 +264,7 @@ public class DecoratorTests
 
     /// <summary>Compiled mode: Reflect metadata API is not available.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ReflectMetadata_PropertyKey(ExecutionMode mode)
     {
         const string source = """
@@ -282,7 +282,7 @@ public class DecoratorTests
 
     /// <summary>Compiled mode: Reflect metadata API is not available.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ReflectMetadata_HasMetadata(ExecutionMode mode)
     {
         const string source = """
@@ -299,7 +299,7 @@ public class DecoratorTests
 
     /// <summary>Compiled mode: Reflect metadata API is not available.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ReflectMetadata_GetKeys(ExecutionMode mode)
     {
         const string source = """
@@ -317,7 +317,7 @@ public class DecoratorTests
 
     /// <summary>Compiled mode: Reflect metadata API is not available.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ReflectMetadata_DeleteMetadata(ExecutionMode mode)
     {
         const string source = """
