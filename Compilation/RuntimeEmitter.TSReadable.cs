@@ -577,11 +577,40 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(notWritableLabel);
-        // Just dequeue and discard if not writable
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
-        il.Emit(OpCodes.Callvirt, dequeueMethod);
-        il.Emit(OpCodes.Pop);
+        // Fallback: try calling Write(chunk, null, null) via runtime reflection on emitted type
+        {
+            var chunkLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+            il.Emit(OpCodes.Callvirt, dequeueMethod);
+            il.Emit(OpCodes.Stloc, chunkLocal);
+
+            // dest.GetType().GetMethod("Write")
+            var writeMethodLocal = il.DeclareLocal(typeof(System.Reflection.MethodInfo));
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+            il.Emit(OpCodes.Ldstr, "Write");
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+            il.Emit(OpCodes.Stloc, writeMethodLocal);
+
+            var noWriteLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, writeMethodLocal);
+            il.Emit(OpCodes.Brfalse, noWriteLabel);
+
+            // method.Invoke(dest, new object[] { chunk })
+            il.Emit(OpCodes.Ldloc, writeMethodLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldloc, chunkLocal);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Callvirt, typeof(System.Reflection.MethodBase).GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
+            il.Emit(OpCodes.Pop);
+
+            il.MarkLabel(noWriteLabel);
+        }
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(loopEnd);
@@ -905,7 +934,9 @@ public partial class RuntimeEmitter
 
     private void EmitTSReadableOnListenerAdded(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // Override OnListenerAdded: if eventName == "data" && _flowing != 1, set _flowing = 1
+        // Override OnListenerAdded:
+        // - "data": enter flowing mode, drain buffer
+        // - "end": if already ended and buffer empty, emit 'end' immediately
         var method = typeBuilder.DefineMethod(
             "OnListenerAdded",
             MethodAttributes.Public | MethodAttributes.Virtual,
@@ -914,19 +945,21 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        var skipLabel = il.DefineLabel();
+        var strEquals = _types.String.GetMethod("op_Equality", [_types.String, _types.String])!;
+        var retLabel = il.DefineLabel();
+        var checkEndLabel = il.DefineLabel();
 
-        // if (eventName != "data") return
+        // === "data" case ===
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldstr, "data");
-        il.Emit(OpCodes.Call, _types.String.GetMethod("op_Equality", [_types.String, _types.String])!);
-        il.Emit(OpCodes.Brfalse, skipLabel);
+        il.Emit(OpCodes.Call, strEquals);
+        il.Emit(OpCodes.Brfalse, checkEndLabel);
 
         // if (_flowing == 1) return (already flowing)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsReadableFlowingField);
         il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Beq, skipLabel);
+        il.Emit(OpCodes.Beq, retLabel);
 
         // _flowing = 1
         il.Emit(OpCodes.Ldarg_0);
@@ -962,19 +995,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Br, retLabel);
 
-        // If stream already ended AND buffer fully drained, emit 'end' event.
-        // Guard with Count == 0 to prevent duplicate 'end' if multiple 'data' listeners added.
-        var noEndLabel = il.DefineLabel();
+        // === "end" case ===
+        il.MarkLabel(checkEndLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "end");
+        il.Emit(OpCodes.Call, strEquals);
+        il.Emit(OpCodes.Brfalse, retLabel);
+
+        // if (_ended && _readBuffer.Count == 0) emit 'end'
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsReadableEndedField);
-        il.Emit(OpCodes.Brfalse, noEndLabel);
+        il.Emit(OpCodes.Brfalse, retLabel);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
         il.Emit(OpCodes.Callvirt, countGetter);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Bne_Un, noEndLabel);
+        il.Emit(OpCodes.Bne_Un, retLabel);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "end");
@@ -983,8 +1022,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
         il.Emit(OpCodes.Pop);
 
-        il.MarkLabel(noEndLabel);
-        il.MarkLabel(skipLabel);
+        il.MarkLabel(retLabel);
         il.Emit(OpCodes.Ret);
     }
 

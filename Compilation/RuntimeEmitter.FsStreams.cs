@@ -34,10 +34,10 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitFsStreamTypeDefinitions(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
-        DefineFsReadStreamType(moduleBuilder);
+        DefineFsReadStreamType(moduleBuilder, runtime);
         DefineFsWriteStreamType(moduleBuilder);
+        EmitFsWriteStreamMethods(runtime);  // Must come before ReadStream methods (Pipe needs _wsWriteMethod)
         EmitFsReadStreamMethods(runtime);
-        EmitFsWriteStreamMethods(runtime);
         _fsReadStreamType.CreateType();
         _fsWriteStreamType.CreateType();
     }
@@ -54,28 +54,33 @@ public partial class RuntimeEmitter
 
     #region $FsReadStream
 
-    private void DefineFsReadStreamType(ModuleBuilder moduleBuilder)
+    private void DefineFsReadStreamType(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
         _fsReadStreamType = moduleBuilder.DefineType(
             "$FsReadStream",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
-            _types.Object
+            runtime.TSReadableType  // Extends $Readable instead of object
         );
 
-        // Fields
+        // Fields (path and bytesRead only — data goes into $Readable's buffer via Push)
         _rsPathField = _fsReadStreamType.DefineField("_path", _types.String, FieldAttributes.Private);
         _rsDataField = _fsReadStreamType.DefineField("_data", _types.Object, FieldAttributes.Private);
         _rsBytesReadField = _fsReadStreamType.DefineField("_bytesRead", _types.Double, FieldAttributes.Private);
 
         // Constructor: $FsReadStream(string path, object data, double bytesRead)
+        // Calls base $Readable ctor, then Push(data) and Push(null) to load buffer and signal EOF
         var ctor = _fsReadStreamType.DefineConstructor(
             MethodAttributes.Public,
             CallingConventions.Standard,
             [_types.String, _types.Object, _types.Double]
         );
         var il = ctor.GetILGenerator();
+
+        // Call base $Readable constructor (no args)
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Call, runtime.TSReadableCtor);
+
+        // Store fields
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Stfld, _rsPathField);
@@ -85,9 +90,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_3);
         il.Emit(OpCodes.Stfld, _rsBytesReadField);
+
+        // Push data into the Readable buffer (if non-null)
+        var skipPushLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2); // data
+        il.Emit(OpCodes.Brfalse, skipPushLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.TSReadablePush);
+        il.Emit(OpCodes.Pop); // Push returns bool
+        il.MarkLabel(skipPushLabel);
+
+        // Push null to signal EOF
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Callvirt, runtime.TSReadablePush);
+        il.Emit(OpCodes.Pop);
+
         il.Emit(OpCodes.Ret);
 
-        // Property: Path (string) - for GetFieldsProperty reflection lookup
+        // Property: Path (string)
         var pathProp = _fsReadStreamType.DefineProperty("Path", PropertyAttributes.None, _types.String, null);
         var pathGetter = _fsReadStreamType.DefineMethod("get_Path",
             MethodAttributes.Public | MethodAttributes.SpecialName, _types.String, Type.EmptyTypes);
@@ -111,106 +133,51 @@ public partial class RuntimeEmitter
 
     private void EmitFsReadStreamMethods(EmittedRuntime runtime)
     {
-        EmitFsReadStreamOn(runtime);
-        EmitFsReadStreamPipe(runtime);
+        // Override Pipe to handle $FsWriteStream (which doesn't extend $Writable)
+        EmitFsReadStreamPipeOverride(runtime);
     }
 
-    private void EmitFsReadStreamOn(EmittedRuntime runtime)
+    /// <summary>
+    /// Override Pipe on $FsReadStream: first tries the base $Readable.Pipe behavior (for $Writable/$Duplex),
+    /// then falls back to calling Write/End directly on $FsWriteStream.
+    /// </summary>
+    private void EmitFsReadStreamPipeOverride(EmittedRuntime runtime)
     {
-        // public object On(object eventName, object callback)
-        // Fires callback synchronously for "data" and "end" events
-        var method = _fsReadStreamType.DefineMethod("On",
-            MethodAttributes.Public, _types.Object, [_types.Object, _types.Object]);
-
-        var il = method.GetILGenerator();
-        var endEventLabel = il.DefineLabel();
-        var returnThisLabel = il.DefineLabel();
-
-        // string evName = eventName?.ToString() ?? ""
-        var evNameLocal = il.DeclareLocal(_types.String);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
-        il.Emit(OpCodes.Stloc, evNameLocal);
-
-        // if (evName == "data")
-        il.Emit(OpCodes.Ldloc, evNameLocal);
-        il.Emit(OpCodes.Ldstr, "data");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brfalse, endEventLabel);
-
-        // if (_data != null) callback.Invoke([_data])
-        var skipDataInvokeLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, _rsDataField);
-        il.Emit(OpCodes.Brfalse, skipDataInvokeLabel);
-
-        // Cast callback to $TSFunction and invoke with [_data]
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, _rsDataField);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
-        il.Emit(OpCodes.Pop);
-
-        il.MarkLabel(skipDataInvokeLabel);
-        il.Emit(OpCodes.Br, returnThisLabel);
-
-        // if (evName == "end")
-        il.MarkLabel(endEventLabel);
-        il.Emit(OpCodes.Ldloc, evNameLocal);
-        il.Emit(OpCodes.Ldstr, "end");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brfalse, returnThisLabel);
-
-        // callback.Invoke([]) - fire end event immediately
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
-        il.Emit(OpCodes.Pop);
-
-        // return this
-        il.MarkLabel(returnThisLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ret);
-    }
-
-    private void EmitFsReadStreamPipe(EmittedRuntime runtime)
-    {
-        // public object Pipe(object writable)
-        // Writes data to writable and ends it
         var method = _fsReadStreamType.DefineMethod("Pipe",
-            MethodAttributes.Public, _types.Object, [_types.Object]);
+            MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual,
+            _types.Object, [_types.Object, _types.Object]);
 
         var il = method.GetILGenerator();
+        var basePathLabel = il.DefineLabel();
 
-        // Cast writable to $FsWriteStream
+        // Check if dest is $FsWriteStream
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _fsWriteStreamType);
+        il.Emit(OpCodes.Brfalse, basePathLabel);
+
+        // $FsWriteStream path: write _data directly, then end
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, _fsWriteStreamType);
-        var wsLocal = il.DeclareLocal(_fsWriteStreamType);
-        il.Emit(OpCodes.Stloc, wsLocal);
-
-        // wsLocal.Write(_data)
-        il.Emit(OpCodes.Ldloc, wsLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _rsDataField);
         il.Emit(OpCodes.Callvirt, _wsWriteMethod);
         il.Emit(OpCodes.Pop);
 
-        // wsLocal.End(null)
-        il.Emit(OpCodes.Ldloc, wsLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _fsWriteStreamType);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Callvirt, _wsEndMethod);
         il.Emit(OpCodes.Pop);
 
-        // return this
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ret);
+
+        // For all other destinations: delegate to base $Readable.Pipe
+        il.MarkLabel(basePathLabel);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.TSReadablePipe);
         il.Emit(OpCodes.Ret);
     }
 

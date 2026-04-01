@@ -188,7 +188,7 @@ public class FsWatchTests
     #region Flowing Streams
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ReadStream_FlowingMode_AutoDrainsOnDataListener(ExecutionMode mode)
     {
         var tempFile = Path.GetTempFileName();
@@ -217,7 +217,7 @@ public class FsWatchTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Readable_PauseResume_FlowControl(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -239,7 +239,7 @@ public class FsWatchTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Readable_ResumeAfterPause(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
