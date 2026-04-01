@@ -28,6 +28,8 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
         "constants",
         // Stream factories
         "createReadStream", "createWriteStream",
+        // Watch APIs
+        "watch", "watchFile", "unwatchFile",
         // fs.promises namespace
         "promises"
     ];
@@ -74,6 +76,10 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
             // Stream factories
             "createReadStream" => EmitCreateReadStream(emitter, arguments),
             "createWriteStream" => EmitCreateWriteStream(emitter, arguments),
+            // Watch APIs
+            "watch" => EmitWatch(emitter, arguments),
+            "watchFile" => EmitWatchFile(emitter, arguments),
+            "unwatchFile" => EmitUnwatchFile(emitter, arguments),
             _ => false
         };
     }
@@ -1004,6 +1010,79 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
         }
 
         il.Emit(OpCodes.Call, ctx.Runtime!.FsCreateWriteStream);
+        return true;
+    }
+
+    #endregion
+
+    #region Watch APIs
+
+    private static bool EmitWatch(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // FsWatch(string path, object optionsOrCallback, object callback)
+        // Arg 0: path (string — don't box)
+        if (arguments.Count > 0)
+            emitter.EmitExpression(arguments[0]);
+        else
+            il.Emit(OpCodes.Ldnull);
+
+        // Args 1-2: boxed
+        for (int i = 1; i < 3; i++)
+        {
+            if (i < arguments.Count)
+            {
+                emitter.EmitExpression(arguments[i]);
+                emitter.EmitBoxIfNeeded(arguments[i]);
+            }
+            else
+                il.Emit(OpCodes.Ldnull);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.FsWatch);
+        return true;
+    }
+
+    private static bool EmitWatchFile(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // FsWatchFile(string path, object options, object callback)
+        if (arguments.Count > 0)
+            emitter.EmitExpression(arguments[0]);
+        else
+            il.Emit(OpCodes.Ldnull);
+
+        for (int i = 1; i < 3; i++)
+        {
+            if (i < arguments.Count)
+            {
+                emitter.EmitExpression(arguments[i]);
+                emitter.EmitBoxIfNeeded(arguments[i]);
+            }
+            else
+                il.Emit(OpCodes.Ldnull);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.FsWatchFile);
+        return true;
+    }
+
+    private static bool EmitUnwatchFile(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // FsUnwatchFile(string path)
+        if (arguments.Count > 0)
+            emitter.EmitExpression(arguments[0]);
+        else
+            il.Emit(OpCodes.Ldnull);
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.FsUnwatchFile);
         return true;
     }
 

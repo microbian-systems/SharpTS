@@ -437,6 +437,8 @@ public partial class RuntimeEmitter
         EmitChildProcessMethods(typeBuilder, runtime);
         // Reflect metadata API
         EmitReflectMetadataMethods(typeBuilder, runtime);
+        // fs.watch / fs.watchFile / fs.unwatchFile
+        EmitFsWatchFactories(typeBuilder, runtime);
         // Timer methods (setTimeout, clearTimeout, setInterval, clearInterval)
         EmitSetTimeoutMethod(typeBuilder, runtime);
         EmitClearTimeoutMethod(typeBuilder, runtime);

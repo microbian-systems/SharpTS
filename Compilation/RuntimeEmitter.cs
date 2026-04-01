@@ -286,6 +286,11 @@ public partial class RuntimeEmitter
         // Must come after TSFunction (uses TSFunctionInvoke) and before EmitRuntimeClass
         EmitFsStreamTypeDefinitions(moduleBuilder, runtime);
 
+        // Emit $FsWatcher and $StatWatcher types
+        // Must come after $EventEmitter and $EventLoop, before EmitRuntimeClass
+        EmitFsWatcherClass(moduleBuilder, runtime);
+        EmitStatWatcherClass(moduleBuilder, runtime);
+
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime);
 

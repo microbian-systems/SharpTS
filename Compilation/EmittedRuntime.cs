@@ -1771,6 +1771,17 @@ public class EmittedRuntime
     public MethodBuilder FsCreateReadStream { get; set; } = null!;
     public MethodBuilder FsCreateWriteStream { get; set; } = null!;
 
+    // fs.watch / fs.watchFile / fs.unwatchFile
+    public Type FsWatcherType { get; set; } = null!;
+    public ConstructorBuilder FsWatcherCtor { get; set; } = null!;
+    public MethodBuilder FsWatcherClose { get; set; } = null!;
+    public Type StatWatcherType { get; set; } = null!;
+    public ConstructorBuilder StatWatcherCtor { get; set; } = null!;
+    public MethodBuilder StatWatcherClose { get; set; } = null!;
+    public MethodBuilder FsWatch { get; set; } = null!;
+    public MethodBuilder FsWatchFile { get; set; } = null!;
+    public MethodBuilder FsUnwatchFile { get; set; } = null!;
+
     // Built-in module methods (module name -> method name -> MethodBuilder)
     // Used for creating TSFunction wrappers when importing named exports
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _builtInModuleMethods = new();
