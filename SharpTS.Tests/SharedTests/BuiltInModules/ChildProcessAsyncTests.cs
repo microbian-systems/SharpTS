@@ -11,7 +11,7 @@ namespace SharpTS.Tests.SharedTests.BuiltInModules;
 public class ChildProcessAsyncTests
 {
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Exec_ReturnsChildProcess(ExecutionMode mode)
     {
         var echoCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -33,7 +33,7 @@ public class ChildProcessAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Spawn_ReturnsChildProcess(ExecutionMode mode)
     {
         var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -81,7 +81,7 @@ public class ChildProcessAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Exec_ChildProcess_HasKillMethod(ExecutionMode mode)
     {
         var echoCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -104,7 +104,7 @@ public class ChildProcessAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Exec_ChildProcess_Properties(ExecutionMode mode)
     {
         var echoCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -126,7 +126,7 @@ public class ChildProcessAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Spawn_HasStdinStream(ExecutionMode mode)
     {
         var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -150,7 +150,7 @@ public class ChildProcessAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ExecFile_ReturnsChildProcess(ExecutionMode mode)
     {
         var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -176,7 +176,7 @@ public class ChildProcessAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fork_TypeIsFunction(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -216,7 +216,7 @@ public class ChildProcessAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Exec_ChildProcess_HasPidProperty(ExecutionMode mode)
     {
         var echoCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
