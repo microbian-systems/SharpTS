@@ -390,7 +390,7 @@ public class DnsRecordTypeTests
     #region dns.promises.resolve with rrtype Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void DnsPromises_Resolve_WithMxRrtype(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

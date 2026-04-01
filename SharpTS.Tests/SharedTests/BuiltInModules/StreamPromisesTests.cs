@@ -58,7 +58,7 @@ public class StreamPromisesTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void StreamPromises_Pipeline_ReturnsPromise(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -82,7 +82,7 @@ public class StreamPromisesTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void StreamPromises_Pipeline_ConnectsStreams(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -105,7 +105,7 @@ public class StreamPromisesTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void StreamPromises_Finished_ReturnsCleanupFunction(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

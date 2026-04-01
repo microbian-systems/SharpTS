@@ -149,20 +149,37 @@ public abstract partial class ExpressionEmitterBase
             }
         }
 
-        // Special case: fs.promises.methodName()
-        if (c.Callee is Expr.Get fsPromisesMethodGet &&
-            fsPromisesMethodGet.Object is Expr.Get fsPromisesGet &&
-            fsPromisesGet.Name.Lexeme == "promises" &&
-            fsPromisesGet.Object is Expr.Variable fsVar &&
+        // Special case: module.promises.methodName() (fs.promises, dns.promises, stream.promises)
+        if (c.Callee is Expr.Get promisesMethodGet &&
+            promisesMethodGet.Object is Expr.Get promisesGet &&
+            promisesGet.Name.Lexeme == "promises" &&
+            promisesGet.Object is Expr.Variable promisesModuleVar &&
             Ctx.BuiltInModuleNamespaces != null &&
-            Ctx.BuiltInModuleNamespaces.TryGetValue(fsVar.Name.Lexeme, out var fsModuleName) &&
-            fsModuleName == "fs" &&
-            Ctx.BuiltInModuleEmitterRegistry?.GetEmitter("fs/promises") is { } fsPromisesEmitter)
+            Ctx.BuiltInModuleNamespaces.TryGetValue(promisesModuleVar.Name.Lexeme, out var promisesModuleName) &&
+            Ctx.BuiltInModuleEmitterRegistry?.GetEmitter(promisesModuleName + "/promises") is { } promisesEmitter)
         {
-            if (fsPromisesEmitter.TryEmitMethodCall(this, fsPromisesMethodGet.Name.Lexeme, c.Arguments))
+            if (promisesEmitter.TryEmitMethodCall(this, promisesMethodGet.Name.Lexeme, c.Arguments))
             {
                 SetStackUnknown();
                 return;
+            }
+        }
+
+        // Handle namedImport.staticMethod() for built-in modules (e.g., Readable.from)
+        if (c.Callee is Expr.Get namedImportGet &&
+            namedImportGet.Object is Expr.Variable namedImportVar &&
+            Ctx.BuiltInModuleMethodBindings?.TryGetValue(namedImportVar.Name.Lexeme, out var namedBinding) == true)
+        {
+            var namedEmitter = Ctx.BuiltInModuleEmitterRegistry?.GetEmitter(namedBinding.ModuleName);
+            if (namedEmitter != null)
+            {
+                // Try "ImportedName.method" combined key (e.g., "Readable.from")
+                var combinedKey = $"{namedBinding.MethodName}.{namedImportGet.Name.Lexeme}";
+                if (namedEmitter.TryEmitMethodCall(this, combinedKey, c.Arguments))
+                {
+                    SetStackUnknown();
+                    return;
+                }
             }
         }
 

@@ -50,6 +50,23 @@ public class BuiltInModuleHandler : ICallHandler
             }
         }
 
+        // Try named import static method call: Readable.from(), EventEmitter.once(), etc.
+        if (call.Callee is Expr.Get namedGet &&
+            namedGet.Object is Expr.Variable namedVar &&
+            ctx.BuiltInModuleMethodBindings?.TryGetValue(namedVar.Name.Lexeme, out var namedBinding) == true)
+        {
+            var namedEmitter = ctx.BuiltInModuleEmitterRegistry.GetEmitter(namedBinding.ModuleName);
+            if (namedEmitter != null)
+            {
+                var combinedKey = $"{namedBinding.MethodName}.{namedGet.Name.Lexeme}";
+                if (namedEmitter.TryEmitMethodCall(emitter, combinedKey, call.Arguments))
+                {
+                    emitter.ResetStackType();
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 }

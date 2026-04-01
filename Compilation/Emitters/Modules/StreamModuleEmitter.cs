@@ -40,6 +40,9 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
             case "addAbortSignal":
                 EmitAddAbortSignalCall(emitter, arguments);
                 return true;
+            case "Readable.from":
+                EmitReadableFromCall(emitter, arguments);
+                return true;
             default:
                 return false;
         }
@@ -119,5 +122,26 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
         {
             il.Emit(OpCodes.Ldnull);
         }
+    }
+
+    private static void EmitReadableFromCall(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // Pack args into object[]
+        il.Emit(OpCodes.Ldc_I4, arguments.Count);
+        il.Emit(OpCodes.Newarr, typeof(object));
+
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4, i);
+            emitter.EmitExpression(arguments[i]);
+            emitter.EmitBoxIfNeeded(arguments[i]);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.StreamReadableFrom);
     }
 }

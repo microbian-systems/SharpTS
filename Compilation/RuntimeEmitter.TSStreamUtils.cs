@@ -10,8 +10,17 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class RuntimeEmitter
 {
+    // Cleanup class fields for finished() return value
+    private FieldBuilder _cleanupStreamField = null!;
+    private FieldBuilder _cleanupCallbackField = null!;
+    private ConstructorBuilder _cleanupCtor = null!;
+    private MethodBuilder _cleanupInvokeMethod = null!;
+
     private void EmitTSStreamUtilsClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
+        // Emit cleanup closure class first
+        EmitStreamFinishedCleanupClass(moduleBuilder, runtime);
+
         var typeBuilder = moduleBuilder.DefineType(
             "$StreamUtils",
             TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit
@@ -24,6 +33,71 @@ public partial class RuntimeEmitter
         EmitStreamPromiseFinished(typeBuilder, runtime);
 
         typeBuilder.CreateType();
+    }
+
+    /// <summary>
+    /// Emits $StreamFinishedCleanup class with stream/callback fields and Invoke method
+    /// that calls stream.Off() for all 4 events.
+    /// </summary>
+    private void EmitStreamFinishedCleanupClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$StreamFinishedCleanup",
+            TypeAttributes.Public | TypeAttributes.BeforeFieldInit
+        );
+
+        _cleanupStreamField = typeBuilder.DefineField("_stream", runtime.TSEventEmitterType, FieldAttributes.Public);
+        _cleanupCallbackField = typeBuilder.DefineField("_callback", _types.Object, FieldAttributes.Public);
+
+        // Constructor(stream, callback)
+        _cleanupCtor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [runtime.TSEventEmitterType, _types.Object]);
+        {
+            var il = _cleanupCtor.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Stfld, _cleanupStreamField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stfld, _cleanupCallbackField);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // Invoke(object[] args) → null  (removes listeners)
+        _cleanupInvokeMethod = typeBuilder.DefineMethod(
+            "Invoke",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.ObjectArray]);
+        {
+            var il = _cleanupInvokeMethod.GetILGenerator();
+
+            // stream.Off("end", callback)
+            EmitOffCall(il, runtime, "end");
+            EmitOffCall(il, runtime, "finish");
+            EmitOffCall(il, runtime, "error");
+            EmitOffCall(il, runtime, "close");
+
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ret);
+        }
+
+        typeBuilder.CreateType();
+
+        void EmitOffCall(ILGenerator il, EmittedRuntime rt, string eventName)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _cleanupStreamField);
+            il.Emit(OpCodes.Ldstr, eventName);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _cleanupCallbackField);
+            il.Emit(OpCodes.Callvirt, rt.TSEventEmitterOff);
+            il.Emit(OpCodes.Pop); // Off returns the emitter
+        }
     }
 
     /// <summary>
@@ -43,8 +117,17 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
 
         // Extract stream from args[0]
-        var streamLocal = il.DeclareLocal(runtime.TSEventEmitterType); // local 0: stream (cast to $EventEmitter)
+        var streamLocal = il.DeclareLocal(runtime.TSEventEmitterType); // local 0: stream
         var callbackLocal = il.DeclareLocal(_types.Object); // local 1: callback
+        var optionsLocal = il.DeclareLocal(_types.Object); // local 2: options (null if 2-arg)
+        var readableOptLocal = il.DeclareLocal(_types.Boolean); // local 3: readable option (default true)
+        var writableOptLocal = il.DeclareLocal(_types.Boolean); // local 4: writable option (default true)
+
+        // Defaults
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, readableOptLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, writableOptLocal);
 
         // Cast args[0] to $EventEmitter
         il.Emit(OpCodes.Ldarg_0);
@@ -63,32 +146,160 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_3);
         il.Emit(OpCodes.Bge, threeArgs);
 
-        // 2-arg case: callback = args[1]
+        // 2-arg case: callback = args[1], options = null
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stloc, callbackLocal);
         il.Emit(OpCodes.Br, afterCallback);
 
-        // 3-arg case: callback = args[2]
+        // 3-arg case: options = args[1], callback = args[2]
         il.MarkLabel(threeArgs);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, optionsLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_2);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stloc, callbackLocal);
 
+        // Extract readable/writable options if present
+        EmitExtractBooleanOption(il, runtime, optionsLocal, "readable", readableOptLocal);
+        EmitExtractBooleanOption(il, runtime, optionsLocal, "writable", writableOptLocal);
+
         il.MarkLabel(afterCallback);
 
-        // Attach once listeners for each event
-        // stream.Once("end", callback)
+        // Attach once listeners based on options
+        // if (readable) stream.Once("end", callback)
+        var skipEnd = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, readableOptLocal);
+        il.Emit(OpCodes.Brfalse, skipEnd);
         EmitOnceCall(il, runtime, streamLocal, callbackLocal, "end");
+        il.MarkLabel(skipEnd);
+
+        // if (writable) stream.Once("finish", callback)
+        var skipFinish = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, writableOptLocal);
+        il.Emit(OpCodes.Brfalse, skipFinish);
         EmitOnceCall(il, runtime, streamLocal, callbackLocal, "finish");
+        il.MarkLabel(skipFinish);
+
+        // Always listen for error and close
         EmitOnceCall(il, runtime, streamLocal, callbackLocal, "error");
         EmitOnceCall(il, runtime, streamLocal, callbackLocal, "close");
 
-        // Return null
-        il.Emit(OpCodes.Ldnull);
+        // Create cleanup closure: new $StreamFinishedCleanup(stream, callback)
+        il.Emit(OpCodes.Ldloc, streamLocal);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Newobj, _cleanupCtor);
+        var cleanupInstanceLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, cleanupInstanceLocal);
+
+        // Return new $TSFunction(cleanupInstance, cleanupInvokeMethod)
+        il.Emit(OpCodes.Ldloc, cleanupInstanceLocal);
+        il.Emit(OpCodes.Ldtoken, _cleanupInvokeMethod);
+        il.Emit(OpCodes.Call, _types.GetMethod(
+            _types.MethodBase, "GetMethodFromHandle", _types.RuntimeMethodHandle));
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// If options has a boolean property with the given name set to false, store false in targetLocal.
+    /// Uses $IHasFields.GetProperty interface which is available early in emission order.
+    /// </summary>
+    private void EmitExtractBooleanOption(ILGenerator il, EmittedRuntime runtime,
+        LocalBuilder optionsLocal, string propName, LocalBuilder targetLocal)
+    {
+        var skipLabel = il.DefineLabel();
+        var valueLocal = il.DeclareLocal(_types.Object);
+
+        // if (options == null) skip
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        // Try $IHasFields interface first, then raw Dictionary<string,object?>
+        var notHasFieldsLabel = il.DefineLabel();
+        var tryDictLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Brfalse, tryDictLabel);
+
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Ldstr, propName);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsGetProperty);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        var afterGetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, afterGetLabel);
+
+        // Fallback: raw Dictionary<string, object?>
+        il.MarkLabel(tryDictLabel);
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Isinst, typeof(Dictionary<string, object?>));
+        il.Emit(OpCodes.Brfalse, notHasFieldsLabel);
+        {
+            var dictLocal = il.DeclareLocal(typeof(Dictionary<string, object?>));
+            il.Emit(OpCodes.Ldloc, optionsLocal);
+            il.Emit(OpCodes.Castclass, typeof(Dictionary<string, object?>));
+            il.Emit(OpCodes.Stloc, dictLocal);
+
+            // dict.TryGetValue(propName, out value)
+            il.Emit(OpCodes.Ldloc, dictLocal);
+            il.Emit(OpCodes.Ldstr, propName);
+            il.Emit(OpCodes.Ldloca, valueLocal);
+            il.Emit(OpCodes.Callvirt, typeof(Dictionary<string, object?>).GetMethod("TryGetValue")!);
+            il.Emit(OpCodes.Brfalse, notHasFieldsLabel); // key not found
+        }
+
+        il.MarkLabel(afterGetLabel);
+
+        // Check if value is bool
+        var checkIntLabel = il.DefineLabel();
+        var doneExtractLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, typeof(bool));
+        il.Emit(OpCodes.Brfalse, checkIntLabel);
+
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Unbox_Any, typeof(bool));
+        il.Emit(OpCodes.Stloc, targetLocal);
+        il.Emit(OpCodes.Br, doneExtractLabel);
+
+        // Also check if value is int (compiled booleans may be boxed as int32)
+        il.MarkLabel(checkIntLabel);
+        var checkDoubleLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, typeof(int));
+        il.Emit(OpCodes.Brfalse, checkDoubleLabel);
+
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Unbox_Any, typeof(int));
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Cgt_Un);
+        il.Emit(OpCodes.Stloc, targetLocal);
+        il.Emit(OpCodes.Br, doneExtractLabel);
+
+        // Also check double (JS false may be compiled as 0.0)
+        il.MarkLabel(checkDoubleLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, typeof(double));
+        il.Emit(OpCodes.Brfalse, doneExtractLabel);
+
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Unbox_Any, typeof(double));
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq); // true if value != 0.0
+        il.Emit(OpCodes.Stloc, targetLocal);
+
+        il.MarkLabel(doneExtractLabel);
+        il.MarkLabel(notHasFieldsLabel);
+        il.MarkLabel(skipLabel);
     }
 
     private static void EmitOnceCall(ILGenerator il, EmittedRuntime runtime, LocalBuilder stream, LocalBuilder callback, string eventName)
@@ -103,7 +314,8 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object Pipeline(object[] args)
-    /// Pipes streams together. Returns the last stream.
+    /// Pipes streams together. The last arg may be a callback function.
+    /// Returns the last stream (not the callback).
     /// </summary>
     private void EmitStreamPipeline(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -118,18 +330,56 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
 
         var argsLocal = il.DeclareLocal(_types.MakeArrayType(_types.Object)); // local 0
-        var lengthLocal = il.DeclareLocal(_types.Int32); // local 1
+        var streamCountLocal = il.DeclareLocal(_types.Int32); // local 1: number of streams (excluding callback)
         var indexLocal = il.DeclareLocal(_types.Int32); // local 2
+        var callbackLocal = il.DeclareLocal(_types.Object); // local 3: callback (if present)
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Stloc, argsLocal);
 
+        // Determine if last arg is a callback (TSFunction) or a stream ($EventEmitter).
+        // If the last arg is NOT a stream, treat it as the callback.
+        var lastArgLocal = il.DeclareLocal(_types.Object); // local 4
+        il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Ldlen);
         il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Stloc, lengthLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, lastArgLocal);
 
-        // Loop: for (i = 0; i < length - 1; i++)
+        var noCallbackLabel = il.DefineLabel();
+        var afterCallbackCheck = il.DefineLabel();
+
+        // if (lastArg is $EventEmitter) → no callback, all args are streams
+        il.Emit(OpCodes.Ldloc, lastArgLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSEventEmitterType);
+        il.Emit(OpCodes.Brtrue, noCallbackLabel);
+
+        // Last arg is the callback: streamCount = args.Length - 1
+        il.Emit(OpCodes.Ldloc, lastArgLocal);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, streamCountLocal);
+        il.Emit(OpCodes.Br, afterCallbackCheck);
+
+        // No callback: streamCount = args.Length
+        il.MarkLabel(noCallbackLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, streamCountLocal);
+
+        il.MarkLabel(afterCallbackCheck);
+
+        // Loop: for (i = 0; i < streamCount - 1; i++)
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, indexLocal);
 
@@ -138,7 +388,7 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(loopStart);
         il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldloc, lengthLocal);
+        il.Emit(OpCodes.Ldloc, streamCountLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Sub);
         il.Emit(OpCodes.Bge, loopEnd);
@@ -165,9 +415,28 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(loopEnd);
 
-        // Return last stream: args[length - 1]
+        // If callback present, call it with null (no error)
+        var skipCallbackInvoke = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Brfalse, skipCallbackInvoke);
+
+        // callback(null) — invoke TSFunction with one null arg
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(skipCallbackInvoke);
+
+        // Return last stream: args[streamCount - 1]
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Ldloc, lengthLocal);
+        il.Emit(OpCodes.Ldloc, streamCountLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Sub);
         il.Emit(OpCodes.Ldelem_Ref);

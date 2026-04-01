@@ -110,7 +110,7 @@ public class DnsAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void DnsPromises_Lookup(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -131,7 +131,7 @@ public class DnsAsyncTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void DnsPromises_ViaModule(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

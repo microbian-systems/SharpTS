@@ -82,7 +82,7 @@ public class HttpAgentTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpGlobalAgent_Destroy(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -98,7 +98,7 @@ public class HttpAgentTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpGlobalAgent_GetName(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -222,7 +222,7 @@ public class HttpAgentTests
     #region Agent instance methods (interpreter only - use GetMember dispatch)
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Agent_GetName_Default(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -239,7 +239,7 @@ public class HttpAgentTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Agent_GetName_WithOptions(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -256,7 +256,7 @@ public class HttpAgentTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Agent_Destroy(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

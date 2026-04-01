@@ -9,7 +9,8 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class RuntimeEmitter
 {
-    // $Readable fields
+    // $Readable fields and methods
+    private MethodBuilder _tsReadableFlushChunkToPipes = null!;
     private FieldBuilder _tsReadableBufferField = null!;
     private FieldBuilder _tsReadablePipeDestinationsField = null!;
     private FieldBuilder _tsReadableEndedField = null!;
@@ -52,8 +53,7 @@ public partial class RuntimeEmitter
 
         // Methods that don't depend on Duplex
         EmitTSReadableRead(typeBuilder, runtime, queueOfObject);
-        EmitTSReadablePush(typeBuilder, runtime, queueOfObject);
-        // NOTE: Pipe is emitted in Phase 2 since it needs Duplex type
+        // NOTE: Push and Pipe are emitted in Phase 2 since they need Duplex type
         EmitTSReadableUnpipe(typeBuilder, runtime);
         EmitTSReadableSetEncoding(typeBuilder, runtime);
         EmitTSReadableDestroy(typeBuilder, runtime, queueOfObject);
@@ -79,7 +79,9 @@ public partial class RuntimeEmitter
         var typeBuilder = (TypeBuilder)runtime.TSReadableType;
         var queueOfObject = typeof(Queue<object?>);
 
-        // Emit Pipe method (depends on TSDuplexType)
+        // These depend on TSDuplexType
+        EmitTSReadableFlushChunkToPipes(typeBuilder, runtime);
+        EmitTSReadablePush(typeBuilder, runtime, queueOfObject);
         EmitTSReadablePipe(typeBuilder, runtime, queueOfObject);
 
         // Finalize the type
@@ -265,6 +267,85 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits FlushChunkToPipes(object chunk): writes chunk to all pipe destinations.
+    /// Shared by both flowing and non-flowing paths in Push().
+    /// </summary>
+    private void EmitTSReadableFlushChunkToPipes(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        _tsReadableFlushChunkToPipes = typeBuilder.DefineMethod(
+            "FlushChunkToPipes",
+            MethodAttributes.Private,
+            _types.Void,
+            [_types.Object]  // chunk
+        );
+
+        var il = _tsReadableFlushChunkToPipes.GetILGenerator();
+
+        var idxLocal = il.DeclareLocal(_types.Int32);
+        var countLocal = il.DeclareLocal(_types.Int32);
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadablePipeDestinationsField);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, countLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idxLocal);
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldloc, countLocal);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        var destLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadablePipeDestinationsField);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("get_Item")!);
+        il.Emit(OpCodes.Stloc, destLocal);
+
+        var tryWritable = il.DefineLabel();
+        var afterWrite = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldloc, destLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSDuplexType);
+        il.Emit(OpCodes.Brfalse, tryWritable);
+
+        il.Emit(OpCodes.Ldloc, destLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSDuplexType);
+        il.Emit(OpCodes.Ldarg_1); // chunk
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Callvirt, runtime.TSDuplexWrite);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, afterWrite);
+
+        il.MarkLabel(tryWritable);
+        il.Emit(OpCodes.Ldloc, destLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSWritableType);
+        il.Emit(OpCodes.Brfalse, afterWrite);
+
+        il.Emit(OpCodes.Ldloc, destLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSWritableType);
+        il.Emit(OpCodes.Ldarg_1); // chunk
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Callvirt, runtime.TSWritableWrite);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(afterWrite);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitTSReadablePush(TypeBuilder typeBuilder, EmittedRuntime runtime, Type queueType)
     {
         // public bool Push(object? chunk)
@@ -305,6 +386,71 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
         il.Emit(OpCodes.Pop);
 
+        // End all pipe destinations
+        {
+            var eofIdxLocal = il.DeclareLocal(_types.Int32);
+            var eofCountLocal = il.DeclareLocal(_types.Int32);
+            var eofLoopStart = il.DefineLabel();
+            var eofLoopEnd = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsReadablePipeDestinationsField);
+            il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetProperty("Count")!.GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, eofCountLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, eofIdxLocal);
+
+            il.MarkLabel(eofLoopStart);
+            il.Emit(OpCodes.Ldloc, eofIdxLocal);
+            il.Emit(OpCodes.Ldloc, eofCountLocal);
+            il.Emit(OpCodes.Bge, eofLoopEnd);
+
+            var eofDestLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsReadablePipeDestinationsField);
+            il.Emit(OpCodes.Ldloc, eofIdxLocal);
+            il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("get_Item")!);
+            il.Emit(OpCodes.Stloc, eofDestLocal);
+
+            var eofTryWritable = il.DefineLabel();
+            var eofAfterEnd = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldloc, eofDestLocal);
+            il.Emit(OpCodes.Isinst, runtime.TSDuplexType);
+            il.Emit(OpCodes.Brfalse, eofTryWritable);
+
+            il.Emit(OpCodes.Ldloc, eofDestLocal);
+            il.Emit(OpCodes.Castclass, runtime.TSDuplexType);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Callvirt, runtime.TSDuplexEnd);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Br, eofAfterEnd);
+
+            il.MarkLabel(eofTryWritable);
+            il.Emit(OpCodes.Ldloc, eofDestLocal);
+            il.Emit(OpCodes.Isinst, runtime.TSWritableType);
+            il.Emit(OpCodes.Brfalse, eofAfterEnd);
+
+            il.Emit(OpCodes.Ldloc, eofDestLocal);
+            il.Emit(OpCodes.Castclass, runtime.TSWritableType);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Callvirt, runtime.TSWritableEnd);
+            il.Emit(OpCodes.Pop);
+
+            il.MarkLabel(eofAfterEnd);
+            il.Emit(OpCodes.Ldloc, eofIdxLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, eofIdxLocal);
+            il.Emit(OpCodes.Br, eofLoopStart);
+
+            il.MarkLabel(eofLoopEnd);
+        }
+
         il.Emit(OpCodes.Br, returnFalseLabel);
 
         il.MarkLabel(notNullLabel);
@@ -328,17 +474,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
         il.Emit(OpCodes.Pop);
 
+        // Flush to pipe destinations
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _tsReadableFlushChunkToPipes!);
+
         // return true
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notFlowingLabel);
-        // Not flowing: _readBuffer.Enqueue(chunk)
+        // Not flowing: _readBuffer.Enqueue(chunk), then flush to pipes
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
         il.Emit(OpCodes.Ldarg_1);
         var enqueueMethod = queueType.GetMethod("Enqueue")!;
         il.Emit(OpCodes.Callvirt, enqueueMethod);
+
+        // Also flush to pipe destinations in non-flowing mode (matches interpreter)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _tsReadableFlushChunkToPipes!);
 
         // return true
         il.Emit(OpCodes.Ldc_I4_1);
@@ -473,6 +629,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
 
         il.MarkLabel(notEndedLabel);
+
+        // Add destination to _pipeDestinations
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadablePipeDestinationsField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
 
         // Set _flowing = 1 (flowing mode) after pipe setup
         il.Emit(OpCodes.Ldarg_0);
@@ -800,6 +962,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(loopEnd);
+
+        // If stream already ended AND buffer fully drained, emit 'end' event.
+        // Guard with Count == 0 to prevent duplicate 'end' if multiple 'data' listeners added.
+        var noEndLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableEndedField);
+        il.Emit(OpCodes.Brfalse, noEndLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+        il.Emit(OpCodes.Callvirt, countGetter);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bne_Un, noEndLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "end");
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(noEndLabel);
         il.MarkLabel(skipLabel);
         il.Emit(OpCodes.Ret);
     }

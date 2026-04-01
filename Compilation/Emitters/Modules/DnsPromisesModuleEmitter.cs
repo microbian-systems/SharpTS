@@ -90,8 +90,8 @@ public sealed class DnsPromisesModuleEmitter : IBuiltInModuleEmitter
         else
             il.Emit(OpCodes.Ldnull);
 
+        // Wrapper already calls WrapTaskAsPromise internally
         il.Emit(OpCodes.Call, ctx.Runtime!.DnsPromisesWrapperMethods["DnsPromisesLookup"]);
-        il.Emit(OpCodes.Call, ctx.Runtime!.WrapTaskAsPromise);
         return true;
     }
 
@@ -119,8 +119,8 @@ public sealed class DnsPromisesModuleEmitter : IBuiltInModuleEmitter
         else
             il.Emit(OpCodes.Ldnull);
 
+        // Wrapper already calls WrapTaskAsPromise internally
         il.Emit(OpCodes.Call, ctx.Runtime!.DnsPromisesWrapperMethods["DnsPromisesResolve"]);
-        il.Emit(OpCodes.Call, ctx.Runtime!.WrapTaskAsPromise);
         return true;
     }
 }

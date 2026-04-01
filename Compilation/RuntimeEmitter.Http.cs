@@ -87,6 +87,7 @@ public partial class RuntimeEmitter
         EmitHttpGet(typeBuilder, runtime);
         EmitHttpGetMethods(typeBuilder, runtime);
         EmitHttpGetStatusCodes(typeBuilder, runtime);
+        EmitAgentHelperMethods(typeBuilder, runtime);
         EmitHttpGetGlobalAgent(typeBuilder, runtime);
         EmitHttpGetAgentConstructor(typeBuilder, runtime);
 
@@ -2313,6 +2314,174 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    // Agent helper method references
+    private MethodBuilder _agentDestroyMethod = null!;
+    private MethodBuilder _agentGetNameMethod = null!;
+
+    /// <summary>
+    /// Emits static helper methods for Agent instances: AgentDestroy and AgentGetName.
+    /// These are wrapped as TSFunction and added to each Agent dictionary.
+    /// </summary>
+    private void EmitAgentHelperMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // AgentDestroy(object?[] args) → null (no-op)
+        _agentDestroyMethod = typeBuilder.DefineMethod(
+            "AgentDestroy",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.ObjectArray]);
+        {
+            var il = _agentDestroyMethod.GetILGenerator();
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // AgentGetName(object?[] args) → string "host:port:localAddress:family"
+        _agentGetNameMethod = typeBuilder.DefineMethod(
+            "AgentGetName",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.ObjectArray]);
+        {
+            var il = _agentGetNameMethod.GetILGenerator();
+
+            // Default values
+            var hostLocal = il.DeclareLocal(_types.String);
+            var portLocal = il.DeclareLocal(_types.String);
+            var localAddrLocal = il.DeclareLocal(_types.String);
+            var familyLocal = il.DeclareLocal(_types.String);
+
+            il.Emit(OpCodes.Ldstr, "localhost");
+            il.Emit(OpCodes.Stloc, hostLocal);
+            il.Emit(OpCodes.Ldstr, "80");
+            il.Emit(OpCodes.Stloc, portLocal);
+            il.Emit(OpCodes.Ldstr, "");
+            il.Emit(OpCodes.Stloc, localAddrLocal);
+            il.Emit(OpCodes.Ldstr, "");
+            il.Emit(OpCodes.Stloc, familyLocal);
+
+            // If args.Length > 0 && args[0] != null, extract options
+            var useDefaults = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ble, useDefaults);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Brfalse, useDefaults);
+
+            // Extract properties from options using GetProperty
+            var optionsLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Stloc, optionsLocal);
+
+            EmitAgentExtractStringOption(il, runtime, optionsLocal, "host", hostLocal);
+            EmitAgentExtractDoubleAsIntStringOption(il, runtime, optionsLocal, "port", portLocal);
+            EmitAgentExtractStringOption(il, runtime, optionsLocal, "localAddress", localAddrLocal);
+            EmitAgentExtractDoubleAsIntStringOption(il, runtime, optionsLocal, "family", familyLocal);
+
+            il.MarkLabel(useDefaults);
+
+            // Return string.Concat(host, ":", port, ":", localAddress, ":", family)
+            il.Emit(OpCodes.Ldc_I4, 7);
+            il.Emit(OpCodes.Newarr, _types.String);
+
+            il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldloc, hostLocal); il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Ldstr, ":"); il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Ldloc, portLocal); il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_3); il.Emit(OpCodes.Ldstr, ":"); il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_4); il.Emit(OpCodes.Ldloc, localAddrLocal); il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_5); il.Emit(OpCodes.Ldstr, ":"); il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_6); il.Emit(OpCodes.Ldloc, familyLocal); il.Emit(OpCodes.Stelem_Ref);
+
+            il.Emit(OpCodes.Call, typeof(string).GetMethod("Concat", [typeof(string[])])!);
+            il.Emit(OpCodes.Ret);
+        }
+    }
+
+    private void EmitAgentExtractStringOption(ILGenerator il, EmittedRuntime runtime,
+        LocalBuilder optionsLocal, string propName, LocalBuilder targetLocal)
+    {
+        var skipLabel = il.DefineLabel();
+        var valueLocal = il.DeclareLocal(_types.Object);
+
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Ldstr, propName);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, valueLocal);
+
+        // If value is string, use it
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, targetLocal);
+        il.MarkLabel(skipLabel);
+    }
+
+    /// <summary>
+    /// Emits IL to add destroy() and getName() TSFunction methods to an Agent dictionary.
+    /// Expects the dictionary on top of the stack (with Dup pattern).
+    /// </summary>
+    private void EmitAgentMethods(ILGenerator il, EmittedRuntime runtime)
+    {
+        // Add destroy method as TSFunction
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "destroy");
+        il.Emit(OpCodes.Ldnull); // target (static)
+        il.Emit(OpCodes.Ldtoken, _agentDestroyMethod);
+        il.Emit(OpCodes.Call, _types.GetMethod(
+            _types.MethodBase, "GetMethodFromHandle", _types.RuntimeMethodHandle));
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        // Add getName method as TSFunction
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "getName");
+        il.Emit(OpCodes.Ldnull); // target (static)
+        il.Emit(OpCodes.Ldtoken, _agentGetNameMethod);
+        il.Emit(OpCodes.Call, _types.GetMethod(
+            _types.MethodBase, "GetMethodFromHandle", _types.RuntimeMethodHandle));
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+    }
+
+    private void EmitAgentExtractDoubleAsIntStringOption(ILGenerator il, EmittedRuntime runtime,
+        LocalBuilder optionsLocal, string propName, LocalBuilder targetLocal)
+    {
+        var skipLabel = il.DefineLabel();
+        var valueLocal = il.DeclareLocal(_types.Object);
+
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Ldstr, propName);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, valueLocal);
+
+        // If value is boxed double, convert to int string
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, typeof(double));
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Unbox_Any, typeof(double));
+        il.Emit(OpCodes.Conv_I4);
+        var intLocal = il.DeclareLocal(typeof(int));
+        il.Emit(OpCodes.Stloc, intLocal);
+        il.Emit(OpCodes.Ldloca, intLocal);
+        il.Emit(OpCodes.Call, typeof(int).GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, targetLocal);
+
+        il.MarkLabel(skipLabel);
+    }
+
     /// <summary>
     /// Emits: public static object HttpGetGlobalAgent()
     /// Returns the global agent object with full Agent properties.
@@ -2449,6 +2618,9 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
             il.Emit(OpCodes.Call, runtime.SetProperty);
 
+            // Add methods
+            EmitAgentMethods(il, runtime);
+
             // Wrap in $Object
             il.Emit(OpCodes.Call, runtime.CreateObject);
             il.Emit(OpCodes.Ret);
@@ -2583,6 +2755,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "requests");
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        // Add methods
+        EmitAgentMethods(il, runtime);
 
         // Wrap in $Object
         il.Emit(OpCodes.Call, runtime.CreateObject);

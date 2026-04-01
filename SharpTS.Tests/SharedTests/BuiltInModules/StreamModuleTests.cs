@@ -749,7 +749,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Readable_Pipe_EntersFlowingMode(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -856,7 +856,7 @@ public class StreamModuleTests
     #region stream.finished()
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Finished_CallsCallbackAfterReadableEnds(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -877,7 +877,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Finished_CallsCallbackAfterWritableFinishes(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -899,7 +899,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Finished_CallsCallbackWithErrorOnStreamError(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -919,7 +919,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Finished_CleanupRemovesListeners(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -942,7 +942,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Finished_OptionsReadableFalse(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -969,7 +969,7 @@ public class StreamModuleTests
     #region stream.pipeline()
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Pipeline_ReadableToWritable(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1034,7 +1034,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Pipeline_ReturnsDestinationStream(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1058,7 +1058,7 @@ public class StreamModuleTests
     #region Readable.from()
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_ReadableFrom_ArrayObjectMode(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1080,7 +1080,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_ReadableFrom_StringArray(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1103,7 +1103,7 @@ public class StreamModuleTests
     #region Missing Events
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_PauseEvent_FiresOnPause(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1121,7 +1121,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_ResumeEvent_FiresOnResume(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1140,7 +1140,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_PrefinishEvent_FiresBeforeFinish(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1211,7 +1211,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_HighWaterMark_CustomValue(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1425,7 +1425,7 @@ public class StreamModuleTests
     #region addAbortSignal
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_AddAbortSignal_ReturnsStream(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
