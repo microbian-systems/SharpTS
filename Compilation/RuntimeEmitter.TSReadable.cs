@@ -577,40 +577,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(notWritableLabel);
-        // Fallback: try calling Write(chunk, null, null) via runtime reflection on emitted type
-        {
-            var chunkLocal = il.DeclareLocal(_types.Object);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
-            il.Emit(OpCodes.Callvirt, dequeueMethod);
-            il.Emit(OpCodes.Stloc, chunkLocal);
-
-            // dest.GetType().GetMethod("Write")
-            var writeMethodLocal = il.DeclareLocal(typeof(System.Reflection.MethodInfo));
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-            il.Emit(OpCodes.Ldstr, "Write");
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
-            il.Emit(OpCodes.Stloc, writeMethodLocal);
-
-            var noWriteLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldloc, writeMethodLocal);
-            il.Emit(OpCodes.Brfalse, noWriteLabel);
-
-            // method.Invoke(dest, new object[] { chunk })
-            il.Emit(OpCodes.Ldloc, writeMethodLocal);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Ldc_I4_1);
-            il.Emit(OpCodes.Newarr, _types.Object);
-            il.Emit(OpCodes.Dup);
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Ldloc, chunkLocal);
-            il.Emit(OpCodes.Stelem_Ref);
-            il.Emit(OpCodes.Callvirt, typeof(System.Reflection.MethodBase).GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
-            il.Emit(OpCodes.Pop);
-
-            il.MarkLabel(noWriteLabel);
-        }
+        // Unknown destination type — just dequeue and discard
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+        il.Emit(OpCodes.Callvirt, dequeueMethod);
+        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(loopEnd);

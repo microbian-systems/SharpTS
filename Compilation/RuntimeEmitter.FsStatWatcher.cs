@@ -123,6 +123,7 @@ public partial class RuntimeEmitter
         // if (_closed) return
         var notClosedLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Volatile);
         il.Emit(OpCodes.Ldfld, _statWatcherClosedField);
         il.Emit(OpCodes.Brfalse, notClosedLabel);
         il.Emit(OpCodes.Ret);
@@ -266,6 +267,7 @@ public partial class RuntimeEmitter
         // _closed = false
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Volatile);
         il.Emit(OpCodes.Stfld, _statWatcherClosedField);
 
         // _filename = Path.GetFullPath(path)
@@ -334,6 +336,7 @@ public partial class RuntimeEmitter
 
         var notClosedLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Volatile);
         il.Emit(OpCodes.Ldfld, _statWatcherClosedField);
         il.Emit(OpCodes.Brfalse, notClosedLabel);
         il.Emit(OpCodes.Ret);
@@ -341,6 +344,7 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Volatile);
         il.Emit(OpCodes.Stfld, _statWatcherClosedField);
 
         // _timer.Dispose()
