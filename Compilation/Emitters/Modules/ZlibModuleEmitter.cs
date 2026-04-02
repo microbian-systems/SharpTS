@@ -33,12 +33,14 @@ public sealed class ZlibModuleEmitter : IBuiltInModuleEmitter
         "createDeflate", "createInflate",
         "createDeflateRaw", "createInflateRaw",
         "createBrotliCompress", "createBrotliDecompress",
+        "createZstdCompress", "createZstdDecompress",
         "createUnzip",
         // Async callback APIs
         "gzip", "gunzip",
         "deflate", "inflate",
         "deflateRaw", "inflateRaw",
         "brotliCompress", "brotliDecompress",
+        "zstdCompress", "zstdDecompress",
         "unzip",
         "constants"
     ];
@@ -69,6 +71,8 @@ public sealed class ZlibModuleEmitter : IBuiltInModuleEmitter
             "createInflateRaw" => EmitCreateStream(emitter, arguments, "ZlibCreateInflateRaw"),
             "createBrotliCompress" => EmitCreateStream(emitter, arguments, "ZlibCreateBrotliCompress"),
             "createBrotliDecompress" => EmitCreateStream(emitter, arguments, "ZlibCreateBrotliDecompress"),
+            "createZstdCompress" => EmitCreateStream(emitter, arguments, "ZlibCreateZstdCompress"),
+            "createZstdDecompress" => EmitCreateStream(emitter, arguments, "ZlibCreateZstdDecompress"),
             "createUnzip" => EmitCreateStream(emitter, arguments, "ZlibCreateUnzip"),
             // Async callback APIs
             "gzip" => EmitAsyncMethod(emitter, arguments, "ZlibGzipAsync"),
@@ -79,6 +83,8 @@ public sealed class ZlibModuleEmitter : IBuiltInModuleEmitter
             "inflateRaw" => EmitAsyncMethod(emitter, arguments, "ZlibInflateRawAsync"),
             "brotliCompress" => EmitAsyncMethod(emitter, arguments, "ZlibBrotliCompressAsync"),
             "brotliDecompress" => EmitAsyncMethod(emitter, arguments, "ZlibBrotliDecompressAsync"),
+            "zstdCompress" => EmitAsyncMethod(emitter, arguments, "ZlibZstdCompressAsync"),
+            "zstdDecompress" => EmitAsyncMethod(emitter, arguments, "ZlibZstdDecompressAsync"),
             "unzip" => EmitAsyncMethod(emitter, arguments, "ZlibUnzipAsync"),
             _ => false
         };
@@ -128,6 +134,8 @@ public sealed class ZlibModuleEmitter : IBuiltInModuleEmitter
             "ZlibCreateInflateRaw" => ctx.Runtime!.ZlibCreateInflateRaw,
             "ZlibCreateBrotliCompress" => ctx.Runtime!.ZlibCreateBrotliCompress,
             "ZlibCreateBrotliDecompress" => ctx.Runtime!.ZlibCreateBrotliDecompress,
+            "ZlibCreateZstdCompress" => ctx.Runtime!.ZlibCreateZstdCompress,
+            "ZlibCreateZstdDecompress" => ctx.Runtime!.ZlibCreateZstdDecompress,
             "ZlibCreateUnzip" => ctx.Runtime!.ZlibCreateUnzip,
             _ => throw new CompileException($"Unknown zlib streaming method: {runtimeMethodName}")
         };
@@ -191,6 +199,8 @@ public sealed class ZlibModuleEmitter : IBuiltInModuleEmitter
             "ZlibInflateRawAsync" => ctx.Runtime!.ZlibInflateRawAsync,
             "ZlibBrotliCompressAsync" => ctx.Runtime!.ZlibBrotliCompressAsync,
             "ZlibBrotliDecompressAsync" => ctx.Runtime!.ZlibBrotliDecompressAsync,
+            "ZlibZstdCompressAsync" => ctx.Runtime!.ZlibZstdCompressAsync,
+            "ZlibZstdDecompressAsync" => ctx.Runtime!.ZlibZstdDecompressAsync,
             "ZlibUnzipAsync" => ctx.Runtime!.ZlibUnzipAsync,
             _ => throw new CompileException($"Unknown zlib async method: {asyncMethodName}")
         };

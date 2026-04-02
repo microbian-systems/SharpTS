@@ -1549,6 +1549,8 @@ public class EmittedRuntime
     public MethodBuilder ZlibCreateInflateRaw { get; set; } = null!;
     public MethodBuilder ZlibCreateBrotliCompress { get; set; } = null!;
     public MethodBuilder ZlibCreateBrotliDecompress { get; set; } = null!;
+    public MethodBuilder ZlibCreateZstdCompress { get; set; } = null!;
+    public MethodBuilder ZlibCreateZstdDecompress { get; set; } = null!;
     public MethodBuilder ZlibCreateUnzip { get; set; } = null!;
     public MethodBuilder ZlibAsyncCallback { get; set; } = null!;
 
@@ -1561,6 +1563,8 @@ public class EmittedRuntime
     public MethodBuilder ZlibInflateRawAsync { get; set; } = null!;
     public MethodBuilder ZlibBrotliCompressAsync { get; set; } = null!;
     public MethodBuilder ZlibBrotliDecompressAsync { get; set; } = null!;
+    public MethodBuilder ZlibZstdCompressAsync { get; set; } = null!;
+    public MethodBuilder ZlibZstdDecompressAsync { get; set; } = null!;
     public MethodBuilder ZlibUnzipAsync { get; set; } = null!;
 
     // $ZlibTransform type - emitted for standalone zlib streaming support

@@ -355,8 +355,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object ZlibZstdCompressSync(object input, object options)
-    /// Note: Zstd is not supported in compiled mode because it requires ZstdSharp.dll
-    /// to be deployed alongside the compiled output. Use interpreter mode for Zstd.
+    /// Uses ZstdSharp.CompressionStream for compression.
     /// </summary>
     private void EmitZlibZstdCompressSync(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -367,21 +366,12 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]);
         runtime.ZlibZstdCompressSync = method;
 
-        var il = method.GetILGenerator();
-
-        // Zstd requires ZstdSharp.dll which would need to be deployed alongside the compiled output
-        // Throw a clear error message explaining this limitation
-        il.Emit(OpCodes.Ldstr, "zstdCompressSync is not available in compiled mode. " +
-            "Zstd requires the ZstdSharp.dll library to be deployed alongside the compiled output. " +
-            "Use interpreter mode or deploy ZstdSharp.dll manually.");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
-        il.Emit(OpCodes.Throw);
+        EmitZstdCompressMethod(method.GetILGenerator(), runtime);
     }
 
     /// <summary>
     /// Emits: public static object ZlibZstdDecompressSync(object input, object options)
-    /// Note: Zstd is not supported in compiled mode because it requires ZstdSharp.dll
-    /// to be deployed alongside the compiled output. Use interpreter mode for Zstd.
+    /// Uses ZstdSharp.DecompressionStream for decompression.
     /// </summary>
     private void EmitZlibZstdDecompressSync(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -392,15 +382,7 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]);
         runtime.ZlibZstdDecompressSync = method;
 
-        var il = method.GetILGenerator();
-
-        // Zstd requires ZstdSharp.dll which would need to be deployed alongside the compiled output
-        // Throw a clear error message explaining this limitation
-        il.Emit(OpCodes.Ldstr, "zstdDecompressSync is not available in compiled mode. " +
-            "Zstd requires the ZstdSharp.dll library to be deployed alongside the compiled output. " +
-            "Use interpreter mode or deploy ZstdSharp.dll manually.");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
-        il.Emit(OpCodes.Throw);
+        EmitZstdDecompressMethod(method.GetILGenerator(), runtime);
     }
 
     #endregion
@@ -626,6 +608,8 @@ public partial class RuntimeEmitter
         EmitZlibCreateStreamMethod(typeBuilder, runtime, "ZlibCreateInflateRaw", 5, mb => runtime.ZlibCreateInflateRaw = mb);
         EmitZlibCreateStreamMethod(typeBuilder, runtime, "ZlibCreateBrotliCompress", 6, mb => runtime.ZlibCreateBrotliCompress = mb);
         EmitZlibCreateStreamMethod(typeBuilder, runtime, "ZlibCreateBrotliDecompress", 7, mb => runtime.ZlibCreateBrotliDecompress = mb);
+        EmitZlibCreateStreamMethod(typeBuilder, runtime, "ZlibCreateZstdCompress", 9, mb => runtime.ZlibCreateZstdCompress = mb);
+        EmitZlibCreateStreamMethod(typeBuilder, runtime, "ZlibCreateZstdDecompress", 10, mb => runtime.ZlibCreateZstdDecompress = mb);
         EmitZlibCreateStreamMethod(typeBuilder, runtime, "ZlibCreateUnzip", 8, mb => runtime.ZlibCreateUnzip = mb);
         EmitZlibAsyncCallback(typeBuilder, runtime);
     }
@@ -688,6 +672,8 @@ public partial class RuntimeEmitter
         EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibInflateRawAsync", () => runtime.ZlibInflateRawSync, mb => runtime.ZlibInflateRawAsync = mb);
         EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibBrotliCompressAsync", () => runtime.ZlibBrotliCompressSync, mb => runtime.ZlibBrotliCompressAsync = mb);
         EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibBrotliDecompressAsync", () => runtime.ZlibBrotliDecompressSync, mb => runtime.ZlibBrotliDecompressAsync = mb);
+        EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibZstdCompressAsync", () => runtime.ZlibZstdCompressSync, mb => runtime.ZlibZstdCompressAsync = mb);
+        EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibZstdDecompressAsync", () => runtime.ZlibZstdDecompressSync, mb => runtime.ZlibZstdDecompressAsync = mb);
         EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibUnzipAsync", () => runtime.ZlibUnzipSync, mb => runtime.ZlibUnzipAsync = mb);
     }
 
@@ -832,6 +818,8 @@ public partial class RuntimeEmitter
             ("createInflateRaw", runtime.ZlibCreateInflateRaw),
             ("createBrotliCompress", runtime.ZlibCreateBrotliCompress),
             ("createBrotliDecompress", runtime.ZlibCreateBrotliDecompress),
+            ("createZstdCompress", runtime.ZlibCreateZstdCompress),
+            ("createZstdDecompress", runtime.ZlibCreateZstdDecompress),
             ("createUnzip", runtime.ZlibCreateUnzip)
         };
 
@@ -862,6 +850,8 @@ public partial class RuntimeEmitter
             ("inflateRaw", runtime.ZlibInflateRawAsync),
             ("brotliCompress", runtime.ZlibBrotliCompressAsync),
             ("brotliDecompress", runtime.ZlibBrotliDecompressAsync),
+            ("zstdCompress", runtime.ZlibZstdCompressAsync),
+            ("zstdDecompress", runtime.ZlibZstdDecompressAsync),
             ("unzip", runtime.ZlibUnzipAsync)
         };
 
@@ -984,6 +974,169 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0); // CompressionMode.Decompress = 0
         il.Emit(OpCodes.Newobj, streamCtor);
         var decompressLocal = il.DeclareLocal(streamType);
+        il.Emit(OpCodes.Stloc, decompressLocal);
+
+        // Create output MemoryStream
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(typeof(MemoryStream)));
+        var outputLocal = il.DeclareLocal(typeof(MemoryStream));
+        il.Emit(OpCodes.Stloc, outputLocal);
+
+        // Copy from decompression stream to output
+        il.Emit(OpCodes.Ldloc, decompressLocal);
+        il.Emit(OpCodes.Ldloc, outputLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Stream, "CopyTo", _types.Stream));
+
+        // Dispose streams
+        il.Emit(OpCodes.Ldloc, decompressLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IDisposable), "Dispose"));
+
+        il.Emit(OpCodes.Ldloc, inputStreamLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IDisposable), "Dispose"));
+
+        // Get result
+        il.Emit(OpCodes.Ldloc, outputLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(MemoryStream), "ToArray"));
+        var resultLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // Dispose output stream
+        il.Emit(OpCodes.Ldloc, outputLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IDisposable), "Dispose"));
+
+        // Create $Buffer from result
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits zstd compression using ZstdSharp.CompressionStream.
+    /// Constructor: CompressionStream(Stream stream, int level, int bufferSize, bool leaveOpen)
+    /// </summary>
+    private void EmitZstdCompressMethod(ILGenerator il, EmittedRuntime runtime)
+    {
+        // Get input bytes
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _getZlibInputBytes!);
+        var inputLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+        il.Emit(OpCodes.Stloc, inputLocal);
+
+        // Get compression level (reuse helper, maps to int)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _getZlibCompressionLevel!);
+        var levelLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Stloc, levelLocal);
+
+        // Create output MemoryStream
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(typeof(MemoryStream)));
+        var outputLocal = il.DeclareLocal(typeof(MemoryStream));
+        il.Emit(OpCodes.Stloc, outputLocal);
+
+        // Map CompressionLevel enum to zstd int level:
+        // Optimal(0)->3, Fastest(1)->1, NoCompression(2)->0, SmallestSize(3)->19
+        var zstdLevelLocal = il.DeclareLocal(_types.Int32);
+        var lvl1Label = il.DefineLabel();
+        var lvl2Label = il.DefineLabel();
+        var lvl3Label = il.DefineLabel();
+        var lvlDoneLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldloc, levelLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Beq, lvl1Label);
+        il.Emit(OpCodes.Ldloc, levelLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Beq, lvl2Label);
+        il.Emit(OpCodes.Ldloc, levelLocal);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Beq, lvl3Label);
+        // Default (Optimal=0): zstd level 3
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Stloc, zstdLevelLocal);
+        il.Emit(OpCodes.Br, lvlDoneLabel);
+
+        il.MarkLabel(lvl1Label); // Fastest -> 1
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, zstdLevelLocal);
+        il.Emit(OpCodes.Br, lvlDoneLabel);
+
+        il.MarkLabel(lvl2Label); // NoCompression -> 0 (store uncompressed isn't really supported, use min)
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, zstdLevelLocal);
+        il.Emit(OpCodes.Br, lvlDoneLabel);
+
+        il.MarkLabel(lvl3Label); // SmallestSize -> 19
+        il.Emit(OpCodes.Ldc_I4, 19);
+        il.Emit(OpCodes.Stloc, zstdLevelLocal);
+
+        il.MarkLabel(lvlDoneLabel);
+
+        // Create CompressionStream(outputMs, zstdLevel, bufferSize=0, leaveOpen=true)
+        var csType = typeof(ZstdSharp.CompressionStream);
+        var csCtor = csType.GetConstructor([typeof(Stream), typeof(int), typeof(int), typeof(bool)])!;
+        il.Emit(OpCodes.Ldloc, outputLocal);
+        il.Emit(OpCodes.Ldloc, zstdLevelLocal);
+        il.Emit(OpCodes.Ldc_I4_0);  // bufferSize = 0 (default)
+        il.Emit(OpCodes.Ldc_I4_1);  // leaveOpen = true
+        il.Emit(OpCodes.Newobj, csCtor);
+        var compressLocal = il.DeclareLocal(csType);
+        il.Emit(OpCodes.Stloc, compressLocal);
+
+        // Write input to compression stream
+        il.Emit(OpCodes.Ldloc, compressLocal);
+        il.Emit(OpCodes.Ldloc, inputLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, inputLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Stream, "Write", _types.MakeArrayType(_types.Byte), _types.Int32, _types.Int32));
+
+        // Dispose compression stream (flushes final data)
+        il.Emit(OpCodes.Ldloc, compressLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IDisposable), "Dispose"));
+
+        // Get result from output stream
+        il.Emit(OpCodes.Ldloc, outputLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(MemoryStream), "ToArray"));
+        var resultLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // Dispose output stream
+        il.Emit(OpCodes.Ldloc, outputLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IDisposable), "Dispose"));
+
+        // Create $Buffer from result
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits zstd decompression using ZstdSharp.DecompressionStream.
+    /// Constructor: DecompressionStream(Stream stream, int bufferSize, bool checkEndOfStream, bool leaveOpen)
+    /// </summary>
+    private void EmitZstdDecompressMethod(ILGenerator il, EmittedRuntime runtime)
+    {
+        // Get input bytes
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _getZlibInputBytes!);
+        var inputLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+        il.Emit(OpCodes.Stloc, inputLocal);
+
+        // Create input MemoryStream
+        il.Emit(OpCodes.Ldloc, inputLocal);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(typeof(MemoryStream), _types.MakeArrayType(_types.Byte)));
+        var inputStreamLocal = il.DeclareLocal(typeof(MemoryStream));
+        il.Emit(OpCodes.Stloc, inputStreamLocal);
+
+        // Create DecompressionStream(inputMs, bufferSize=0, checkEndOfStream=false, leaveOpen=false)
+        var dsType = typeof(ZstdSharp.DecompressionStream);
+        var dsCtor = dsType.GetConstructor([typeof(Stream), typeof(int), typeof(bool), typeof(bool)])!;
+        il.Emit(OpCodes.Ldloc, inputStreamLocal);
+        il.Emit(OpCodes.Ldc_I4_0);  // bufferSize = 0 (default)
+        il.Emit(OpCodes.Ldc_I4_0);  // checkEndOfStream = false
+        il.Emit(OpCodes.Ldc_I4_0);  // leaveOpen = false
+        il.Emit(OpCodes.Newobj, dsCtor);
+        var decompressLocal = il.DeclareLocal(dsType);
         il.Emit(OpCodes.Stloc, decompressLocal);
 
         // Create output MemoryStream

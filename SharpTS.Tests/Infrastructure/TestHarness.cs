@@ -253,6 +253,12 @@ public static class TestHarness
             {
                 File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
 
+                // Copy ZstdSharp.dll (required for zstd compression in compiled mode)
+                var zstdDll = Path.Combine(Path.GetDirectoryName(sharpTsDll)!, "ZstdSharp.dll");
+                if (File.Exists(zstdDll))
+                {
+                    File.Copy(zstdDll, Path.Combine(tempDir, "ZstdSharp.dll"), overwrite: true);
+                }
             }
 
             // Write runtimeconfig.json
@@ -635,6 +641,12 @@ public static class TestHarness
             {
                 File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
 
+                // Copy ZstdSharp.dll (required for zstd compression in compiled mode)
+                var zstdDll = Path.Combine(Path.GetDirectoryName(sharpTsDll)!, "ZstdSharp.dll");
+                if (File.Exists(zstdDll))
+                {
+                    File.Copy(zstdDll, Path.Combine(tempDir, "ZstdSharp.dll"), overwrite: true);
+                }
             }
 
             // Write runtimeconfig.json
@@ -811,6 +823,12 @@ public static class TestHarness
             {
                 File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
 
+                // Copy ZstdSharp.dll (required for zstd compression in compiled mode)
+                var zstdDll = Path.Combine(Path.GetDirectoryName(sharpTsDll)!, "ZstdSharp.dll");
+                if (File.Exists(zstdDll))
+                {
+                    File.Copy(zstdDll, Path.Combine(tempDir, "ZstdSharp.dll"), overwrite: true);
+                }
             }
 
             // Write runtimeconfig.json

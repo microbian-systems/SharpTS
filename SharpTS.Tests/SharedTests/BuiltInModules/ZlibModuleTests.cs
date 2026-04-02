@@ -217,7 +217,7 @@ public class ZlibModuleTests
     #region Zstd Tests (Interpreter Only - requires ZstdSharp.dll for compiled)
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_Zstd_RoundTrip(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -236,7 +236,7 @@ public class ZlibModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_Zstd_CompressesData(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -254,7 +254,7 @@ public class ZlibModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_Zstd_LargeData(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -437,7 +437,7 @@ public class ZlibModuleTests
     #region Return Type Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_ReturnsBuffer_Full(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

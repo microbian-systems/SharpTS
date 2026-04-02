@@ -18,7 +18,9 @@ public enum ZlibTransformKind
     InflateRaw,
     BrotliCompress,
     BrotliDecompress,
-    Unzip
+    Unzip,
+    ZstdCompress,
+    ZstdDecompress
 }
 
 /// <summary>
@@ -64,7 +66,8 @@ public class SharpTSZlibTransform : SharpTSTransform
     private bool IsCompression => _kind is ZlibTransformKind.Gzip
         or ZlibTransformKind.Deflate
         or ZlibTransformKind.DeflateRaw
-        or ZlibTransformKind.BrotliCompress;
+        or ZlibTransformKind.BrotliCompress
+        or ZlibTransformKind.ZstdCompress;
 
     private Stream CreateCompressionStream(MemoryStream output)
     {
@@ -75,6 +78,7 @@ public class SharpTSZlibTransform : SharpTSTransform
             ZlibTransformKind.Deflate => new ZLibStream(output, level, leaveOpen: true),
             ZlibTransformKind.DeflateRaw => new DeflateStream(output, level, leaveOpen: true),
             ZlibTransformKind.BrotliCompress => new BrotliStream(output, level, leaveOpen: true),
+            ZlibTransformKind.ZstdCompress => new ZstdSharp.CompressionStream(output, _options.GetZstdLevel(), 0, leaveOpen: true),
             _ => throw new InvalidOperationException($"Not a compression kind: {_kind}")
         };
     }
@@ -150,6 +154,7 @@ public class SharpTSZlibTransform : SharpTSTransform
             ZlibTransformKind.Inflate => ZlibHelpers.DeflateDecompress(input, _options),
             ZlibTransformKind.InflateRaw => ZlibHelpers.DeflateRawDecompress(input, _options),
             ZlibTransformKind.BrotliDecompress => ZlibHelpers.BrotliDecompress(input, _options),
+            ZlibTransformKind.ZstdDecompress => ZlibHelpers.ZstdDecompress(input, _options),
             ZlibTransformKind.Unzip => ZlibHelpers.DeflateRawDecompress(input, _options),
             _ => throw new InvalidOperationException($"Not a decompression kind: {_kind}")
         };
@@ -188,6 +193,8 @@ public class SharpTSZlibTransform : SharpTSTransform
         ZlibTransformKind.BrotliCompress => "BrotliCompress {}",
         ZlibTransformKind.BrotliDecompress => "BrotliDecompress {}",
         ZlibTransformKind.Unzip => "Unzip {}",
+        ZlibTransformKind.ZstdCompress => "ZstdCompress {}",
+        ZlibTransformKind.ZstdDecompress => "ZstdDecompress {}",
         _ => "ZlibTransform {}"
     };
 

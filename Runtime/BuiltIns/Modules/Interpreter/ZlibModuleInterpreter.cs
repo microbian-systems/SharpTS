@@ -56,6 +56,8 @@ public static class ZlibModuleInterpreter
             ["createInflateRaw"] = new BuiltInMethod("createInflateRaw", 0, 1, CreateInflateRaw),
             ["createBrotliCompress"] = new BuiltInMethod("createBrotliCompress", 0, 1, CreateBrotliCompress),
             ["createBrotliDecompress"] = new BuiltInMethod("createBrotliDecompress", 0, 1, CreateBrotliDecompress),
+            ["createZstdCompress"] = new BuiltInMethod("createZstdCompress", 0, 1, CreateZstdCompress),
+            ["createZstdDecompress"] = new BuiltInMethod("createZstdDecompress", 0, 1, CreateZstdDecompress),
             ["createUnzip"] = new BuiltInMethod("createUnzip", 0, 1, CreateUnzip),
 
             // Async callback APIs
@@ -67,6 +69,8 @@ public static class ZlibModuleInterpreter
             ["inflateRaw"] = new BuiltInMethod("inflateRaw", 2, 3, InflateRawAsync),
             ["brotliCompress"] = new BuiltInMethod("brotliCompress", 2, 3, BrotliCompressAsync),
             ["brotliDecompress"] = new BuiltInMethod("brotliDecompress", 2, 3, BrotliDecompressAsync),
+            ["zstdCompress"] = new BuiltInMethod("zstdCompress", 2, 3, ZstdCompressAsync),
+            ["zstdDecompress"] = new BuiltInMethod("zstdDecompress", 2, 3, ZstdDecompressAsync),
             ["unzip"] = new BuiltInMethod("unzip", 2, 3, UnzipAsync),
 
             // Constants
@@ -288,6 +292,12 @@ public static class ZlibModuleInterpreter
     private static object? CreateBrotliDecompress(Interp interpreter, object? receiver, List<object?> args)
         => new SharpTSZlibTransform(ZlibTransformKind.BrotliDecompress, GetOptions(args, 0));
 
+    private static object? CreateZstdCompress(Interp interpreter, object? receiver, List<object?> args)
+        => new SharpTSZlibTransform(ZlibTransformKind.ZstdCompress, GetOptions(args, 0));
+
+    private static object? CreateZstdDecompress(Interp interpreter, object? receiver, List<object?> args)
+        => new SharpTSZlibTransform(ZlibTransformKind.ZstdDecompress, GetOptions(args, 0));
+
     private static object? CreateUnzip(Interp interpreter, object? receiver, List<object?> args)
         => new SharpTSZlibTransform(ZlibTransformKind.Unzip, GetOptions(args, 0));
 
@@ -318,6 +328,12 @@ public static class ZlibModuleInterpreter
 
     private static object? BrotliDecompressAsync(Interp interpreter, object? receiver, List<object?> args)
         => RunAsync(interpreter, args, "brotliDecompress", ZlibHelpers.BrotliDecompress);
+
+    private static object? ZstdCompressAsync(Interp interpreter, object? receiver, List<object?> args)
+        => RunAsync(interpreter, args, "zstdCompress", ZlibHelpers.ZstdCompress);
+
+    private static object? ZstdDecompressAsync(Interp interpreter, object? receiver, List<object?> args)
+        => RunAsync(interpreter, args, "zstdDecompress", ZlibHelpers.ZstdDecompress);
 
     private static object? UnzipAsync(Interp interpreter, object? receiver, List<object?> args)
     {

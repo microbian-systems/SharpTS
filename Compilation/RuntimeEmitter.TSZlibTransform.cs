@@ -28,6 +28,8 @@ public partial class RuntimeEmitter
     private const int KindBrotliCompress = 6;
     private const int KindBrotliDecompress = 7;
     private const int KindUnzip = 8;
+    private const int KindZstdCompress = 9;
+    private const int KindZstdDecompress = 10;
 
     /// <summary>
     /// Emits the $ZlibTransform class extending $Transform.
@@ -92,8 +94,7 @@ public partial class RuntimeEmitter
         var doneLabel = il.DefineLabel();
         var compLabel = il.DefineLabel();
 
-        // Compression kinds: 0=Gzip, 2=Deflate, 4=DeflateRaw, 6=BrotliCompress
-        // Check: kind == 0 || kind == 2 || kind == 4 || kind == 6
+        // Compression kinds: 0=Gzip, 2=Deflate, 4=DeflateRaw, 6=BrotliCompress, 9=ZstdCompress
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4, KindGzip);
         il.Emit(OpCodes.Beq, compLabel);
@@ -105,6 +106,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Beq, compLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4, KindBrotliCompress);
+        il.Emit(OpCodes.Beq, compLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4, KindZstdCompress);
         il.Emit(OpCodes.Beq, compLabel);
 
         // Fall through to decompression setup
@@ -143,6 +147,7 @@ public partial class RuntimeEmitter
         var deflateLabel = il.DefineLabel();
         var deflateRawLabel = il.DefineLabel();
         var brotliLabel = il.DefineLabel();
+        var zstdLabel = il.DefineLabel();
         var storeLabel = il.DefineLabel();
 
         // switch (_kind)
@@ -159,6 +164,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsZlibKindField);
         il.Emit(OpCodes.Ldc_I4, KindDeflateRaw);
         il.Emit(OpCodes.Beq, deflateRawLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibKindField);
+        il.Emit(OpCodes.Ldc_I4, KindZstdCompress);
+        il.Emit(OpCodes.Beq, zstdLabel);
         // Default: brotli
         il.Emit(OpCodes.Br, brotliLabel);
 
@@ -207,6 +216,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsZlibLevelField);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Newobj, typeof(BrotliStream).GetConstructor([typeof(Stream), typeof(CompressionLevel), typeof(bool)])!);
+        il.Emit(OpCodes.Stfld, _tsZlibCompressField);
+        il.Emit(OpCodes.Br, storeLabel);
+
+        // ZstdSharp.CompressionStream(outputMs, level=3, bufferSize=0, leaveOpen=true)
+        il.MarkLabel(zstdLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibOutputMsField);
+        il.Emit(OpCodes.Ldc_I4_3);  // default zstd level
+        il.Emit(OpCodes.Ldc_I4_0);  // bufferSize = 0 (default)
+        il.Emit(OpCodes.Ldc_I4_1);  // leaveOpen = true
+        il.Emit(OpCodes.Newobj, typeof(ZstdSharp.CompressionStream).GetConstructor([typeof(Stream), typeof(int), typeof(int), typeof(bool)])!);
         il.Emit(OpCodes.Stfld, _tsZlibCompressField);
 
         il.MarkLabel(storeLabel);
@@ -569,6 +590,7 @@ public partial class RuntimeEmitter
         var inflateLabel = il.DefineLabel();
         var inflateRawLabel = il.DefineLabel();
         var brotliLabel = il.DefineLabel();
+        var zstdDecompLabel = il.DefineLabel();
         var unzipLabel = il.DefineLabel();
         var doneLabel = il.DefineLabel();
 
@@ -591,6 +613,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsZlibKindField);
         il.Emit(OpCodes.Ldc_I4, KindInflateRaw);
         il.Emit(OpCodes.Beq, inflateRawLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibKindField);
+        il.Emit(OpCodes.Ldc_I4, KindZstdDecompress);
+        il.Emit(OpCodes.Beq, zstdDecompLabel);
         // Default to brotli decompress
         il.Emit(OpCodes.Br, brotliLabel);
 
@@ -660,6 +686,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, inputStreamLocal);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newobj, typeof(BrotliStream).GetConstructor([typeof(Stream), typeof(CompressionMode)])!);
+        il.Emit(OpCodes.Stloc, decompStreamLocal);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        // ZstdSharp.DecompressionStream(inputMs, bufferSize=0, checkEndOfStream=false, leaveOpen=false)
+        il.MarkLabel(zstdDecompLabel);
+        il.Emit(OpCodes.Ldloc, inputStreamLocal);
+        il.Emit(OpCodes.Ldc_I4_0);  // bufferSize = 0
+        il.Emit(OpCodes.Ldc_I4_0);  // checkEndOfStream = false
+        il.Emit(OpCodes.Ldc_I4_0);  // leaveOpen = false
+        il.Emit(OpCodes.Newobj, typeof(ZstdSharp.DecompressionStream).GetConstructor([typeof(Stream), typeof(int), typeof(bool), typeof(bool)])!);
         il.Emit(OpCodes.Stloc, decompStreamLocal);
 
         il.MarkLabel(doneLabel);
