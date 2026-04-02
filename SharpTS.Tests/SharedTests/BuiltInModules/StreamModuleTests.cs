@@ -45,7 +45,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_NamedImport_All(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -999,7 +999,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Pipeline_ReadableTransformWritable(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1163,7 +1163,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_AutoDestroy_DestroysAfterEnd(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1192,7 +1192,7 @@ public class StreamModuleTests
     #region highWaterMark
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_HighWaterMark_PushReturnsFalse(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1232,7 +1232,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_HighWaterMark_ObjectModeDefault16(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

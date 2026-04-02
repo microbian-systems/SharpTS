@@ -19,6 +19,8 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsReadableReadableField = null!;
     private FieldBuilder _tsReadableFlowingField = null!; // int: -1=initial, 0=paused, 1=flowing
     private FieldBuilder _tsReadableObjectModeField = null!;
+    private FieldBuilder _tsReadableHighWaterMarkField = null!;
+    private FieldBuilder _tsReadableBufferSizeField = null!;
 
     /// <summary>
     /// Phase 1: Define the $Readable type, fields, and constructor.
@@ -47,6 +49,8 @@ public partial class RuntimeEmitter
         _tsReadableReadableField = typeBuilder.DefineField("_readable", _types.Boolean, FieldAttributes.Family);
         _tsReadableFlowingField = typeBuilder.DefineField("_flowing", _types.Int32, FieldAttributes.Family);
         _tsReadableObjectModeField = typeBuilder.DefineField("_objectMode", _types.Boolean, FieldAttributes.Family);
+        _tsReadableHighWaterMarkField = typeBuilder.DefineField("_highWaterMark", _types.Int32, FieldAttributes.Family);
+        _tsReadableBufferSizeField = typeBuilder.DefineField("_bufferSize", _types.Int32, FieldAttributes.Family);
 
         // Constructor
         EmitTSReadableCtor(typeBuilder, runtime, queueOfObject);
@@ -62,6 +66,7 @@ public partial class RuntimeEmitter
         EmitTSReadableResume(typeBuilder, runtime);
         EmitTSReadableIsPaused(typeBuilder, runtime);
         EmitTSReadableSetObjectMode(typeBuilder, runtime);
+        EmitTSReadableSetHighWaterMark(typeBuilder, runtime);
 
         // Property getters
         EmitTSReadablePropertyGetters(typeBuilder, runtime, queueOfObject);
@@ -149,6 +154,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, _tsReadableObjectModeField);
+
+        // Default highWaterMark: 16384 bytes (16 for object mode, but that's set later)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, 16384);
+        il.Emit(OpCodes.Stfld, _tsReadableHighWaterMarkField);
 
         il.Emit(OpCodes.Ret);
     }
@@ -264,6 +274,36 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Stfld, _tsReadableObjectModeField);
+
+        // If objectMode=true and highWaterMark is still default (16384), set to 16
+        var skipHwm = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableHighWaterMarkField);
+        il.Emit(OpCodes.Ldc_I4, 16384);
+        il.Emit(OpCodes.Bne_Un, skipHwm);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, 16);
+        il.Emit(OpCodes.Stfld, _tsReadableHighWaterMarkField);
+        il.MarkLabel(skipHwm);
+
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitTSReadableSetHighWaterMark(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // public void SetHighWaterMark(int value)
+        var method = typeBuilder.DefineMethod(
+            "SetHighWaterMark",
+            MethodAttributes.Public,
+            _types.Void,
+            [_types.Int32]
+        );
+        runtime.TSReadableSetHighWaterMark = method;
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, _tsReadableHighWaterMarkField);
         il.Emit(OpCodes.Ret);
     }
 
@@ -496,9 +536,80 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, _tsReadableFlushChunkToPipes!);
 
-        // return true
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ret);
+        // Compute total buffer size and return whether it's under highWaterMark
+        // Sum string lengths (byte mode) or count items (object mode)
+        {
+            // Simple approach: use ToArray() on the queue and sum lengths
+            var totalLocal = il.DeclareLocal(_types.Int32);
+            var arrLocal = il.DeclareLocal(typeof(object?[]));
+            var idxLocal = il.DeclareLocal(_types.Int32);
+            var arrLenLocal = il.DeclareLocal(_types.Int32);
+            var loopStartLbl = il.DefineLabel();
+            var loopEndLbl = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, totalLocal);
+
+            // object[] items = _readBuffer.ToArray()
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+            il.Emit(OpCodes.Callvirt, queueType.GetMethod("ToArray")!);
+            il.Emit(OpCodes.Stloc, arrLocal);
+
+            il.Emit(OpCodes.Ldloc, arrLocal);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Stloc, arrLenLocal);
+
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, idxLocal);
+
+            il.MarkLabel(loopStartLbl);
+            il.Emit(OpCodes.Ldloc, idxLocal);
+            il.Emit(OpCodes.Ldloc, arrLenLocal);
+            il.Emit(OpCodes.Bge, loopEndLbl);
+
+            // chunk = items[idx]
+            var chunkLocal2 = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldloc, arrLocal);
+            il.Emit(OpCodes.Ldloc, idxLocal);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Stloc, chunkLocal2);
+
+            // Object mode: total += 1; Byte mode: total += (string ? length : 1)
+            var notStr2 = il.DefineLabel();
+            var afterLen2 = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, chunkLocal2);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Brfalse, notStr2);
+            il.Emit(OpCodes.Ldloc, totalLocal);
+            il.Emit(OpCodes.Ldloc, chunkLocal2);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Callvirt, typeof(string).GetProperty("Length")!.GetGetMethod()!);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, totalLocal);
+            il.Emit(OpCodes.Br, afterLen2);
+            il.MarkLabel(notStr2);
+            il.Emit(OpCodes.Ldloc, totalLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, totalLocal);
+            il.MarkLabel(afterLen2);
+
+            il.Emit(OpCodes.Ldloc, idxLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, idxLocal);
+            il.Emit(OpCodes.Br, loopStartLbl);
+            il.MarkLabel(loopEndLbl);
+
+            // return total < _highWaterMark
+            il.Emit(OpCodes.Ldloc, totalLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsReadableHighWaterMarkField);
+            il.Emit(OpCodes.Clt);
+            il.Emit(OpCodes.Ret);
+        }
 
         il.MarkLabel(returnFalseLabel);
         il.Emit(OpCodes.Ldc_I4_0);

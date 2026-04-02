@@ -25,6 +25,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsWritableFinalCallbackField = null!;
     private FieldBuilder _tsWritableHighWaterMarkField = null!;
     private FieldBuilder _tsWritableObjectModeField = null!;
+    private FieldBuilder _tsWritableAutoDestroyField = null!;
 
     /// <summary>
     /// Emits the $WriteCallbackWrapper helper class.
@@ -128,6 +129,7 @@ public partial class RuntimeEmitter
         _tsWritableFinalCallbackField = typeBuilder.DefineField("_finalCallback", _types.Object, FieldAttributes.Private);
         _tsWritableHighWaterMarkField = typeBuilder.DefineField("_highWaterMark", _types.Int32, FieldAttributes.Private);
         _tsWritableObjectModeField = typeBuilder.DefineField("_objectMode", _types.Boolean, FieldAttributes.Private);
+        _tsWritableAutoDestroyField = typeBuilder.DefineField("_autoDestroy", _types.Boolean, FieldAttributes.Private);
 
         // Constructor
         EmitTSWritableCtor(typeBuilder, runtime);
@@ -144,6 +146,7 @@ public partial class RuntimeEmitter
         EmitTSWritableSetWriteCallback(typeBuilder, runtime);
         EmitTSWritableSetFinalCallback(typeBuilder, runtime);
         EmitTSWritableSetObjectMode(typeBuilder, runtime);
+        EmitTSWritableSetAutoDestroy(typeBuilder, runtime);
 
         // Property getters
         EmitTSWritablePropertyGetters(typeBuilder, runtime);
@@ -205,6 +208,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, _tsWritableObjectModeField);
+
+        // _autoDestroy = false
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, _tsWritableAutoDestroyField);
 
         il.Emit(OpCodes.Ret);
     }
@@ -438,6 +446,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
         il.Emit(OpCodes.Pop);
 
+        // If autoDestroy, emit 'close' event after 'finish'
+        var skipCloseLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableAutoDestroyField);
+        il.Emit(OpCodes.Brfalse, skipCloseLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "close");
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(skipCloseLabel);
+
         il.MarkLabel(alreadyEndedLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
@@ -634,6 +657,7 @@ public partial class RuntimeEmitter
             _types.Void,
             [_types.Object]
         );
+        runtime.TSWritableSetWriteCallback = method;
 
         var il = method.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
@@ -651,6 +675,7 @@ public partial class RuntimeEmitter
             _types.Void,
             [_types.Object]
         );
+        runtime.TSWritableSetFinalCallback = method;
 
         var il = method.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
@@ -668,11 +693,29 @@ public partial class RuntimeEmitter
             _types.Void,
             [_types.Boolean]
         );
+        runtime.TSWritableSetObjectMode = method;
 
         var il = method.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Stfld, _tsWritableObjectModeField);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitTSWritableSetAutoDestroy(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // public void SetAutoDestroy(bool value)
+        var method = typeBuilder.DefineMethod(
+            "SetAutoDestroy",
+            MethodAttributes.Public,
+            _types.Void,
+            [_types.Boolean]
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, _tsWritableAutoDestroyField);
         il.Emit(OpCodes.Ret);
     }
 

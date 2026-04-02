@@ -31,8 +31,13 @@ public partial class RuntimeEmitter
         EmitStreamReadableFrom(typeBuilder, runtime);
         EmitStreamPromisePipeline(typeBuilder, runtime);
         EmitStreamPromiseFinished(typeBuilder, runtime);
+        EmitStreamConstructorFactories(typeBuilder, runtime);
 
         typeBuilder.CreateType();
+
+        // Register utility functions as module methods for TSFunction wrapping
+        runtime.RegisterBuiltInModuleMethod("stream", "finished", runtime.StreamFinished);
+        runtime.RegisterBuiltInModuleMethod("stream", "pipeline", runtime.StreamPipeline);
     }
 
     /// <summary>
@@ -415,22 +420,30 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(loopEnd);
 
-        // If callback present, call it with null (no error)
+        // If callback present, attach it via Finished() on the last stream
+        // so it fires when the pipeline completes (not immediately)
         var skipCallbackInvoke = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, callbackLocal);
         il.Emit(OpCodes.Brfalse, skipCallbackInvoke);
 
-        // callback(null) — invoke TSFunction with one null arg
-        il.Emit(OpCodes.Ldloc, callbackLocal);
-        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
-        il.Emit(OpCodes.Ldc_I4_1);
+        // Call Finished(lastStream, callback) to attach completion listeners
+        il.Emit(OpCodes.Ldc_I4_2);
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldnull);
+        // lastStream = args[streamCount - 1]
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, streamCountLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
-        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, runtime.StreamFinished);
+        il.Emit(OpCodes.Pop); // Finished returns cleanup function, discard
 
         il.MarkLabel(skipCallbackInvoke);
 
@@ -585,6 +598,41 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Call, typeof(Task).GetMethod("FromResult")!.MakeGenericMethod(_types.Object));
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits factory methods for each stream constructor so they can be wrapped as TSFunction
+    /// and used as first-class values (e.g., typeof Readable === "function").
+    /// Each factory takes (object[] args) and returns a new stream instance with options applied.
+    /// </summary>
+    private void EmitStreamConstructorFactories(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // Simple factory methods that just create instances.
+        // These are wrapped as TSFunction for first-class constructor references
+        // (e.g., typeof Readable === "function").
+        // Direct `new Readable(options)` calls still use the optimized constructor
+        // emission in ExpressionEmitterBase.Constructors.cs which handles options inline.
+        EmitSimpleFactory(typeBuilder, runtime, "Readable", runtime.TSReadableCtor);
+        EmitSimpleFactory(typeBuilder, runtime, "Writable", runtime.TSWritableCtor);
+        EmitSimpleFactory(typeBuilder, runtime, "Duplex", runtime.TSDuplexCtor);
+        EmitSimpleFactory(typeBuilder, runtime, "Transform", runtime.TSTransformCtor);
+        EmitSimpleFactory(typeBuilder, runtime, "PassThrough", runtime.TSPassThroughCtor);
+
+        // Also register utility functions for stream/promises
+        runtime.RegisterBuiltInModuleMethod("stream/promises", "pipeline", runtime.StreamPromisePipeline);
+        runtime.RegisterBuiltInModuleMethod("stream/promises", "finished", runtime.StreamPromiseFinished);
+    }
+
+    private void EmitSimpleFactory(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        string name, ConstructorBuilder ctor)
+    {
+        var method = typeBuilder.DefineMethod($"Create{name}",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.ObjectArray]);
+        runtime.RegisterBuiltInModuleMethod("stream", name, method);
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Newobj, ctor);
         il.Emit(OpCodes.Ret);
     }
 }

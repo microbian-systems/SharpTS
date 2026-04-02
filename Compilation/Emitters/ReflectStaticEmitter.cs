@@ -456,29 +456,46 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
             case "metadata":
             {
                 // Reflect.metadata(key, value) → decorator factory
-                // Returns a function that calls defineMetadata when applied
-                // For now, emit the defineMetadata call directly since decorators apply it
-                // This is the @Reflect.metadata("key", "value") pattern
-                // The decorator framework already calls this as a function that receives (target)
-                // We need to return a function(target) { defineMetadata(key, value, target) }
-                // For simplicity, emit a TSFunction wrapping a helper
+                // Returns a TSFunction wrapping $ReflectMetadataDecorator closure
+                // When invoked as @Reflect.metadata("role", "admin") class MyClass {},
+                // the decorator system calls: Reflect.metadata("role", "admin")(MyClass)
 
-                // Actually, Reflect.metadata(key, value) returns a decorator function.
-                // When used as @Reflect.metadata("role", "admin") class MyClass {},
-                // it's called as: Reflect.metadata("role", "admin")(MyClass)
-                // So we need to return a function. Let's create a closure.
-                // For now, just inline: the decorator machinery should handle this.
-                // Emit: ReflectDefineMetadata(key, value, target, null) where target comes from decorator call
-                // This is complex — let me emit it as a no-op that stores and the decorator applies it.
+                if (ctx.Runtime!.ReflectMetadataDecoratorCtor == null ||
+                    ctx.Runtime!.ReflectMetadataDecoratorInvoke == null)
+                    return false;
 
-                // Simple approach: return a TSFunction that takes (target) and calls defineMetadata
-                // But creating closures in IL is complex. Let me use the display class pattern.
-                // Actually, the test just checks that getMetadata returns the right value after decoration.
-                // The decorator framework calls the factory function result with the target class.
-                // So Reflect.metadata("role", "admin") must return (target) => { defineMetadata("role", "admin", target); return target; }
+                // Emit args
+                if (arguments.Count >= 1)
+                {
+                    emitter.EmitExpression(arguments[0]);
+                    emitter.EmitBoxIfNeeded(arguments[0]);
+                }
+                else
+                    il.Emit(OpCodes.Ldnull);
 
-                // This requires a closure. Let's skip this case for now and handle the 5 direct API tests.
-                return false;
+                if (arguments.Count >= 2)
+                {
+                    emitter.EmitExpression(arguments[1]);
+                    emitter.EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                    il.Emit(OpCodes.Ldnull);
+
+                // new $ReflectMetadataDecorator(key, value)
+                il.Emit(OpCodes.Newobj, ctx.Runtime!.ReflectMetadataDecoratorCtor);
+
+                // Store instance, then wrap in TSFunction: new $TSFunction(instance, Invoke)
+                var closureLocal = il.DeclareLocal(typeof(object));
+                il.Emit(OpCodes.Stloc, closureLocal);
+                il.Emit(OpCodes.Ldloc, closureLocal); // target for TSFunction ctor
+                il.Emit(OpCodes.Ldtoken, ctx.Runtime!.ReflectMetadataDecoratorInvoke);
+                var runtimeMethodHandle = ctx.Types.Resolve("System.RuntimeMethodHandle");
+                var methodBase = ctx.Types.Resolve("System.Reflection.MethodBase");
+                il.Emit(OpCodes.Call, ctx.Types.GetMethod(methodBase, "GetMethodFromHandle", runtimeMethodHandle));
+                il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
+                il.Emit(OpCodes.Newobj, ctx.Runtime!.TSFunctionCtor);
+
+                return true;
             }
 
             default:

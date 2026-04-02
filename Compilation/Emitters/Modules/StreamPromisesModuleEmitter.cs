@@ -36,13 +36,8 @@ public sealed class StreamPromisesModuleEmitter : IBuiltInModuleEmitter
 
     public bool TryEmitPropertyGet(IEmitterContext emitter, string propertyName)
     {
-        if (!_exportedMembers.Contains(propertyName))
-            return false;
-
-        var ctx = emitter.Context;
-        var il = ctx.IL;
-        il.Emit(OpCodes.Ldstr, $"[stream/promises/{propertyName}]");
-        return true;
+        // Return false so that EmitBuiltInModuleMethodWrapper creates proper TSFunction wrappers.
+        return false;
     }
 
     private static void EmitPromisePipelineCall(IEmitterContext emitter, List<Expr> arguments)

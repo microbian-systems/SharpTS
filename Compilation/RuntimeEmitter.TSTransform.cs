@@ -289,12 +289,12 @@ public partial class RuntimeEmitter
 
     private void EmitTSTransformEnd(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // public override $Transform End(object? chunk, object? encoding, object? callback)
-        // Remove NewSlot to properly override $Duplex.End
+        // public override $Duplex End(object? chunk, object? encoding, object? callback)
+        // Must return $Duplex (same as base) so virtual dispatch works correctly
         var method = typeBuilder.DefineMethod(
             "End",
             MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.Virtual,
-            typeBuilder,
+            runtime.TSDuplexType,
             [_types.Object, _types.Object, _types.Object]
         );
 
@@ -385,6 +385,7 @@ public partial class RuntimeEmitter
             _types.Void,
             [_types.Object]
         );
+        runtime.TSTransformSetTransformCallback = method;
 
         var il = method.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
@@ -401,6 +402,7 @@ public partial class RuntimeEmitter
             _types.Void,
             [_types.Object]
         );
+        runtime.TSTransformSetFlushCallback = method;
 
         var il = method.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);

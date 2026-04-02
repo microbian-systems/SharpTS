@@ -586,6 +586,7 @@ public abstract partial class ExpressionEmitterBase
 
             // Extract 'objectMode' property
             var skipObjectModeLabel = IL.DefineLabel();
+            var afterObjectModeLabel = IL.DefineLabel();
             IL.Emit(OpCodes.Ldloc, optionsLocal);
             IL.Emit(OpCodes.Ldstr, "objectMode");
             IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
@@ -594,10 +595,35 @@ public abstract partial class ExpressionEmitterBase
             IL.Emit(OpCodes.Pop);
             IL.Emit(OpCodes.Ldloc, instanceLocal);
             IL.Emit(OpCodes.Ldc_I4_1);
-            IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSReadableType.GetMethod("SetObjectMode")!);
-            IL.Emit(OpCodes.Br, endLabel);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.TSReadableSetObjectMode);
+            IL.Emit(OpCodes.Br, afterObjectModeLabel);
             IL.MarkLabel(skipObjectModeLabel);
             IL.Emit(OpCodes.Pop);
+            IL.MarkLabel(afterObjectModeLabel);
+
+            // Extract 'highWaterMark' property and call SetHighWaterMark
+            {
+                var skipHwmLabel = IL.DefineLabel();
+                var hwmValLocal = IL.DeclareLocal(typeof(object));
+                IL.Emit(OpCodes.Ldloc, optionsLocal);
+                IL.Emit(OpCodes.Ldstr, "highWaterMark");
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+                IL.Emit(OpCodes.Stloc, hwmValLocal);
+                // Skip if null
+                IL.Emit(OpCodes.Ldloc, hwmValLocal);
+                IL.Emit(OpCodes.Brfalse, skipHwmLabel);
+                // Skip if $Undefined
+                IL.Emit(OpCodes.Ldloc, hwmValLocal);
+                IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+                IL.Emit(OpCodes.Brtrue, skipHwmLabel);
+                // Convert to int via Convert.ToInt32
+                IL.Emit(OpCodes.Ldloc, instanceLocal);
+                IL.Emit(OpCodes.Ldloc, hwmValLocal);
+                IL.Emit(OpCodes.Call, typeof(Convert).GetMethod("ToInt32", [typeof(object)])!);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.TSReadableSetHighWaterMark!);
+                IL.MarkLabel(skipHwmLabel);
+            }
+
             IL.MarkLabel(endLabel);
             IL.Emit(OpCodes.Ldloc, instanceLocal);
         }
@@ -650,6 +676,7 @@ public abstract partial class ExpressionEmitterBase
 
             // Extract 'objectMode'
             var skipObjectModeLabel = IL.DefineLabel();
+            var afterObjectModeLabel2 = IL.DefineLabel();
             IL.Emit(OpCodes.Ldloc, optionsLocal);
             IL.Emit(OpCodes.Ldstr, "objectMode");
             IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
@@ -659,9 +686,22 @@ public abstract partial class ExpressionEmitterBase
             IL.Emit(OpCodes.Ldloc, instanceLocal);
             IL.Emit(OpCodes.Ldc_I4_1);
             IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSWritableType.GetMethod("SetObjectMode")!);
-            IL.Emit(OpCodes.Br, endLabel);
+            IL.Emit(OpCodes.Br, afterObjectModeLabel2);
             IL.MarkLabel(skipObjectModeLabel);
             IL.Emit(OpCodes.Pop);
+            IL.MarkLabel(afterObjectModeLabel2);
+
+            // Extract 'autoDestroy'
+            var skipAutoDestroyLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, optionsLocal);
+            IL.Emit(OpCodes.Ldstr, "autoDestroy");
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+            IL.Emit(OpCodes.Brfalse, skipAutoDestroyLabel);
+            IL.Emit(OpCodes.Ldloc, instanceLocal);
+            IL.Emit(OpCodes.Ldc_I4_1);
+            IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSWritableType.GetMethod("SetAutoDestroy")!);
+            IL.MarkLabel(skipAutoDestroyLabel);
+
             IL.Emit(OpCodes.Br, endLabel);
             IL.MarkLabel(optionsNullLabel);
             IL.MarkLabel(endLabel);

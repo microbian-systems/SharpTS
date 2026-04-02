@@ -95,6 +95,9 @@ public class EmittedRuntime
     // Reflect metadata API
     public MethodBuilder ReflectDefineMetadata { get; set; } = null!;
     public MethodBuilder ReflectGetMetadata { get; set; } = null!;
+    // $ReflectMetadataDecorator closure class for Reflect.metadata(key, value) → decorator factory
+    public ConstructorBuilder? ReflectMetadataDecoratorCtor { get; set; }
+    public MethodBuilder? ReflectMetadataDecoratorInvoke { get; set; }
     public MethodBuilder ReflectHasMetadata { get; set; } = null!;
     public MethodBuilder ReflectGetMetadataKeys { get; set; } = null!;
     public MethodBuilder ReflectDeleteMetadata { get; set; } = null!;
@@ -1778,6 +1781,21 @@ public class EmittedRuntime
     public ConstructorBuilder TSPassThroughCtor { get; set; } = null!;
 
     public MethodBuilder TSReadableSetObjectMode { get; set; } = null!;
+    public MethodBuilder? TSReadableSetHighWaterMark { get; set; }
+
+    // Writable setter methods (for factory functions)
+    public MethodBuilder? TSWritableSetObjectMode { get; set; }
+    public MethodBuilder? TSWritableSetWriteCallback { get; set; }
+    public MethodBuilder? TSWritableSetFinalCallback { get; set; }
+
+    // Duplex setter methods (for factory functions)
+    public MethodBuilder? TSDuplexSetObjectMode { get; set; }
+    public MethodBuilder? TSDuplexSetWriteCallback { get; set; }
+
+    // Transform setter methods (for factory functions)
+    // Note: Transform inherits SetObjectMode and SetWriteCallback from Duplex
+    public MethodBuilder? TSTransformSetTransformCallback { get; set; }
+    public MethodBuilder? TSTransformSetFlushCallback { get; set; }
 
     // Stream utility methods
     public MethodBuilder StreamFinished { get; set; } = null!;

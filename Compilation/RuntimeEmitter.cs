@@ -295,6 +295,10 @@ public partial class RuntimeEmitter
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime);
 
+        // Emit $ReflectMetadataDecorator closure class
+        // Must come after EmitRuntimeClass (calls ReflectDefineMetadata)
+        EmitReflectMetadataDecoratorClass(moduleBuilder, runtime);
+
         // Finalize $BoundArrayMethod with Invoke method (Phase 2)
         // Must come after EmitRuntimeClass (needs array methods defined)
         EmitBoundArrayMethodFinalize(runtime);

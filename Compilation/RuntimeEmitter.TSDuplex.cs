@@ -384,6 +384,7 @@ public partial class RuntimeEmitter
             _types.Void,
             [_types.Object]
         );
+        runtime.TSDuplexSetWriteCallback = method;
 
         var il = method.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
@@ -418,6 +419,7 @@ public partial class RuntimeEmitter
             _types.Void,
             [_types.Boolean]
         );
+        runtime.TSDuplexSetObjectMode = method;
 
         var il = method.GetILGenerator();
         // Set inherited _objectMode from $Readable

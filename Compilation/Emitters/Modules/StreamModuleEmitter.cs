@@ -50,21 +50,55 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
 
     public bool TryEmitPropertyGet(IEmitterContext emitter, string propertyName)
     {
-        if (!_exportedMembers.Contains(propertyName))
-            return false;
-
-        var ctx = emitter.Context;
-        var il = ctx.IL;
-
         if (propertyName == "promises")
         {
-            il.Emit(OpCodes.Ldstr, "[stream/promises]");
+            // Build a sub-object with pipeline and finished TSFunction wrappers
+            EmitPromisesSubObject(emitter);
             return true;
         }
 
-        // Emit a placeholder value for the stream constructor or function.
-        il.Emit(OpCodes.Ldstr, $"[{propertyName}]");
-        return true;
+        // Constructor names and function names return false so that
+        // EmitBuiltInModuleMethodWrapper creates proper TSFunction wrappers.
+        // This makes typeof Readable === "function" work correctly.
+        return false;
+    }
+
+    private static void EmitPromisesSubObject(IEmitterContext emitter)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // Create Dictionary<string, object?> with pipeline and finished
+        var dictType = ctx.Types.DictionaryStringObject;
+        var dictCtor = ctx.Types.GetDefaultConstructor(dictType);
+        var addMethod = ctx.Types.GetMethod(dictType, "Add", ctx.Types.String, ctx.Types.Object);
+
+        il.Emit(OpCodes.Newobj, dictCtor);
+
+        // Add "pipeline" -> TSFunction wrapping PromisePipeline
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "pipeline");
+        il.Emit(OpCodes.Ldnull); // target
+        il.Emit(OpCodes.Ldtoken, ctx.Runtime!.StreamPromisePipeline);
+        var runtimeMethodHandle = ctx.Types.Resolve("System.RuntimeMethodHandle");
+        var methodBase = ctx.Types.Resolve("System.Reflection.MethodBase");
+        il.Emit(OpCodes.Call, ctx.Types.GetMethod(methodBase, "GetMethodFromHandle", runtimeMethodHandle));
+        il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
+        il.Emit(OpCodes.Newobj, ctx.Runtime!.TSFunctionCtor);
+        il.Emit(OpCodes.Call, addMethod);
+
+        // Add "finished" -> TSFunction wrapping PromiseFinished
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "finished");
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldtoken, ctx.Runtime!.StreamPromiseFinished);
+        il.Emit(OpCodes.Call, ctx.Types.GetMethod(methodBase, "GetMethodFromHandle", runtimeMethodHandle));
+        il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
+        il.Emit(OpCodes.Newobj, ctx.Runtime!.TSFunctionCtor);
+        il.Emit(OpCodes.Call, addMethod);
+
+        // Wrap in SharpTSObject
+        il.Emit(OpCodes.Call, ctx.Runtime!.CreateObject);
     }
 
     private static void EmitFinishedCall(IEmitterContext emitter, List<Expr> arguments)

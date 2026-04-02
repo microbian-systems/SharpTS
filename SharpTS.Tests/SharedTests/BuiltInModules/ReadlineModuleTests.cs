@@ -174,7 +174,7 @@ public class ReadlineModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Interface_PauseResume_EmitsEvents(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

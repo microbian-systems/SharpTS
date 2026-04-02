@@ -320,4 +320,75 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Ret);
     }
+
+    /// <summary>
+    /// Emits $ReflectMetadataDecorator: a closure class that captures (key, value)
+    /// and returns a decorator function (target) => { defineMetadata(key, value, target); return target; }.
+    /// </summary>
+    private void EmitReflectMetadataDecoratorClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$ReflectMetadataDecorator",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit
+        );
+
+        // Fields: _key and _value
+        var keyField = typeBuilder.DefineField("_key", _types.Object, FieldAttributes.Public);
+        var valueField = typeBuilder.DefineField("_value", _types.Object, FieldAttributes.Public);
+
+        // Constructor(object key, object value)
+        var ctor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.Object, _types.Object]
+        );
+        runtime.ReflectMetadataDecoratorCtor = ctor;
+        {
+            var il = ctor.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Stfld, keyField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stfld, valueField);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // Invoke(object[] args) → object
+        // args[0] = target
+        // Calls: ReflectDefineMetadata(_key, _value, target, null)
+        // Returns: target
+        var invoke = typeBuilder.DefineMethod(
+            "Invoke",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.ObjectArray]
+        );
+        runtime.ReflectMetadataDecoratorInvoke = invoke;
+        {
+            var il = invoke.GetILGenerator();
+
+            // Load args for ReflectDefineMetadata(key, value, target, propertyKey)
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, keyField);   // key
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, valueField);  // value
+            il.Emit(OpCodes.Ldarg_1);            // args
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_Ref);         // target = args[0]
+            il.Emit(OpCodes.Ldnull);             // propertyKey = null
+            il.Emit(OpCodes.Call, runtime.ReflectDefineMetadata);
+            // ReflectDefineMetadata returns void, nothing to pop
+
+            // Return target
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Ret);
+        }
+
+        typeBuilder.CreateType();
+    }
 }

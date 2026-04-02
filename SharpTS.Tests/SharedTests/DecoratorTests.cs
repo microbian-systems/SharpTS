@@ -333,9 +333,8 @@ public class DecoratorTests
         Assert.Equal("true\nfalse\n", output);
     }
 
-    /// <summary>Compiled mode: Reflect metadata API is not available.</summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ReflectMetadata_DecoratorFactory(ExecutionMode mode)
     {
         const string source = """

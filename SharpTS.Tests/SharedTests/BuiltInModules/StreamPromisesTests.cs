@@ -9,7 +9,7 @@ namespace SharpTS.Tests.SharedTests.BuiltInModules;
 public class StreamPromisesTests
 {
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void StreamPromises_Import_Pipeline(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -25,7 +25,7 @@ public class StreamPromisesTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void StreamPromises_Import_Finished(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -41,7 +41,7 @@ public class StreamPromisesTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void StreamPromises_PropertyAccess(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
