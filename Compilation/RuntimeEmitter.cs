@@ -217,6 +217,7 @@ public partial class RuntimeEmitter
         EmitTSDuplexFinalize(runtime);                         // Phase 2: CreateType
         EmitTSTransformClass(moduleBuilder, runtime);
         EmitTSPassThroughClass(moduleBuilder, runtime);
+        EmitTSZlibTransformClass(moduleBuilder, runtime);
         EmitTSStreamUtilsClass(moduleBuilder, runtime);
 
         // Emit function method wrapper classes for bind/call/apply

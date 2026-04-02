@@ -1552,6 +1552,21 @@ public class EmittedRuntime
     public MethodBuilder ZlibCreateUnzip { get; set; } = null!;
     public MethodBuilder ZlibAsyncCallback { get; set; } = null!;
 
+    // Zlib per-method async wrappers
+    public MethodBuilder ZlibGzipAsync { get; set; } = null!;
+    public MethodBuilder ZlibGunzipAsync { get; set; } = null!;
+    public MethodBuilder ZlibDeflateAsync { get; set; } = null!;
+    public MethodBuilder ZlibInflateAsync { get; set; } = null!;
+    public MethodBuilder ZlibDeflateRawAsync { get; set; } = null!;
+    public MethodBuilder ZlibInflateRawAsync { get; set; } = null!;
+    public MethodBuilder ZlibBrotliCompressAsync { get; set; } = null!;
+    public MethodBuilder ZlibBrotliDecompressAsync { get; set; } = null!;
+    public MethodBuilder ZlibUnzipAsync { get; set; } = null!;
+
+    // $ZlibTransform type - emitted for standalone zlib streaming support
+    public Type TSZlibTransformType { get; set; } = null!;
+    public ConstructorBuilder TSZlibTransformCtor { get; set; } = null!;
+
     // $EventEmitter type - emitted for standalone event emitter support
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSEventEmitter
     public Type TSEventEmitterType { get; set; } = null!;

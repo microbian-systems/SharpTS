@@ -570,7 +570,7 @@ public class ZlibModuleTests
     #region Streaming API Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_CreateGzip_WriteAndRead(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -600,7 +600,7 @@ public class ZlibModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_CreateDeflate_WriteAndVerify(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -630,7 +630,7 @@ public class ZlibModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_CreateBrotliCompress_WriteAndVerify(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -660,7 +660,7 @@ public class ZlibModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_CreateGzip_WriteAndCollect(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -692,7 +692,7 @@ public class ZlibModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_CreateDeflateRaw_WriteAndVerify(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -722,7 +722,7 @@ public class ZlibModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_CreateUnzip_AutoDetectsGzip(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -757,7 +757,7 @@ public class ZlibModuleTests
     #region Async Callback API Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_Gzip_Async_Callback(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -782,7 +782,7 @@ public class ZlibModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_Deflate_Async_Callback(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -806,7 +806,7 @@ public class ZlibModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_BrotliCompress_Async_Callback(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -834,7 +834,7 @@ public class ZlibModuleTests
     #region Named Import Tests for Streaming APIs
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Zlib_NamedImport_CreateGzip(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

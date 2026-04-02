@@ -30,8 +30,11 @@ public partial class RuntimeEmitter
         EmitZlibUnzipSync(typeBuilder, runtime);
         EmitZlibGetConstants(typeBuilder, runtime);
 
-        // Emit streaming create* methods
+        // Emit streaming create* methods (pure-IL, no reflection)
         EmitZlibStreamingMethods(typeBuilder, runtime);
+
+        // Emit per-method async wrappers
+        EmitZlibAsyncMethods(typeBuilder, runtime);
 
         // Emit wrapper methods for named imports
         EmitZlibMethodWrappers(typeBuilder, runtime);
@@ -629,7 +632,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object CreateXxx(object? options)
-    /// Uses reflection to create SharpTSZlibTransform(kind, options).
+    /// Creates a $ZlibTransform directly via newobj (no reflection).
     /// </summary>
     private void EmitZlibCreateStreamMethod(TypeBuilder typeBuilder, EmittedRuntime runtime,
         string methodName, int kindValue, Action<MethodBuilder> setter)
@@ -643,91 +646,18 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Load the ZlibTransformKind enum value
-        // Load the ZlibOptions from the options argument
-        // Use reflection to create SharpTSZlibTransform
-
-        // var transformType = Type.GetType("SharpTS.Runtime.Types.SharpTSZlibTransform, SharpTS");
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSZlibTransform, SharpTS");
-        il.Emit(OpCodes.Call, _types.GetMethod(typeof(Type), "GetType", _types.String));
-        var typeLocal = il.DeclareLocal(typeof(Type));
-        il.Emit(OpCodes.Stloc, typeLocal);
-
-        // if (transformType == null) return null;
-        var notNullLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Brtrue, notNullLabel);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notNullLabel);
-
-        // var kindType = Type.GetType("SharpTS.Runtime.Types.ZlibTransformKind, SharpTS");
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.ZlibTransformKind, SharpTS");
-        il.Emit(OpCodes.Call, _types.GetMethod(typeof(Type), "GetType", _types.String));
-        var kindTypeLocal = il.DeclareLocal(typeof(Type));
-        il.Emit(OpCodes.Stloc, kindTypeLocal);
-
-        // var optionsType = Type.GetType("SharpTS.Runtime.BuiltIns.Modules.ZlibOptions, SharpTS");
-        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.Modules.ZlibOptions, SharpTS");
-        il.Emit(OpCodes.Call, _types.GetMethod(typeof(Type), "GetType", _types.String));
-        var optionsTypeLocal = il.DeclareLocal(typeof(Type));
-        il.Emit(OpCodes.Stloc, optionsTypeLocal);
-
-        // Parse options: ZlibOptions.FromValue(options)
-        il.Emit(OpCodes.Ldloc, optionsTypeLocal);
-        il.Emit(OpCodes.Ldstr, "FromValue");
-        il.Emit(OpCodes.Ldc_I4_1); // one param
-        il.Emit(OpCodes.Newarr, typeof(Type));
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.Object);
-        il.Emit(OpCodes.Call, _types.GetMethod(typeof(Type), "GetTypeFromHandle", typeof(RuntimeTypeHandle)));
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Type), "GetMethod", _types.String, typeof(Type[])));
-        var fromValueLocal = il.DeclareLocal(typeof(System.Reflection.MethodInfo));
-        il.Emit(OpCodes.Stloc, fromValueLocal);
-
-        // var parsedOptions = fromValue.Invoke(null, new object[] { options });
-        il.Emit(OpCodes.Ldloc, fromValueLocal);
-        il.Emit(OpCodes.Ldnull); // static method
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0); // options arg
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(System.Reflection.MethodBase), "Invoke", _types.Object, typeof(object[])));
-        var parsedOptionsLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, parsedOptionsLocal);
-
-        // var kindEnum = Enum.ToObject(kindType, kindValue);
-        il.Emit(OpCodes.Ldloc, kindTypeLocal);
-        il.Emit(OpCodes.Ldc_I4, kindValue);
-        il.Emit(OpCodes.Box, _types.Int32);
-        il.Emit(OpCodes.Call, _types.GetMethod(typeof(Enum), "ToObject", typeof(Type), _types.Object));
-        var kindEnumLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, kindEnumLocal);
-
-        // Activator.CreateInstance(transformType, new object[] { kindEnum, parsedOptions })
-        il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldloc, kindEnumLocal);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, parsedOptionsLocal);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Call, _types.GetMethod(typeof(Activator), "CreateInstance", typeof(Type), typeof(object[])));
+        // Parse compression level from options (default: CompressionLevel.Optimal = 0)
+        // For decompression kinds, level is ignored but we still pass it
+        il.Emit(OpCodes.Ldc_I4, kindValue);   // kind
+        il.Emit(OpCodes.Ldarg_0);              // options
+        il.Emit(OpCodes.Call, _getZlibCompressionLevel!);  // -> int (CompressionLevel)
+        il.Emit(OpCodes.Newobj, runtime.TSZlibTransformCtor);  // new $ZlibTransform(kind, level)
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
-    /// Emits: public static object ZlibAsyncCallback(object input, object? options, object? callback, MethodInfo syncMethod)
-    /// Wraps a sync compression method with callback-style async invocation.
-    /// In compiled mode, this immediately calls the sync method and invokes the callback.
+    /// Retained for backward compat — still referenced by EmittedRuntime.ZlibAsyncCallback.
+    /// Now a no-op since individual async methods are emitted separately.
     /// </summary>
     private void EmitZlibAsyncCallback(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -739,16 +669,113 @@ public partial class RuntimeEmitter
         runtime.ZlibAsyncCallback = method;
 
         var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
 
-        // For compiled mode, we just call the sync method inline and then invoke callback.
-        // The async callback API in compiled mode runs synchronously (acceptable tradeoff).
+    /// <summary>
+    /// Emits per-method async wrappers: ZlibGzipAsync, ZlibDeflateAsync, etc.
+    /// Each calls the corresponding sync method and invokes the callback with (null, result) or (error).
+    /// In compiled mode, these run synchronously (acceptable tradeoff).
+    /// </summary>
+    private void EmitZlibAsyncMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibGzipAsync", () => runtime.ZlibGzipSync, mb => runtime.ZlibGzipAsync = mb);
+        EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibGunzipAsync", () => runtime.ZlibGunzipSync, mb => runtime.ZlibGunzipAsync = mb);
+        EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibDeflateAsync", () => runtime.ZlibDeflateSync, mb => runtime.ZlibDeflateAsync = mb);
+        EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibInflateAsync", () => runtime.ZlibInflateSync, mb => runtime.ZlibInflateAsync = mb);
+        EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibDeflateRawAsync", () => runtime.ZlibDeflateRawSync, mb => runtime.ZlibDeflateRawAsync = mb);
+        EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibInflateRawAsync", () => runtime.ZlibInflateRawSync, mb => runtime.ZlibInflateRawAsync = mb);
+        EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibBrotliCompressAsync", () => runtime.ZlibBrotliCompressSync, mb => runtime.ZlibBrotliCompressAsync = mb);
+        EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibBrotliDecompressAsync", () => runtime.ZlibBrotliDecompressSync, mb => runtime.ZlibBrotliDecompressAsync = mb);
+        EmitZlibAsyncMethod(typeBuilder, runtime, "ZlibUnzipAsync", () => runtime.ZlibUnzipSync, mb => runtime.ZlibUnzipAsync = mb);
+    }
 
-        // The caller already passed input and options on the stack before the callback.
-        // We need to: call syncMethod(input, options), then invoke callback(null, result).
-        // But we don't have the sync method reference at IL level - instead we do the work inline.
+    /// <summary>
+    /// Emits: public static object ZlibXxxAsync(object input, object? options, object? callback)
+    /// Calls syncMethod(input, options), then invokes callback(null, result).
+    /// On exception, invokes callback(error.Message).
+    /// </summary>
+    private void EmitZlibAsyncMethod(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        string methodName, Func<MethodBuilder> getSyncMethod, Action<MethodBuilder> setter)
+    {
+        var method = typeBuilder.DefineMethod(
+            methodName,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]  // input, options, callback
+        );
+        setter(method);
 
-        // Simply return null - the async callback APIs in compiled mode
-        // are best handled by the sync versions. This is a stub.
+        var il = method.GetILGenerator();
+
+        var resultLocal = il.DeclareLocal(_types.Object);
+
+        // try {
+        il.BeginExceptionBlock();
+
+        //   result = SyncMethod(input, options)
+        il.Emit(OpCodes.Ldarg_0); // input
+        il.Emit(OpCodes.Ldarg_1); // options
+        il.Emit(OpCodes.Call, getSyncMethod());
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        //   if (callback != null && callback is $TSFunction)
+        //     callback.Invoke([null, result])
+        var noCallbackLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, noCallbackLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, noCallbackLabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldnull); // error = null
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, resultLocal); // result
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(noCallbackLabel);
+
+        // } catch (Exception ex) {
+        il.BeginCatchBlock(typeof(Exception));
+        var exLocal = il.DeclareLocal(typeof(Exception));
+        il.Emit(OpCodes.Stloc, exLocal);
+
+        //   if (callback != null) callback.Invoke([ex.Message])
+        var noCatchCallbackLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, noCatchCallbackLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, noCatchCallbackLabel);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Exception).GetProperty("Message")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(noCatchCallbackLabel);
+
+        // }
+        il.EndExceptionBlock();
+
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
     }
@@ -818,6 +845,38 @@ public partial class RuntimeEmitter
 
             var il = wrapper.GetILGenerator();
             il.Emit(OpCodes.Ldarg_0); // options (first arg treated as options)
+            il.Emit(OpCodes.Call, targetMethod);
+            il.Emit(OpCodes.Ret);
+
+            runtime.RegisterBuiltInModuleMethod("zlib", name, wrapper);
+        }
+
+        // Async callback methods (3 args: input, options, callback)
+        var asyncMethods = new (string name, MethodBuilder target)[]
+        {
+            ("gzip", runtime.ZlibGzipAsync),
+            ("gunzip", runtime.ZlibGunzipAsync),
+            ("deflate", runtime.ZlibDeflateAsync),
+            ("inflate", runtime.ZlibInflateAsync),
+            ("deflateRaw", runtime.ZlibDeflateRawAsync),
+            ("inflateRaw", runtime.ZlibInflateRawAsync),
+            ("brotliCompress", runtime.ZlibBrotliCompressAsync),
+            ("brotliDecompress", runtime.ZlibBrotliDecompressAsync),
+            ("unzip", runtime.ZlibUnzipAsync)
+        };
+
+        foreach (var (name, targetMethod) in asyncMethods)
+        {
+            var wrapper = typeBuilder.DefineMethod(
+                "ZlibWrapper_" + name,
+                MethodAttributes.Public | MethodAttributes.Static,
+                _types.Object,
+                [_types.Object, _types.Object, _types.Object]);
+
+            var il = wrapper.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0); // input
+            il.Emit(OpCodes.Ldarg_1); // options
+            il.Emit(OpCodes.Ldarg_2); // callback
             il.Emit(OpCodes.Call, targetMethod);
             il.Emit(OpCodes.Ret);
 

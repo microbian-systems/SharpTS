@@ -71,15 +71,15 @@ public sealed class ZlibModuleEmitter : IBuiltInModuleEmitter
             "createBrotliDecompress" => EmitCreateStream(emitter, arguments, "ZlibCreateBrotliDecompress"),
             "createUnzip" => EmitCreateStream(emitter, arguments, "ZlibCreateUnzip"),
             // Async callback APIs
-            "gzip" => EmitAsyncMethod(emitter, arguments, "ZlibGzipSync"),
-            "gunzip" => EmitAsyncMethod(emitter, arguments, "ZlibGunzipSync"),
-            "deflate" => EmitAsyncMethod(emitter, arguments, "ZlibDeflateSync"),
-            "inflate" => EmitAsyncMethod(emitter, arguments, "ZlibInflateSync"),
-            "deflateRaw" => EmitAsyncMethod(emitter, arguments, "ZlibDeflateRawSync"),
-            "inflateRaw" => EmitAsyncMethod(emitter, arguments, "ZlibInflateRawSync"),
-            "brotliCompress" => EmitAsyncMethod(emitter, arguments, "ZlibBrotliCompressSync"),
-            "brotliDecompress" => EmitAsyncMethod(emitter, arguments, "ZlibBrotliDecompressSync"),
-            "unzip" => EmitAsyncMethod(emitter, arguments, "ZlibUnzipSync"),
+            "gzip" => EmitAsyncMethod(emitter, arguments, "ZlibGzipAsync"),
+            "gunzip" => EmitAsyncMethod(emitter, arguments, "ZlibGunzipAsync"),
+            "deflate" => EmitAsyncMethod(emitter, arguments, "ZlibDeflateAsync"),
+            "inflate" => EmitAsyncMethod(emitter, arguments, "ZlibInflateAsync"),
+            "deflateRaw" => EmitAsyncMethod(emitter, arguments, "ZlibDeflateRawAsync"),
+            "inflateRaw" => EmitAsyncMethod(emitter, arguments, "ZlibInflateRawAsync"),
+            "brotliCompress" => EmitAsyncMethod(emitter, arguments, "ZlibBrotliCompressAsync"),
+            "brotliDecompress" => EmitAsyncMethod(emitter, arguments, "ZlibBrotliDecompressAsync"),
+            "unzip" => EmitAsyncMethod(emitter, arguments, "ZlibUnzipAsync"),
             _ => false
         };
     }
@@ -138,10 +138,10 @@ public sealed class ZlibModuleEmitter : IBuiltInModuleEmitter
 
     /// <summary>
     /// Emits an async callback zlib method call.
-    /// Pattern: Method(input, [options,] callback) -> void
-    /// Delegates to sync method wrapped in callback invocation.
+    /// Pattern: Method(input, [options,] callback) -> null
+    /// Calls the per-method async wrapper which calls sync + invokes callback.
     /// </summary>
-    private static bool EmitAsyncMethod(IEmitterContext emitter, List<Expr> arguments, string syncMethodName)
+    private static bool EmitAsyncMethod(IEmitterContext emitter, List<Expr> arguments, string asyncMethodName)
     {
         var ctx = emitter.Context;
         var il = ctx.IL;
@@ -180,23 +180,22 @@ public sealed class ZlibModuleEmitter : IBuiltInModuleEmitter
             il.Emit(OpCodes.Ldnull);
         }
 
-        // Get sync method reference
-        var syncMethod = syncMethodName switch
+        // Call the per-method async wrapper: XxxAsync(input, options, callback)
+        var asyncMethod = asyncMethodName switch
         {
-            "ZlibGzipSync" => ctx.Runtime!.ZlibGzipSync,
-            "ZlibGunzipSync" => ctx.Runtime!.ZlibGunzipSync,
-            "ZlibDeflateSync" => ctx.Runtime!.ZlibDeflateSync,
-            "ZlibInflateSync" => ctx.Runtime!.ZlibInflateSync,
-            "ZlibDeflateRawSync" => ctx.Runtime!.ZlibDeflateRawSync,
-            "ZlibInflateRawSync" => ctx.Runtime!.ZlibInflateRawSync,
-            "ZlibBrotliCompressSync" => ctx.Runtime!.ZlibBrotliCompressSync,
-            "ZlibBrotliDecompressSync" => ctx.Runtime!.ZlibBrotliDecompressSync,
-            "ZlibUnzipSync" => ctx.Runtime!.ZlibUnzipSync,
-            _ => throw new CompileException($"Unknown zlib sync method: {syncMethodName}")
+            "ZlibGzipAsync" => ctx.Runtime!.ZlibGzipAsync,
+            "ZlibGunzipAsync" => ctx.Runtime!.ZlibGunzipAsync,
+            "ZlibDeflateAsync" => ctx.Runtime!.ZlibDeflateAsync,
+            "ZlibInflateAsync" => ctx.Runtime!.ZlibInflateAsync,
+            "ZlibDeflateRawAsync" => ctx.Runtime!.ZlibDeflateRawAsync,
+            "ZlibInflateRawAsync" => ctx.Runtime!.ZlibInflateRawAsync,
+            "ZlibBrotliCompressAsync" => ctx.Runtime!.ZlibBrotliCompressAsync,
+            "ZlibBrotliDecompressAsync" => ctx.Runtime!.ZlibBrotliDecompressAsync,
+            "ZlibUnzipAsync" => ctx.Runtime!.ZlibUnzipAsync,
+            _ => throw new CompileException($"Unknown zlib async method: {asyncMethodName}")
         };
 
-        // Call ZlibAsyncCallback(input, options, callback, syncMethod)
-        il.Emit(OpCodes.Call, ctx.Runtime!.ZlibAsyncCallback);
+        il.Emit(OpCodes.Call, asyncMethod);
         return true;
     }
 
