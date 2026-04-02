@@ -769,6 +769,7 @@ public partial class Interpreter : IDisposable
     public void Interpret(List<Stmt> statements, TypeMap? typeMap = null)
     {
         _typeMap = typeMap;
+        ProcessBuiltIns.ResetScriptStartTime();
         try
         {
             // Check for "use strict" directive at file level

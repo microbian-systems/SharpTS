@@ -228,9 +228,7 @@ public class ProcessGlobalTests
     }
 
     [Theory]
-    // CompiledOnly: In interpreter mode, process.uptime() returns the host process uptime,
-    // which exceeds the threshold during long test suite runs.
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Process_Uptime_IsSmallForNewProcess(ExecutionMode mode)
     {
         var source = """

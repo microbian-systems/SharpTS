@@ -97,7 +97,8 @@ public class UnboxedArithmeticTests
     }
 
     // CompiledOnly: Uninitialized `let x: number` defaults to 0 in compiled mode
-    // (.NET value type default) but produces `undefined` in the interpreter.
+    // (.NET value type default) but produces `undefined` in the interpreter (correct per JS spec).
+    // This is a CLR platform constraint — .NET locals of value types are zero-initialized.
     [Theory]
     [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
     public void UninitializedNumberLocal_DefaultsToZero(ExecutionMode mode)

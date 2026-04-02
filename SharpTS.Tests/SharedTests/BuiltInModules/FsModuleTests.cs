@@ -9,20 +9,17 @@ namespace SharpTS.Tests.SharedTests.BuiltInModules;
 public class FsModuleTests
 {
     private static string Uid() => Guid.NewGuid().ToString("N")[..8];
-    /// <summary>
-    /// Compiled-only: the compiled executable runs from the temp directory where main.ts
-    /// was written; the interpreter's CWD may differ.
-    /// </summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fs_ExistsSync_ReturnsTrueForExistingFile(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
                 import * as fs from 'fs';
-                // main.ts exists since we're running it
-                console.log(fs.existsSync('main.ts'));
+                import * as path from 'path';
+                // main.ts exists since we're running it — use __dirname for CWD-independent resolution
+                console.log(fs.existsSync(path.join(__dirname, 'main.ts')));
                 """
         };
 

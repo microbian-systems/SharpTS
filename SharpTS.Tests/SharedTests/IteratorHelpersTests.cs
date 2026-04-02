@@ -284,8 +284,10 @@ public class IteratorHelpersTests
     [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
     public void Iterator_GeneratorWithTake_IsLazy(ExecutionMode mode)
     {
-        // Infinite generators require lazy evaluation, which is only available in compiled mode.
-        // The interpreter uses eager generator evaluation, so infinite generators hang.
+        // CompiledOnly: The interpreter's SharpTSGenerator uses eager evaluation —
+        // ExecuteBody() runs the entire generator body on the first Next() call, collecting
+        // all yields into a list. This causes infinite generators to hang. Fixing this
+        // requires rewriting the interpreter's generator to use a coroutine/state machine model.
         var source = @"
             function* naturals(): Generator<number> {
                 let n = 1;
