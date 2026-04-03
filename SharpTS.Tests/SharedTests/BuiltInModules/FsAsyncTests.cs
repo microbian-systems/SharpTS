@@ -431,9 +431,6 @@ public class FsAsyncTests
 
     #region Error Handling
 
-    // InterpretedOnly: Compiled mode doesn't properly catch fs/promises errors in
-    // async try/catch — the exception propagates as unhandled instead of being caught.
-
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void FsPromises_ReadFile_NonExistent_Throws(ExecutionMode mode)
