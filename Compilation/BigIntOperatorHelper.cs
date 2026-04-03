@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Reflection;
 using SharpTS.Parsing;
+using SharpTS.Runtime;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Compilation;
@@ -107,6 +108,44 @@ public static class BigIntOperatorHelper
             TokenType.CARET => new SharpTSBigInt(left ^ right),
             TokenType.LESS_LESS => new SharpTSBigInt(left << (int)right),
             TokenType.GREATER_GREATER => new SharpTSBigInt(left >> (int)right),
+            TokenType.GREATER_GREATER_GREATER => throw new Exception(
+                "Runtime Error: Unsigned right shift (>>>) is not supported for bigint."),
+
+            _ => throw new Exception($"Runtime Error: Operator {op} not supported for bigint.")
+        };
+    }
+
+    /// <summary>
+    /// Evaluates a BigInt binary operation returning RuntimeValue (avoids boxing).
+    /// </summary>
+    public static RuntimeValue EvaluateBinaryRV(TokenType op, BigInteger left, BigInteger right)
+    {
+        return op switch
+        {
+            // Arithmetic → BigInt (no boxing)
+            TokenType.PLUS => RuntimeValue.FromBigInt(new SharpTSBigInt(left + right)),
+            TokenType.MINUS => RuntimeValue.FromBigInt(new SharpTSBigInt(left - right)),
+            TokenType.STAR => RuntimeValue.FromBigInt(new SharpTSBigInt(left * right)),
+            TokenType.SLASH => RuntimeValue.FromBigInt(new SharpTSBigInt(BigInteger.Divide(left, right))),
+            TokenType.PERCENT => RuntimeValue.FromBigInt(new SharpTSBigInt(BigInteger.Remainder(left, right))),
+            TokenType.STAR_STAR => RuntimeValue.FromBigInt(SharpTSBigInt.Pow(new SharpTSBigInt(left), new SharpTSBigInt(right))),
+
+            // Comparison → bool (no boxing)
+            TokenType.GREATER => RuntimeValue.FromBoolean(left > right),
+            TokenType.GREATER_EQUAL => RuntimeValue.FromBoolean(left >= right),
+            TokenType.LESS => RuntimeValue.FromBoolean(left < right),
+            TokenType.LESS_EQUAL => RuntimeValue.FromBoolean(left <= right),
+
+            // Equality → bool (no boxing)
+            TokenType.EQUAL_EQUAL or TokenType.EQUAL_EQUAL_EQUAL => RuntimeValue.FromBoolean(left == right),
+            TokenType.BANG_EQUAL or TokenType.BANG_EQUAL_EQUAL => RuntimeValue.FromBoolean(left != right),
+
+            // Bitwise → BigInt (no boxing)
+            TokenType.AMPERSAND => RuntimeValue.FromBigInt(new SharpTSBigInt(left & right)),
+            TokenType.PIPE => RuntimeValue.FromBigInt(new SharpTSBigInt(left | right)),
+            TokenType.CARET => RuntimeValue.FromBigInt(new SharpTSBigInt(left ^ right)),
+            TokenType.LESS_LESS => RuntimeValue.FromBigInt(new SharpTSBigInt(left << (int)right)),
+            TokenType.GREATER_GREATER => RuntimeValue.FromBigInt(new SharpTSBigInt(left >> (int)right)),
             TokenType.GREATER_GREATER_GREATER => throw new Exception(
                 "Runtime Error: Unsigned right shift (>>>) is not supported for bigint."),
 

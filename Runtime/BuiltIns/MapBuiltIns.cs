@@ -24,12 +24,12 @@ public static class MapBuiltIns
             .MethodV2("keys", 0, (_, map, _) => RuntimeValue.FromObject(map.Keys()))
             .MethodV2("values", 0, (_, map, _) => RuntimeValue.FromObject(map.Values()))
             .MethodV2("entries", 0, (_, map, _) => RuntimeValue.FromObject(map.Entries()))
-            .Method("forEach", 1, ForEach)
+            .MethodV2("forEach", 1, ForEachV2)
             .Build();
 
     private static readonly BuiltInStaticMemberLookup _staticLookup =
         BuiltInStaticBuilder.Create()
-            .Method("groupBy", 2, GroupBy)
+            .MethodV2("groupBy", 2, GroupByV2)
             .Build();
 
     public static object? GetStaticMethod(string name)
@@ -99,5 +99,19 @@ public static class MapBuiltIns
         }
 
         return result;
+    }
+
+    private static RuntimeValue ForEachV2(Interpreter interp, SharpTSMap map, ReadOnlySpan<RuntimeValue> args)
+    {
+        ForEach(interp, map, new List<object?> { args[0].ToObject() });
+        return RuntimeValue.Undefined;
+    }
+
+    private static RuntimeValue GroupByV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+    {
+        var list = new List<object?>(args.Length);
+        foreach (var arg in args)
+            list.Add(arg.ToObject());
+        return RuntimeValue.FromBoxed(GroupBy(interp, list));
     }
 }

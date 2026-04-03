@@ -146,7 +146,7 @@ public static class FunctionBuiltIns
 /// <summary>
 /// A function that has been bound to a specific 'this' value and/or has partial application.
 /// </summary>
-public class BoundFunction : ISharpTSCallable
+public class BoundFunction : ISharpTSCallable, ISharpTSCallableV2
 {
     private readonly ISharpTSCallable _target;
     private readonly object? _thisArg;
@@ -189,6 +189,47 @@ public class BoundFunction : ISharpTSCallable
     {
         int baseArity = _target.Arity();
         return Math.Max(0, baseArity - _boundArgs.Count);
+    }
+
+    int ISharpTSCallableV2.Arity => Arity();
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    {
+        // Combine bound args + call args into a single array
+        var combined = new RuntimeValue[_boundArgs.Count + arguments.Length];
+        for (int i = 0; i < _boundArgs.Count; i++)
+            combined[i] = RuntimeValue.FromBoxed(_boundArgs[i]);
+        arguments.CopyTo(combined.AsSpan(_boundArgs.Count));
+
+        // Delegate to target's V2 path if available
+        if (!_ignoreThisArg && _thisArg != null)
+        {
+            if (_target is SharpTSFunction fn)
+            {
+                var boundFn = CreateBoundSharpTSFunction(fn, _thisArg);
+                if (boundFn is ISharpTSCallableV2 v2)
+                    return v2.CallV2(interpreter, combined);
+                return RuntimeValue.FromBoxed(boundFn.Call(interpreter, combined.Select(rv => rv.ToObject()).ToList()));
+            }
+
+            if (_target is SharpTSArrowFunction arrow && arrow.HasOwnThis)
+            {
+                var boundArrow = arrow.Bind(_thisArg);
+                if (boundArrow is ISharpTSCallableV2 v2)
+                    return v2.CallV2(interpreter, combined);
+                return RuntimeValue.FromBoxed(boundArrow.Call(interpreter, combined.Select(rv => rv.ToObject()).ToList()));
+            }
+        }
+
+        // Fast path: target supports V2
+        if (_target is ISharpTSCallableV2 targetV2)
+            return targetV2.CallV2(interpreter, combined);
+
+        // Fallback to legacy
+        var boxedArgs = new List<object?>(combined.Length);
+        foreach (var rv in combined)
+            boxedArgs.Add(rv.ToObject());
+        return RuntimeValue.FromBoxed(_target.Call(interpreter, boxedArgs));
     }
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
@@ -235,7 +276,7 @@ public class BoundFunction : ISharpTSCallable
 /// <summary>
 /// Internal wrapper to call a SharpTSFunction with an arbitrary 'this' value.
 /// </summary>
-internal class BoundSharpTSFunctionWrapper : ISharpTSCallable
+internal class BoundSharpTSFunctionWrapper : ISharpTSCallable, ISharpTSCallableV2
 {
     private readonly SharpTSFunction _fn;
     private readonly object _thisArg;
@@ -247,6 +288,8 @@ internal class BoundSharpTSFunctionWrapper : ISharpTSCallable
     }
 
     public int Arity() => _fn.Arity();
+
+    int ISharpTSCallableV2.Arity => _fn.Arity();
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
@@ -262,6 +305,22 @@ internal class BoundSharpTSFunctionWrapper : ISharpTSCallable
         var syntheticInstance = new SyntheticThisInstance(_thisArg);
         var boundFn2 = _fn.Bind(syntheticInstance);
         return boundFn2.Call(interpreter, arguments);
+    }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    {
+        SharpTSFunction boundFn;
+        if (_thisArg is SharpTSInstance instance)
+        {
+            boundFn = _fn.Bind(instance);
+        }
+        else
+        {
+            var syntheticInstance = new SyntheticThisInstance(_thisArg);
+            boundFn = _fn.Bind(syntheticInstance);
+        }
+        // SharpTSFunction implements ISharpTSCallableV2
+        return ((ISharpTSCallableV2)boundFn).CallV2(interpreter, arguments);
     }
 }
 

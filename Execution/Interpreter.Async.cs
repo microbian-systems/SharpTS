@@ -1,8 +1,10 @@
+using SharpTS.Compilation;
 using SharpTS.Parsing;
 using SharpTS.Runtime;
 using SharpTS.Runtime.BuiltIns;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
+using SharpTS.TypeSystem;
 
 namespace SharpTS.Execution;
 
@@ -443,9 +445,35 @@ public partial class Interpreter
 
     private async Task<RuntimeValue> EvaluateBinaryAsync(Expr.Binary binary)
     {
-        object? left = (await EvaluateAsync(binary.Left)).ToObject();
-        object? right = (await EvaluateAsync(binary.Right)).ToObject();
-        return RuntimeValue.FromBoxed(EvaluateBinaryOperation(binary.Operator, left, right));
+        var leftRV = await EvaluateAsync(binary.Left);
+        var rightRV = await EvaluateAsync(binary.Right);
+
+        // Fast path: both operands are numbers
+        if (leftRV.IsNumber && rightRV.IsNumber)
+        {
+            double l = leftRV.AsNumber(), r = rightRV.AsNumber();
+            var desc = SemanticOperatorResolver.Resolve(binary.Operator.Type);
+            switch (desc)
+            {
+                case OperatorDescriptor.Plus:
+                    return RuntimeValue.FromNumber(l + r);
+                case OperatorDescriptor.Arithmetic:
+                    return RuntimeValue.FromNumber(EvaluateArithmetic(binary.Operator.Type, l, r));
+                case OperatorDescriptor.Power:
+                    return RuntimeValue.FromNumber(Math.Pow(l, r));
+                case OperatorDescriptor.Comparison:
+                    return RuntimeValue.FromBoolean(EvaluateComparison(binary.Operator.Type, l, r));
+                case OperatorDescriptor.Equality eq:
+                    bool equal = l.Equals(r);
+                    return RuntimeValue.FromBoolean(eq.IsNegated ? !equal : equal);
+                case OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift:
+                    return RuntimeValue.FromNumber(EvaluateBitwise(binary.Operator.Type, (int)l, (int)r));
+                case OperatorDescriptor.UnsignedRightShift:
+                    return RuntimeValue.FromNumber((double)((uint)(int)l >> ((int)r & 0x1F)));
+            }
+        }
+
+        return EvaluateBinaryOperationRV(binary.Operator, leftRV, rightRV);
     }
 
     private Task<RuntimeValue> EvaluateLogicalAsync(Expr.Logical logical) =>
@@ -467,8 +495,17 @@ public partial class Interpreter
 
     private async Task<RuntimeValue> EvaluateUnaryAsync(Expr.Unary unary)
     {
-        object? right = (await EvaluateAsync(unary.Right)).ToObject();
-        return RuntimeValue.FromBoxed(EvaluateUnaryOperation(unary.Operator, right));
+        // typeof never throws on undeclared variables
+        if (unary.Operator.Type == TokenType.TYPEOF && unary.Right is Expr.Variable)
+        {
+            RuntimeValue right;
+            try { right = await EvaluateAsync(unary.Right); }
+            catch (InterpreterException) { right = RuntimeValue.Undefined; }
+            return RuntimeValue.FromString(right.TypeofString());
+        }
+
+        var rv = await EvaluateAsync(unary.Right);
+        return EvaluateUnaryOperationRV(unary.Operator, rv);
     }
 
     private async ValueTask<RuntimeValue> EvaluateAssignAsync(Expr.Assign assign)

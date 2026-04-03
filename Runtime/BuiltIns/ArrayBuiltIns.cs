@@ -29,12 +29,12 @@ public static class ArrayBuiltIns
             .MethodV2("join", 0, 1, JoinV2)
             .MethodV2("concat", 1, ConcatV2)
             .MethodV2("reverse", 0, ReverseV2)
-            .Method("flat", 0, 1, Flat)
-            .Method("flatMap", 1, FlatMap)
-            .Method("sort", 0, 1, Sort)
-            .Method("toSorted", 0, 1, ToSorted)
-            .Method("splice", 0, int.MaxValue, Splice)
-            .Method("toSpliced", 0, int.MaxValue, ToSpliced)
+            .MethodV2("flat", 0, 1, FlatV2)
+            .MethodV2("flatMap", 1, FlatMapV2)
+            .MethodV2("sort", 0, 1, SortV2)
+            .MethodV2("toSorted", 0, 1, ToSortedV2)
+            .MethodV2("splice", 0, int.MaxValue, SpliceV2)
+            .MethodV2("toSpliced", 0, int.MaxValue, ToSplicedV2)
             .MethodV2("findLast", 1, FindLastV2)
             .MethodV2("findLastIndex", 1, FindLastIndexV2)
             .MethodV2("toReversed", 0, ToReversedV2)
@@ -794,5 +794,33 @@ public static class ArrayBuiltIns
         }
 
         public void Dispose() => ArgumentListPool.Return(_args);
+    }
+
+    // ===================== V2 Wrappers (RuntimeValue boundary) =====================
+
+    private static RuntimeValue FlatV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Flat(interp, arr, SpanToList(args)));
+
+    private static RuntimeValue FlatMapV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(FlatMap(interp, arr, SpanToList(args)));
+
+    private static RuntimeValue SortV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Sort(interp, arr, SpanToList(args)));
+
+    private static RuntimeValue ToSortedV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(ToSorted(interp, arr, SpanToList(args)));
+
+    private static RuntimeValue SpliceV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Splice(interp, arr, SpanToList(args)));
+
+    private static RuntimeValue ToSplicedV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(ToSpliced(interp, arr, SpanToList(args)));
+
+    private static List<object?> SpanToList(ReadOnlySpan<RuntimeValue> args)
+    {
+        var list = new List<object?>(args.Length);
+        foreach (var arg in args)
+            list.Add(arg.ToObject());
+        return list;
     }
 }

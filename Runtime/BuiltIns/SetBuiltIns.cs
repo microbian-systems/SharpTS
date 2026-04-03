@@ -23,7 +23,7 @@ public static class SetBuiltIns
             .MethodV2("keys", 0, (_, set, _) => RuntimeValue.FromObject(set.Keys()))
             .MethodV2("values", 0, (_, set, _) => RuntimeValue.FromObject(set.Values()))
             .MethodV2("entries", 0, (_, set, _) => RuntimeValue.FromObject(set.Entries()))
-            .Method("forEach", 1, ForEach)
+            .MethodV2("forEach", 1, ForEachV2)
             // ES2025 Set Operations
             .MethodV2("union", 1, UnionV2)
             .MethodV2("intersection", 1, IntersectionV2)
@@ -79,6 +79,12 @@ public static class SetBuiltIns
             callback.Call(interp, callbackArgs);
         }
         return null;
+    }
+
+    private static RuntimeValue ForEachV2(Interpreter interp, SharpTSSet set, ReadOnlySpan<RuntimeValue> args)
+    {
+        ForEach(interp, set, new List<object?> { args[0].ToObject() });
+        return RuntimeValue.Undefined;
     }
 
     // ES2025 Set Operations

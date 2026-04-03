@@ -13,19 +13,19 @@ public static class IteratorBuiltIns
 {
     private static readonly BuiltInTypeMemberLookup<SharpTSIterator> _lookup =
         BuiltInTypeBuilder<SharpTSIterator>.ForInstanceType()
-            .Method("next", 0, Next)
-            .Method("return", 0, 1, Return)
-            .Method("map", 1, Map)
-            .Method("filter", 1, Filter)
-            .Method("take", 1, Take)
-            .Method("drop", 1, Drop)
-            .Method("flatMap", 1, FlatMap)
-            .Method("reduce", 1, 2, Reduce)
-            .Method("toArray", 0, ToArray)
-            .Method("forEach", 1, ForEach)
-            .Method("some", 1, Some)
-            .Method("every", 1, Every)
-            .Method("find", 1, Find)
+            .MethodV2("next", 0, NextV2)
+            .MethodV2("return", 0, 1, ReturnV2)
+            .MethodV2("map", 1, MapV2)
+            .MethodV2("filter", 1, FilterV2)
+            .MethodV2("take", 1, TakeV2)
+            .MethodV2("drop", 1, DropV2)
+            .MethodV2("flatMap", 1, FlatMapV2)
+            .MethodV2("reduce", 1, 2, ReduceV2)
+            .MethodV2("toArray", 0, ToArrayV2)
+            .MethodV2("forEach", 1, ForEachV2)
+            .MethodV2("some", 1, SomeV2)
+            .MethodV2("every", 1, EveryV2)
+            .MethodV2("find", 1, FindV2)
             .Build();
 
     public static object? GetMember(SharpTSIterator receiver, string name)
@@ -270,4 +270,52 @@ public static class IteratorBuiltIns
     }
 
     private static bool IsTruthy(object? obj) => RuntimeTypes.IsTruthy(obj);
+
+    // ===================== V2 Wrappers (RuntimeValue boundary) =====================
+
+    private static RuntimeValue NextV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Next(interp, iter, []));
+
+    private static RuntimeValue ReturnV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Return(interp, iter, args.Length > 0 ? [args[0].ToObject()] : []));
+
+    private static RuntimeValue MapV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Map(interp, iter, [args[0].ToObject()]));
+
+    private static RuntimeValue FilterV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Filter(interp, iter, [args[0].ToObject()]));
+
+    private static RuntimeValue TakeV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Take(interp, iter, [args[0].ToObject()]));
+
+    private static RuntimeValue DropV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Drop(interp, iter, [args[0].ToObject()]));
+
+    private static RuntimeValue FlatMapV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(FlatMap(interp, iter, [args[0].ToObject()]));
+
+    private static RuntimeValue ReduceV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+    {
+        var list = new List<object?>(args.Length);
+        foreach (var arg in args) list.Add(arg.ToObject());
+        return RuntimeValue.FromBoxed(Reduce(interp, iter, list));
+    }
+
+    private static RuntimeValue ToArrayV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(ToArray(interp, iter, []));
+
+    private static RuntimeValue ForEachV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+    {
+        ForEach(interp, iter, [args[0].ToObject()]);
+        return RuntimeValue.Undefined;
+    }
+
+    private static RuntimeValue SomeV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Some(interp, iter, [args[0].ToObject()]));
+
+    private static RuntimeValue EveryV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Every(interp, iter, [args[0].ToObject()]));
+
+    private static RuntimeValue FindV2(Interpreter interp, SharpTSIterator iter, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Find(interp, iter, [args[0].ToObject()]));
 }

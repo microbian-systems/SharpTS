@@ -219,7 +219,7 @@ public partial class Interpreter
             int i => RuntimeValue.FromNumber(i),
             string s => RuntimeValue.FromString(s),
             bool b => RuntimeValue.FromBoolean(b),
-            BigInteger bi => RuntimeValue.FromObject(new SharpTSBigInt(bi)),
+            BigInteger bi => RuntimeValue.FromBigInt(new SharpTSBigInt(bi)),
             _ => RuntimeValue.FromBoxed(literal.Value)
         };
     }

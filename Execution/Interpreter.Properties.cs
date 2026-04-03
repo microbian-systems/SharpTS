@@ -268,9 +268,9 @@ public partial class Interpreter
         return category switch
         {
             TypeCategory.Class when obj is SharpTSClass klass =>
-                RuntimeValue.FromBoxed(EvaluateGetOnClass(klass, memberName)),
+                EvaluateGetOnClassRV(klass, memberName),
             TypeCategory.Namespace when obj is SharpTSNamespace nsObj =>
-                RuntimeValue.FromBoxed(EvaluateGetOnNamespace(nsObj, memberName)),
+                EvaluateGetOnNamespaceRV(nsObj, memberName),
             TypeCategory.Enum when obj is SharpTSEnum enumObj =>
                 enumObj.GetMemberRV(memberName),
             TypeCategory.Enum when obj is ConstEnumValues constEnumObj =>
@@ -286,6 +286,12 @@ public partial class Interpreter
     /// <summary>
     /// Evaluates property access on a class (static members).
     /// </summary>
+    private static RuntimeValue EvaluateGetOnClassRV(SharpTSClass klass, string memberName)
+        => RuntimeValue.FromBoxed(EvaluateGetOnClass(klass, memberName));
+
+    private static RuntimeValue EvaluateGetOnNamespaceRV(SharpTSNamespace nsObj, string memberName)
+        => RuntimeValue.FromBoxed(EvaluateGetOnNamespace(nsObj, memberName));
+
     private static object? EvaluateGetOnClass(SharpTSClass klass, string memberName)
     {
         // Try static auto-accessor first (TypeScript 4.9+)
@@ -369,8 +375,10 @@ public partial class Interpreter
         var getter = simpleObj.GetGetter(memberName);
         if (getter != null)
         {
-            // Invoke the getter with 'this' bound to the object
             var boundGetter = BindAccessorToObject(getter, simpleObj);
+            // V2 fast path for getter invocation
+            if (boundGetter is ISharpTSCallableV2 v2Getter)
+                return v2Getter.CallV2(this, ReadOnlySpan<RuntimeValue>.Empty);
             return RuntimeValue.FromBoxed(boundGetter.Call(this, []));
         }
 

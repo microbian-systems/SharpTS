@@ -118,11 +118,19 @@ public partial class Interpreter
         }
 
         // Handle global functions via registry (Symbol, BigInt, parseInt, setTimeout, Error types, etc.)
-        if (call.Callee is Expr.Variable globalVar &&
-            GlobalFunctionRegistry.Instance.TryGetHandler(globalVar.Name.Lexeme, out var handler))
+        if (call.Callee is Expr.Variable globalVar)
         {
-            Func<Expr, ValueTask<object?>> evalWrapper = async expr => (await ctx.EvaluateExprAsync(expr)).ToObject();
-            return await handler!(evalWrapper, call.Arguments, this);
+            var gvName = globalVar.Name.Lexeme;
+            if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
+            {
+                Func<Expr, ValueTask<RuntimeValue>> evalWrapper = expr => ctx.EvaluateExprAsync(expr);
+                return await handlerV2!(evalWrapper, call.Arguments, this);
+            }
+            if (GlobalFunctionRegistry.Instance.TryGetHandler(gvName, out var handler))
+            {
+                Func<Expr, ValueTask<object?>> evalWrapperLegacy = async expr => (await ctx.EvaluateExprAsync(expr)).ToObject();
+                return RuntimeValue.FromBoxed(await handler!(evalWrapperLegacy, call.Arguments, this));
+            }
         }
 
         object? callee = (await ctx.EvaluateExprAsync(call.Callee)).ToObject();
@@ -266,12 +274,19 @@ public partial class Interpreter
         }
 
         // Handle global functions via registry (Symbol, BigInt, parseInt, setTimeout, Error types, etc.)
-        if (call.Callee is Expr.Variable globalVar &&
-            GlobalFunctionRegistry.Instance.TryGetHandler(globalVar.Name.Lexeme, out var handler))
+        if (call.Callee is Expr.Variable globalVar)
         {
-            // Use cached wrapper to avoid per-call delegate allocation
-            _syncEvalWrapperCached ??= expr => new ValueTask<object?>(_syncContext.EvaluateExprAsync(expr).Result.ToObject());
-            return RuntimeValue.FromBoxed(handler!(_syncEvalWrapperCached, call.Arguments, this).GetAwaiter().GetResult());
+            var gvName = globalVar.Name.Lexeme;
+            if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
+            {
+                _syncEvalWrapperV2Cached ??= expr => _syncContext.EvaluateExprAsync(expr);
+                return handlerV2!(_syncEvalWrapperV2Cached, call.Arguments, this).GetAwaiter().GetResult();
+            }
+            if (GlobalFunctionRegistry.Instance.TryGetHandler(gvName, out var handler))
+            {
+                _syncEvalWrapperCached ??= expr => new ValueTask<object?>(_syncContext.EvaluateExprAsync(expr).Result.ToObject());
+                return RuntimeValue.FromBoxed(handler!(_syncEvalWrapperCached, call.Arguments, this).GetAwaiter().GetResult());
+            }
         }
 
         object? callee = Evaluate(call.Callee);
@@ -387,9 +402,46 @@ public partial class Interpreter
         }
 
         // Slow path: BigInt, string concatenation, mixed types, in, instanceof
+        return EvaluateBinaryOperationRV(binary.Operator, leftRV, rightRV);
+    }
+
+    /// <summary>
+    /// RuntimeValue-native binary operation — avoids boxing for BigInt, string concat, equality, etc.
+    /// </summary>
+    private RuntimeValue EvaluateBinaryOperationRV(Token op, RuntimeValue leftRV, RuntimeValue rightRV)
+    {
+        // Check for BigInt (Kind == BigInt, not Object)
+        System.Numerics.BigInteger? leftBigInt = leftRV.IsBigInt ? leftRV.AsBigInt().Value : null;
+        System.Numerics.BigInteger? rightBigInt = rightRV.IsBigInt ? rightRV.AsBigInt().Value : null;
+
+        if (leftBigInt.HasValue || rightBigInt.HasValue)
+        {
+            return EvaluateBigIntBinaryRV(op.Type, leftRV, rightRV, leftBigInt, rightBigInt);
+        }
+
         object? left = leftRV.ToObject();
         object? right = rightRV.ToObject();
-        return RuntimeValue.FromBoxed(EvaluateBinaryOperation(binary.Operator, left, right));
+
+        var desc = SemanticOperatorResolver.Resolve(op.Type);
+
+        return desc switch
+        {
+            OperatorDescriptor.Plus when left is string || right is string =>
+                RuntimeValue.FromString(string.Concat(
+                    left as string ?? Stringify(left),
+                    right as string ?? Stringify(right))),
+            OperatorDescriptor.Plus => RuntimeValue.FromNumber((double)left! + (double)right!),
+            OperatorDescriptor.Arithmetic => RuntimeValue.FromNumber(EvaluateArithmetic(op.Type, (double)left!, (double)right!)),
+            OperatorDescriptor.Power => RuntimeValue.FromNumber(Math.Pow((double)left!, (double)right!)),
+            OperatorDescriptor.Comparison => RuntimeValue.FromBoolean(EvaluateComparison(op.Type, (double)left!, (double)right!)),
+            OperatorDescriptor.Equality eq => RuntimeValue.FromBoolean(EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated)),
+            OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
+                RuntimeValue.FromNumber(EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right))),
+            OperatorDescriptor.UnsignedRightShift => RuntimeValue.FromNumber((double)((uint)ToInt32(left) >> (ToInt32(right) & 0x1F))),
+            OperatorDescriptor.In => RuntimeValue.FromBoxed(EvaluateIn(left, right)),
+            OperatorDescriptor.InstanceOf => RuntimeValue.FromBoxed(EvaluateInstanceof(left, right)),
+            _ => RuntimeValue.Undefined
+        };
     }
 
     /// <summary>
@@ -477,6 +529,27 @@ public partial class Interpreter
         System.Numerics.BigInteger biVal => biVal,
         _ => null
     };
+
+    private RuntimeValue EvaluateBigIntBinaryRV(TokenType op, RuntimeValue leftRV, RuntimeValue rightRV,
+        System.Numerics.BigInteger? leftBi, System.Numerics.BigInteger? rightBi)
+    {
+        // Equality operators allow mixed types (bigint with anything)
+        if (BigIntOperatorHelper.IsEqualityOperator(op))
+        {
+            if (!leftBi.HasValue || !rightBi.HasValue)
+            {
+                // Mixed types: equality is false, inequality is true
+                return RuntimeValue.FromBoolean(op is TokenType.BANG_EQUAL or TokenType.BANG_EQUAL_EQUAL);
+            }
+            return BigIntOperatorHelper.EvaluateBinaryRV(op, leftBi.Value, rightBi.Value);
+        }
+
+        // All other operators require both to be bigint
+        if (!leftBi.HasValue || !rightBi.HasValue)
+            throw new InterpreterException("Cannot mix bigint and other types in operations.");
+
+        return BigIntOperatorHelper.EvaluateBinaryRV(op, leftBi.Value, rightBi.Value);
+    }
 
     private object EvaluateBigIntBinary(TokenType op, object? left, object? right,
         System.Numerics.BigInteger? leftBi, System.Numerics.BigInteger? rightBi)

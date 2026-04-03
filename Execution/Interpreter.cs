@@ -106,8 +106,9 @@ public partial class Interpreter : IDisposable
     private readonly SyncEvaluationContext _syncContext;
     private readonly AsyncEvaluationContext _asyncContext;
 
-    // Cached wrapper for GlobalFunctionHandler delegate compatibility
+    // Cached wrappers for GlobalFunctionHandler delegate compatibility
     private Func<Expr, ValueTask<object?>>? _syncEvalWrapperCached;
+    private Func<Expr, ValueTask<RuntimeValue>>? _syncEvalWrapperV2Cached;
 
     /// <summary>
     /// The TextWriter used for stdout output (console.log, process.stdout.write, etc.).

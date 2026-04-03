@@ -256,29 +256,44 @@ public partial class Interpreter
         // typeof never throws on undeclared variables - it returns "undefined"
         if (unary.Operator.Type == TokenType.TYPEOF && unary.Right is Expr.Variable)
         {
-            object? right;
-            try { right = Evaluate(unary.Right); }
-            catch (InterpreterException) { right = SharpTSUndefined.Instance; }
-            return RuntimeValue.FromBoxed(EvaluateUnaryOperation(unary.Operator, right));
+            RuntimeValue right;
+            try { right = EvaluateRV(unary.Right); }
+            catch (InterpreterException) { right = RuntimeValue.Undefined; }
+            return RuntimeValue.FromString(right.TypeofString());
         }
 
         // Fast path for common unary operations on RuntimeValue
         var rv = EvaluateRV(unary.Right);
-        switch (unary.Operator.Type)
+        return EvaluateUnaryOperationRV(unary.Operator, rv);
+    }
+
+    /// <summary>
+    /// RuntimeValue-native unary operation — avoids boxing for all cases including BigInt.
+    /// </summary>
+    private RuntimeValue EvaluateUnaryOperationRV(Token op, RuntimeValue rv)
+    {
+        switch (op.Type)
         {
             case TokenType.BANG:
                 return RuntimeValue.FromBoolean(!rv.IsTruthy());
             case TokenType.MINUS when rv.IsNumber:
                 return RuntimeValue.FromNumber(-rv.AsNumber());
+            case TokenType.MINUS when rv.IsBigInt:
+                return RuntimeValue.FromBigInt(new SharpTSBigInt(-rv.AsBigInt().Value));
+            case TokenType.MINUS:
+                return RuntimeValue.FromNumber(-(double)rv.ToObject()!);
             case TokenType.TYPEOF:
                 return RuntimeValue.FromString(rv.TypeofString());
             case TokenType.VOID:
                 return RuntimeValue.Undefined;
             case TokenType.TILDE when rv.IsNumber:
                 return RuntimeValue.FromNumber(~(int)rv.AsNumber());
+            case TokenType.TILDE when rv.IsBigInt:
+                return RuntimeValue.FromBigInt(new SharpTSBigInt(~rv.AsBigInt().Value));
+            case TokenType.TILDE:
+                return RuntimeValue.FromNumber(~(int)(double)rv.ToObject()!);
             default:
-                // Fall back to object-based path for BigInt and other cases
-                return RuntimeValue.FromBoxed(EvaluateUnaryOperation(unary.Operator, rv.ToObject()));
+                return RuntimeValue.Undefined;
         }
     }
 

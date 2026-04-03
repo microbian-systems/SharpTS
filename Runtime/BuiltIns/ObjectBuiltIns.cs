@@ -12,26 +12,26 @@ public static class ObjectBuiltIns
             .MethodV2("keys", 1, KeysV2)
             .MethodV2("values", 1, ValuesV2)
             .MethodV2("entries", 1, EntriesV2)
-            .Method("fromEntries", 1, FromEntries)
+            .MethodV2("fromEntries", 1, FromEntriesV2)
             .MethodV2("hasOwn", 2, HasOwnV2)
             .MethodV2("is", 2, IsV2)
-            .Method("assign", 1, int.MaxValue, Assign)
+            .MethodV2("assign", 1, int.MaxValue, AssignV2)
             .MethodV2("freeze", 1, FreezeV2)
             .MethodV2("seal", 1, SealV2)
             .MethodV2("isFrozen", 1, IsFrozenV2)
             .MethodV2("isSealed", 1, IsSealedV2)
-            .Method("defineProperty", 3, DefineProperty)
-            .Method("getOwnPropertyDescriptor", 2, GetOwnPropertyDescriptor)
-            .Method("getOwnPropertyNames", 1, GetOwnPropertyNames)
-            .Method("create", 1, 2, Create)
-            .Method("preventExtensions", 1, PreventExtensions)
-            .Method("isExtensible", 1, IsExtensibleMethod)
-            .Method("getOwnPropertySymbols", 1, GetOwnPropertySymbols)
+            .MethodV2("defineProperty", 3, DefinePropertyV2)
+            .MethodV2("getOwnPropertyDescriptor", 2, GetOwnPropertyDescriptorV2)
+            .MethodV2("getOwnPropertyNames", 1, GetOwnPropertyNamesV2)
+            .MethodV2("create", 1, 2, CreateV2)
+            .MethodV2("preventExtensions", 1, PreventExtensionsV2)
+            .MethodV2("isExtensible", 1, IsExtensibleMethodV2)
+            .MethodV2("getOwnPropertySymbols", 1, GetOwnPropertySymbolsV2)
             .MethodV2("getPrototypeOf", 1, GetPrototypeOfV2)
-            .Method("setPrototypeOf", 2, SetPrototypeOf)
-            .Method("groupBy", 2, GroupBy)
-            .Method("defineProperties", 2, DefineProperties)
-            .Method("getOwnPropertyDescriptors", 1, GetOwnPropertyDescriptors)
+            .MethodV2("setPrototypeOf", 2, SetPrototypeOfV2)
+            .MethodV2("groupBy", 2, GroupByV2)
+            .MethodV2("defineProperties", 2, DefinePropertiesV2)
+            .MethodV2("getOwnPropertyDescriptors", 1, GetOwnPropertyDescriptorsV2)
             .Build();
 
     /// <summary>
@@ -1592,5 +1592,54 @@ public static class ObjectBuiltIns
         }
 
         return new SharpTSObject(groups);
+    }
+
+    // ===================== V2 Wrappers (RuntimeValue boundary — delegates to internal logic) =====================
+
+    private static RuntimeValue FromEntriesV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(FromEntries(interp, SpanToList(args)));
+
+    private static RuntimeValue AssignV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Assign(interp, SpanToList(args)));
+
+    private static RuntimeValue DefinePropertyV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(DefineProperty(interp, SpanToList(args)));
+
+    private static RuntimeValue GetOwnPropertyDescriptorV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(GetOwnPropertyDescriptor(interp, SpanToList(args)));
+
+    private static RuntimeValue GetOwnPropertyNamesV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(GetOwnPropertyNames(interp, SpanToList(args)));
+
+    private static RuntimeValue CreateV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(Create(interp, SpanToList(args)));
+
+    private static RuntimeValue PreventExtensionsV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(PreventExtensions(interp, SpanToList(args)));
+
+    private static RuntimeValue IsExtensibleMethodV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(IsExtensibleMethod(interp, SpanToList(args)));
+
+    private static RuntimeValue GetOwnPropertySymbolsV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(GetOwnPropertySymbols(interp, SpanToList(args)));
+
+    private static RuntimeValue SetPrototypeOfV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(SetPrototypeOf(interp, SpanToList(args)));
+
+    private static RuntimeValue GroupByV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(GroupBy(interp, SpanToList(args)));
+
+    private static RuntimeValue DefinePropertiesV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(DefineProperties(interp, SpanToList(args)));
+
+    private static RuntimeValue GetOwnPropertyDescriptorsV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+        => RuntimeValue.FromBoxed(GetOwnPropertyDescriptors(interp, SpanToList(args)));
+
+    private static List<object?> SpanToList(ReadOnlySpan<RuntimeValue> args)
+    {
+        var list = new List<object?>(args.Length);
+        foreach (var arg in args)
+            list.Add(arg.ToObject());
+        return list;
     }
 }

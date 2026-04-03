@@ -16,11 +16,11 @@ public static class StringBuiltIns
             .MethodV2("toUpperCase", 0, ToUpperCaseV2)
             .MethodV2("toLowerCase", 0, ToLowerCaseV2)
             .MethodV2("trim", 0, TrimV2)
-            .Method("replace", 2, Replace)
-            .Method("split", 1, 2, Split)
-            .Method("match", 1, Match)
-            .Method("matchAll", 1, MatchAll)
-            .Method("search", 1, Search)
+            .MethodV2("replace", 2, ReplaceV2)
+            .MethodV2("split", 1, 2, SplitV2)
+            .MethodV2("match", 1, MatchV2)
+            .MethodV2("matchAll", 1, MatchAllV2)
+            .MethodV2("search", 1, SearchV2)
             .MethodV2("includes", 1, IncludesV2)
             .MethodV2("startsWith", 1, StartsWithV2)
             .MethodV2("endsWith", 1, EndsWithV2)
@@ -42,9 +42,9 @@ public static class StringBuiltIns
 
     private static readonly BuiltInStaticMemberLookup _staticLookup =
         BuiltInStaticBuilder.Create()
-            .Method("raw", 1, int.MaxValue, StringRaw)
-            .Method("fromCharCode", 0, int.MaxValue, FromCharCode)
-            .Method("fromCodePoint", 0, int.MaxValue, FromCodePoint)
+            .MethodV2("raw", 1, int.MaxValue, StringRawV2)
+            .MethodV2("fromCharCode", 0, int.MaxValue, FromCharCodeV2)
+            .MethodV2("fromCodePoint", 0, int.MaxValue, FromCodePointV2)
             .Build();
 
     public static object? GetMember(string receiver, string name)
@@ -57,44 +57,38 @@ public static class StringBuiltIns
     public static object? GetStaticMember(string name)
         => _staticLookup.GetMember(name);
 
-    private static object? Replace(Interpreter _, string str, List<object?> args)
+    private static RuntimeValue ReplaceV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
     {
-        var replacement = args[1]?.ToString() ?? "";
+        var replacement = args[1].ToObject()?.ToString() ?? "";
 
-        // Handle RegExp pattern
-        if (args[0] is SharpTSRegExp regex)
+        if (args[0].ToObject() is SharpTSRegExp regex)
         {
-            return regex.Replace(str, replacement);
+            return RuntimeValue.FromString(regex.Replace(str, replacement));
         }
 
-        // String pattern: JavaScript replace() only replaces the first occurrence
-        var search = args[0]?.ToString() ?? "";
+        var search = args[0].ToObject()?.ToString() ?? "";
         var index = str.IndexOf(search);
-        if (index < 0) return str;
-        return str.Substring(0, index) + replacement + str.Substring(index + search.Length);
+        if (index < 0) return RuntimeValue.FromString(str);
+        return RuntimeValue.FromString(str.Substring(0, index) + replacement + str.Substring(index + search.Length));
     }
 
-    private static object? Split(Interpreter _, string str, List<object?> args)
+    private static RuntimeValue SplitV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
     {
-        int? limit = args.Count > 1 && args[1] is double d ? (int)d : null;
+        int? limit = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumber() : null;
 
-        // Handle RegExp separator
-        if (args[0] is SharpTSRegExp regex)
+        if (args[0].ToObject() is SharpTSRegExp regex)
         {
             string[] parts = regex.Split(str);
-            // Apply limit if specified
             IEnumerable<string> resultParts = limit.HasValue && limit.Value >= 0
                 ? parts.Take(limit.Value)
                 : parts;
-            return new SharpTSArray(resultParts.Select(p => (object?)p).ToList());
+            return RuntimeValue.FromObject(new SharpTSArray(resultParts.Select(p => (object?)p).ToList()));
         }
 
-        // String separator
-        var separator = args[0]?.ToString() ?? "";
+        var separator = args[0].ToObject()?.ToString() ?? "";
         string[] stringParts;
         if (separator == "")
         {
-            // Empty separator splits into individual characters
             stringParts = str.Select(c => c.ToString()).ToArray();
         }
         else
@@ -102,83 +96,70 @@ public static class StringBuiltIns
             stringParts = str.Split(separator);
         }
 
-        // Apply limit if specified (JavaScript behavior: limit restricts number of results)
         if (limit.HasValue && limit.Value >= 0)
         {
             stringParts = stringParts.Take(limit.Value).ToArray();
         }
 
         var elements = stringParts.Select(p => (object?)p).ToList();
-        return new SharpTSArray(elements);
+        return RuntimeValue.FromObject(new SharpTSArray(elements));
     }
 
-    private static object? Match(Interpreter _, string str, List<object?> args)
+    private static RuntimeValue MatchV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
     {
-        // Handle RegExp pattern
-        if (args[0] is SharpTSRegExp regex)
+        if (args[0].ToObject() is SharpTSRegExp regex)
         {
             if (regex.Global)
             {
-                // Global match: return array of all matches
                 var matches = regex.MatchAll(str);
-                if (matches.Count == 0) return null;
-                return new SharpTSArray(matches.Select(m => (object?)m).ToList());
+                if (matches.Count == 0) return RuntimeValue.Null;
+                return RuntimeValue.FromObject(new SharpTSArray(matches.Select(m => (object?)m).ToList()));
             }
             else
             {
-                // Non-global: same as exec()
-                return regex.Exec(str);
+                return RuntimeValue.FromBoxed(regex.Exec(str));
             }
         }
 
-        // String pattern: find first occurrence
-        var search = args[0]?.ToString() ?? "";
+        var search = args[0].ToObject()?.ToString() ?? "";
         var index = str.IndexOf(search);
-        if (index < 0) return null;
-        return new SharpTSArray([(object?)search]);
+        if (index < 0) return RuntimeValue.Null;
+        return RuntimeValue.FromObject(new SharpTSArray([(object?)search]));
     }
 
-    private static object? MatchAll(Interpreter _, string str, List<object?> args)
+    private static RuntimeValue MatchAllV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args[0] is SharpTSRegExp regex)
+        if (args[0].ToObject() is SharpTSRegExp regex)
         {
             if (!regex.Global)
                 throw new Exception("TypeError: String.prototype.matchAll called with a non-global RegExp argument");
             var matchObjects = regex.MatchAllObjects(str);
-            return new SharpTSArray(matchObjects.Select(m => (object?)m).ToList());
+            return RuntimeValue.FromObject(new SharpTSArray(matchObjects.Select(m => (object?)m).ToList()));
         }
 
-        // String pattern: create a temporary global RegExp
-        var pattern = args[0]?.ToString() ?? "";
+        var pattern = args[0].ToObject()?.ToString() ?? "";
         var tempRegex = new SharpTSRegExp(System.Text.RegularExpressions.Regex.Escape(pattern), "g");
         var results = tempRegex.MatchAllObjects(str);
-        return new SharpTSArray(results.Select(m => (object?)m).ToList());
+        return RuntimeValue.FromObject(new SharpTSArray(results.Select(m => (object?)m).ToList()));
     }
 
-    private static object? Search(Interpreter _, string str, List<object?> args)
+    private static RuntimeValue SearchV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
     {
-        // Handle RegExp pattern
-        if (args[0] is SharpTSRegExp regex)
+        if (args[0].ToObject() is SharpTSRegExp regex)
         {
-            return (double)regex.Search(str);
+            return RuntimeValue.FromNumber(regex.Search(str));
         }
 
-        // String pattern
-        var search = args[0]?.ToString() ?? "";
-        return (double)str.IndexOf(search);
+        var search = args[0].ToObject()?.ToString() ?? "";
+        return RuntimeValue.FromNumber(str.IndexOf(search));
     }
 
-    /// <summary>
-    /// String.raw tag function implementation.
-    /// Returns raw strings from template literals with substitutions.
-    /// </summary>
-    private static object? StringRaw(Interpreter _, List<object?> args)
+    private static RuntimeValue StringRawV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0)
+        if (args.Length == 0)
             throw new Exception("TypeError: String.raw requires at least 1 argument.");
 
-        // First argument should have a 'raw' property
-        object? stringsArg = args[0];
+        object? stringsArg = args[0].ToObject();
         IList<object?>? rawStrings = null;
 
         if (stringsArg is SharpTSTemplateStringsArray tsa)
@@ -193,7 +174,6 @@ public static class StringBuiltIns
         }
         else if (stringsArg is SharpTSArray arr)
         {
-            // Check if array has a 'raw' property (via SharpTSTemplateStringsArray)
             if (stringsArg is ISharpTSPropertyAccessor accessor)
             {
                 var rawProp = accessor.GetProperty("raw");
@@ -202,71 +182,58 @@ public static class StringBuiltIns
             }
             if (rawStrings == null)
             {
-                // Use the array elements directly as raw strings
                 rawStrings = arr.Elements;
             }
         }
 
         if (rawStrings == null || rawStrings.Count == 0)
-            return "";
+            return RuntimeValue.EmptyString;
 
         var result = new StringBuilder();
         for (int i = 0; i < rawStrings.Count; i++)
         {
             result.Append(rawStrings[i]?.ToString() ?? "");
-            if (i < args.Count - 1 && i < rawStrings.Count - 1)
+            if (i < args.Length - 1 && i < rawStrings.Count - 1)
             {
-                result.Append(args[i + 1]?.ToString() ?? "");
+                result.Append(args[i + 1].ToObject()?.ToString() ?? "");
             }
         }
 
-        return result.ToString();
+        return RuntimeValue.FromString(result.ToString());
     }
 
-    /// <summary>
-    /// String.fromCharCode() implementation.
-    /// Creates a string from the specified sequence of UTF-16 code units.
-    /// </summary>
-    private static object? FromCharCode(Interpreter _, List<object?> args)
+    private static RuntimeValue FromCharCodeV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0) return "";
+        if (args.Length == 0) return RuntimeValue.EmptyString;
 
-        // Fast path for single character
-        if (args.Count == 1)
+        if (args.Length == 1)
         {
-            var code = args[0] is double d ? (int)d : 0;
-            return ((char)(code & 0xFFFF)).ToString();
+            var code = (int)args[0].AsNumber();
+            return RuntimeValue.FromString(((char)(code & 0xFFFF)).ToString());
         }
 
-        // Multiple characters - use Span-based string creation
-        return string.Create(args.Count, args, static (span, argList) =>
+        var chars = new char[args.Length];
+        for (int i = 0; i < args.Length; i++)
         {
-            for (int i = 0; i < argList.Count; i++)
-            {
-                var code = argList[i] is double d ? (int)d : 0;
-                span[i] = (char)(code & 0xFFFF);  // Truncate to 16-bit as per JavaScript spec
-            }
-        });
+            var code = (int)args[i].AsNumber();
+            chars[i] = (char)(code & 0xFFFF);
+        }
+        return RuntimeValue.FromString(new string(chars));
     }
 
-    /// <summary>
-    /// String.fromCodePoint() implementation.
-    /// Creates a string from the specified sequence of Unicode code points.
-    /// Unlike fromCharCode, handles supplementary characters (> U+FFFF) via surrogate pairs.
-    /// </summary>
-    private static object? FromCodePoint(Interpreter _, List<object?> args)
+    private static RuntimeValue FromCodePointV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0) return "";
+        if (args.Length == 0) return RuntimeValue.EmptyString;
 
         var sb = new StringBuilder();
         foreach (var arg in args)
         {
-            var codePoint = arg is double d ? (int)d : 0;
+            var codePoint = (int)arg.AsNumber();
             if (codePoint < 0 || codePoint > 0x10FFFF)
                 throw new Exception($"RangeError: Invalid code point {codePoint}");
             sb.Append(char.ConvertFromUtf32(codePoint));
         }
-        return sb.ToString();
+        return RuntimeValue.FromString(sb.ToString());
     }
 
     #region V2 Implementations (RuntimeValue — no boxing)

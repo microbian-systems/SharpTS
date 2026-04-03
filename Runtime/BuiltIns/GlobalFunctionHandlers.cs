@@ -16,46 +16,42 @@ internal static class GlobalFunctionHandlers
     public static void RegisterAll(GlobalFunctionRegistry registry)
     {
         // Constructors (can be called without 'new')
-        registry.Register(BuiltInNames.Symbol, HandleSymbol);
-        registry.Register(BuiltInNames.BigInt, HandleBigInt);
-        registry.Register(BuiltInNames.Date, HandleDate);
+        registry.RegisterV2(BuiltInNames.Symbol, HandleSymbol);
+        registry.RegisterV2(BuiltInNames.BigInt, HandleBigInt);
+        registry.RegisterV2(BuiltInNames.Date, HandleDate);
 
         // Parsing functions
-        registry.Register(BuiltInNames.ParseInt, HandleParseInt);
-        registry.Register(BuiltInNames.ParseFloat, HandleParseFloat);
+        registry.RegisterV2(BuiltInNames.ParseInt, HandleParseInt);
+        registry.RegisterV2(BuiltInNames.ParseFloat, HandleParseFloat);
 
         // Type checking functions
-        registry.Register(BuiltInNames.IsNaN, HandleIsNaN);
-        registry.Register(BuiltInNames.IsFinite, HandleIsFinite);
+        registry.RegisterV2(BuiltInNames.IsNaN, HandleIsNaN);
+        registry.RegisterV2(BuiltInNames.IsFinite, HandleIsFinite);
 
         // Utility functions
-        registry.Register(BuiltInNames.StructuredClone, HandleStructuredClone);
+        registry.RegisterV2(BuiltInNames.StructuredClone, HandleStructuredClone);
 
         // Timer functions
-        registry.Register(BuiltInNames.SetTimeout, HandleSetTimeout);
-        registry.Register(BuiltInNames.ClearTimeout, HandleClearTimeout);
-        registry.Register(BuiltInNames.SetInterval, HandleSetInterval);
-        registry.Register(BuiltInNames.ClearInterval, HandleClearInterval);
+        registry.RegisterV2(BuiltInNames.SetTimeout, HandleSetTimeout);
+        registry.RegisterV2(BuiltInNames.ClearTimeout, HandleClearTimeout);
+        registry.RegisterV2(BuiltInNames.SetInterval, HandleSetInterval);
+        registry.RegisterV2(BuiltInNames.ClearInterval, HandleClearInterval);
 
         // Microtask function
-        registry.Register(BuiltInNames.QueueMicrotask, HandleQueueMicrotask);
+        registry.RegisterV2(BuiltInNames.QueueMicrotask, HandleQueueMicrotask);
 
         // Internal helper
-        registry.Register(BuiltInNames.ObjectRest, HandleObjectRest);
+        registry.RegisterV2(BuiltInNames.ObjectRest, HandleObjectRest);
 
         // Error constructors (called without 'new')
-        // Each error type gets its own handler that knows its type name
         foreach (var errorType in BuiltInNames.ErrorTypeNames)
         {
-            registry.Register(errorType, CreateErrorHandler(errorType));
+            registry.RegisterV2(errorType, CreateErrorHandler(errorType));
         }
     }
 
-    /// <summary>
-    /// Handle Symbol() constructor - creates unique symbols.
-    /// </summary>
-    private static async ValueTask<object?> HandleSymbol(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleSymbol(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
@@ -63,298 +59,254 @@ internal static class GlobalFunctionHandlers
         if (arguments.Count > 0)
         {
             var arg = await evaluateArg(arguments[0]);
-            description = arg?.ToString();
+            description = arg.ToObject()?.ToString();
         }
-        return new SharpTSSymbol(description);
+        return RuntimeValue.FromObject(new SharpTSSymbol(description));
     }
 
-    /// <summary>
-    /// Handle BigInt() constructor - converts number/string to bigint.
-    /// </summary>
-    private static async ValueTask<object?> HandleBigInt(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleBigInt(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
         if (arguments.Count != 1)
             throw new InterpreterException($"{BuiltInNames.BigInt}() requires exactly one argument.");
 
-        var arg = await evaluateArg(arguments[0]);
-        return arg switch
-        {
-            SharpTSBigInt bi => bi,
-            System.Numerics.BigInteger biVal => new SharpTSBigInt(biVal),
-            double d => new SharpTSBigInt(d),
-            string s => new SharpTSBigInt(s),
-            _ => throw new Exception($"Runtime Error: Cannot convert {arg?.GetType().Name ?? "null"} to bigint.")
-        };
+        var argRV = await evaluateArg(arguments[0]);
+
+        if (argRV.IsBigInt)
+            return argRV;
+        if (argRV.IsNumber)
+            return RuntimeValue.FromBigInt(new SharpTSBigInt(argRV.AsNumber()));
+        if (argRV.IsString)
+            return RuntimeValue.FromBigInt(new SharpTSBigInt(argRV.AsString()));
+
+        var arg = argRV.ToObject();
+        if (arg is SharpTSBigInt bi)
+            return RuntimeValue.FromBigInt(bi);
+        if (arg is System.Numerics.BigInteger biVal)
+            return RuntimeValue.FromBigInt(new SharpTSBigInt(biVal));
+
+        throw new Exception($"Runtime Error: Cannot convert {arg?.GetType().Name ?? "null"} to bigint.");
     }
 
-    /// <summary>
-    /// Handle Date() function call - returns current date as string (without 'new').
-    /// Date() called without 'new' ignores all arguments and returns current date as string.
-    /// </summary>
-    private static ValueTask<object?> HandleDate(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static ValueTask<RuntimeValue> HandleDate(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
-        return ValueTask.FromResult<object?>(new SharpTSDate().ToString());
+        return ValueTask.FromResult(RuntimeValue.FromString(new SharpTSDate().ToString()));
     }
 
-    /// <summary>
-    /// Handle global parseInt().
-    /// </summary>
-    private static async ValueTask<object?> HandleParseInt(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleParseInt(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
         if (arguments.Count < 1)
             throw new InterpreterException($"{BuiltInNames.ParseInt}() requires at least one argument.");
 
-        var str = (await evaluateArg(arguments[0]))?.ToString() ?? "";
+        var strRV = await evaluateArg(arguments[0]);
+        var str = strRV.ToObject()?.ToString() ?? "";
         int radix = 10;
         if (arguments.Count > 1)
         {
-            var radixValue = await evaluateArg(arguments[1]);
-            if (radixValue != null)
-                radix = (int)(double)radixValue;
+            var radixRV = await evaluateArg(arguments[1]);
+            if (radixRV.IsNumber)
+                radix = (int)radixRV.AsNumber();
         }
-        return NumberBuiltIns.ParseInt(str, radix);
+        return RuntimeValue.FromNumber(NumberBuiltIns.ParseInt(str, radix));
     }
 
-    /// <summary>
-    /// Handle global parseFloat().
-    /// </summary>
-    private static async ValueTask<object?> HandleParseFloat(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleParseFloat(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
         if (arguments.Count < 1)
             throw new InterpreterException($"{BuiltInNames.ParseFloat}() requires at least one argument.");
 
-        var str = (await evaluateArg(arguments[0]))?.ToString() ?? "";
-        return NumberBuiltIns.ParseFloat(str);
+        var strRV = await evaluateArg(arguments[0]);
+        var str = strRV.ToObject()?.ToString() ?? "";
+        return RuntimeValue.FromNumber(NumberBuiltIns.ParseFloat(str));
     }
 
-    /// <summary>
-    /// Handle global isNaN().
-    /// Global isNaN coerces to number first (different from Number.isNaN).
-    /// </summary>
-    private static async ValueTask<object?> HandleIsNaN(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleIsNaN(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
-        if (arguments.Count < 1) return true; // isNaN() with no args returns true
+        if (arguments.Count < 1) return RuntimeValue.True;
 
-        var arg = await evaluateArg(arguments[0]);
-        // Global isNaN coerces to number first (different from Number.isNaN)
-        if (arg is double d) return double.IsNaN(d);
-        if (arg is string s) return !double.TryParse(s, out _);
-        if (arg is null) return true;
-        if (arg is bool) return false;
-        return true;
+        var argRV = await evaluateArg(arguments[0]);
+        if (argRV.IsNumber) return RuntimeValue.FromBoolean(double.IsNaN(argRV.AsNumber()));
+        if (argRV.IsString) return RuntimeValue.FromBoolean(!double.TryParse(argRV.AsString(), out _));
+        if (argRV.IsNull) return RuntimeValue.True;
+        if (argRV.IsBoolean) return RuntimeValue.False;
+        return RuntimeValue.True;
     }
 
-    /// <summary>
-    /// Handle global isFinite().
-    /// Global isFinite coerces to number first (different from Number.isFinite).
-    /// </summary>
-    private static async ValueTask<object?> HandleIsFinite(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleIsFinite(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
-        if (arguments.Count < 1) return false; // isFinite() with no args returns false
+        if (arguments.Count < 1) return RuntimeValue.False;
 
-        var arg = await evaluateArg(arguments[0]);
-        // Global isFinite coerces to number first (different from Number.isFinite)
-        if (arg is double d) return double.IsFinite(d);
-        if (arg is string s && double.TryParse(s, out double parsed)) return double.IsFinite(parsed);
-        if (arg is null) return true; // null coerces to 0 which is finite
-        if (arg is bool) return true; // true=1, false=0, both finite
-        return false;
+        var argRV = await evaluateArg(arguments[0]);
+        if (argRV.IsNumber) return RuntimeValue.FromBoolean(double.IsFinite(argRV.AsNumber()));
+        if (argRV.IsString && double.TryParse(argRV.AsString(), out double parsed))
+            return RuntimeValue.FromBoolean(double.IsFinite(parsed));
+        if (argRV.IsNull) return RuntimeValue.True; // null coerces to 0 which is finite
+        if (argRV.IsBoolean) return RuntimeValue.True; // true=1, false=0, both finite
+        return RuntimeValue.False;
     }
 
-    /// <summary>
-    /// Handle global structuredClone(value, options?).
-    /// </summary>
-    private static async ValueTask<object?> HandleStructuredClone(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleStructuredClone(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
         if (arguments.Count < 1)
             throw new InterpreterException($"{BuiltInNames.StructuredClone}() requires at least one argument (value).");
 
-        var value = await evaluateArg(arguments[0]);
+        var value = (await evaluateArg(arguments[0])).ToObject();
         SharpTSArray? transfer = null;
         if (arguments.Count > 1)
         {
-            var options = await evaluateArg(arguments[1]);
+            var options = (await evaluateArg(arguments[1])).ToObject();
             if (options is SharpTSObject optObj && optObj.Fields.TryGetValue("transfer", out var transferValue))
             {
                 transfer = transferValue as SharpTSArray;
             }
         }
-        return StructuredClone.Clone(value, transfer);
+        return RuntimeValue.FromBoxed(StructuredClone.Clone(value, transfer));
     }
 
-    /// <summary>
-    /// Handle setTimeout(callback, delay?, ...args).
-    /// </summary>
-    private static async ValueTask<object?> HandleSetTimeout(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleSetTimeout(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
         if (arguments.Count < 1)
             throw new InterpreterException($"{BuiltInNames.SetTimeout}() requires at least one argument (callback).");
 
-        var callbackValue = await evaluateArg(arguments[0]);
+        var callbackValue = (await evaluateArg(arguments[0])).ToObject();
         if (callbackValue is not ISharpTSCallable callback)
             throw new InterpreterException($"{BuiltInNames.SetTimeout}() callback must be a function.");
 
-        // Get delay (defaults to 0)
         double delayMs = 0;
         if (arguments.Count >= 2)
         {
-            var delayValue = await evaluateArg(arguments[1]);
-            if (delayValue is double dv)
-                delayMs = dv;
-            else if (delayValue != null && delayValue is not SharpTSUndefined)
-                throw new Exception($"Runtime Error: {BuiltInNames.SetTimeout}() delay must be a number, got {delayValue.GetType().Name}.");
+            var delayRV = await evaluateArg(arguments[1]);
+            if (delayRV.IsNumber)
+                delayMs = delayRV.AsNumber();
+            else if (!delayRV.IsUndefined && !delayRV.IsNull)
+                throw new Exception($"Runtime Error: {BuiltInNames.SetTimeout}() delay must be a number.");
         }
 
-        // Get additional args for the callback
         List<object?> callbackArgs = [];
         for (int i = 2; i < arguments.Count; i++)
         {
-            callbackArgs.Add(await evaluateArg(arguments[i]));
+            callbackArgs.Add((await evaluateArg(arguments[i])).ToObject());
         }
 
-        return TimerBuiltIns.SetTimeout(interpreter, callback, delayMs, callbackArgs);
+        return RuntimeValue.FromBoxed(TimerBuiltIns.SetTimeout(interpreter, callback, delayMs, callbackArgs));
     }
 
-    /// <summary>
-    /// Handle clearTimeout(handle?).
-    /// </summary>
-    private static async ValueTask<object?> HandleClearTimeout(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleClearTimeout(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
         object? handle = null;
         if (arguments.Count > 0)
         {
-            handle = await evaluateArg(arguments[0]);
+            handle = (await evaluateArg(arguments[0])).ToObject();
         }
         TimerBuiltIns.ClearTimeout(handle);
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    /// <summary>
-    /// Handle setInterval(callback, delay?, ...args).
-    /// </summary>
-    private static async ValueTask<object?> HandleSetInterval(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleSetInterval(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
         if (arguments.Count < 1)
             throw new InterpreterException($"{BuiltInNames.SetInterval}() requires at least one argument (callback).");
 
-        var callbackValue = await evaluateArg(arguments[0]);
+        var callbackValue = (await evaluateArg(arguments[0])).ToObject();
         if (callbackValue is not ISharpTSCallable callback)
             throw new InterpreterException($"{BuiltInNames.SetInterval}() callback must be a function.");
 
-        // Get delay (defaults to 0)
         double delayMs = 0;
         if (arguments.Count >= 2)
         {
-            var delayValue = await evaluateArg(arguments[1]);
-            if (delayValue is double dv)
-                delayMs = dv;
-            else if (delayValue != null && delayValue is not SharpTSUndefined)
-                throw new Exception($"Runtime Error: {BuiltInNames.SetInterval}() delay must be a number, got {delayValue.GetType().Name}.");
+            var delayRV = await evaluateArg(arguments[1]);
+            if (delayRV.IsNumber)
+                delayMs = delayRV.AsNumber();
+            else if (!delayRV.IsUndefined && !delayRV.IsNull)
+                throw new Exception($"Runtime Error: {BuiltInNames.SetInterval}() delay must be a number.");
         }
 
-        // Get additional args for the callback
         List<object?> callbackArgs = [];
         for (int i = 2; i < arguments.Count; i++)
         {
-            callbackArgs.Add(await evaluateArg(arguments[i]));
+            callbackArgs.Add((await evaluateArg(arguments[i])).ToObject());
         }
 
-        return TimerBuiltIns.SetInterval(interpreter, callback, delayMs, callbackArgs);
+        return RuntimeValue.FromBoxed(TimerBuiltIns.SetInterval(interpreter, callback, delayMs, callbackArgs));
     }
 
-    /// <summary>
-    /// Handle clearInterval(handle?).
-    /// </summary>
-    private static async ValueTask<object?> HandleClearInterval(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleClearInterval(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
         object? handle = null;
         if (arguments.Count > 0)
         {
-            handle = await evaluateArg(arguments[0]);
+            handle = (await evaluateArg(arguments[0])).ToObject();
         }
         TimerBuiltIns.ClearInterval(handle);
-        return null;
+        return RuntimeValue.Undefined;
     }
 
-    /// <summary>
-    /// Handle queueMicrotask(callback).
-    /// Queues a microtask to be executed at the end of the current task,
-    /// before any macrotasks (setTimeout/setInterval callbacks).
-    /// </summary>
-    private static async ValueTask<object?> HandleQueueMicrotask(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleQueueMicrotask(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
         if (arguments.Count < 1)
             throw new InterpreterException($"{BuiltInNames.QueueMicrotask}() requires exactly one argument (callback).");
 
-        var callbackValue = await evaluateArg(arguments[0]);
+        var callbackValue = (await evaluateArg(arguments[0])).ToObject();
         if (callbackValue is not ISharpTSCallable callback)
             throw new InterpreterException($"{BuiltInNames.QueueMicrotask}() callback must be a function.");
 
-        // Queue the microtask for execution
         interpreter.QueueMicrotask(callback);
-
-        // queueMicrotask returns undefined
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    /// <summary>
-    /// Handle __objectRest (internal helper for object rest patterns).
-    /// </summary>
-    private static async ValueTask<object?> HandleObjectRest(
-        Func<Expr, ValueTask<object?>> evaluateArg,
+    private static async ValueTask<RuntimeValue> HandleObjectRest(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter)
     {
         if (arguments.Count >= 2)
         {
-            var source = await evaluateArg(arguments[0]);
-            var excludeKeys = await evaluateArg(arguments[1]) as SharpTSArray;
-            return ObjectBuiltIns.ObjectRest(source, excludeKeys?.Elements ?? []);
+            var source = (await evaluateArg(arguments[0])).ToObject();
+            var excludeKeys = (await evaluateArg(arguments[1])).ToObject() as SharpTSArray;
+            return RuntimeValue.FromBoxed(ObjectBuiltIns.ObjectRest(source, excludeKeys?.Elements ?? []));
         }
         throw new Exception($"{BuiltInNames.ObjectRest} requires 2 arguments");
     }
 
     /// <summary>
     /// Creates an error handler for a specific error type.
-    /// This factory method allows each error type to have its own handler that knows its type name.
     /// </summary>
-    public static GlobalFunctionRegistry.GlobalFunctionHandler CreateErrorHandler(string errorTypeName)
+    public static GlobalFunctionRegistry.GlobalFunctionHandlerV2 CreateErrorHandler(string errorTypeName)
     {
         return async (evaluateArg, arguments, interpreter) =>
         {
@@ -363,9 +315,9 @@ internal static class GlobalFunctionHandlers
             {
                 foreach (var arg in arguments)
                 {
-                    pooledArgs.Add(await evaluateArg(arg));
+                    pooledArgs.Add((await evaluateArg(arg)).ToObject());
                 }
-                return ErrorBuiltIns.CreateError(errorTypeName, pooledArgs);
+                return RuntimeValue.FromBoxed(ErrorBuiltIns.CreateError(errorTypeName, pooledArgs));
             }
             finally
             {

@@ -11,7 +11,7 @@ public static class IteratorStaticBuiltIns
 {
     private static readonly BuiltInStaticMemberLookup _staticLookup =
         BuiltInStaticBuilder.Create()
-            .Method("from", 1, From)
+            .MethodV2("from", 1, FromV2)
             .Build();
 
     public static object? GetStaticMethod(string name)
@@ -47,5 +47,12 @@ public static class IteratorStaticBuiltIns
             if (result.Done) yield break;
             yield return result.Value;
         }
+    }
+
+    private static RuntimeValue FromV2(Interpreter interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> args)
+    {
+        var list = new List<object?>(args.Length);
+        foreach (var arg in args) list.Add(arg.ToObject());
+        return RuntimeValue.FromBoxed(From(interp, list));
     }
 }

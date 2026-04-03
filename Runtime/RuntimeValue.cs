@@ -543,6 +543,7 @@ public readonly struct RuntimeValue : IEquatable<RuntimeValue>
             ValueKind.BigInt => "bigint",
             ValueKind.Object => _objectValue switch
             {
+                SharpTSProxy proxy => proxy.IsCallable ? "function" : "object",
                 ISharpTSCallable => "function",
                 _ => "object"
             },
