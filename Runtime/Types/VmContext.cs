@@ -1,4 +1,7 @@
+using System.Reflection;
 using System.Runtime.CompilerServices;
+using SharpTS.Execution;
+using SharpTS.Runtime.BuiltIns;
 
 namespace SharpTS.Runtime.Types;
 
@@ -46,7 +49,42 @@ public static class VmContext
             foreach (var kv in dict)
                 props[kv.Key] = kv.Value;
         }
+        else if (contextObject != null)
+        {
+            // Fallback: handle emitted $Object and other types with a Fields property
+            var fieldsProp = contextObject.GetType().GetProperty("Fields");
+            if (fieldsProp?.GetValue(contextObject) is IEnumerable<KeyValuePair<string, object?>> fields)
+            {
+                foreach (var kv in fields)
+                    props[kv.Key] = kv.Value;
+            }
+        }
+        // Wrap any compiled callables (e.g. $TSFunction) so the sub-interpreter can call them
+        WrapCompiledCallables(props);
+
         return props;
+    }
+
+    /// <summary>
+    /// Wraps values that look like compiled callables ($TSFunction) in ISharpTSCallable adapters
+    /// so the sub-interpreter can invoke them. Compiled functions have an Invoke(object, object[])
+    /// method but don't implement ISharpTSCallable.
+    /// </summary>
+    private static void WrapCompiledCallables(Dictionary<string, object?> props)
+    {
+        foreach (var key in props.Keys.ToList())
+        {
+            var value = props[key];
+            if (value == null || value is ISharpTSCallable || value is BuiltInMethod)
+                continue;
+
+            // Check for Invoke(object[]) method — signature of emitted $TSFunction
+            var invokeMethod = value.GetType().GetMethod("Invoke", [typeof(object[])]);
+            if (invokeMethod != null)
+            {
+                props[key] = new CompiledCallableAdapter(value, invokeMethod);
+            }
+        }
     }
 
     /// <summary>
@@ -70,7 +108,39 @@ public static class VmContext
                     dict[name] = value;
             }
         }
+        else if (contextObject != null)
+        {
+            // Fallback: handle emitted $Object via reflection on SetProperty method
+            var setMethod = contextObject.GetType().GetMethod("SetProperty",
+                [typeof(string), typeof(object)]);
+            if (setMethod != null)
+            {
+                foreach (var name in originalProperties.Keys)
+                {
+                    if (env.TryGet(name, out var value))
+                        setMethod.Invoke(contextObject, [name, value]);
+                }
+            }
+        }
     }
 
     private sealed class VmContextMarker { }
+}
+
+/// <summary>
+/// Wraps a compiled callable ($TSFunction or similar) as ISharpTSCallable so the
+/// interpreter can invoke it. Used at the vm module boundary when compiled functions
+/// are passed in context objects.
+/// </summary>
+internal sealed class CompiledCallableAdapter(object target, MethodInfo invokeMethod) : ISharpTSCallable
+{
+    public int Arity() => 0; // Unknown arity for compiled functions
+
+    public object? Call(Interpreter interpreter, List<object?> arguments)
+    {
+        var args = arguments.ToArray();
+        return invokeMethod.Invoke(target, [args]);
+    }
+
+    public override string ToString() => target.ToString() ?? "<compiled function>";
 }

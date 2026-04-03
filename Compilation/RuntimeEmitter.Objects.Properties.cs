@@ -171,6 +171,23 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notTSObjectLabel);
 
+        // Check plain Dictionary<string, object?> (vm.Script objects, CreateObject results, etc.)
+        var notDictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, notDictLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
+        il.Emit(OpCodes.Brfalse, notDictLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notDictLabel);
+
         // Check $IHasFields interface (covers user-defined classes and $Object subclasses with typed properties)
         var notHasFieldsLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);

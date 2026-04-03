@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Runtime.ExceptionServices;
 using SharpTS.Compilation;
 using SharpTS.Parsing;
 using SharpTS.Runtime.Exceptions;
@@ -10,26 +11,35 @@ namespace SharpTS.Runtime.Types;
 /// Runtime object representing an active generator instance.
 /// </summary>
 /// <remarks>
-/// Created by <see cref="SharpTSGeneratorFunction"/> when called. Implements
-/// execution of the generator body, collecting yielded values.
-/// Also implements IEnumerable for seamless for...of integration.
-///
-/// This implementation uses eager evaluation - the entire generator body is
-/// executed on the first call to Next(), collecting all yielded values into
-/// a list. Subsequent Next() calls return values from this list.
+/// Created by <see cref="SharpTSGeneratorFunction"/> when called.
+/// Uses thread-based coroutines for lazy evaluation — the generator body runs on a
+/// background thread and suspends at each yield point via synchronization primitives.
+/// This correctly handles infinite generators and lazy iteration.
 /// </remarks>
 /// <seealso cref="SharpTSGeneratorFunction"/>
 /// <seealso cref="SharpTSIteratorResult"/>
-public class SharpTSGenerator : IEnumerable<object?>
+public class SharpTSGenerator : IEnumerable<object?>, IDisposable
 {
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _environment;
     private readonly Interpreter _interpreter;
 
-    private List<object?>? _values = null;  // Collected yielded values (null = not yet executed)
-    private int _index = 0;
-    private object? _returnValue = null;
-    private bool _closed = false;  // True if generator has been closed via .return()
+    // Coroutine synchronization
+    private Thread? _workerThread;
+    private readonly ManualResetEventSlim _callerReady = new(false);
+    private readonly ManualResetEventSlim _workerReady = new(false);
+
+    // State
+    private enum State { NotStarted, Suspended, Running, Completed }
+    private State _state = State.NotStarted;
+    private object? _yieldedValue;
+    private object? _returnValue;
+    private bool _closed;
+    private Exception? _workerException;
+
+    // Caller state save/restore across yield points
+    private RuntimeEnvironment? _callerEnv;
+    private Action<object?, bool>? _callerYieldCallback;
 
     public SharpTSGenerator(Stmt.Function declaration, RuntimeEnvironment environment, Interpreter interpreter)
     {
@@ -40,394 +50,163 @@ public class SharpTSGenerator : IEnumerable<object?>
 
     /// <summary>
     /// Advances the generator to the next yield point.
-    /// Returns { value, done } result object.
     /// </summary>
     public SharpTSIteratorResult Next()
     {
-        // If generator is closed, always return done
-        if (_closed)
-        {
+        if (_closed || _state == State.Completed)
             return new SharpTSIteratorResult(_returnValue, done: true);
-        }
 
-        // Execute the generator body on first call
-        if (_values == null)
+        // Save caller's environment
+        _callerEnv = _interpreter.Environment;
+
+        if (_state == State.NotStarted)
         {
-            ExecuteBody();
+            _state = State.Running;
+            _workerThread = new Thread(RunBody) { IsBackground = true, Name = "Generator" };
+            _workerThread.Start();
         }
-
-        if (_index < _values!.Count)
+        else
         {
-            return new SharpTSIteratorResult(_values[_index++], done: false);
+            // Resume: restore generator's environment and signal worker
+            _state = State.Running;
+            _callerReady.Set();
         }
 
-        return new SharpTSIteratorResult(_returnValue, done: true);
+        // Wait for worker to yield or complete
+        _workerReady.Wait();
+        _workerReady.Reset();
+
+        if (_workerException != null)
+        {
+            var ex = _workerException;
+            _workerException = null;
+            _state = State.Completed;
+            ExceptionDispatchInfo.Capture(ex).Throw();
+        }
+
+        if (_state == State.Completed)
+            return new SharpTSIteratorResult(_returnValue, done: true);
+
+        return new SharpTSIteratorResult(_yieldedValue, done: false);
     }
 
     /// <summary>
     /// Closes the generator and returns a result with the given value.
     /// </summary>
-    /// <remarks>
-    /// Note: In JavaScript, .return() would trigger finally blocks. This simplified
-    /// implementation just closes the generator. Finally block support would require
-    /// a full lazy evaluation model with proper state machine semantics.
-    /// </remarks>
     public SharpTSIteratorResult Return(object? value = null)
     {
         _closed = true;
         _returnValue = value;
+
+        // If the worker is suspended, wake it so it can exit
+        if (_state == State.Suspended)
+        {
+            _callerReady.Set();
+        }
+
         return new SharpTSIteratorResult(value, done: true);
     }
 
     /// <summary>
     /// Throws an exception at the current yield point.
     /// </summary>
-    /// <remarks>
-    /// Since this generator uses eager evaluation, the throw happens after
-    /// all values are already collected. The exception propagates to the caller.
-    /// </remarks>
     public SharpTSIteratorResult Throw(object? error = null)
     {
         _closed = true;
+
+        if (_state == State.Suspended)
+        {
+            _callerReady.Set();
+        }
+
         string message = error?.ToString() ?? "Generator.throw() called";
         throw new ThrowException(error ?? message);
     }
 
     /// <summary>
-    /// Executes the generator body, collecting all yielded values.
+    /// Runs the generator body on the worker thread.
+    /// Uses a yield callback to suspend execution at yield points without
+    /// throwing exceptions, preserving the interpreter's call stack and environment.
     /// </summary>
-    private void ExecuteBody()
+    private void RunBody()
     {
-        _values = [];
-
-        if (_declaration.Body == null || _declaration.Body.Count == 0)
-        {
-            return;
-        }
-
-        // Save and set the interpreter environment
         RuntimeEnvironment previousEnv = _interpreter.Environment;
         _interpreter.SetEnvironment(_environment);
 
+        // Set yield callback so yield expressions suspend the thread
+        // instead of throwing YieldException
+        _callerYieldCallback = _interpreter.YieldCallback;
+        _interpreter.YieldCallback = HandleYieldCallback;
+
         try
         {
-            var result = ExecuteStatements(_declaration.Body);
+            if (_declaration.Body == null || _declaration.Body.Count == 0)
+                return;
+
+            var result = _interpreter.ExecuteBlock(_declaration.Body, _environment);
             if (result.Type == ExecutionResult.ResultType.Return)
             {
                 _returnValue = result.Value.ToObject();
             }
-            else if (result.Type == ExecutionResult.ResultType.Throw)
-            {
-                throw new Exception(_interpreter.Stringify(result.Value.ToObject()));
-            }
+        }
+        catch (Exception ex) when (ex is not ThreadInterruptedException)
+        {
+            _workerException = ex;
         }
         finally
         {
+            _interpreter.YieldCallback = _callerYieldCallback;
             _interpreter.SetEnvironment(previousEnv);
+            _state = State.Completed;
+            _workerReady.Set();
         }
     }
 
     /// <summary>
-    /// Recursively executes statements, collecting yields.
+    /// Yield callback invoked by the interpreter when a yield expression is evaluated.
+    /// Suspends the worker thread until the next Next() call.
     /// </summary>
-    private ExecutionResult ExecuteStatements(List<Stmt> statements)
+    private void HandleYieldCallback(object? value, bool isDelegating)
     {
-        foreach (var stmt in statements)
+        if (isDelegating)
         {
-            var result = ExecuteStatement(stmt);
-            if (result.IsAbrupt) return result;
-        }
-        return ExecutionResult.Success();
-    }
-
-    /// <summary>
-    /// Executes a single statement, handling yield expressions specially.
-    /// </summary>
-    private ExecutionResult ExecuteStatement(Stmt stmt)
-    {
-        switch (stmt)
-        {
-            case Stmt.Expression exprStmt:
-                try
-                {
-                    _interpreter.Evaluate(exprStmt.Expr);
-                }
-                catch (YieldException yield)
-                {
-                    HandleYield(yield);
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.Block block:
-                if (block.Statements != null)
-                {
-                    var blockEnv = new RuntimeEnvironment(_interpreter.Environment);
-                    RuntimeEnvironment prevEnv = _interpreter.Environment;
-                    _interpreter.SetEnvironment(blockEnv);
-                    try
-                    {
-                        return ExecuteStatements(block.Statements);
-                    }
-                    finally
-                    {
-                        _interpreter.SetEnvironment(prevEnv);
-                    }
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.Var varStmt:
-                object? value = null;
-                try
-                {
-                    if (varStmt.Initializer != null)
-                    {
-                        value = _interpreter.Evaluate(varStmt.Initializer);
-                    }
-                }
-                catch (YieldException yield)
-                {
-                    HandleYield(yield);
-                    value = null;  // After yield, variable gets undefined
-                }
-                _environment.Define(varStmt.Name.Lexeme, value);
-                return ExecutionResult.Success();
-
-            case Stmt.If ifStmt:
-                object? condition;
-                try
-                {
-                    condition = _interpreter.Evaluate(ifStmt.Condition);
-                }
-                catch (YieldException yield)
-                {
-                    HandleYield(yield);
-                    condition = false;
-                }
-
-                if (IsTruthy(condition))
-                {
-                    return ExecuteStatement(ifStmt.ThenBranch);
-                }
-                else if (ifStmt.ElseBranch != null)
-                {
-                    return ExecuteStatement(ifStmt.ElseBranch);
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.While whileStmt:
-                while (true)
-                {
-                    object? whileCond;
-                    try
-                    {
-                        whileCond = _interpreter.Evaluate(whileStmt.Condition);
-                    }
-                    catch (YieldException yield)
-                    {
-                        HandleYield(yield);
-                        whileCond = false;
-                    }
-
-                    if (!IsTruthy(whileCond)) break;
-
-                    var result = ExecuteStatement(whileStmt.Body);
-                    if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == null) break;
-                    if (result.Type == ExecutionResult.ResultType.Continue && result.TargetLabel == null) continue;
-                    if (result.IsAbrupt) return result;
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.For forStmt:
-                // Execute initializer once
-                if (forStmt.Initializer != null)
-                {
-                    var initResult = ExecuteStatement(forStmt.Initializer);
-                    if (initResult.IsAbrupt) return initResult;
-                }
-
-                // Loop
-                while (true)
-                {
-                    // Check condition
-                    if (forStmt.Condition != null)
-                    {
-                        object? forCond;
-                        try
-                        {
-                            forCond = _interpreter.Evaluate(forStmt.Condition);
-                        }
-                        catch (YieldException yield)
-                        {
-                            HandleYield(yield);
-                            forCond = false;
-                        }
-
-                        if (!IsTruthy(forCond)) break;
-                    }
-
-                    // Execute body
-                    var result = ExecuteStatement(forStmt.Body);
-
-                    if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == null)
-                        break;
-
-                    // On continue OR normal completion, execute increment
-                    if (result.Type == ExecutionResult.ResultType.Continue && result.TargetLabel == null)
-                    {
-                        // Execute increment before continuing
-                        if (forStmt.Increment != null)
-                        {
-                            try
-                            {
-                                _interpreter.Evaluate(forStmt.Increment);
-                            }
-                            catch (YieldException yield)
-                            {
-                                HandleYield(yield);
-                            }
-                        }
-                        continue;
-                    }
-
-                    if (result.IsAbrupt) return result;
-
-                    // Normal completion: execute increment
-                    if (forStmt.Increment != null)
-                    {
-                        try
-                        {
-                            _interpreter.Evaluate(forStmt.Increment);
-                        }
-                        catch (YieldException yield)
-                        {
-                            HandleYield(yield);
-                        }
-                    }
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.ForOf forOf:
-                object? iterable;
-                try
-                {
-                    iterable = _interpreter.Evaluate(forOf.Iterable);
-                }
-                catch (YieldException yield)
-                {
-                    HandleYield(yield);
-                    iterable = new SharpTSArray([]);
-                }
-
-                IEnumerable<object?> elements = GetIterableElements(iterable);
-                foreach (var element in elements)
-                {
-                    var loopEnv = new RuntimeEnvironment(_interpreter.Environment);
-                    loopEnv.Define(forOf.Variable.Lexeme, element);
-
-                    RuntimeEnvironment prevEnv = _interpreter.Environment;
-                    _interpreter.SetEnvironment(loopEnv);
-                    try
-                    {
-                        var result = ExecuteStatement(forOf.Body);
-                        if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == null) break;
-                        if (result.Type == ExecutionResult.ResultType.Continue && result.TargetLabel == null) continue;
-                        if (result.IsAbrupt) return result;
-                    }
-                    finally
-                    {
-                        _interpreter.SetEnvironment(prevEnv);
-                    }
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.Return returnStmt:
-                object? returnValue = null;
-                if (returnStmt.Value != null)
-                {
-                    try
-                    {
-                        returnValue = _interpreter.Evaluate(returnStmt.Value);
-                    }
-                    catch (YieldException yield)
-                    {
-                        HandleYield(yield);
-                    }
-                }
-                return ExecutionResult.Return(returnValue);
-
-            case Stmt.TryCatch tryCatch:
-                ExecutionResult tryResult = ExecuteStatements(tryCatch.TryBlock);
-                if (tryResult.Type == ExecutionResult.ResultType.Throw)
-                {
-                    if (tryCatch.CatchBlock != null && tryCatch.CatchParam != null)
-                    {
-                        var catchEnv = new RuntimeEnvironment(_interpreter.Environment);
-                        catchEnv.Define(tryCatch.CatchParam.Lexeme, tryResult.Value);
-                        RuntimeEnvironment prevEnv = _interpreter.Environment;
-                        _interpreter.SetEnvironment(catchEnv);
-                        try
-                        {
-                            tryResult = ExecuteStatements(tryCatch.CatchBlock);
-                        }
-                        finally
-                        {
-                            _interpreter.SetEnvironment(prevEnv);
-                        }
-                    }
-                }
-
-                if (tryCatch.FinallyBlock != null)
-                {
-                    var finallyResult = ExecuteStatements(tryCatch.FinallyBlock);
-                    if (finallyResult.IsAbrupt) return finallyResult;
-                }
-                return tryResult;
-
-            default:
-                // For other statements, delegate to the interpreter
-                // but catch any yields that might occur
-                try
-                {
-                    return _interpreter.ExecuteBlock([stmt], _environment);
-                }
-                catch (YieldException yield)
-                {
-                    HandleYield(yield);
-                    return ExecutionResult.Success();
-                }
-        }
-    }
-
-    /// <summary>
-    /// Handles a yield exception by collecting the value.
-    /// </summary>
-    private void HandleYield(YieldException yield)
-    {
-        if (yield.IsDelegating)
-        {
-            // yield* - delegate to another iterable
-            var elements = GetIterableElements(yield.Value);
+            // yield* — iterate the delegated iterable, yielding each value
+            var elements = _interpreter.GetIterableElements(value);
             foreach (var element in elements)
             {
-                _values!.Add(element);
+                if (_closed) return;
+                SuspendWithValue(element);
             }
         }
         else
         {
-            _values!.Add(yield.Value);
+            SuspendWithValue(value);
         }
     }
 
     /// <summary>
-    /// Gets elements from an iterable value, including custom iterables with Symbol.iterator.
+    /// Suspends the worker thread, passing a single yielded value to the caller.
     /// </summary>
-    private IEnumerable<object?> GetIterableElements(object? value)
+    private void SuspendWithValue(object? value)
     {
-        // Use the interpreter's GetIterableElements which handles Symbol.iterator protocol
-        return _interpreter.GetIterableElements(value);
-    }
+        _yieldedValue = value;
+        _state = State.Suspended;
 
-    private static bool IsTruthy(object? obj) => RuntimeTypes.IsTruthy(obj);
+        // Save generator state, restore caller state
+        var generatorEnv = _interpreter.Environment;
+        _interpreter.SetEnvironment(_callerEnv!);
+        _interpreter.YieldCallback = _callerYieldCallback;
+
+        _workerReady.Set();    // Signal caller that value is ready
+        _callerReady.Wait();   // Wait for next Next() call
+        _callerReady.Reset();
+
+        // Save caller state (may have changed), restore generator state
+        _callerEnv = _interpreter.Environment;
+        _callerYieldCallback = _interpreter.YieldCallback;
+        _interpreter.SetEnvironment(generatorEnv);
+        _interpreter.YieldCallback = HandleYieldCallback;
+    }
 
     // IEnumerable implementation for for...of integration
     public IEnumerator<object?> GetEnumerator()
@@ -443,6 +222,16 @@ public class SharpTSGenerator : IEnumerable<object?>
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
     public override string ToString() => "[object Generator]";
+
+    public void Dispose()
+    {
+        _closed = true;
+        if (_state == State.Suspended)
+            _callerReady.Set();
+        _callerReady.Dispose();
+        _workerReady.Dispose();
+        GC.SuppressFinalize(this);
+    }
 }
 
 /// <summary>
@@ -451,17 +240,29 @@ public class SharpTSGenerator : IEnumerable<object?>
 /// <remarks>
 /// Similar to <see cref="SharpTSGenerator"/> but created from <see cref="Expr.ArrowFunction"/>
 /// with IsGenerator=true instead of <see cref="Stmt.Function"/>.
+/// Uses thread-based coroutines for lazy evaluation.
 /// </remarks>
-public class SharpTSArrowGenerator : IEnumerable<object?>
+public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
 {
     private readonly Expr.ArrowFunction _declaration;
     private readonly RuntimeEnvironment _environment;
     private readonly Interpreter _interpreter;
 
-    private List<object?>? _values = null;
-    private int _index = 0;
-    private object? _returnValue = null;
-    private bool _closed = false;
+    // Coroutine synchronization
+    private Thread? _workerThread;
+    private readonly ManualResetEventSlim _callerReady = new(false);
+    private readonly ManualResetEventSlim _workerReady = new(false);
+
+    // State
+    private enum State { NotStarted, Suspended, Running, Completed }
+    private State _state = State.NotStarted;
+    private object? _yieldedValue;
+    private object? _returnValue;
+    private bool _closed;
+    private Exception? _workerException;
+
+    private RuntimeEnvironment? _callerEnv;
+    private Action<object?, bool>? _callerYieldCallback;
 
     public SharpTSArrowGenerator(Expr.ArrowFunction declaration, RuntimeEnvironment environment, Interpreter interpreter)
     {
@@ -472,179 +273,128 @@ public class SharpTSArrowGenerator : IEnumerable<object?>
 
     public SharpTSIteratorResult Next()
     {
-        if (_closed)
-        {
+        if (_closed || _state == State.Completed)
             return new SharpTSIteratorResult(_returnValue, done: true);
-        }
 
-        if (_values == null)
+        _callerEnv = _interpreter.Environment;
+
+        if (_state == State.NotStarted)
         {
-            ExecuteBody();
+            _state = State.Running;
+            _workerThread = new Thread(RunBody) { IsBackground = true, Name = "ArrowGenerator" };
+            _workerThread.Start();
         }
-
-        if (_index < _values!.Count)
+        else
         {
-            return new SharpTSIteratorResult(_values[_index++], done: false);
+            _state = State.Running;
+            _callerReady.Set();
         }
 
-        return new SharpTSIteratorResult(_returnValue, done: true);
+        _workerReady.Wait();
+        _workerReady.Reset();
+
+        if (_workerException != null)
+        {
+            var ex = _workerException;
+            _workerException = null;
+            _state = State.Completed;
+            ExceptionDispatchInfo.Capture(ex).Throw();
+        }
+
+        if (_state == State.Completed)
+            return new SharpTSIteratorResult(_returnValue, done: true);
+
+        return new SharpTSIteratorResult(_yieldedValue, done: false);
     }
 
     public SharpTSIteratorResult Return(object? value = null)
     {
         _closed = true;
         _returnValue = value;
+        if (_state == State.Suspended) _callerReady.Set();
         return new SharpTSIteratorResult(value, done: true);
     }
 
     public SharpTSIteratorResult Throw(object? error = null)
     {
         _closed = true;
+        if (_state == State.Suspended) _callerReady.Set();
         string message = error?.ToString() ?? "Generator.throw() called";
         throw new ThrowException(error ?? message);
     }
 
-    private void ExecuteBody()
+    private void RunBody()
     {
-        _values = [];
-
         RuntimeEnvironment previousEnv = _interpreter.Environment;
         _interpreter.SetEnvironment(_environment);
+
+        _callerYieldCallback = _interpreter.YieldCallback;
+        _interpreter.YieldCallback = HandleYieldCallback;
 
         try
         {
             if (_declaration.ExpressionBody != null)
             {
-                // Expression body - just evaluate and return
-                try
-                {
-                    _returnValue = _interpreter.Evaluate(_declaration.ExpressionBody);
-                }
-                catch (YieldException yield)
-                {
-                    HandleYield(yield);
-                }
+                _returnValue = _interpreter.Evaluate(_declaration.ExpressionBody);
             }
             else if (_declaration.BlockBody != null && _declaration.BlockBody.Count > 0)
             {
-                var result = ExecuteStatements(_declaration.BlockBody);
+                var result = _interpreter.ExecuteBlock(_declaration.BlockBody, _environment);
                 if (result.Type == ExecutionResult.ResultType.Return)
                 {
                     _returnValue = result.Value.ToObject();
                 }
-                else if (result.Type == ExecutionResult.ResultType.Throw)
-                {
-                    throw new Exception(_interpreter.Stringify(result.Value.ToObject()));
-                }
             }
+        }
+        catch (Exception ex) when (ex is not ThreadInterruptedException)
+        {
+            _workerException = ex;
         }
         finally
         {
+            _interpreter.YieldCallback = _callerYieldCallback;
             _interpreter.SetEnvironment(previousEnv);
+            _state = State.Completed;
+            _workerReady.Set();
         }
     }
 
-    private ExecutionResult ExecuteStatements(List<Stmt> statements)
+    private void HandleYieldCallback(object? value, bool isDelegating)
     {
-        foreach (var stmt in statements)
+        if (isDelegating)
         {
-            var result = ExecuteStatement(stmt);
-            if (result.IsAbrupt) return result;
-        }
-        return ExecutionResult.Success();
-    }
-
-    private ExecutionResult ExecuteStatement(Stmt stmt)
-    {
-        // Delegate to interpreter but catch yields
-        switch (stmt)
-        {
-            case Stmt.Expression exprStmt:
-                try
-                {
-                    _interpreter.Evaluate(exprStmt.Expr);
-                }
-                catch (YieldException yield)
-                {
-                    HandleYield(yield);
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.Block block:
-                if (block.Statements != null)
-                {
-                    var blockEnv = new RuntimeEnvironment(_interpreter.Environment);
-                    RuntimeEnvironment prevEnv = _interpreter.Environment;
-                    _interpreter.SetEnvironment(blockEnv);
-                    try
-                    {
-                        return ExecuteStatements(block.Statements);
-                    }
-                    finally
-                    {
-                        _interpreter.SetEnvironment(prevEnv);
-                    }
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.Var varStmt:
-                object? value = null;
-                try
-                {
-                    if (varStmt.Initializer != null)
-                    {
-                        value = _interpreter.Evaluate(varStmt.Initializer);
-                    }
-                }
-                catch (YieldException yield)
-                {
-                    HandleYield(yield);
-                }
-                _environment.Define(varStmt.Name.Lexeme, value);
-                return ExecutionResult.Success();
-
-            case Stmt.Return returnStmt:
-                object? returnValue = null;
-                if (returnStmt.Value != null)
-                {
-                    try
-                    {
-                        returnValue = _interpreter.Evaluate(returnStmt.Value);
-                    }
-                    catch (YieldException yield)
-                    {
-                        HandleYield(yield);
-                    }
-                }
-                return ExecutionResult.Return(returnValue);
-
-            default:
-                try
-                {
-                    return _interpreter.ExecuteBlock([stmt], _environment);
-                }
-                catch (YieldException yield)
-                {
-                    HandleYield(yield);
-                    return ExecutionResult.Success();
-                }
-        }
-    }
-
-    private void HandleYield(YieldException yield)
-    {
-        if (yield.IsDelegating)
-        {
-            var elements = _interpreter.GetIterableElements(yield.Value);
+            var elements = _interpreter.GetIterableElements(value);
             foreach (var element in elements)
             {
-                _values!.Add(element);
+                if (_closed) return;
+                SuspendWithValue(element);
             }
         }
         else
         {
-            _values!.Add(yield.Value);
+            SuspendWithValue(value);
         }
+    }
+
+    private void SuspendWithValue(object? value)
+    {
+        _yieldedValue = value;
+        _state = State.Suspended;
+
+        // Save generator state, restore caller state
+        var generatorEnv = _interpreter.Environment;
+        _interpreter.SetEnvironment(_callerEnv!);
+        _interpreter.YieldCallback = _callerYieldCallback;
+
+        _workerReady.Set();
+        _callerReady.Wait();
+        _callerReady.Reset();
+
+        // Save caller state (may have changed), restore generator state
+        _callerEnv = _interpreter.Environment;
+        _callerYieldCallback = _interpreter.YieldCallback;
+        _interpreter.SetEnvironment(generatorEnv);
+        _interpreter.YieldCallback = HandleYieldCallback;
     }
 
     public IEnumerator<object?> GetEnumerator()
@@ -660,4 +410,13 @@ public class SharpTSArrowGenerator : IEnumerable<object?>
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
     public override string ToString() => "[object Generator]";
+
+    public void Dispose()
+    {
+        _closed = true;
+        if (_state == State.Suspended) _callerReady.Set();
+        _callerReady.Dispose();
+        _workerReady.Dispose();
+        GC.SuppressFinalize(this);
+    }
 }

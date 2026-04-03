@@ -175,6 +175,16 @@ public partial class Interpreter
     private RuntimeValue EvaluateYield(Expr.Yield yieldExpr)
     {
         object? value = yieldExpr.Value != null ? Evaluate(yieldExpr.Value) : null;
+
+        // If a yield callback is set (coroutine-based generator), call it directly
+        // instead of throwing. This suspends the worker thread without unwinding
+        // the interpreter's call stack, preserving environment state.
+        if (YieldCallback != null)
+        {
+            YieldCallback(value, yieldExpr.IsDelegating);
+            return RuntimeValue.Undefined;
+        }
+
         throw new YieldException(value, yieldExpr.IsDelegating);
     }
 

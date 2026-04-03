@@ -281,13 +281,12 @@ public class IteratorHelpersTests
     #region Generator + iterator helpers
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Iterator_GeneratorWithTake_IsLazy(ExecutionMode mode)
     {
-        // CompiledOnly: The interpreter's SharpTSGenerator uses eager evaluation —
-        // ExecuteBody() runs the entire generator body on the first Next() call, collecting
-        // all yields into a list. This causes infinite generators to hang. Fixing this
-        // requires rewriting the interpreter's generator to use a coroutine/state machine model.
+        // Both modes support lazy generators:
+        // - Compiled: IL state machine with yield resume points
+        // - Interpreted: Thread-based coroutines with ManualResetEventSlim synchronization
         var source = @"
             function* naturals(): Generator<number> {
                 let n = 1;

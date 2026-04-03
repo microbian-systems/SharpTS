@@ -257,6 +257,13 @@ public partial class Interpreter : IDisposable
     internal void SetEnvironment(RuntimeEnvironment env) => _environment = env;
 
     /// <summary>
+    /// When set, yield expressions call this delegate instead of throwing YieldException.
+    /// Used by the coroutine-based generator to suspend the worker thread at yield points
+    /// without unwinding the call stack.
+    /// </summary>
+    internal Action<object?, bool>? YieldCallback { get; set; }
+
+    /// <summary>
     /// Registers a timer for tracking. Called by TimerBuiltIns when creating setTimeout/setInterval.
     /// Enables proper cleanup of all pending timers when the interpreter is disposed.
     /// </summary>

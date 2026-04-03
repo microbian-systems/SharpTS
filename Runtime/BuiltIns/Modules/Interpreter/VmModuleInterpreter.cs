@@ -385,14 +385,14 @@ public sealed class VmScriptConstructor : ISharpTSCallable
                 return VmModuleInterpreter.ExecuteParsedInNewContext(statements, context, interp);
             });
 
-        // Return as SharpTSObject for interpreter (ISharpTSCallable dispatch)
-        // and as Dictionary for compiled mode (GetFieldsProperty dispatch)
-        var fields = new Dictionary<string, object?>
+        // Return as Dictionary<string, object?> — works in both modes:
+        // Interpreter: EvaluateGetOnFallback handles IDictionary<string, object?>
+        // Compiled: GetFieldsProperty handles Dictionary<string, object?>
+        return new Dictionary<string, object?>
         {
             ["runInNewContext"] = runInNewCtx,
             ["runInThisContext"] = runInThisCtx,
             ["runInContext"] = runInCtx,
         };
-        return new SharpTSObject(fields);
     }
 }

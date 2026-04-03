@@ -9,18 +9,18 @@ namespace SharpTS.Tests.SharedTests.BuiltInModules;
 /// Compiled-mode limitations:
 /// The vm module is inherently dynamic — it compiles and runs arbitrary strings at runtime.
 /// In compiled mode, all vm methods delegate to the interpreter via reflection (same pattern
-/// as child_process.fork). This works well for the common case but has boundary limitations:
+/// as child_process.fork). This works well for the common case but has one remaining limitation:
 ///
-/// - Functions in context objects: Compiled arrow functions ($TSFunction) are not ISharpTSCallable,
-///   so the sub-interpreter cannot call them. Use InterpretedOnly for tests with function contexts.
-/// - Complex return values: The sub-interpreter returns SharpTSObject/SharpTSArray, but compiled
-///   code expects Dictionary/List. Primitive values (number, string, bool) cross fine.
 /// - runInThisContext scope sharing: The compiled caller has no RuntimeEnvironment, so
 ///   runInThisContext falls back to a new empty context in compiled mode.
-/// - Import statements inside vm code do not work (sub-interpreter uses InterpretRepl,
-///   not InterpretModules).
-/// - Script class methods: The Script object is a SharpTSObject whose properties are not
-///   accessible via compiled-mode GetFieldsProperty dispatch. Script tests are InterpretedOnly.
+///
+/// Resolved limitations (now have full parity):
+/// - Script class methods: Script objects now return Dictionary&lt;string, object?&gt; which
+///   GetFieldsProperty handles via the Dictionary dispatch path.
+/// - Functions in context objects: CompiledCallableAdapter wraps $TSFunction instances
+///   as ISharpTSCallable at the VmContext boundary.
+/// - compileFunction with parsingContext/contextExtensions: VmContext.ExtractProperties
+///   now handles emitted $Object types via reflection fallback.
 /// </summary>
 public class VmModuleTests
 {
@@ -259,7 +259,7 @@ public class VmModuleTests
     #region Script Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Vm_Script_RunInNewContext(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -298,7 +298,7 @@ public class VmModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Vm_Script_RunInContext(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -317,7 +317,7 @@ public class VmModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Vm_Script_MultipleRuns(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -386,7 +386,7 @@ public class VmModuleTests
     #region Context Functions Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Vm_RunInNewContext_FunctionInContext(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -552,7 +552,7 @@ public class VmModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Vm_CompileFunction_ParsingContext(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -570,7 +570,7 @@ public class VmModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Vm_CompileFunction_ContextExtensions(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -589,7 +589,7 @@ public class VmModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Vm_CompileFunction_ContextWithFunction(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
