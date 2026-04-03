@@ -1,3 +1,4 @@
+using SharpTS.Compilation.Emitters;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation.CallHandlers;
@@ -10,7 +11,7 @@ public class StaticTypeHandler : ICallHandler
 {
     public int Priority => 30;
 
-    public bool TryHandle(ILEmitter emitter, Expr.Call call)
+    public bool TryHandle(IEmitterContext emitter, Expr.Call call)
     {
         // Must be a method call on a static variable (e.g., Math.floor())
         if (call.Callee is not Expr.Get staticGet ||
@@ -30,7 +31,7 @@ public class StaticTypeHandler : ICallHandler
         if (!staticStrategy.TryEmitStaticCall(emitter, staticGet.Name.Lexeme, call.Arguments))
             return false;
 
-        emitter.ResetStackType();
+        emitter.SetStackUnknown();
         return true;
     }
 }

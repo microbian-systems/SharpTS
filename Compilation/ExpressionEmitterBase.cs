@@ -27,9 +27,24 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     ILGenerator IEmitterContext.IL => IL;
     void IEmitterContext.EmitExpression(Expr expr) => EmitExpression(expr);
     void IEmitterContext.EmitBoxIfNeeded(Expr expr) => EnsureBoxed();
+    void IEmitterContext.EnsureBoxed() => EnsureBoxed();
     void IEmitterContext.EmitExpressionAsDouble(Expr expr) => EmitExpressionAsDouble(expr);
     void IEmitterContext.SetStackUnknown() => SetStackUnknown();
     void IEmitterContext.SetStackType(StackType type) => SetStackType(type);
+
+    bool IEmitterContext.TryEmitConsoleMethod(Expr.Call call)
+    {
+        return _helpers.TryEmitConsoleMethod(
+            call,
+            arg => { EmitExpression(arg); EnsureBoxed(); },
+            Ctx.Runtime!);
+    }
+
+    void IEmitterContext.EmitFetchCall(List<Expr> arguments) => EmitFetchCall(arguments);
+
+    void IEmitterContext.EmitConversionForParameter(Expr expr, Type targetType) => EmitConversionForParameter(expr, targetType);
+
+    void IEmitterContext.EmitDefaultForType(Type type) => EmitDefaultForType(type);
 
     #endregion
 

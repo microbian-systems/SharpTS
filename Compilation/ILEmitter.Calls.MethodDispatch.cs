@@ -330,51 +330,6 @@ public partial class ILEmitter
     }
 
     /// <summary>
-    /// Emits a super() constructor call with proper argument handling and generic type support.
-    /// </summary>
-    /// <param name="parentCtor">The parent class constructor to call.</param>
-    /// <param name="arguments">The arguments to pass to the constructor.</param>
-    private void EmitSuperConstructorCall(ConstructorBuilder parentCtor, List<Expr> arguments)
-    {
-        // Load this
-        IL.Emit(OpCodes.Ldarg_0);
-
-        // Load arguments with proper type conversions
-        var ctorParams = parentCtor.GetParameters();
-        for (int i = 0; i < arguments.Count; i++)
-        {
-            EmitExpression(arguments[i]);
-            if (i < ctorParams.Length)
-            {
-                EmitConversionForParameter(arguments[i], ctorParams[i].ParameterType);
-            }
-            else
-            {
-                EmitBoxIfNeeded(arguments[i]);
-            }
-        }
-
-        // Pad missing optional arguments with appropriate default values
-        for (int i = arguments.Count; i < ctorParams.Length; i++)
-        {
-            EmitDefaultForType(ctorParams[i].ParameterType);
-        }
-
-        // Call parent constructor
-        // Handle generic superclass with type arguments (e.g., extends Box<string>)
-        ConstructorInfo ctorToCall = parentCtor;
-        Type? baseType = _ctx.CurrentClassBuilder?.BaseType;
-        if (baseType != null && baseType.IsGenericType && baseType.IsConstructedGenericType)
-        {
-            // Get the constructor for the closed generic type
-            ctorToCall = TypeBuilder.GetConstructor(baseType, parentCtor);
-        }
-        IL.Emit(OpCodes.Call, ctorToCall);
-        IL.Emit(OpCodes.Ldnull); // constructor call returns undefined
-        SetStackUnknown();
-    }
-
-    /// <summary>
     /// Emits a Promise instance method call (.then, .catch, .finally).
     /// These methods take callbacks and return a new Promise (Task).
     /// </summary>
@@ -460,64 +415,4 @@ public partial class ILEmitter
         SetStackUnknown();
     }
 
-    /// <summary>
-    /// Tries to emit IL for process.stdin.read(), process.stdout.write(), process.stderr.write() calls.
-    /// Returns true if the call was handled.
-    /// </summary>
-    private bool TryEmitProcessStreamCall(Expr.Call c)
-    {
-        // Pattern: process.stdin.read(), process.stdout.write("data"), process.stderr.write("data")
-        // c.Callee is Expr.Get { Object: Expr.Get { Object: Expr.Variable("process"), Name: "stdin/stdout/stderr" }, Name: "read/write" }
-
-        if (c.Callee is not Expr.Get methodGet)
-            return false;
-
-        if (methodGet.Object is not Expr.Get streamGet)
-            return false;
-
-        if (streamGet.Object is not Expr.Variable processVar || processVar.Name.Lexeme != "process")
-            return false;
-
-        string streamName = streamGet.Name.Lexeme;
-        string methodName = methodGet.Name.Lexeme;
-
-        switch (streamName)
-        {
-            case "stdin" when methodName == "read":
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.StdinRead);
-                SetStackUnknown();
-                return true;
-
-            case "stdout" when methodName == "write":
-                if (c.Arguments.Count > 0)
-                {
-                    EmitExpression(c.Arguments[0]);
-                    EmitBoxIfNeeded(c.Arguments[0]);
-                }
-                else
-                {
-                    IL.Emit(OpCodes.Ldstr, "");
-                }
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.StdoutWrite);
-                SetStackUnknown();
-                return true;
-
-            case "stderr" when methodName == "write":
-                if (c.Arguments.Count > 0)
-                {
-                    EmitExpression(c.Arguments[0]);
-                    EmitBoxIfNeeded(c.Arguments[0]);
-                }
-                else
-                {
-                    IL.Emit(OpCodes.Ldstr, "");
-                }
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.StderrWrite);
-                SetStackUnknown();
-                return true;
-
-            default:
-                return false;
-        }
-    }
 }

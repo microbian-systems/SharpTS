@@ -1,4 +1,5 @@
 using System.Reflection.Emit;
+using SharpTS.Compilation.Emitters;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation.CallHandlers;
@@ -10,7 +11,7 @@ public class ObjectRestHandler : ICallHandler
 {
     public int Priority => 15;  // High priority internal function
 
-    public bool TryHandle(ILEmitter emitter, Expr.Call call)
+    public bool TryHandle(IEmitterContext emitter, Expr.Call call)
     {
         if (call.Callee is not Expr.Variable restVar || restVar.Name.Lexeme != "__objectRest")
             return false;
@@ -18,7 +19,7 @@ public class ObjectRestHandler : ICallHandler
         if (call.Arguments.Count < 2)
             return false;
 
-        var il = emitter.ILGen;
+        var il = emitter.IL;
         var ctx = emitter.Context;
 
         // Emit source object (now accepts object to support both dictionaries and class instances)

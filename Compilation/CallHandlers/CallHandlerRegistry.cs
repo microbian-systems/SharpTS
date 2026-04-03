@@ -1,3 +1,4 @@
+using SharpTS.Compilation.Emitters;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation.CallHandlers;
@@ -5,6 +6,7 @@ namespace SharpTS.Compilation.CallHandlers;
 /// <summary>
 /// Registry that manages and executes call handlers in priority order.
 /// Implements Chain of Responsibility pattern for call emission.
+/// Works with IEmitterContext so it can be used by all emitter types.
 /// </summary>
 public class CallHandlerRegistry
 {
@@ -17,15 +19,22 @@ public class CallHandlerRegistry
     {
         _handlers =
         [
+            new SuperConstructorHandler(),   // Priority 10 - super() calls
             new ObjectRestHandler(),         // Priority 15 - Internal helpers first
             new ConsoleMethodHandler(),      // Priority 20 - Console methods
             new StaticTypeHandler(),         // Priority 30 - Math, JSON, Object, Array, etc.
+            new GlobalThisChainHandler(),    // Priority 32 - globalThis.X.Y()
             new DateStaticHandler(),         // Priority 35 - Date.now()
             new BuiltInModuleHandler(),      // Priority 40 - path, os, fs modules
+            new ProcessStreamHandler(),      // Priority 43 - process.stdin/stdout/stderr
             new TimerHandler(),              // Priority 45 - setTimeout, clearTimeout
             new FetchHandler(),              // Priority 46 - fetch()
             new GlobalFunctionHandler(),     // Priority 50 - parseInt, parseFloat, isNaN, isFinite
             new BuiltInConstructorHandler(), // Priority 60 - Symbol, BigInt, Date()
+            new ImportedClassStaticHandler(),// Priority 72 - imported class statics
+            new ClassExprStaticHandler(),    // Priority 74 - class expression statics
+            new ThisStaticContextHandler(),  // Priority 76 - this.method() in static context
+            new AsyncFunctionCallHandler(),  // Priority 80 - async function dispatch
         ];
 
         // Sort by priority (lower = earlier)
@@ -35,10 +44,10 @@ public class CallHandlerRegistry
     /// <summary>
     /// Attempts to handle the call using registered handlers.
     /// </summary>
-    /// <param name="emitter">The IL emitter instance.</param>
+    /// <param name="emitter">The emitter context for code generation.</param>
     /// <param name="call">The call expression to handle.</param>
     /// <returns>True if any handler handled the call.</returns>
-    public bool TryHandle(ILEmitter emitter, Expr.Call call)
+    public bool TryHandle(IEmitterContext emitter, Expr.Call call)
     {
         foreach (var handler in _handlers)
         {

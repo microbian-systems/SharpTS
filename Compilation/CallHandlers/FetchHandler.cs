@@ -1,3 +1,4 @@
+using SharpTS.Compilation.Emitters;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation.CallHandlers;
@@ -9,7 +10,7 @@ public class FetchHandler : ICallHandler
 {
     public int Priority => 46; // After TimerHandler (45), before GlobalFunctionHandler (50)
 
-    public bool TryHandle(ILEmitter emitter, Expr.Call call)
+    public bool TryHandle(IEmitterContext emitter, Expr.Call call)
     {
         if (call.Callee is not Expr.Variable v)
             return false;
@@ -17,7 +18,7 @@ public class FetchHandler : ICallHandler
         if (v.Name.Lexeme != "fetch")
             return false;
 
-        emitter.EmitFetch(call.Arguments);
+        emitter.EmitFetchCall(call.Arguments);
         return true;
     }
 }

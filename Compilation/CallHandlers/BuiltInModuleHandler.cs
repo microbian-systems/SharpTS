@@ -1,3 +1,4 @@
+using SharpTS.Compilation.Emitters;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation.CallHandlers;
@@ -11,7 +12,7 @@ public class BuiltInModuleHandler : ICallHandler
 {
     public int Priority => 40;
 
-    public bool TryHandle(ILEmitter emitter, Expr.Call call)
+    public bool TryHandle(IEmitterContext emitter, Expr.Call call)
     {
         var ctx = emitter.Context;
         if (ctx.BuiltInModuleNamespaces == null || ctx.BuiltInModuleEmitterRegistry == null)
@@ -26,7 +27,7 @@ public class BuiltInModuleHandler : ICallHandler
             if (builtInEmitter != null &&
                 builtInEmitter.TryEmitMethodCall(emitter, builtInGet.Name.Lexeme, call.Arguments))
             {
-                emitter.ResetStackType();
+                emitter.SetStackUnknown();
                 return true;
             }
         }
@@ -44,7 +45,7 @@ public class BuiltInModuleHandler : ICallHandler
                 var combinedName = $"{parentGet.Name.Lexeme}.{nestedGet.Name.Lexeme}";
                 if (nestedEmitter.TryEmitMethodCall(emitter, combinedName, call.Arguments))
                 {
-                    emitter.ResetStackType();
+                    emitter.SetStackUnknown();
                     return true;
                 }
             }
@@ -61,7 +62,7 @@ public class BuiltInModuleHandler : ICallHandler
                 var combinedKey = $"{namedBinding.MethodName}.{namedGet.Name.Lexeme}";
                 if (namedEmitter.TryEmitMethodCall(emitter, combinedKey, call.Arguments))
                 {
-                    emitter.ResetStackType();
+                    emitter.SetStackUnknown();
                     return true;
                 }
             }

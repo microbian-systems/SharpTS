@@ -32,7 +32,7 @@ public partial class ILEmitter
     /// Used after calling functions that may have typed return values.
     /// </summary>
     /// <param name="returnType">The return type of the called method</param>
-    private void BoxReturnValueIfNeeded(Type returnType)
+    private new void BoxReturnValueIfNeeded(Type returnType)
     {
         if (returnType == typeof(void))
         {
@@ -161,7 +161,7 @@ public partial class ILEmitter
     /// Emits conversion from the current stack value to the target parameter type.
     /// Handles boxing for object, unboxing for value types, and pass-through for matching types.
     /// </summary>
-    public void EmitConversionForParameter(Expr expr, Type targetType)
+    public new void EmitConversionForParameter(Expr expr, Type targetType)
     {
         // If target is object, box value types
         if (targetType == typeof(object))

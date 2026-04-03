@@ -1,4 +1,5 @@
 using System.Reflection.Emit;
+using SharpTS.Compilation.Emitters;
 using SharpTS.Diagnostics.Exceptions;
 using SharpTS.Parsing;
 
@@ -13,7 +14,7 @@ public class BuiltInConstructorHandler : ICallHandler
 {
     public int Priority => 60;
 
-    public bool TryHandle(ILEmitter emitter, Expr.Call call)
+    public bool TryHandle(IEmitterContext emitter, Expr.Call call)
     {
         if (call.Callee is not Expr.Variable v)
             return false;
@@ -30,9 +31,9 @@ public class BuiltInConstructorHandler : ICallHandler
         };
     }
 
-    private static bool EmitSymbol(ILEmitter emitter, Expr.Call call)
+    private static bool EmitSymbol(IEmitterContext emitter, Expr.Call call)
     {
-        var il = emitter.ILGen;
+        var il = emitter.IL;
         var ctx = emitter.Context;
 
         if (call.Arguments.Count == 0)
@@ -52,9 +53,9 @@ public class BuiltInConstructorHandler : ICallHandler
         return true;
     }
 
-    private static bool EmitBigInt(ILEmitter emitter, Expr.Call call)
+    private static bool EmitBigInt(IEmitterContext emitter, Expr.Call call)
     {
-        var il = emitter.ILGen;
+        var il = emitter.IL;
         var ctx = emitter.Context;
 
         if (call.Arguments.Count != 1)
@@ -63,13 +64,13 @@ public class BuiltInConstructorHandler : ICallHandler
         emitter.EmitExpression(call.Arguments[0]);
         emitter.EmitBoxIfNeeded(call.Arguments[0]);
         il.Emit(OpCodes.Call, ctx.Runtime!.CreateBigInt);
-        emitter.ResetStackType();
+        emitter.SetStackUnknown();
         return true;
     }
 
-    private static bool EmitDate(ILEmitter emitter, Expr.Call call)
+    private static bool EmitDate(IEmitterContext emitter, Expr.Call call)
     {
-        var il = emitter.ILGen;
+        var il = emitter.IL;
         var ctx = emitter.Context;
 
         // Date() without 'new' returns current date as string
@@ -78,9 +79,9 @@ public class BuiltInConstructorHandler : ICallHandler
         return true;
     }
 
-    private static bool EmitError(ILEmitter emitter, Expr.Call call, string errorTypeName)
+    private static bool EmitError(IEmitterContext emitter, Expr.Call call, string errorTypeName)
     {
-        var il = emitter.ILGen;
+        var il = emitter.IL;
         var ctx = emitter.Context;
 
         // Error() and subtypes called without 'new' still create error objects

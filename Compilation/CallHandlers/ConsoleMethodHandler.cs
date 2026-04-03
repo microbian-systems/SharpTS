@@ -1,27 +1,18 @@
+using SharpTS.Compilation.Emitters;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation.CallHandlers;
 
 /// <summary>
 /// Handles console method calls: console.log, console.error, console.warn, etc.
-/// Delegates to the existing TryEmitConsoleMethod helper.
+/// Delegates to the TryEmitConsoleMethod on IEmitterContext.
 /// </summary>
 public class ConsoleMethodHandler : ICallHandler
 {
     public int Priority => 20;
 
-    public bool TryHandle(ILEmitter emitter, Expr.Call call)
+    public bool TryHandle(IEmitterContext emitter, Expr.Call call)
     {
-        var ctx = emitter.Context;
-        var helpers = emitter.Helpers;
-
-        return helpers.TryEmitConsoleMethod(
-            call,
-            arg =>
-            {
-                emitter.EmitExpression(arg);
-                emitter.EmitBoxIfNeeded(arg);
-            },
-            ctx.Runtime!);
+        return emitter.TryEmitConsoleMethod(call);
     }
 }

@@ -1,24 +1,22 @@
 using System.Reflection.Emit;
+using SharpTS.Compilation.Emitters;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation.CallHandlers;
 
 /// <summary>
 /// Handles timer functions: setTimeout, clearTimeout, setInterval, clearInterval, queueMicrotask.
-/// Note: These are now also handled by ExpressionEmitterBase.EmitCall directly,
-/// so this handler serves as an additional dispatch path for ILEmitter only
-/// (with EmitBoxIfNeeded optimization).
 /// </summary>
 public class TimerHandler : ICallHandler
 {
     public int Priority => 45;
 
-    public bool TryHandle(ILEmitter emitter, Expr.Call call)
+    public bool TryHandle(IEmitterContext emitter, Expr.Call call)
     {
         if (call.Callee is not Expr.Variable v)
             return false;
 
-        var il = emitter.ILGen;
+        var il = emitter.IL;
         var ctx = emitter.Context;
 
         return v.Name.Lexeme switch
@@ -32,7 +30,7 @@ public class TimerHandler : ICallHandler
         };
     }
 
-    private static bool EmitTimer(ILEmitter emitter, ILGenerator il, CompilationContext ctx, Expr.Call call, System.Reflection.MethodInfo method)
+    private static bool EmitTimer(IEmitterContext emitter, ILGenerator il, CompilationContext ctx, Expr.Call call, System.Reflection.MethodInfo method)
     {
         // Callback
         if (call.Arguments.Count > 0) { emitter.EmitExpression(call.Arguments[0]); emitter.EmitBoxIfNeeded(call.Arguments[0]); } else { il.Emit(OpCodes.Ldnull); }
@@ -58,11 +56,11 @@ public class TimerHandler : ICallHandler
             il.Emit(OpCodes.Newarr, ctx.Types.Object);
         }
         il.Emit(OpCodes.Call, method);
-        emitter.ResetStackType();
+        emitter.SetStackUnknown();
         return true;
     }
 
-    private static bool EmitClearTimer(ILEmitter emitter, ILGenerator il, CompilationContext ctx, Expr.Call call, System.Reflection.MethodInfo method)
+    private static bool EmitClearTimer(IEmitterContext emitter, ILGenerator il, CompilationContext ctx, Expr.Call call, System.Reflection.MethodInfo method)
     {
         if (call.Arguments.Count > 0) { emitter.EmitExpression(call.Arguments[0]); emitter.EmitBoxIfNeeded(call.Arguments[0]); } else { il.Emit(OpCodes.Ldnull); }
         il.Emit(OpCodes.Call, method);
@@ -70,7 +68,7 @@ public class TimerHandler : ICallHandler
         return true;
     }
 
-    private static bool EmitQueueMicrotask(ILEmitter emitter, ILGenerator il, CompilationContext ctx, Expr.Call call)
+    private static bool EmitQueueMicrotask(IEmitterContext emitter, ILGenerator il, CompilationContext ctx, Expr.Call call)
     {
         if (call.Arguments.Count > 0) { emitter.EmitExpression(call.Arguments[0]); emitter.EmitBoxIfNeeded(call.Arguments[0]); } else { il.Emit(OpCodes.Ldnull); }
         il.Emit(OpCodes.Call, ctx.Runtime!.QueueMicrotask);

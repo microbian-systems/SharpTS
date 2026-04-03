@@ -11,7 +11,7 @@ public class DateStaticHandler : ICallHandler
 {
     public int Priority => 35;
 
-    public bool TryHandle(ILEmitter emitter, Expr.Call call)
+    public bool TryHandle(IEmitterContext emitter, Expr.Call call)
     {
         // Must be Date.now()
         if (call.Callee is not Expr.Get dateGet ||
@@ -22,11 +22,11 @@ public class DateStaticHandler : ICallHandler
             return false;
         }
 
-        var il = emitter.ILGen;
+        var il = emitter.IL;
         var ctx = emitter.Context;
 
         il.Emit(OpCodes.Call, ctx.Runtime!.DateNow);
-        ((IEmitterContext)emitter).SetStackType(StackType.Double);
+        emitter.SetStackType(StackType.Double);
         return true;
     }
 }
