@@ -22,7 +22,7 @@ public static partial class RuntimeTypes
             var sslStream = new SslStream(tcpClient.GetStream(), false);
 
             var cert = X509Certificate2.CreateFromPem(certPem, keyPem);
-            cert = new X509Certificate2(cert.Export(X509ContentType.Pfx), (string?)null);
+            cert = X509CertificateLoader.LoadPkcs12(cert.Export(X509ContentType.Pfx), null);
 
             var authOptions = new SslServerAuthenticationOptions
             {

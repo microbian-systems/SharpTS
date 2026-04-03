@@ -23,7 +23,6 @@ public partial class RuntimeEmitter
     private TypeBuilder _tlsConnectClosureType = null!;
     private ConstructorBuilder _tlsConnectClosureCtor = null!;
     private MethodBuilder _tlsConnectClosureConnect = null!;
-    private MethodBuilder _tlsAcceptAllCertsMethod = null!;
 
     /// <summary>
     /// Emits TLS handshake helper methods on the $Runtime class.
