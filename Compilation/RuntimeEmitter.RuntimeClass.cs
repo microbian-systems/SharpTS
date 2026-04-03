@@ -43,6 +43,7 @@ public partial class RuntimeEmitter
             _types.Object
         );
         runtime.RuntimeType = typeBuilder;
+        _runtimeTypeBuilder = typeBuilder;
 
         // Static field for Random
         var randomField = typeBuilder.DefineField("_random", _types.Random, FieldAttributes.Private | FieldAttributes.Static);
@@ -460,6 +461,9 @@ public partial class RuntimeEmitter
         // Intl support (Intl.NumberFormat)
         EmitIntlMethods(typeBuilder, runtime);
 
+        // TLS handshake helpers (called via late-binding from emitted TLS types)
+        EmitTlsHandshakeHelpers(typeBuilder, runtime);
+
         // Worker Threads support (SharedArrayBuffer, TypedArrays, Atomics, MessagePort, Worker)
         EmitWorkerHelpers(typeBuilder, runtime);
 
@@ -472,6 +476,17 @@ public partial class RuntimeEmitter
         // Private member helpers are no longer emitted; async/generator emitters
         // now bind directly to class-private storage and method tokens.
 
-        typeBuilder.CreateType();
+        // NOTE: CreateType() deferred to EmitRuntimeClassFinalize to allow
+        // Phase 2 method bodies (e.g., TlsConnect) to be emitted after closure types.
+    }
+
+    private TypeBuilder? _runtimeTypeBuilder;
+
+    /// <summary>
+    /// Phase 2: Finalizes the $Runtime class after all deferred method bodies are emitted.
+    /// </summary>
+    internal void EmitRuntimeClassFinalize()
+    {
+        _runtimeTypeBuilder?.CreateType();
     }
 }

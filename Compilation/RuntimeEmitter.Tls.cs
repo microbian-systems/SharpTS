@@ -49,9 +49,13 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object TlsConnect(object? portOrOptions, object? hostOrCallback, object? optionsOrNull, object? callbackOrNull)
-    /// Creates a new $TlsSocket instance (pure IL, no SharpTS.dll dependency).
-    /// In standalone mode, the socket is created but not actually connected.
+    /// Creates a new $TlsSocket. Parses port/host/options, calls TlsConnectAndHandshake
+    /// via late-binding on a background thread, populates socket, invokes callback.
+    /// NOTE: The TlsConnect body is deferred to EmitTlsConnectBody (Phase 2) since it
+    /// depends on the $TlsConnectClosure type defined after EmitRuntimeClass.
     /// </summary>
+    private MethodBuilder? _tlsConnectMethod;
+
     private void EmitTlsConnect(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
@@ -62,11 +66,148 @@ public partial class RuntimeEmitter
         );
         runtime.TlsConnect = method;
         runtime.RegisterBuiltInModuleMethod("tls", "connect", method);
+        _tlsConnectMethod = method;
+        // Body emitted in EmitTlsConnectBody after $TlsConnectClosure is defined
+    }
 
-        var il = method.GetILGenerator();
+    /// <summary>
+    /// Phase 2: Emits the body of TlsConnect after $TlsConnectClosure is available.
+    /// </summary>
+    internal void EmitTlsConnectBody(EmittedRuntime runtime)
+    {
+        var il = _tlsConnectMethod!.GetILGenerator();
 
-        // new $TlsSocket()
+        // Parse port from arg0 (double → int)
+        var portLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, portLocal);
+        var portDone = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, portDone);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, portLocal);
+        il.MarkLabel(portDone);
+
+        // Parse host from arg1 (string), default "127.0.0.1"
+        var hostLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldstr, "127.0.0.1");
+        il.Emit(OpCodes.Stloc, hostLocal);
+        var hostDone = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, hostDone);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, hostLocal);
+        il.MarkLabel(hostDone);
+
+        // Find options dict in args
+        var optionsLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, optionsLocal);
+        for (int argIdx = 2; argIdx >= 0; argIdx--)
+        {
+            var skipOpt = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg, argIdx);
+            il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+            il.Emit(OpCodes.Brfalse, skipOpt);
+            il.Emit(OpCodes.Ldarg, argIdx);
+            il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+            il.Emit(OpCodes.Stloc, optionsLocal);
+            il.MarkLabel(skipOpt);
+        }
+
+        // Find callback in args
+        var callbackLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+        for (int argIdx = 3; argIdx >= 1; argIdx--)
+        {
+            var skipCb = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg, argIdx);
+            il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+            il.Emit(OpCodes.Brfalse, skipCb);
+            il.Emit(OpCodes.Ldarg, argIdx);
+            il.Emit(OpCodes.Stloc, callbackLocal);
+            il.MarkLabel(skipCb);
+        }
+
+        // Check rejectUnauthorized
+        var rejectLocal = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, rejectLocal);
+        var tempLocal = il.DeclareLocal(_types.Object);
+        var rejectDone = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Brfalse, rejectDone);
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Ldstr, "rejectUnauthorized");
+        il.Emit(OpCodes.Ldloca, tempLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue")!);
+        il.Emit(OpCodes.Brfalse, rejectDone);
+        il.Emit(OpCodes.Ldloc, tempLocal);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, rejectDone);
+        il.Emit(OpCodes.Ldloc, tempLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Stloc, rejectLocal);
+        il.MarkLabel(rejectDone);
+
+        // Extract ALPN protocols
+        var alpnLocal = il.DeclareLocal(typeof(string[]));
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, alpnLocal);
+        var alpnDone = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Brfalse, alpnDone);
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Ldstr, "ALPNProtocols");
+        il.Emit(OpCodes.Ldloca, tempLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue")!);
+        il.Emit(OpCodes.Brfalse, alpnDone);
+        il.Emit(OpCodes.Ldloc, tempLocal);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brfalse, alpnDone);
+        il.Emit(OpCodes.Ldloc, tempLocal);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Call, typeof(System.Linq.Enumerable).GetMethod("OfType")!.MakeGenericMethod(_types.String));
+        il.Emit(OpCodes.Call, typeof(System.Linq.Enumerable).GetMethod("ToArray")!.MakeGenericMethod(_types.String));
+        il.Emit(OpCodes.Stloc, alpnLocal);
+        il.MarkLabel(alpnDone);
+
+        // Create socket
+        var socketLocal = il.DeclareLocal(runtime.TlsSocketType);
         il.Emit(OpCodes.Newobj, runtime.TlsSocketCtor);
+        il.Emit(OpCodes.Stloc, socketLocal);
+        il.Emit(OpCodes.Ldloc, socketLocal);
+        il.Emit(OpCodes.Ldloc, hostLocal);
+        il.Emit(OpCodes.Stfld, _tlsSocketServernameField);
+
+        // EventLoop.Ref()
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopRef);
+
+        // Create $TlsConnectClosure and queue on ThreadPool
+        il.Emit(OpCodes.Ldloc, socketLocal);
+        il.Emit(OpCodes.Ldloc, portLocal);
+        il.Emit(OpCodes.Ldloc, hostLocal);
+        il.Emit(OpCodes.Ldloc, rejectLocal);
+        il.Emit(OpCodes.Ldloc, alpnLocal);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Newobj, _tlsConnectClosureCtor);
+        var closureLocal = il.DeclareLocal(_tlsConnectClosureType);
+        il.Emit(OpCodes.Stloc, closureLocal);
+
+        il.Emit(OpCodes.Ldloc, closureLocal);
+        il.Emit(OpCodes.Ldftn, _tlsConnectClosureConnect);
+        il.Emit(OpCodes.Newobj, typeof(System.Threading.WaitCallback).GetConstructor([_types.Object, typeof(IntPtr)])!);
+        il.Emit(OpCodes.Call, typeof(System.Threading.ThreadPool).GetMethod("QueueUserWorkItem", [typeof(System.Threading.WaitCallback)])!);
+        il.Emit(OpCodes.Pop);
+
+        il.Emit(OpCodes.Ldloc, socketLocal);
         il.Emit(OpCodes.Ret);
     }
 

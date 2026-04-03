@@ -1259,7 +1259,7 @@ public class StreamModuleTests
     #region toArray, forEach, isReadable, isWritable
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Readable_ToArray(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1280,7 +1280,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Readable_ForEach(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1301,7 +1301,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_IsReadable_IsWritable(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1326,7 +1326,7 @@ public class StreamModuleTests
     #region map/filter
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Readable_Map(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1357,7 +1357,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Readable_Filter(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -1389,7 +1389,7 @@ public class StreamModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Stream_Readable_MapFilter_Chaining(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

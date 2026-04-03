@@ -376,7 +376,7 @@ public class TlsModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TlsConnect_ALPNProtocols(ExecutionMode mode)
     {
         var (certPem, keyPem) = GenerateSelfSignedCert();
@@ -407,7 +407,7 @@ public class TlsModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TlsServer_ALPNProtocols(ExecutionMode mode)
     {
         var (certPem, keyPem) = GenerateSelfSignedCert();
@@ -438,7 +438,7 @@ public class TlsModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TlsServer_SNICallback_Accepted(ExecutionMode mode)
     {
         var (certPem, keyPem) = GenerateSelfSignedCert();

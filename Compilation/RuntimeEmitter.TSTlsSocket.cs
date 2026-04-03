@@ -25,6 +25,12 @@ public partial class RuntimeEmitter
     private TypeBuilder _tlsServerTypeBuilder = null!;
     private FieldBuilder _tlsServerIsListeningField = null!;
     private FieldBuilder _tlsServerCallbackField = null!;
+    private FieldBuilder _tlsServerCertField = null!;       // string (PEM cert)
+    private FieldBuilder _tlsServerKeyField = null!;        // string (PEM key)
+    private FieldBuilder _tlsServerListenerField = null!;   // TcpListener
+    private FieldBuilder _tlsServerPortField = null!;       // int
+    private FieldBuilder _tlsServerAlpnField = null!;       // string[] (ALPN protocol names)
+    private MethodBuilder _tlsServerAcceptWorkerMethod = null!;
 
     /// <summary>
     /// Emits all TLS types ($TlsSocket and $TlsServer) for standalone operation.
@@ -55,10 +61,10 @@ public partial class RuntimeEmitter
         runtime.TlsSocketType = typeBuilder;
 
         // Fields
-        _tlsSocketAuthorizedField = typeBuilder.DefineField("_authorized", _types.Boolean, FieldAttributes.Private);
-        _tlsSocketEncryptedField = typeBuilder.DefineField("_encrypted", _types.Boolean, FieldAttributes.Private);
-        _tlsSocketAlpnProtocolField = typeBuilder.DefineField("_alpnProtocol", _types.Object, FieldAttributes.Private);
-        _tlsSocketServernameField = typeBuilder.DefineField("_servername", _types.Object, FieldAttributes.Private);
+        _tlsSocketAuthorizedField = typeBuilder.DefineField("_authorized", _types.Boolean, FieldAttributes.Assembly);
+        _tlsSocketEncryptedField = typeBuilder.DefineField("_encrypted", _types.Boolean, FieldAttributes.Assembly);
+        _tlsSocketAlpnProtocolField = typeBuilder.DefineField("_alpnProtocol", _types.Object, FieldAttributes.Assembly);
+        _tlsSocketServernameField = typeBuilder.DefineField("_servername", _types.Object, FieldAttributes.Assembly);
 
         // Constructor: public $TlsSocket() - calls base $EventEmitter()
         var ctor = typeBuilder.DefineConstructor(
@@ -420,7 +426,20 @@ public partial class RuntimeEmitter
 
         // Fields
         _tlsServerIsListeningField = typeBuilder.DefineField("_isListening", _types.Boolean, FieldAttributes.Private);
-        _tlsServerCallbackField = typeBuilder.DefineField("_callback", _types.Object, FieldAttributes.Private);
+        _tlsServerCallbackField = typeBuilder.DefineField("_callback", _types.Object, FieldAttributes.Assembly);
+        _tlsServerCertField = typeBuilder.DefineField("_cert", _types.String, FieldAttributes.Private);
+        _tlsServerKeyField = typeBuilder.DefineField("_key", _types.String, FieldAttributes.Private);
+        _tlsServerListenerField = typeBuilder.DefineField("_listener", typeof(System.Net.Sockets.TcpListener), FieldAttributes.Private);
+        _tlsServerPortField = typeBuilder.DefineField("_port", _types.Int32, FieldAttributes.Private);
+        _tlsServerAlpnField = typeBuilder.DefineField("_alpn", typeof(string[]), FieldAttributes.Private);
+
+        // Define accept worker stub (body emitted later — needs closure type)
+        _tlsServerAcceptWorkerMethod = typeBuilder.DefineMethod(
+            "_TlsAcceptWorker",
+            MethodAttributes.Private,
+            typeof(void),
+            [_types.Object]
+        );
 
         // Constructor: public $TlsServer(object? options, object? callback)
         var ctor = typeBuilder.DefineConstructor(
@@ -442,6 +461,82 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldarg_2);
         ctorIL.Emit(OpCodes.Stfld, _tlsServerCallbackField);
+
+        // Parse options (arg1) for cert, key, ALPNProtocols
+        var skipOptions = ctorIL.DefineLabel();
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Brfalse, skipOptions);
+
+        // cert = options["cert"] as string
+        var dictType = _types.DictionaryStringObject;
+        var dictTryGet = dictType.GetMethod("TryGetValue")!;
+        var tempLocal = ctorIL.DeclareLocal(_types.Object);
+
+        // Check if options is Dictionary<string, object?>
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Isinst, dictType);
+        ctorIL.Emit(OpCodes.Brfalse, skipOptions);
+
+        var optLocal = ctorIL.DeclareLocal(dictType);
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Castclass, dictType);
+        ctorIL.Emit(OpCodes.Stloc, optLocal);
+
+        // Extract "cert"
+        var noCert = ctorIL.DefineLabel();
+        ctorIL.Emit(OpCodes.Ldloc, optLocal);
+        ctorIL.Emit(OpCodes.Ldstr, "cert");
+        ctorIL.Emit(OpCodes.Ldloca, tempLocal);
+        ctorIL.Emit(OpCodes.Callvirt, dictTryGet);
+        ctorIL.Emit(OpCodes.Brfalse, noCert);
+        ctorIL.Emit(OpCodes.Ldloc, tempLocal);
+        ctorIL.Emit(OpCodes.Isinst, _types.String);
+        ctorIL.Emit(OpCodes.Brfalse, noCert);
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldloc, tempLocal);
+        ctorIL.Emit(OpCodes.Castclass, _types.String);
+        ctorIL.Emit(OpCodes.Stfld, _tlsServerCertField);
+        ctorIL.MarkLabel(noCert);
+
+        // Extract "key"
+        var noKey = ctorIL.DefineLabel();
+        ctorIL.Emit(OpCodes.Ldloc, optLocal);
+        ctorIL.Emit(OpCodes.Ldstr, "key");
+        ctorIL.Emit(OpCodes.Ldloca, tempLocal);
+        ctorIL.Emit(OpCodes.Callvirt, dictTryGet);
+        ctorIL.Emit(OpCodes.Brfalse, noKey);
+        ctorIL.Emit(OpCodes.Ldloc, tempLocal);
+        ctorIL.Emit(OpCodes.Isinst, _types.String);
+        ctorIL.Emit(OpCodes.Brfalse, noKey);
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldloc, tempLocal);
+        ctorIL.Emit(OpCodes.Castclass, _types.String);
+        ctorIL.Emit(OpCodes.Stfld, _tlsServerKeyField);
+        ctorIL.MarkLabel(noKey);
+
+        // Extract "ALPNProtocols" → convert List<object?> to string[]
+        var noAlpn = ctorIL.DefineLabel();
+        ctorIL.Emit(OpCodes.Ldloc, optLocal);
+        ctorIL.Emit(OpCodes.Ldstr, "ALPNProtocols");
+        ctorIL.Emit(OpCodes.Ldloca, tempLocal);
+        ctorIL.Emit(OpCodes.Callvirt, dictTryGet);
+        ctorIL.Emit(OpCodes.Brfalse, noAlpn);
+        ctorIL.Emit(OpCodes.Ldloc, tempLocal);
+        ctorIL.Emit(OpCodes.Isinst, _types.ListOfObject);
+        ctorIL.Emit(OpCodes.Brfalse, noAlpn);
+        // Convert List<object?> to string[] using LINQ
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldloc, tempLocal);
+        ctorIL.Emit(OpCodes.Castclass, _types.ListOfObject);
+        // Call Enumerable.OfType<string>().ToArray()
+        var ofTypeMethod = typeof(System.Linq.Enumerable).GetMethod("OfType")!.MakeGenericMethod(_types.String);
+        var toArrayMethod = typeof(System.Linq.Enumerable).GetMethod("ToArray")!.MakeGenericMethod(_types.String);
+        ctorIL.Emit(OpCodes.Call, ofTypeMethod);
+        ctorIL.Emit(OpCodes.Call, toArrayMethod);
+        ctorIL.Emit(OpCodes.Stfld, _tlsServerAlpnField);
+        ctorIL.MarkLabel(noAlpn);
+
+        ctorIL.MarkLabel(skipOptions);
         ctorIL.Emit(OpCodes.Ret);
 
         // Properties
@@ -450,10 +545,10 @@ public partial class RuntimeEmitter
         // Methods
         EmitTlsServerListen(typeBuilder, runtime);
         EmitTlsServerClose(typeBuilder, runtime);
-        EmitTlsServerAddress(typeBuilder);
+        EmitTlsServerAddress(typeBuilder, runtime);
         EmitTlsServerGetMember(typeBuilder, runtime);
 
-        typeBuilder.CreateType();
+        // NOTE: CreateType() deferred to EmitTlsServerFinalize (needs accept worker body)
     }
 
     /// <summary>
@@ -478,8 +573,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public object? Listen(object port, object host, object backlog, object callback)
-    /// Stub - TLS server requires real runtime for actual listening.
-    /// Returns this for chaining.
+    /// Sets up a real TcpListener, starts accept worker on ThreadPool.
     /// </summary>
     private void EmitTlsServerListen(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -492,10 +586,101 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // In standalone mode, we can't do real TLS. Just mark as listening and return this.
+        // Parse port from arg1 (double → int)
+        var portLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, portLocal);
+        var portParsed = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, portParsed);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, portLocal);
+        il.MarkLabel(portParsed);
+
+        // Parse host from arg2 (string), default "0.0.0.0"
+        var hostLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldstr, "0.0.0.0");
+        il.Emit(OpCodes.Stloc, hostLocal);
+        var hostParsed = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, hostParsed);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, hostLocal);
+        il.MarkLabel(hostParsed);
+
+        // Find callback in args (scan from right)
+        var callbackLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+        for (int argIdx = 4; argIdx >= 1; argIdx--)
+        {
+            var skipCb = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg, argIdx);
+            il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+            il.Emit(OpCodes.Brfalse, skipCb);
+            il.Emit(OpCodes.Ldarg, argIdx);
+            il.Emit(OpCodes.Stloc, callbackLocal);
+            il.MarkLabel(skipCb);
+        }
+
+        // Create TcpListener: new TcpListener(IPAddress.Parse(host), port)
+        il.Emit(OpCodes.Ldloc, hostLocal);
+        il.Emit(OpCodes.Call, typeof(System.Net.IPAddress).GetMethod("Parse", [_types.String])!);
+        il.Emit(OpCodes.Ldloc, portLocal);
+        il.Emit(OpCodes.Newobj, typeof(System.Net.Sockets.TcpListener).GetConstructor([typeof(System.Net.IPAddress), _types.Int32])!);
+        var listenerLocal = il.DeclareLocal(typeof(System.Net.Sockets.TcpListener));
+        il.Emit(OpCodes.Stloc, listenerLocal);
+
+        // listener.Start()
+        il.Emit(OpCodes.Ldloc, listenerLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.Sockets.TcpListener).GetMethod("Start", Type.EmptyTypes)!);
+
+        // _listener = listener
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, listenerLocal);
+        il.Emit(OpCodes.Stfld, _tlsServerListenerField);
+
+        // If port was 0, get the actual port from the listener
+        var portNotZero = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, portLocal);
+        il.Emit(OpCodes.Brtrue, portNotZero);
+        il.Emit(OpCodes.Ldloc, listenerLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.Sockets.TcpListener).GetProperty("LocalEndpoint")!.GetGetMethod()!);
+        il.Emit(OpCodes.Castclass, typeof(System.Net.IPEndPoint));
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.IPEndPoint).GetProperty("Port")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, portLocal);
+        il.MarkLabel(portNotZero);
+
+        // _port = port
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, portLocal);
+        il.Emit(OpCodes.Stfld, _tlsServerPortField);
+
+        // _isListening = true
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _tlsServerIsListeningField);
+
+        // EventLoop.Ref()
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopRef);
+
+        // Call callback if provided
+        var noCallback = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Brfalse, noCallback);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(noCallback);
 
         // Emit 'listening' event
         il.Emit(OpCodes.Ldarg_0);
@@ -505,8 +690,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
         il.Emit(OpCodes.Pop);
 
-        // Call callback (arg4) if provided
-        EmitCallbackInvoke(il, runtime, OpCodes.Ldarg_S, (byte)4);
+        // Start accept loop: ThreadPool.QueueUserWorkItem(new WaitCallback(this._TlsAcceptWorker))
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldftn, _tlsServerAcceptWorkerMethod);
+        il.Emit(OpCodes.Newobj, typeof(System.Threading.WaitCallback).GetConstructor([_types.Object, typeof(IntPtr)])!);
+        il.Emit(OpCodes.Call, typeof(System.Threading.ThreadPool).GetMethod("QueueUserWorkItem", [typeof(System.Threading.WaitCallback)])!);
+        il.Emit(OpCodes.Pop);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
@@ -541,6 +730,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, _tlsServerIsListeningField);
+
+        // Stop the TcpListener if it exists
+        var noListener = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tlsServerListenerField);
+        il.Emit(OpCodes.Brfalse, noListener);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tlsServerListenerField);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.Sockets.TcpListener).GetMethod("Stop")!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stfld, _tlsServerListenerField);
+        il.MarkLabel(noListener);
+
+        // EventLoop.Unref()
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopUnref);
 
         // Call callback (arg1) if provided
         var noCallbackLabel = il.DefineLabel();
@@ -590,9 +796,9 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public object? Address()
-    /// Returns null (not actually listening in standalone mode).
+    /// Returns a dictionary with { address, family, port } from the bound listener.
     /// </summary>
-    private void EmitTlsServerAddress(TypeBuilder typeBuilder)
+    private void EmitTlsServerAddress(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
             "Address",
@@ -602,7 +808,61 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        il.Emit(OpCodes.Ldnull);
+
+        // if (_listener == null) return null
+        var hasListener = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tlsServerListenerField);
+        il.Emit(OpCodes.Brtrue, hasListener);
+        // Return dict with port from _port field
+        var dictType = _types.DictionaryStringObject;
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(dictType));
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "port");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tlsServerPortField);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(hasListener);
+        // Build { address, family, port } from listener.LocalEndpoint
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(dictType));
+        var dictLocal = il.DeclareLocal(dictType);
+        il.Emit(OpCodes.Stloc, dictLocal);
+
+        var epLocal = il.DeclareLocal(typeof(System.Net.IPEndPoint));
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tlsServerListenerField);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.Sockets.TcpListener).GetProperty("LocalEndpoint")!.GetGetMethod()!);
+        il.Emit(OpCodes.Castclass, typeof(System.Net.IPEndPoint));
+        il.Emit(OpCodes.Stloc, epLocal);
+
+        // ["address"] = ep.Address.ToString()
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "address");
+        il.Emit(OpCodes.Ldloc, epLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.IPEndPoint).GetProperty("Address")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
+
+        // ["port"] = (double)ep.Port
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "port");
+        il.Emit(OpCodes.Ldloc, epLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.IPEndPoint).GetProperty("Port")!.GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
+
+        // ["family"] = "IPv4"
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "family");
+        il.Emit(OpCodes.Ldstr, "IPv4");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
+
+        il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ret);
     }
 

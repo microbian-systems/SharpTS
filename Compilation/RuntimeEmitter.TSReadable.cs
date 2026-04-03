@@ -65,6 +65,8 @@ public partial class RuntimeEmitter
         EmitTSReadablePause(typeBuilder, runtime);
         EmitTSReadableResume(typeBuilder, runtime);
         EmitTSReadableIsPaused(typeBuilder, runtime);
+        EmitTSReadableToArray(typeBuilder, runtime, queueOfObject);
+        EmitTSReadableForEach(typeBuilder, runtime, queueOfObject);
         EmitTSReadableSetObjectMode(typeBuilder, runtime);
         EmitTSReadableSetHighWaterMark(typeBuilder, runtime);
 
@@ -76,10 +78,10 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Phase 2: Emit methods that depend on Duplex type.
+    /// Phase 2a: Emit methods that depend on Duplex type.
     /// Must be called after Duplex type is defined.
     /// </summary>
-    private void EmitTSReadableMethods(EmittedRuntime runtime)
+    private void EmitTSReadablePhaseTwoMethods(EmittedRuntime runtime)
     {
         var typeBuilder = (TypeBuilder)runtime.TSReadableType;
         var queueOfObject = typeof(Queue<object?>);
@@ -88,6 +90,19 @@ public partial class RuntimeEmitter
         EmitTSReadableFlushChunkToPipes(typeBuilder, runtime);
         EmitTSReadablePush(typeBuilder, runtime, queueOfObject);
         EmitTSReadablePipe(typeBuilder, runtime, queueOfObject);
+    }
+
+    /// <summary>
+    /// Phase 2b: Emit Map/Filter methods that depend on Transform type,
+    /// then finalize the $Readable type.
+    /// Must be called after Transform type and helper callback classes are defined.
+    /// </summary>
+    private void EmitTSReadableMapFilterMethods(EmittedRuntime runtime)
+    {
+        var typeBuilder = (TypeBuilder)runtime.TSReadableType;
+
+        EmitTSReadableMap(typeBuilder, runtime);
+        EmitTSReadableFilter(typeBuilder, runtime);
 
         // Finalize the type
         typeBuilder.CreateType();
@@ -1225,5 +1240,210 @@ public partial class RuntimeEmitter
         il.MarkLabel(flowingEndLabel);
         il.Emit(OpCodes.Ret);
         readableFlowingProp.SetGetMethod(getReadableFlowing);
+    }
+
+    /// <summary>
+    /// Emits: public object ToArray()
+    /// Drains the read buffer into a List&lt;object?&gt; and returns it.
+    /// </summary>
+    private void EmitTSReadableToArray(TypeBuilder typeBuilder, EmittedRuntime runtime, Type queueType)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ToArray",
+            MethodAttributes.Public,
+            _types.Object,
+            Type.EmptyTypes
+        );
+
+        var il = method.GetILGenerator();
+        var listLocal = il.DeclareLocal(_types.ListOfObject);
+        var loopLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        // var list = new List<object?>();
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObject));
+        il.Emit(OpCodes.Stloc, listLocal);
+
+        // while (_readBuffer.Count > 0)
+        il.MarkLabel(loopLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+        il.Emit(OpCodes.Callvirt, queueType.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, doneLabel);
+
+        // list.Add(_readBuffer.Dequeue());
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+        il.Emit(OpCodes.Callvirt, queueType.GetMethod("Dequeue")!);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+        il.Emit(OpCodes.Br, loopLabel);
+
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object ForEach(object callback)
+    /// Drains the read buffer, calling callback(chunk) for each item.
+    /// </summary>
+    private void EmitTSReadableForEach(TypeBuilder typeBuilder, EmittedRuntime runtime, Type queueType)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ForEach",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var loopLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+        var callbackLocal = il.DeclareLocal(runtime.TSFunctionType);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // Cast callback to $TSFunction
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+
+        // while (_readBuffer.Count > 0)
+        il.MarkLabel(loopLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+        il.Emit(OpCodes.Callvirt, queueType.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, doneLabel);
+
+        // callback.Invoke([_readBuffer.Dequeue()])
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableBufferField);
+        il.Emit(OpCodes.Callvirt, queueType.GetMethod("Dequeue")!);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+
+        il.Emit(OpCodes.Br, loopLabel);
+
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object Map(object callback)
+    /// Creates a $Transform with objectMode matching this stream, sets a map transform
+    /// callback, pipes this→transform, and returns the transform.
+    /// </summary>
+    private void EmitTSReadableMap(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Map",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var transformLocal = il.DeclareLocal(runtime.TSTransformType);
+
+        // var transform = new $Transform();
+        il.Emit(OpCodes.Newobj, runtime.TSTransformCtor);
+        il.Emit(OpCodes.Stloc, transformLocal);
+
+        // transform.SetObjectMode(this._objectMode);
+        il.Emit(OpCodes.Ldloc, transformLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableObjectModeField);
+        il.Emit(OpCodes.Callvirt, runtime.TSReadableSetObjectMode);
+
+        // Create a $MapTransformCallback, then wrap it in a $TSFunction
+        // so the Transform.Write method can invoke it via InvokeWithThis.
+        var callbackLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_1); // user callback
+        il.Emit(OpCodes.Newobj, runtime.MapTransformCallbackCtor);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+
+        // Wrap in $TSFunction: new $TSFunction(callbackInstance, callbackInstance.GetType().GetMethod("Invoke"))
+        il.Emit(OpCodes.Ldloc, transformLocal);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "Invoke");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Type), "GetMethod", _types.String)!);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Callvirt, runtime.TSTransformSetTransformCallback!);
+
+        // this.Pipe(transform)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, transformLocal);
+        il.Emit(OpCodes.Ldnull); // options
+        il.Emit(OpCodes.Callvirt, runtime.TSReadablePipe);
+        il.Emit(OpCodes.Pop);
+
+        // return transform
+        il.Emit(OpCodes.Ldloc, transformLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object Filter(object callback)
+    /// Creates a $Transform with objectMode matching this stream, sets a filter transform
+    /// callback, pipes this→transform, and returns the transform.
+    /// </summary>
+    private void EmitTSReadableFilter(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Filter",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var transformLocal = il.DeclareLocal(runtime.TSTransformType);
+
+        // var transform = new $Transform();
+        il.Emit(OpCodes.Newobj, runtime.TSTransformCtor);
+        il.Emit(OpCodes.Stloc, transformLocal);
+
+        // transform.SetObjectMode(this._objectMode);
+        il.Emit(OpCodes.Ldloc, transformLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableObjectModeField);
+        il.Emit(OpCodes.Callvirt, runtime.TSReadableSetObjectMode);
+
+        // Create a $FilterTransformCallback, then wrap it in a $TSFunction
+        var callbackLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_1); // user callback
+        il.Emit(OpCodes.Newobj, runtime.FilterTransformCallbackCtor);
+        il.Emit(OpCodes.Stloc, callbackLocal);
+
+        il.Emit(OpCodes.Ldloc, transformLocal);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "Invoke");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Type), "GetMethod", _types.String)!);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Callvirt, runtime.TSTransformSetTransformCallback!);
+
+        // this.Pipe(transform)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, transformLocal);
+        il.Emit(OpCodes.Ldnull); // options
+        il.Emit(OpCodes.Callvirt, runtime.TSReadablePipe);
+        il.Emit(OpCodes.Pop);
+
+        // return transform
+        il.Emit(OpCodes.Ldloc, transformLocal);
+        il.Emit(OpCodes.Ret);
     }
 }

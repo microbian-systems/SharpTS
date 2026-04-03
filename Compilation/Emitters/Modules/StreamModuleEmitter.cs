@@ -43,6 +43,12 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
             case "Readable.from":
                 EmitReadableFromCall(emitter, arguments);
                 return true;
+            case "Readable.isReadable":
+                EmitIsReadableCall(emitter, arguments);
+                return true;
+            case "Writable.isWritable":
+                EmitIsWritableCall(emitter, arguments);
+                return true;
             default:
                 return false;
         }
@@ -156,6 +162,73 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
         {
             il.Emit(OpCodes.Ldnull);
         }
+    }
+
+    /// <summary>
+    /// Emits: Readable.isReadable(stream) → bool
+    /// Returns true if stream is an instance of $Readable (or any subclass like $Duplex, $Transform).
+    /// </summary>
+    private static void EmitIsReadableCall(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        if (arguments.Count > 0)
+            emitter.EmitExpression(arguments[0]);
+        else
+            il.Emit(OpCodes.Ldnull);
+
+        il.Emit(OpCodes.Isinst, ctx.Runtime!.TSReadableType);
+        var trueLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, typeof(bool));
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(trueLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Box, typeof(bool));
+        il.MarkLabel(endLabel);
+    }
+
+    /// <summary>
+    /// Emits: Writable.isWritable(stream) → bool
+    /// Returns true if stream is a $Writable or $Duplex (which extends $Readable but has write capability).
+    /// </summary>
+    private static void EmitIsWritableCall(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        if (arguments.Count > 0)
+            emitter.EmitExpression(arguments[0]);
+        else
+            il.Emit(OpCodes.Ldnull);
+
+        // Check: obj is $Writable || obj is $Duplex
+        var objLocal = il.DeclareLocal(typeof(object));
+        il.Emit(OpCodes.Stloc, objLocal);
+
+        var trueLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Isinst, ctx.Runtime!.TSWritableType);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Isinst, ctx.Runtime!.TSDuplexType);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, typeof(bool));
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(trueLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Box, typeof(bool));
+
+        il.MarkLabel(endLabel);
     }
 
     private static void EmitReadableFromCall(IEmitterContext emitter, List<Expr> arguments)

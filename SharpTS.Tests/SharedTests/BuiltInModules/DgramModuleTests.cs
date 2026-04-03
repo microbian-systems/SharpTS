@@ -140,7 +140,7 @@ public class DgramModuleTests
     #region Send and Receive Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Dgram_SendReceive_BasicMessage(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -170,7 +170,7 @@ public class DgramModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Dgram_SendReceive_BufferMessage(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -324,7 +324,7 @@ public class DgramModuleTests
     #region Connected Mode Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Dgram_Socket_Connect_And_Send(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

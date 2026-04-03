@@ -1797,6 +1797,14 @@ public class EmittedRuntime
     public MethodBuilder? TSTransformSetTransformCallback { get; set; }
     public MethodBuilder? TSTransformSetFlushCallback { get; set; }
 
+    // TLS handshake helpers (called via late-binding)
+    public MethodBuilder TlsAcceptAndHandshake { get; set; } = null!;
+    public MethodBuilder TlsConnectAndHandshake { get; set; } = null!;
+
+    // $MapTransformCallback / $FilterTransformCallback helper classes
+    public ConstructorBuilder MapTransformCallbackCtor { get; set; } = null!;
+    public ConstructorBuilder FilterTransformCallbackCtor { get; set; } = null!;
+
     // Stream utility methods
     public MethodBuilder StreamFinished { get; set; } = null!;
     public MethodBuilder StreamPipeline { get; set; } = null!;

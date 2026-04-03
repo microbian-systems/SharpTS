@@ -213,9 +213,11 @@ public partial class RuntimeEmitter
         EmitTSWritableClass(moduleBuilder, runtime);
         EmitTSReadableTypeDefinition(moduleBuilder, runtime);  // Phase 1: type, fields, most methods
         EmitTSDuplexTypeDefinition(moduleBuilder, runtime);    // Phase 1: type, fields, all methods
-        EmitTSReadableMethods(runtime);                        // Phase 2: Pipe method + CreateType
+        EmitTSReadablePhaseTwoMethods(runtime);                  // Phase 2a: Push, Pipe (need Duplex)
         EmitTSDuplexFinalize(runtime);                         // Phase 2: CreateType
         EmitTSTransformClass(moduleBuilder, runtime);
+        EmitMapFilterTransformCallbackClasses(moduleBuilder, runtime); // Helper classes for map/filter
+        EmitTSReadableMapFilterMethods(runtime);               // Phase 2b: Map, Filter (need Transform) + CreateType
         EmitTSPassThroughClass(moduleBuilder, runtime);
         EmitTSZlibTransformClass(moduleBuilder, runtime);
         EmitTSStreamUtilsClass(moduleBuilder, runtime);
@@ -321,9 +323,22 @@ public partial class RuntimeEmitter
         // Finalize $NetServer class (Phase 2)
         EmitTSNetServerPhase2(runtime);
 
+        // Emit dgram message closure class (needed by receive worker body)
+        EmitDgramMessageClosureClass(moduleBuilder, runtime);
+
         // Finalize $DatagramSocket class (Phase 2)
-        // Must come after EmitRuntimeClass
+        // Must come after EmitRuntimeClass and DgramMessageClosure
+        EmitDgramReceiveWorkerBody(runtime);
         EmitDatagramSocketFinalize(runtime);
+
+        // Emit TLS closure classes, finalize $Runtime and $TlsServer (Phase 2)
+        // Must come after EmitRuntimeClass (TlsConnectAndHandshake helper is on $Runtime)
+        EmitTlsAcceptClosureClass(moduleBuilder, runtime);
+        EmitTlsConnectClosureClass(moduleBuilder, runtime);
+        EmitTlsConnectBody(runtime);   // Deferred TlsConnect body (needs $TlsConnectClosure)
+        EmitRuntimeClassFinalize();     // Finalize $Runtime after all method bodies
+        EmitTlsServerAcceptWorkerBody(runtime);
+        EmitTlsServerFinalize();
 
         // Finalize $ReadlineInterface class (Phase 2)
         // Must come after EmitRuntimeClass (Question uses InvokeValue)
