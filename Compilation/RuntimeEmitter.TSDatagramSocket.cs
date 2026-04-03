@@ -22,6 +22,10 @@ public partial class RuntimeEmitter
     private FieldBuilder _dgramConnectedField = null!;
     private FieldBuilder _dgramConnectedAddressField = null!;
     private FieldBuilder _dgramConnectedPortField = null!;
+    private MethodBuilder _dgramReceiveWorkerMethod = null!;
+    private TypeBuilder _dgramMessageClosureType = null!;
+    private ConstructorBuilder _dgramMessageClosureCtor = null!;
+    private MethodBuilder _dgramMessageClosureRun = null!;
 
     /// <summary>
     /// Phase 1: Defines the $DatagramSocket type, fields, constructor, and all sync methods.
@@ -100,6 +104,15 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Stfld, _dgramConnectedPortField);
 
         ctorIL.Emit(OpCodes.Ret);
+
+        // Define receive worker method stub (body emitted in Phase 2)
+        // Must be defined before EmitDgramBind which references it.
+        _dgramReceiveWorkerMethod = typeBuilder.DefineMethod(
+            "_DgramReceiveWorker",
+            MethodAttributes.Private,
+            typeof(void),
+            [_types.Object]
+        );
 
         // Emit all methods (none need InvokeValue, so all go in Phase 1)
         EmitDgramBind(typeBuilder, runtime);
@@ -437,6 +450,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _dgramBoundField);
 
+        // EventLoop.Ref() to keep process alive while socket is bound
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopRef);
+
+        // Start receive loop on ThreadPool
+        // ThreadPool.QueueUserWorkItem(new WaitCallback(this._DgramReceiveWorker))
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldftn, _dgramReceiveWorkerMethod);
+        il.Emit(OpCodes.Newobj, typeof(WaitCallback).GetConstructor([_types.Object, typeof(IntPtr)])!);
+        il.Emit(OpCodes.Call, typeof(ThreadPool).GetMethod("QueueUserWorkItem", [typeof(WaitCallback)])!);
+        il.Emit(OpCodes.Pop);
+
         // Call callback if provided
         EmitDgramCallbackInvocation(il, runtime, () => il.Emit(OpCodes.Ldloc, callbackLocal), 0);
 
@@ -512,6 +537,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stfld, _dgramClientField);
 
         il.MarkLabel(noClient);
+
+        // EventLoop.Unref() since socket is no longer listening
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Call, runtime.EventLoopUnref);
 
         // Call callback if provided
         EmitDgramCallbackInvocation(il, runtime, () => il.Emit(OpCodes.Ldarg_1), 0);
@@ -1065,7 +1094,27 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Convert msg to bytes: Encoding.UTF8.GetBytes(msg?.ToString() ?? "")
+        // Convert msg to bytes:
+        // - If msg is a $Buffer, use GetData() to get raw bytes
+        // - Otherwise, use Encoding.UTF8.GetBytes(msg?.ToString() ?? "")
+        var bytesLocal = il.DeclareLocal(typeof(byte[]));
+        var bytesReadyLabel = il.DefineLabel();
+
+        // Check if msg is $Buffer
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSBufferType);
+        var notBufferLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notBufferLabel);
+
+        // Buffer path: bytes = ((TSBuffer)msg).GetData()
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TSBufferType);
+        il.Emit(OpCodes.Callvirt, runtime.TSBufferGetData);
+        il.Emit(OpCodes.Stloc, bytesLocal);
+        il.Emit(OpCodes.Br, bytesReadyLabel);
+
+        // String path: bytes = Encoding.UTF8.GetBytes(msg?.ToString() ?? "")
+        il.MarkLabel(notBufferLabel);
         var msgStrLocal = il.DeclareLocal(_types.String);
         var msgNullLabel = il.DefineLabel();
         var msgDoneLabel = il.DefineLabel();
@@ -1081,11 +1130,12 @@ public partial class RuntimeEmitter
         il.MarkLabel(msgDoneLabel);
         il.Emit(OpCodes.Stloc, msgStrLocal);
 
-        var bytesLocal = il.DeclareLocal(typeof(byte[]));
         il.Emit(OpCodes.Call, typeof(Encoding).GetProperty("UTF8")!.GetGetMethod()!);
         il.Emit(OpCodes.Ldloc, msgStrLocal);
         il.Emit(OpCodes.Callvirt, typeof(Encoding).GetMethod("GetBytes", [_types.String])!);
         il.Emit(OpCodes.Stloc, bytesLocal);
+
+        il.MarkLabel(bytesReadyLabel);
 
         // Create client if null
         var clientExists = il.DefineLabel();
