@@ -596,29 +596,25 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldc_I4_0);
             il.Emit(OpCodes.Stfld, _netSocketConnectingField);
 
-            // var errorDict = new Dictionary<string, object?> { ["message"] = _errorMsg, ["code"] = _errorCode, ["syscall"] = "connect" }
-            var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
-            il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
-            il.Emit(OpCodes.Stloc, dictLocal);
-
-            il.Emit(OpCodes.Ldloc, dictLocal);
-            il.Emit(OpCodes.Ldstr, "message");
+            // var error = new $Error(_errorMsg); error.Code = _errorCode; error.Syscall = "connect";
+            var errorLocal = il.DeclareLocal(runtime.TSErrorType);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, errorMsgField);
-            il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
+            il.Emit(OpCodes.Newobj, runtime.TSErrorCtorMessage);
+            il.Emit(OpCodes.Stloc, errorLocal);
 
-            il.Emit(OpCodes.Ldloc, dictLocal);
-            il.Emit(OpCodes.Ldstr, "code");
+            // error.Code = _errorCode
+            il.Emit(OpCodes.Ldloc, errorLocal);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, errorCodeField);
-            il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
+            il.Emit(OpCodes.Callvirt, runtime.TSErrorCodeSetter);
 
-            il.Emit(OpCodes.Ldloc, dictLocal);
-            il.Emit(OpCodes.Ldstr, "syscall");
+            // error.Syscall = "connect"
+            il.Emit(OpCodes.Ldloc, errorLocal);
             il.Emit(OpCodes.Ldstr, "connect");
-            il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
+            il.Emit(OpCodes.Callvirt, runtime.TSErrorSyscallSetter);
 
-            // _socket.Emit("error", new object[] { errorDict })
+            // _socket.Emit("error", new object[] { error })
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, socketField);
             il.Emit(OpCodes.Ldstr, "error");
@@ -626,7 +622,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Newarr, _types.Object);
             il.Emit(OpCodes.Dup);
             il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Ldloc, dictLocal);
+            il.Emit(OpCodes.Ldloc, errorLocal);
             il.Emit(OpCodes.Stelem_Ref);
             il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
             il.Emit(OpCodes.Pop);

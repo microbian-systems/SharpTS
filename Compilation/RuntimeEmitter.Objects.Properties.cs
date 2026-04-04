@@ -245,6 +245,40 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notErrorStackLabel);
 
+        // Check "code" — only return if non-null (absent on plain Error objects)
+        var notErrorCodeNameLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "code");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notErrorCodeNameLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSErrorType);
+        il.Emit(OpCodes.Callvirt, runtime.TSErrorCodeGetter);
+        var codeNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, codeNullLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(codeNullLabel);
+        il.Emit(OpCodes.Pop); // discard null from Dup
+        il.MarkLabel(notErrorCodeNameLabel);
+
+        // Check "syscall" — only return if non-null
+        var notErrorSyscallNameLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "syscall");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notErrorSyscallNameLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSErrorType);
+        il.Emit(OpCodes.Callvirt, runtime.TSErrorSyscallGetter);
+        var syscallNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, syscallNullLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(syscallNullLabel);
+        il.Emit(OpCodes.Pop); // discard null from Dup
+        il.MarkLabel(notErrorSyscallNameLabel);
+
         il.MarkLabel(notErrorLabel);
 
         // Check $StringDecoder - handle write, end, encoding
@@ -611,6 +645,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSErrorStackSetter);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notErrorStackLabel);
+
+        // Check "code"
+        var notErrorCodeSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "code");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notErrorCodeSetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSErrorType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, runtime.TSErrorCodeSetter);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notErrorCodeSetLabel);
+
+        // Check "syscall"
+        var notErrorSyscallSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "syscall");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notErrorSyscallSetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSErrorType);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, runtime.TSErrorSyscallSetter);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notErrorSyscallSetLabel);
 
         il.MarkLabel(notErrorLabel);
 

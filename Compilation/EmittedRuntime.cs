@@ -640,6 +640,10 @@ public class EmittedRuntime
     public MethodBuilder TSErrorCauseGetter { get; set; } = null!;
     public MethodBuilder TSErrorCauseSetter { get; set; } = null!;
     public MethodBuilder TSErrorHasCauseGetter { get; set; } = null!;
+    public MethodBuilder TSErrorCodeGetter { get; set; } = null!;
+    public MethodBuilder TSErrorCodeSetter { get; set; } = null!;
+    public MethodBuilder TSErrorSyscallGetter { get; set; } = null!;
+    public MethodBuilder TSErrorSyscallSetter { get; set; } = null!;
     public MethodBuilder TSErrorToStringMethod { get; set; } = null!;
     public MethodBuilder TSErrorCaptureStackTrace { get; set; } = null!;
 

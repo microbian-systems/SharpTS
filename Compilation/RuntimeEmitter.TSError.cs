@@ -15,6 +15,8 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsErrorStackField = null!;
     private FieldBuilder _tsErrorCauseField = null!;
     private FieldBuilder _tsErrorHasCauseField = null!;
+    private FieldBuilder _tsErrorCodeField = null!;
+    private FieldBuilder _tsErrorSyscallField = null!;
 
     // AggregateError errors field
     private FieldBuilder _tsAggregateErrorErrorsField = null!;
@@ -52,6 +54,8 @@ public partial class RuntimeEmitter
         _tsErrorStackField = typeBuilder.DefineField("_stack", _types.String, FieldAttributes.Private);
         _tsErrorCauseField = typeBuilder.DefineField("_cause", _types.Object, FieldAttributes.Private);
         _tsErrorHasCauseField = typeBuilder.DefineField("_hasCause", _types.Boolean, FieldAttributes.Private);
+        _tsErrorCodeField = typeBuilder.DefineField("_code", _types.String, FieldAttributes.Private);
+        _tsErrorSyscallField = typeBuilder.DefineField("_syscall", _types.String, FieldAttributes.Private);
 
         // CaptureStackTrace helper - must be emitted first since the constructor calls it
         EmitCaptureStackTrace(typeBuilder, runtime);
@@ -68,6 +72,8 @@ public partial class RuntimeEmitter
         EmitTSErrorMessageProperty(typeBuilder, runtime);
         EmitTSErrorStackProperty(typeBuilder, runtime);
         EmitTSErrorCauseProperty(typeBuilder, runtime);
+        EmitTSErrorCodeProperty(typeBuilder, runtime);
+        EmitTSErrorSyscallProperty(typeBuilder, runtime);
 
         // ToString override
         EmitTSErrorToStringMethod(typeBuilder, runtime);
@@ -311,6 +317,72 @@ public partial class RuntimeEmitter
         hcIL.Emit(OpCodes.Ldarg_0);
         hcIL.Emit(OpCodes.Ldfld, _tsErrorHasCauseField);
         hcIL.Emit(OpCodes.Ret);
+    }
+
+    private void EmitTSErrorCodeProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // public string? Code { get; set; }
+        var prop = typeBuilder.DefineProperty("Code", PropertyAttributes.None, _types.String, null);
+
+        var getter = typeBuilder.DefineMethod(
+            "get_Code",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig | MethodAttributes.Virtual,
+            _types.String,
+            Type.EmptyTypes
+        );
+        runtime.TSErrorCodeGetter = getter;
+        var getIL = getter.GetILGenerator();
+        getIL.Emit(OpCodes.Ldarg_0);
+        getIL.Emit(OpCodes.Ldfld, _tsErrorCodeField);
+        getIL.Emit(OpCodes.Ret);
+        prop.SetGetMethod(getter);
+
+        var setter = typeBuilder.DefineMethod(
+            "set_Code",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig | MethodAttributes.Virtual,
+            _types.Void,
+            [_types.String]
+        );
+        runtime.TSErrorCodeSetter = setter;
+        var setIL = setter.GetILGenerator();
+        setIL.Emit(OpCodes.Ldarg_0);
+        setIL.Emit(OpCodes.Ldarg_1);
+        setIL.Emit(OpCodes.Stfld, _tsErrorCodeField);
+        setIL.Emit(OpCodes.Ret);
+        prop.SetSetMethod(setter);
+    }
+
+    private void EmitTSErrorSyscallProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // public string? Syscall { get; set; }
+        var prop = typeBuilder.DefineProperty("Syscall", PropertyAttributes.None, _types.String, null);
+
+        var getter = typeBuilder.DefineMethod(
+            "get_Syscall",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig | MethodAttributes.Virtual,
+            _types.String,
+            Type.EmptyTypes
+        );
+        runtime.TSErrorSyscallGetter = getter;
+        var getIL = getter.GetILGenerator();
+        getIL.Emit(OpCodes.Ldarg_0);
+        getIL.Emit(OpCodes.Ldfld, _tsErrorSyscallField);
+        getIL.Emit(OpCodes.Ret);
+        prop.SetGetMethod(getter);
+
+        var setter = typeBuilder.DefineMethod(
+            "set_Syscall",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig | MethodAttributes.Virtual,
+            _types.Void,
+            [_types.String]
+        );
+        runtime.TSErrorSyscallSetter = setter;
+        var setIL = setter.GetILGenerator();
+        setIL.Emit(OpCodes.Ldarg_0);
+        setIL.Emit(OpCodes.Ldarg_1);
+        setIL.Emit(OpCodes.Stfld, _tsErrorSyscallField);
+        setIL.Emit(OpCodes.Ret);
+        prop.SetSetMethod(setter);
     }
 
     private void EmitTSErrorToStringMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
