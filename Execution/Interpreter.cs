@@ -196,6 +196,15 @@ public partial class Interpreter : IDisposable
     private readonly CancellationTokenSource _shutdownCts = new();
     private InterpreterSynchronizationContext? _eventLoopSyncContext;
 
+    // VM timeout support — checked during statement execution to enforce script timeout
+    private CancellationToken _vmTimeoutToken;
+
+    /// <summary>
+    /// Sets a cancellation token that will be checked during statement execution.
+    /// Used by the vm module to enforce script execution timeouts.
+    /// </summary>
+    public void SetVmTimeoutToken(CancellationToken token) => _vmTimeoutToken = token;
+
     /// <summary>
     /// Represents a scheduled timer callback that will be executed by the main thread.
     /// </summary>
@@ -849,6 +858,11 @@ public partial class Interpreter : IDisposable
 
         foreach (Stmt statement in statements)
         {
+            // Check vm timeout token before each statement
+            if (_vmTimeoutToken.IsCancellationRequested)
+                throw new Runtime.Exceptions.ThrowException(
+                    new Runtime.Types.SharpTSError("Script execution timed out."));
+
             if (statement is Stmt.Expression exprStmt)
             {
                 lastExprValue = Evaluate(exprStmt.Expr);

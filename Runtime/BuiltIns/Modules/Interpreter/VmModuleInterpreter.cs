@@ -38,7 +38,8 @@ public static class VmModuleInterpreter
             throw new Exception("vm.runInNewContext requires a code string");
 
         var contextObject = args.Count > 1 ? args[1] : null;
-        return ExecuteInNewContext(code, contextObject, interpreter);
+        var timeout = GetTimeoutOption(args.Count > 2 ? args[2] : null);
+        return ExecuteInNewContext(code, contextObject, interpreter, timeout);
     }
 
     /// <summary>
@@ -49,7 +50,8 @@ public static class VmModuleInterpreter
         if (args.Count == 0 || args[0] is not string code)
             throw new Exception("vm.runInThisContext requires a code string");
 
-        return ExecuteInCurrentContext(code, interpreter);
+        var timeout = GetTimeoutOption(args.Count > 1 ? args[1] : null);
+        return ExecuteInCurrentContext(code, interpreter, timeout);
     }
 
     /// <summary>
@@ -74,7 +76,7 @@ public static class VmModuleInterpreter
     /// Executes code in a fresh interpreter with context object properties seeded as variables.
     /// Mutations to context variables are written back to the context object.
     /// </summary>
-    internal static object? ExecuteInNewContext(string code, object? contextObject, Interp? parentInterpreter = null)
+    internal static object? ExecuteInNewContext(string code, object? contextObject, Interp? parentInterpreter = null, int timeout = -1)
     {
         // Parse the code
         var statements = ParseCode(code);
@@ -91,37 +93,70 @@ public static class VmModuleInterpreter
         foreach (var (key, value) in contextProps)
             env.Define(key, value);
 
-        // Resolve variables and execute
-        var resolver = new VariableResolver(subInterpreter);
-        resolver.Resolve(statements);
+        // Apply timeout if specified
+        CancellationTokenSource? cts = null;
+        if (timeout > 0)
+        {
+            cts = new CancellationTokenSource(timeout);
+            subInterpreter.SetVmTimeoutToken(cts.Token);
+        }
 
-        var result = subInterpreter.InterpretRepl(statements);
+        try
+        {
+            // Resolve variables and execute
+            var resolver = new VariableResolver(subInterpreter);
+            resolver.Resolve(statements);
 
-        // Write mutations back to context object
-        VmContext.WriteBack(contextObject, contextProps, subInterpreter.Environment);
+            var result = subInterpreter.InterpretRepl(statements);
 
-        subInterpreter.Dispose();
-        return result;
+            // Write mutations back to context object
+            VmContext.WriteBack(contextObject, contextProps, subInterpreter.Environment);
+
+            return result;
+        }
+        finally
+        {
+            subInterpreter.Dispose();
+            cts?.Dispose();
+        }
     }
 
     /// <summary>
     /// Executes code in the current interpreter's scope.
     /// </summary>
-    internal static object? ExecuteInCurrentContext(string code, Interp interpreter)
+    internal static object? ExecuteInCurrentContext(string code, Interp interpreter, int timeout = -1)
     {
         var statements = ParseCode(code);
 
         var resolver = new VariableResolver(interpreter);
         resolver.Resolve(statements);
 
-        return interpreter.InterpretRepl(statements);
+        CancellationTokenSource? cts = null;
+        if (timeout > 0)
+        {
+            cts = new CancellationTokenSource(timeout);
+            interpreter.SetVmTimeoutToken(cts.Token);
+        }
+
+        try
+        {
+            return interpreter.InterpretRepl(statements);
+        }
+        finally
+        {
+            if (cts != null)
+            {
+                interpreter.SetVmTimeoutToken(default);
+                cts.Dispose();
+            }
+        }
     }
 
     /// <summary>
     /// Executes pre-parsed statements in a new context.
     /// Used by Script.runInNewContext and Script.runInContext.
     /// </summary>
-    internal static object? ExecuteParsedInNewContext(List<Stmt> statements, object? contextObject, Interp? parentInterpreter = null)
+    internal static object? ExecuteParsedInNewContext(List<Stmt> statements, object? contextObject, Interp? parentInterpreter = null, int timeout = -1)
     {
         var contextProps = VmContext.ExtractProperties(contextObject);
 
@@ -133,26 +168,59 @@ public static class VmModuleInterpreter
         foreach (var (key, value) in contextProps)
             env.Define(key, value);
 
-        var resolver = new VariableResolver(subInterpreter);
-        resolver.Resolve(statements);
+        CancellationTokenSource? cts = null;
+        if (timeout > 0)
+        {
+            cts = new CancellationTokenSource(timeout);
+            subInterpreter.SetVmTimeoutToken(cts.Token);
+        }
 
-        var result = subInterpreter.InterpretRepl(statements);
+        try
+        {
+            var resolver = new VariableResolver(subInterpreter);
+            resolver.Resolve(statements);
 
-        VmContext.WriteBack(contextObject, contextProps, subInterpreter.Environment);
+            var result = subInterpreter.InterpretRepl(statements);
 
-        subInterpreter.Dispose();
-        return result;
+            VmContext.WriteBack(contextObject, contextProps, subInterpreter.Environment);
+
+            return result;
+        }
+        finally
+        {
+            subInterpreter.Dispose();
+            cts?.Dispose();
+        }
     }
 
     /// <summary>
     /// Executes pre-parsed statements in the current interpreter's scope.
     /// Used by Script.runInThisContext.
     /// </summary>
-    internal static object? ExecuteParsedInCurrentContext(List<Stmt> statements, Interp interpreter)
+    internal static object? ExecuteParsedInCurrentContext(List<Stmt> statements, Interp interpreter, int timeout = -1)
     {
         var resolver = new VariableResolver(interpreter);
         resolver.Resolve(statements);
-        return interpreter.InterpretRepl(statements);
+
+        CancellationTokenSource? cts = null;
+        if (timeout > 0)
+        {
+            cts = new CancellationTokenSource(timeout);
+            interpreter.SetVmTimeoutToken(cts.Token);
+        }
+
+        try
+        {
+            return interpreter.InterpretRepl(statements);
+        }
+        finally
+        {
+            if (cts != null)
+            {
+                interpreter.SetVmTimeoutToken(default);
+                cts.Dispose();
+            }
+        }
     }
 
     /// <summary>
@@ -299,6 +367,26 @@ public static class VmModuleInterpreter
     }
 
     /// <summary>
+    /// Extracts the timeout option (in milliseconds) from an options object.
+    /// Returns -1 if not specified.
+    /// </summary>
+    internal static int GetTimeoutOption(object? options)
+    {
+        if (options is SharpTSObject obj)
+        {
+            var val = obj.GetProperty("timeout");
+            if (val is double d && d > 0)
+                return (int)d;
+        }
+        else if (options is Dictionary<string, object?> dict)
+        {
+            if (dict.TryGetValue("timeout", out var val) && val is double d && d > 0)
+                return (int)d;
+        }
+        return -1;
+    }
+
+    /// <summary>
     /// Validates that a string is a valid JavaScript identifier.
     /// </summary>
     private static bool IsValidIdentifier(string name)
@@ -366,23 +454,26 @@ public sealed class VmScriptConstructor : ISharpTSCallable
             (interp, recv, methodArgs) =>
             {
                 var contextObject = methodArgs.Count > 0 ? methodArgs[0] : null;
-                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, contextObject, interp);
+                var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Count > 1 ? methodArgs[1] : null);
+                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, contextObject, interp, timeout);
             });
 
         var runInThisCtx = new BuiltInMethod("runInThisContext", 0, 1,
             (interp, recv, methodArgs) =>
             {
+                var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Count > 0 ? methodArgs[0] : null);
                 if (interp != null)
-                    return VmModuleInterpreter.ExecuteParsedInCurrentContext(statements, interp);
+                    return VmModuleInterpreter.ExecuteParsedInCurrentContext(statements, interp, timeout);
                 // Compiled mode: no interpreter available, fall back to new context
-                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, null, interp);
+                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, null, interp, timeout);
             });
 
         var runInCtx = new BuiltInMethod("runInContext", 1, 2,
             (interp, recv, methodArgs) =>
             {
                 var context = methodArgs.Count > 0 ? methodArgs[0] : null;
-                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, context, interp);
+                var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Count > 1 ? methodArgs[1] : null);
+                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, context, interp, timeout);
             });
 
         // Return as Dictionary<string, object?> — works in both modes:

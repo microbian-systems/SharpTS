@@ -234,6 +234,11 @@ public partial class Interpreter
             {
                 foreach (Stmt statement in statements)
                 {
+                    // Check vm timeout token before each statement in a block
+                    if (_vmTimeoutToken.IsCancellationRequested)
+                        throw new Runtime.Exceptions.ThrowException(
+                            new Runtime.Types.SharpTSError("Script execution timed out."));
+
                     var result = Execute(statement);
                     if (result.IsAbrupt)
                     {
@@ -923,6 +928,11 @@ public partial class Interpreter
     {
         while (evaluateCondition())
         {
+            // Check vm timeout token on each loop iteration
+            if (_vmTimeoutToken.IsCancellationRequested)
+                throw new Runtime.Exceptions.ThrowException(
+                    new Runtime.Types.SharpTSError("Script execution timed out."));
+
             var result = executeBody();
             var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, label);
             if (shouldBreak) return ExecutionResult.Success();

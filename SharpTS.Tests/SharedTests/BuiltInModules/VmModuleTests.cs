@@ -607,4 +607,89 @@ public class VmModuleTests
     }
 
     #endregion
+
+    #region timeout
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_RunInNewContext_Timeout_Throws(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import vm from 'vm';
+                try {
+                    vm.runInNewContext('while(true) {}', {}, { timeout: 50 });
+                    console.log('no error');
+                } catch (e) {
+                    console.log('caught:' + e.message);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("caught:Script execution timed out", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_RunInNewContext_NoTimeout_Completes(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import vm from 'vm';
+                const result = vm.runInNewContext('let sum = 0; for (let i = 0; i < 100; i++) sum += i; sum;', {});
+                console.log(result);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("4950", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_RunInThisContext_Timeout_Throws(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import vm from 'vm';
+                try {
+                    vm.runInThisContext('while(true) {}', { timeout: 50 });
+                    console.log('no error');
+                } catch (e) {
+                    console.log('caught:' + e.message);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("caught:Script execution timed out", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_RunInNewContext_Timeout_Throws(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import vm from 'vm';
+                const script = new vm.Script('while(true) {}');
+                try {
+                    script.runInNewContext({}, { timeout: 50 });
+                    console.log('no error');
+                } catch (e) {
+                    console.log('caught:' + e.message);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("caught:Script execution timed out", output);
+    }
+
+    #endregion
 }

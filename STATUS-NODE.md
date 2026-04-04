@@ -873,8 +873,8 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `vm.compileFunction(code, params?, opts?)` | ✅ | Compiles function body with named params; parsingContext, contextExtensions options |
 | **Not Implemented** | | |
 | `vm.Module` / `vm.SourceTextModule` | ❌ | Experimental in Node.js |
-| `timeout` option | ❌ | Can be added later with CancellationToken |
-| `vm.measureMemory` | ❌ | |
+| `timeout` option | ✅ | Execution timeout in ms; throws Error on expiry; checked per-statement and per-loop-iteration |
+| `vm.measureMemory` | ❌ | V8-specific, not applicable |
 
 ---
 
@@ -883,7 +883,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 SharpTS provides comprehensive support for file system operations (sync, callback-based async, and promise-based via `fs/promises`), including file descriptor APIs, directory utilities, hard/symbolic links, permissions, file watching (`watch`, `watchFile`, `unwatchFile`), and streaming (`createReadStream`, `createWriteStream`). Also includes path manipulation, OS information, process management, crypto (hashing, encryption, key derivation, signing), URL parsing, binary data handling via Buffer, EventEmitter for event-driven patterns, timers (setTimeout/setInterval/setImmediate), string decoding for multi-byte characters, high-resolution performance timing, stream classes (Readable, Writable, Duplex, Transform, PassThrough) with flowing mode (auto-flowing on `data` listener, pause/resume, pipe backpressure), the Web Fetch API for HTTP client requests with AbortController support, HTTP/HTTPS servers via `http.createServer`/`https.createServer`, TLS/SSL via `tls` module, TCP via `net` module, UDP via `dgram` module (including connected mode), DNS resolution (full record type support), cluster module for multi-process scaling, and Worker Threads for parallel execution. The module system supports both ES modules and CommonJS import syntax.
 
 **Key Gaps:**
-- No HTTP port sharing in cluster (round-robin load balancing)
+- None — all major Node.js APIs are implemented
 
 **Recommended Workarounds:**
 - Use ES module syntax instead of `require()`
@@ -898,4 +898,5 @@ Priority features to implement for broader Node.js compatibility:
 1. ~~**package.json exports**~~ ✅ Implemented: subpath exports, conditional exports, wildcard patterns, self-referencing, subpath imports
 2. ~~**AsyncLocalStorage / async_hooks**~~ ✅ Implemented: AsyncLocalStorage with run, getStore, enterWith, exit, disable; async context propagation across await/Promise.then
 3. ~~**IPC sockets**~~ ✅ Implemented: Named pipes (Windows) / Unix domain sockets (Linux/macOS) with error codes, server.address() returns pipe path
-4. **cluster HTTP port sharing** - Round-robin load balancing (medium effort)
+4. ~~**cluster HTTP port sharing**~~ ✅ Implemented: SharedTcpListener/SharedHttpListener with round-robin dispatch via atomic counter; server.listen() intercepted in worker mode
+5. ~~**vm.timeout option**~~ ✅ Implemented: CancellationToken-based timeout checked per-statement and per-loop-iteration; throws Error on expiry
