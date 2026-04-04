@@ -68,139 +68,14 @@ public abstract partial class ExpressionEmitterBase
             }
         }
 
-        // Special case: module.promises.methodName() (fs.promises, dns.promises, stream.promises)
-        if (c.Callee is Expr.Get promisesMethodGet &&
-            promisesMethodGet.Object is Expr.Get promisesGet &&
-            promisesGet.Name.Lexeme == "promises" &&
-            promisesGet.Object is Expr.Variable promisesModuleVar &&
-            Ctx.BuiltInModuleNamespaces != null &&
-            Ctx.BuiltInModuleNamespaces.TryGetValue(promisesModuleVar.Name.Lexeme, out var promisesModuleName) &&
-            Ctx.BuiltInModuleEmitterRegistry?.GetEmitter(promisesModuleName + "/promises") is { } promisesEmitter)
-        {
-            if (promisesEmitter.TryEmitMethodCall(this, promisesMethodGet.Name.Lexeme, c.Arguments))
-            {
-                SetStackUnknown();
-                return;
-            }
-        }
-
-        // Handle Class.staticMethod() calls (supports generic classes via TryGetCallableStaticMethod)
-        if (c.Callee is Expr.Get classStaticGet &&
-            classStaticGet.Object is Expr.Variable classVar &&
-            Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out var classBuilder))
-        {
-            string resolvedClassName = Ctx.ResolveClassName(classVar.Name.Lexeme);
-            if (Ctx.ClassRegistry!.TryGetCallableStaticMethod(resolvedClassName, classStaticGet.Name.Lexeme, classBuilder, out var callableMethod))
-            {
-                var staticMethodParams = callableMethod!.GetParameters();
-                var paramCount = staticMethodParams.Length;
-
-                for (int i = 0; i < c.Arguments.Count; i++)
-                {
-                    EmitExpression(c.Arguments[i]);
-                    if (i < staticMethodParams.Length)
-                        EmitConversionForParameter(c.Arguments[i], staticMethodParams[i].ParameterType);
-                    else
-                        EnsureBoxed();
-                }
-
-                for (int i = c.Arguments.Count; i < paramCount; i++)
-                    EmitDefaultForType(staticMethodParams[i].ParameterType);
-
-                IL.Emit(OpCodes.Call, callableMethod);
-                SetStackUnknown();
-                return;
-            }
-        }
-
-        // Handle Promise instance methods: promise.then/catch/finally
+        // Handle Expr.Get callee patterns (module.promises, class statics, instance methods)
         if (c.Callee is Expr.Get methodGet)
         {
-            string methodName = methodGet.Name.Lexeme;
-            if (methodName is "then" or "catch" or "finally")
-            {
-                EmitPromiseInstanceMethodCall(methodGet.Object, methodName, c.Arguments);
-                return;
-            }
-
-            // Try direct dispatch for known class instance methods
-            if (TryEmitDirectMethodCall(methodGet.Object, methodName, c.Arguments))
+            if (TryEmitGetCalleeViaBaseClass(c, methodGet))
                 return;
 
-            // Type-first dispatch: Use TypeEmitterRegistry if we have type information
-            var objType = Ctx.TypeMap?.Get(methodGet.Object);
-            if (objType != null && Ctx.TypeEmitterRegistry != null)
-            {
-                var strategy = Ctx.TypeEmitterRegistry.GetStrategy(objType);
-                if (strategy != null && strategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                    return;
-
-                // Handle union types
-                if (objType is TypeSystem.TypeInfo.Union union)
-                {
-                    bool hasBufferMember = union.Types.Any(t => t is TypeSystem.TypeInfo.Buffer);
-                    bool hasStringMember = union.Types.Any(t => t is TypeSystem.TypeInfo.String or TypeSystem.TypeInfo.StringLiteral);
-                    bool hasArrayMember = union.Types.Any(t => t is TypeSystem.TypeInfo.Array);
-
-                    bool isAmbiguousMethod = methodName is "slice" or "concat" or "includes" or "indexOf" or "toString";
-                    int typesWithMethod = 0;
-                    if (hasBufferMember && isAmbiguousMethod) typesWithMethod++;
-                    if (hasStringMember && isAmbiguousMethod) typesWithMethod++;
-                    if (hasArrayMember && isAmbiguousMethod) typesWithMethod++;
-
-                    if (typesWithMethod <= 1)
-                    {
-                        if (hasBufferMember)
-                        {
-                            var bufferStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Buffer());
-                            if (bufferStrategy != null && bufferStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                                return;
-                        }
-                        if (hasStringMember)
-                        {
-                            var stringStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.String());
-                            if (stringStrategy != null && stringStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                                return;
-                        }
-                        if (hasArrayMember)
-                        {
-                            var arrayStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Array(new TypeSystem.TypeInfo.Any()));
-                            if (arrayStrategy != null && arrayStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                                return;
-                        }
-                    }
-                }
-            }
-
-            // Fallback: Method name-based dispatch for known built-in methods
-            if (Ctx.TypeEmitterRegistry != null)
-            {
-                if (methodName is "charAt" or "substring" or "toUpperCase" or "toLowerCase"
-                    or "trim" or "replace" or "split" or "startsWith" or "endsWith"
-                    or "repeat" or "padStart" or "padEnd" or "charCodeAt" or "lastIndexOf"
-                    or "trimStart" or "trimEnd" or "replaceAll" or "at" or "match" or "search")
-                {
-                    var stringStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.String());
-                    if (stringStrategy != null && stringStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                        return;
-                }
-
-                if (methodName is "pop" or "shift" or "unshift" or "map" or "filter"
-                    or "push" or "find" or "findIndex" or "some" or "every" or "reduce" or "join"
-                    or "reverse" or "fill")
-                {
-                    var arrayStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Array(new TypeSystem.TypeInfo.Any()));
-                    if (arrayStrategy != null && arrayStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
-                        return;
-                }
-            }
-
-            // Handle ambiguous methods (slice, concat, includes, indexOf)
-            if (methodName is "slice" or "concat" or "includes" or "indexOf")
-            {
-                EmitAmbiguousMethodCall(methodGet.Object, methodName, c.Arguments);
-                return;
-            }
+            // For state machine emitters: fall through to function value call
+            // ILEmitter overrides EmitCall and routes to EmitMethodCall instead
         }
 
         // Check if it's a built-in module method binding (e.g., import { readFile } from 'fs/promises')
@@ -444,6 +319,154 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Ldtoken, Ctx.Runtime!.RuntimeType);
         IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.ExpandCallArgs);
+    }
+
+    /// <summary>
+    /// Tries to handle an Expr.Get callee via shared dispatch patterns:
+    /// module.promises, class statics, Promise.then/catch/finally, type-first dispatch,
+    /// fallback string/array methods, ambiguous methods.
+    /// Returns true if handled, false to fall through to emitter-specific instance method dispatch.
+    /// ILEmitter calls this before its EmitMethodCall; state machine emitters use it as their
+    /// only Expr.Get dispatch (with InvokeMethodValue as the final fallback).
+    /// </summary>
+    protected bool TryEmitGetCalleeViaBaseClass(Expr.Call c, Expr.Get methodGet)
+    {
+        // Handler chain: static types, Date.now, built-in modules, process streams,
+        // globalThis chaining, imported/class-expr/this statics, etc.
+        if (_callHandlers.TryHandle(this, c))
+            return true;
+
+        // module.promises.methodName() (fs.promises, dns.promises, stream.promises)
+        if (methodGet.Object is Expr.Get promisesGet &&
+            promisesGet.Name.Lexeme == "promises" &&
+            promisesGet.Object is Expr.Variable promisesModuleVar &&
+            Ctx.BuiltInModuleNamespaces != null &&
+            Ctx.BuiltInModuleNamespaces.TryGetValue(promisesModuleVar.Name.Lexeme, out var promisesModuleName) &&
+            Ctx.BuiltInModuleEmitterRegistry?.GetEmitter(promisesModuleName + "/promises") is { } promisesEmitter)
+        {
+            if (promisesEmitter.TryEmitMethodCall(this, methodGet.Name.Lexeme, c.Arguments))
+            {
+                SetStackUnknown();
+                return true;
+            }
+        }
+
+        // Class.staticMethod() with generic class support
+        if (methodGet.Object is Expr.Variable classVar &&
+            Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out var classBuilder))
+        {
+            string resolvedClassName = Ctx.ResolveClassName(classVar.Name.Lexeme);
+            if (Ctx.ClassRegistry!.TryGetCallableStaticMethod(resolvedClassName, methodGet.Name.Lexeme, classBuilder, out var callableMethod))
+            {
+                var staticMethodParams = callableMethod!.GetParameters();
+                var paramCount = staticMethodParams.Length;
+
+                for (int i = 0; i < c.Arguments.Count; i++)
+                {
+                    EmitExpression(c.Arguments[i]);
+                    if (i < staticMethodParams.Length)
+                        EmitConversionForParameter(c.Arguments[i], staticMethodParams[i].ParameterType);
+                    else
+                        EnsureBoxed();
+                }
+
+                for (int i = c.Arguments.Count; i < paramCount; i++)
+                    EmitDefaultForType(staticMethodParams[i].ParameterType);
+
+                IL.Emit(OpCodes.Call, callableMethod);
+                SetStackUnknown();
+                return true;
+            }
+        }
+
+        // Promise instance methods: promise.then/catch/finally
+        string methodName = methodGet.Name.Lexeme;
+        if (methodName is "then" or "catch" or "finally")
+        {
+            EmitPromiseInstanceMethodCall(methodGet.Object, methodName, c.Arguments);
+            return true;
+        }
+
+        // Direct dispatch for known class instance methods
+        if (TryEmitDirectMethodCall(methodGet.Object, methodName, c.Arguments))
+            return true;
+
+        // Type-first dispatch via TypeEmitterRegistry
+        var objType = Ctx.TypeMap?.Get(methodGet.Object);
+        if (objType != null && Ctx.TypeEmitterRegistry != null)
+        {
+            var strategy = Ctx.TypeEmitterRegistry.GetStrategy(objType);
+            if (strategy != null && strategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                return true;
+
+            // Union type handling
+            if (objType is TypeSystem.TypeInfo.Union union)
+            {
+                bool hasBufferMember = union.Types.Any(t => t is TypeSystem.TypeInfo.Buffer);
+                bool hasStringMember = union.Types.Any(t => t is TypeSystem.TypeInfo.String or TypeSystem.TypeInfo.StringLiteral);
+                bool hasArrayMember = union.Types.Any(t => t is TypeSystem.TypeInfo.Array);
+
+                bool isAmbiguousMethod = methodName is "slice" or "concat" or "includes" or "indexOf" or "toString";
+                int typesWithMethod = 0;
+                if (hasBufferMember && isAmbiguousMethod) typesWithMethod++;
+                if (hasStringMember && isAmbiguousMethod) typesWithMethod++;
+                if (hasArrayMember && isAmbiguousMethod) typesWithMethod++;
+
+                if (typesWithMethod <= 1)
+                {
+                    if (hasBufferMember)
+                    {
+                        var bufferStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Buffer());
+                        if (bufferStrategy != null && bufferStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                            return true;
+                    }
+                    if (hasStringMember)
+                    {
+                        var stringStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.String());
+                        if (stringStrategy != null && stringStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                            return true;
+                    }
+                    if (hasArrayMember)
+                    {
+                        var arrayStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Array(new TypeSystem.TypeInfo.Any()));
+                        if (arrayStrategy != null && arrayStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                            return true;
+                    }
+                }
+            }
+        }
+
+        // Fallback: method name-based dispatch for known built-in methods
+        if (Ctx.TypeEmitterRegistry != null)
+        {
+            if (methodName is "charAt" or "substring" or "toUpperCase" or "toLowerCase"
+                or "trim" or "replace" or "split" or "startsWith" or "endsWith"
+                or "repeat" or "padStart" or "padEnd" or "charCodeAt" or "lastIndexOf"
+                or "trimStart" or "trimEnd" or "replaceAll" or "at" or "match" or "search")
+            {
+                var stringStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.String());
+                if (stringStrategy != null && stringStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                    return true;
+            }
+
+            if (methodName is "pop" or "shift" or "unshift" or "map" or "filter"
+                or "push" or "find" or "findIndex" or "some" or "every" or "reduce" or "join"
+                or "reverse" or "fill")
+            {
+                var arrayStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.Array(new TypeSystem.TypeInfo.Any()));
+                if (arrayStrategy != null && arrayStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                    return true;
+            }
+        }
+
+        // Ambiguous methods (slice, concat, includes, indexOf)
+        if (methodName is "slice" or "concat" or "includes" or "indexOf")
+        {
+            EmitAmbiguousMethodCall(methodGet.Object, methodName, c.Arguments);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

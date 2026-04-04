@@ -23,12 +23,12 @@ public partial class ILEmitter
             return;
         }
 
-        // For Expr.Get callees: let handler chain + base class handle known patterns,
-        // then fall through to ILEmitter's EmitMethodCall for instance method dispatch.
-        // EmitMethodCall has optimized dispatch with TypeMap that the base class lacks.
+        // For Expr.Get callees: run base class dispatch for handler chain, module.promises,
+        // class statics, super.method, Promise.then/catch/finally, etc. If none match,
+        // fall through to ILEmitter's EmitMethodCall for optimized instance method dispatch.
         if (c.Callee is Expr.Get methodGet)
         {
-            // Handler chain handles: static types, Date.now, built-in modules, process streams,
+            // Handler chain: static types, Date.now, built-in modules, process streams,
             // globalThis chaining, imported/class-expr/this statics
             if (_callHandlers.TryHandle(this, c))
                 return;
