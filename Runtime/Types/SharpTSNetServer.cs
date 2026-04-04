@@ -194,38 +194,46 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
         _pipePath = path;
         _cts = new CancellationTokenSource();
 
-        if (OperatingSystem.IsWindows())
+        try
         {
-            _isListening = true;
-            interpreter.Ref();
+            if (OperatingSystem.IsWindows())
+            {
+                _isListening = true;
+                interpreter.Ref();
 
-            // Start accept loop and wait until the first pipe is ready before
-            // calling the callback (which may create a client that connects immediately).
-            var pipeReady = new ManualResetEventSlim(false);
-            StartAcceptingIpcWindows(interpreter, pipeReady);
-            pipeReady.Wait(5000); // Wait up to 5s for pipe to be ready
+                // Start accept loop and wait until the first pipe is ready before
+                // calling the callback (which may create a client that connects immediately).
+                var pipeReady = new ManualResetEventSlim(false);
+                StartAcceptingIpcWindows(interpreter, pipeReady);
+                pipeReady.Wait(5000); // Wait up to 5s for pipe to be ready
 
-            callback?.Call(interpreter, []);
-            EmitEvent(interpreter, "listening", []);
+                callback?.Call(interpreter, []);
+                EmitEvent(interpreter, "listening", []);
+            }
+            else
+            {
+                // Unix domain socket
+                // Delete stale socket file (standard Node.js behavior)
+                if (File.Exists(path))
+                    File.Delete(path);
+
+                _unixSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                _unixSocket.Bind(new UnixDomainSocketEndPoint(path));
+                _unixSocket.Listen(511);
+
+                _isListening = true;
+                interpreter.Ref();
+
+                callback?.Call(interpreter, []);
+                EmitEvent(interpreter, "listening", []);
+
+                StartAcceptingIpcUnix(interpreter);
+            }
         }
-        else
+        catch (Exception ex)
         {
-            // Unix domain socket
-            // Delete stale socket file (standard Node.js behavior)
-            if (File.Exists(path))
-                File.Delete(path);
-
-            _unixSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-            _unixSocket.Bind(new UnixDomainSocketEndPoint(path));
-            _unixSocket.Listen(511);
-
-            _isListening = true;
-            interpreter.Ref();
-
-            callback?.Call(interpreter, []);
-            EmitEvent(interpreter, "listening", []);
-
-            StartAcceptingIpcUnix(interpreter);
+            var error = SharpTSSocket.CreateSocketError(ex, "listen", path);
+            EmitEvent(interpreter, "error", [error]);
         }
 
         return this;
@@ -478,10 +486,8 @@ public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposab
 
         if (_isIpc)
         {
-            return new SharpTSObject(new Dictionary<string, object?>
-            {
-                ["address"] = _pipePath
-            });
+            // Node.js returns the pipe path as a string for IPC servers
+            return _pipePath;
         }
 
         if (_isClusterWorker)

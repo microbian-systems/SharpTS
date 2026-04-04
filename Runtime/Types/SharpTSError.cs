@@ -30,6 +30,18 @@ public class SharpTSError : ITypeCategorized
     public string Stack { get; set; }
 
     /// <summary>
+    /// The Node.js error code (e.g., "ENOENT", "ECONNREFUSED").
+    /// Set for system errors from built-in modules (fs, net, etc.).
+    /// </summary>
+    public string? Code { get; set; }
+
+    /// <summary>
+    /// The system call that failed (e.g., "connect", "listen").
+    /// Set for system errors from built-in modules.
+    /// </summary>
+    public string? Syscall { get; set; }
+
+    /// <summary>
     /// The cause of this error (ES2022). Set via the options parameter:
     /// <c>new Error("message", { cause: someValue })</c>
     /// </summary>

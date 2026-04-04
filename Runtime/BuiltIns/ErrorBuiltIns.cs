@@ -57,6 +57,8 @@ public static class ErrorBuiltIns
             "message" => receiver.Message,
             "stack" => receiver.Stack,
             "cause" => receiver.HasCause ? receiver.Cause : Types.SharpTSUndefined.Instance,
+            "code" when receiver.Code is not null => receiver.Code,
+            "syscall" when receiver.Syscall is not null => receiver.Syscall,
             "toString" => new BuiltInMethod("toString", 0, (_, recv, _) =>
                 ((SharpTSError)recv!).ToString()),
 

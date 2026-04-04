@@ -178,9 +178,10 @@ public class SharpTSSocket : SharpTSEventEmitter
             catch (Exception ex)
             {
                 _connecting = false;
+                var error = CreateSocketError(ex, "connect", $"{capturedHost}:{capturedPort}");
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
+                    EmitEvent(interpreter, "error", [error]);
                 }, isInterval: false);
             }
         });
@@ -210,7 +211,9 @@ public class SharpTSSocket : SharpTSEventEmitter
                 {
                     var pipeName = ConvertToWindowsPipeName(path);
                     var pipeClient = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-                    await pipeClient.ConnectAsync();
+                    // Use timeout to avoid blocking forever if no server is listening.
+                    // Node.js throws ENOENT for missing pipes; 5s matches typical socket timeouts.
+                    await pipeClient.ConnectAsync(5000);
                     _stream = pipeClient;
                 }
                 else
@@ -234,14 +237,41 @@ public class SharpTSSocket : SharpTSEventEmitter
             catch (Exception ex)
             {
                 _connecting = false;
+                var error = CreateSocketError(ex, "connect", path);
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
+                    EmitEvent(interpreter, "error", [error]);
                 }, isInterval: false);
             }
         });
 
         return this;
+    }
+
+    /// <summary>
+    /// Creates a SharpTSError with Node.js-compatible code and syscall properties.
+    /// </summary>
+    internal static SharpTSError CreateSocketError(Exception ex, string syscall, string? address = null)
+    {
+        var code = ex switch
+        {
+            FileNotFoundException => "ENOENT",
+            DirectoryNotFoundException => "ENOENT",
+            TimeoutException => "ENOENT", // Named pipe connect timeout = no server listening
+            SocketException se when se.SocketErrorCode == SocketError.ConnectionRefused => "ECONNREFUSED",
+            SocketException se when se.SocketErrorCode == SocketError.AddressAlreadyInUse => "EADDRINUSE",
+            SocketException se when se.SocketErrorCode == SocketError.AddressNotAvailable => "EADDRNOTAVAIL",
+            SocketException se when se.SocketErrorCode == SocketError.TimedOut => "ETIMEDOUT",
+            IOException when ex.InnerException is SocketException inner
+                && inner.SocketErrorCode == SocketError.ConnectionRefused => "ECONNREFUSED",
+            _ => "ECONNREFUSED"
+        };
+
+        var msg = address != null
+            ? $"{code}: {ex.Message}, {syscall} {address}"
+            : $"{code}: {ex.Message}, {syscall}";
+
+        return new SharpTSError(msg) { Code = code, Syscall = syscall };
     }
 
     /// <summary>

@@ -1093,18 +1093,14 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(isListening);
 
-        // if (_isIpc) return { address: _pipePath }
+        // if (_isIpc) return _pipePath (Node.js returns the pipe path as a string)
         var notIpcAddr = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _netServerIsIpcField);
         il.Emit(OpCodes.Brfalse, notIpcAddr);
 
-        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldstr, "address");
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _netServerPipePathField);
-        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item", [_types.String, _types.Object])!);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notIpcAddr);

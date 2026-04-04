@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-03-25 (fetch redirect option: follow/manual/error; http.Agent; process.stdin/stdout/stderr stream support)
+**Last Updated:** 2026-04-03 (IPC sockets: server.address() returns string, connect timeout, error codes with code/syscall properties)
 
 ## Legend
 - ✅ Implemented
@@ -754,8 +754,8 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `isIP(input)` | ✅ | Returns 4 (IPv4), 6 (IPv6), or 0 (invalid) |
 | `isIPv4(input)` | ✅ | True if valid IPv4 address |
 | `isIPv6(input)` | ✅ | True if valid IPv6 address |
-| **Not Implemented** | | |
-| IPC sockets | ❌ | Named pipes / Unix domain sockets |
+| **IPC** | | |
+| IPC sockets | ✅ | Named pipes (Windows) / Unix domain sockets (Linux/macOS); `server.listen(path)`, `createConnection({path})`, `remoteFamily='pipe'`, error codes (ENOENT/ECONNREFUSED) |
 | `socket.ref()` / `unref()` | ⚠️ | Basic support via event loop ref counting |
 
 ---
@@ -883,7 +883,6 @@ This document tracks Node.js module and API implementation status in SharpTS.
 SharpTS provides comprehensive support for file system operations (sync, callback-based async, and promise-based via `fs/promises`), including file descriptor APIs, directory utilities, hard/symbolic links, permissions, file watching (`watch`, `watchFile`, `unwatchFile`), and streaming (`createReadStream`, `createWriteStream`). Also includes path manipulation, OS information, process management, crypto (hashing, encryption, key derivation, signing), URL parsing, binary data handling via Buffer, EventEmitter for event-driven patterns, timers (setTimeout/setInterval/setImmediate), string decoding for multi-byte characters, high-resolution performance timing, stream classes (Readable, Writable, Duplex, Transform, PassThrough) with flowing mode (auto-flowing on `data` listener, pause/resume, pipe backpressure), the Web Fetch API for HTTP client requests with AbortController support, HTTP/HTTPS servers via `http.createServer`/`https.createServer`, TLS/SSL via `tls` module, TCP via `net` module, UDP via `dgram` module (including connected mode), DNS resolution (full record type support), cluster module for multi-process scaling, and Worker Threads for parallel execution. The module system supports both ES modules and CommonJS import syntax.
 
 **Key Gaps:**
-- No IPC sockets (named pipes / Unix domain sockets)
 - No HTTP port sharing in cluster (round-robin load balancing)
 - No highWaterMark enforcement on read-side backpressure
 
@@ -899,5 +898,5 @@ Priority features to implement for broader Node.js compatibility:
 
 1. ~~**package.json exports**~~ ✅ Implemented: subpath exports, conditional exports, wildcard patterns, self-referencing, subpath imports
 2. ~~**AsyncLocalStorage / async_hooks**~~ ✅ Implemented: AsyncLocalStorage with run, getStore, enterWith, exit, disable; async context propagation across await/Promise.then
-3. **IPC sockets** - Named pipes / Unix domain socket support in net module (medium effort)
+3. ~~**IPC sockets**~~ ✅ Implemented: Named pipes (Windows) / Unix domain sockets (Linux/macOS) with error codes, server.address() returns pipe path
 4. **cluster HTTP port sharing** - Round-robin load balancing (medium effort)

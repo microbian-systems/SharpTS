@@ -56,6 +56,7 @@ public partial class RuntimeEmitter
     internal MethodBuilder _socketConnectOkClosureRun = null!;
     internal ConstructorBuilder _socketConnectErrClosureCtor = null!;
     internal MethodBuilder _socketConnectErrClosureRun = null!;
+    private MethodBuilder _getSocketErrorCodeMethod = null!;
 
     /// <summary>
     /// Phase 1a: Defines the $NetSocket type, fields, constructors (with bodies),
@@ -431,6 +432,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, portLocal);
         il.Emit(OpCodes.Stfld, _netSocketConnectPortField);
 
+        // Emit error code helper (used by both TCP and IPC connect workers)
+        _getSocketErrorCodeMethod = EmitGetSocketErrorCode(typeBuilder);
+
         // ThreadPool.QueueUserWorkItem(new WaitCallback(this._ConnectWorker))
         var connectWorker = EmitNetSocketConnectWorker(typeBuilder, runtime);
         il.Emit(OpCodes.Ldarg_0);
@@ -530,11 +534,13 @@ public partial class RuntimeEmitter
         wil.Emit(OpCodes.Ldc_I4_0);
         wil.Emit(OpCodes.Stfld, _netSocketConnectingField);
 
-        // EventLoop.Schedule(new Action(new $SocketConnectErrClosure(this, ex.Message).Run))
+        // EventLoop.Schedule(new Action(new $SocketConnectErrClosure(this, ex.Message, GetSocketErrorCode(ex)).Run))
         wil.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
         wil.Emit(OpCodes.Ldarg_0);
         wil.Emit(OpCodes.Ldloc, exLocal);
         wil.Emit(OpCodes.Callvirt, _types.Exception.GetProperty("Message")!.GetGetMethod()!);
+        wil.Emit(OpCodes.Ldloc, exLocal);
+        wil.Emit(OpCodes.Call, _getSocketErrorCodeMethod);
         wil.Emit(OpCodes.Newobj, _socketConnectErrClosureCtor);
         wil.Emit(OpCodes.Ldftn, _socketConnectErrClosureRun);
         wil.Emit(OpCodes.Newobj, typeof(Action).GetConstructor([_types.Object, typeof(IntPtr)])!);
@@ -629,9 +635,10 @@ public partial class RuntimeEmitter
             wil.Emit(OpCodes.Newobj, typeof(NamedPipeClientStream).GetConstructor([_types.String, _types.String, typeof(PipeDirection), typeof(PipeOptions)])!);
             wil.Emit(OpCodes.Stloc, pipeLocal);
 
-            // pipeClient.Connect() — blocking connect
+            // pipeClient.Connect(5000) — blocking connect with timeout to avoid hanging forever
             wil.Emit(OpCodes.Ldloc, pipeLocal);
-            wil.Emit(OpCodes.Callvirt, typeof(NamedPipeClientStream).GetMethod("Connect", Type.EmptyTypes)!);
+            wil.Emit(OpCodes.Ldc_I4, 5000);
+            wil.Emit(OpCodes.Callvirt, typeof(NamedPipeClientStream).GetMethod("Connect", [_types.Int32])!);
 
             // _stream = pipeClient
             wil.Emit(OpCodes.Ldarg_0);
@@ -665,11 +672,13 @@ public partial class RuntimeEmitter
         wil.Emit(OpCodes.Ldc_I4_0);
         wil.Emit(OpCodes.Stfld, _netSocketConnectingField);
 
-        // EventLoop.Schedule(new Action(new $SocketConnectErrClosure(this, ex.Message).Run))
+        // EventLoop.Schedule(new Action(new $SocketConnectErrClosure(this, ex.Message, GetSocketErrorCode(ex)).Run))
         wil.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
         wil.Emit(OpCodes.Ldarg_0);
         wil.Emit(OpCodes.Ldloc, exLocal);
         wil.Emit(OpCodes.Callvirt, _types.Exception.GetProperty("Message")!.GetGetMethod()!);
+        wil.Emit(OpCodes.Ldloc, exLocal);
+        wil.Emit(OpCodes.Call, _getSocketErrorCodeMethod);
         wil.Emit(OpCodes.Newobj, _socketConnectErrClosureCtor);
         wil.Emit(OpCodes.Ldftn, _socketConnectErrClosureRun);
         wil.Emit(OpCodes.Newobj, typeof(Action).GetConstructor([_types.Object, typeof(IntPtr)])!);
@@ -721,6 +730,97 @@ public partial class RuntimeEmitter
         // return Path.GetFileName(path)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, typeof(System.IO.Path).GetMethod("GetFileName", [_types.String])!);
+        il.Emit(OpCodes.Ret);
+
+        return method;
+    }
+
+    /// <summary>
+    /// Emits: public static string GetSocketErrorCode(Exception ex)
+    /// Maps .NET exceptions to Node.js error codes for socket operations.
+    /// </summary>
+    private MethodBuilder EmitGetSocketErrorCode(TypeBuilder typeBuilder)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetSocketErrorCode",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Exception]
+        );
+
+        var il = method.GetILGenerator();
+
+        // Check if ex is SocketException
+        var notSocket = il.DefineLabel();
+        var checkFile = il.DefineLabel();
+        var defaultCode = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, typeof(SocketException));
+        var seLocal = il.DeclareLocal(typeof(SocketException));
+        il.Emit(OpCodes.Stloc, seLocal);
+        il.Emit(OpCodes.Ldloc, seLocal);
+        il.Emit(OpCodes.Brfalse, notSocket);
+
+        // switch (se.SocketErrorCode)
+        il.Emit(OpCodes.Ldloc, seLocal);
+        il.Emit(OpCodes.Callvirt, typeof(SocketException).GetProperty("SocketErrorCode")!.GetGetMethod()!);
+
+        // ConnectionRefused
+        var notRefused = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4, (int)SocketError.ConnectionRefused);
+        il.Emit(OpCodes.Bne_Un, notRefused);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "ECONNREFUSED");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notRefused);
+
+        // AddressAlreadyInUse
+        var notInUse = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4, (int)SocketError.AddressAlreadyInUse);
+        il.Emit(OpCodes.Bne_Un, notInUse);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "EADDRINUSE");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notInUse);
+
+        // TimedOut
+        var notTimeout = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4, (int)SocketError.TimedOut);
+        il.Emit(OpCodes.Bne_Un, notTimeout);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "ETIMEDOUT");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTimeout);
+
+        // Default for SocketException
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "ECONNREFUSED");
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notSocket);
+
+        // Check if ex is FileNotFoundException, DirectoryNotFoundException, or TimeoutException
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, typeof(FileNotFoundException));
+        il.Emit(OpCodes.Brtrue, checkFile);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, typeof(DirectoryNotFoundException));
+        il.Emit(OpCodes.Brtrue, checkFile);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, typeof(TimeoutException));
+        il.Emit(OpCodes.Brfalse, defaultCode);
+
+        il.MarkLabel(checkFile);
+        il.Emit(OpCodes.Ldstr, "ENOENT");
+        il.Emit(OpCodes.Ret);
+
+        // Default
+        il.MarkLabel(defaultCode);
+        il.Emit(OpCodes.Ldstr, "ECONNREFUSED");
         il.Emit(OpCodes.Ret);
 
         return method;

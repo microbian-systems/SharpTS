@@ -543,7 +543,8 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits $SocketConnectErrClosure: sets _connecting = false and fires "error" event with message dict.
+    /// Emits $SocketConnectErrClosure: sets _connecting = false and fires "error" event with error dict.
+    /// Error dict has { message, code, syscall } properties matching Node.js system errors.
     /// </summary>
     private void EmitSocketConnectErrClosure(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
@@ -555,12 +556,13 @@ public partial class RuntimeEmitter
 
         var socketField = typeBuilder.DefineField("_socket", _netSocketTypeBuilder, FieldAttributes.Private);
         var errorMsgField = typeBuilder.DefineField("_errorMsg", _types.String, FieldAttributes.Private);
+        var errorCodeField = typeBuilder.DefineField("_errorCode", _types.String, FieldAttributes.Private);
 
-        // Constructor: (socket, errorMsg)
+        // Constructor: (socket, errorMsg, errorCode)
         var ctor = typeBuilder.DefineConstructor(
             MethodAttributes.Public,
             CallingConventions.Standard,
-            [_netSocketTypeBuilder, _types.String]
+            [_netSocketTypeBuilder, _types.String, _types.String]
         );
         {
             var il = ctor.GetILGenerator();
@@ -572,6 +574,9 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_2);
             il.Emit(OpCodes.Stfld, errorMsgField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_3);
+            il.Emit(OpCodes.Stfld, errorCodeField);
             il.Emit(OpCodes.Ret);
         }
 
@@ -591,14 +596,26 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldc_I4_0);
             il.Emit(OpCodes.Stfld, _netSocketConnectingField);
 
-            // var errorDict = new Dictionary<string, object?> { ["message"] = _errorMsg }
+            // var errorDict = new Dictionary<string, object?> { ["message"] = _errorMsg, ["code"] = _errorCode, ["syscall"] = "connect" }
             var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
             il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
             il.Emit(OpCodes.Stloc, dictLocal);
+
             il.Emit(OpCodes.Ldloc, dictLocal);
             il.Emit(OpCodes.Ldstr, "message");
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, errorMsgField);
+            il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
+
+            il.Emit(OpCodes.Ldloc, dictLocal);
+            il.Emit(OpCodes.Ldstr, "code");
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, errorCodeField);
+            il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
+
+            il.Emit(OpCodes.Ldloc, dictLocal);
+            il.Emit(OpCodes.Ldstr, "syscall");
+            il.Emit(OpCodes.Ldstr, "connect");
             il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item")!);
 
             // _socket.Emit("error", new object[] { errorDict })
