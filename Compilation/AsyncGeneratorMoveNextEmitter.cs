@@ -48,37 +48,8 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
         _types = types;
     }
 
-    #region StatementEmitterBase Overrides
-
-    protected override LocalBuilder? DeclareLoopVariable(string name)
-    {
-        var varField = _builder.GetVariableField(name);
-        if (varField != null) return null; // Hoisted field
-        var local = _il.DeclareLocal(typeof(object));
-        _ctx!.Locals.RegisterLocal(name, local);
-        return local;
-    }
-
-    protected override void EmitStoreLoopVariable(LocalBuilder? local, string name, Action emitValue)
-    {
-        var varField = _builder.GetVariableField(name);
-        if (varField != null)
-        {
-            var temp = _il.DeclareLocal(typeof(object));
-            emitValue();
-            _il.Emit(OpCodes.Stloc, temp);
-            _il.Emit(OpCodes.Ldarg_0);
-            _il.Emit(OpCodes.Ldloc, temp);
-            _il.Emit(OpCodes.Stfld, varField);
-        }
-        else if (local != null)
-        {
-            emitValue();
-            _il.Emit(OpCodes.Stloc, local);
-        }
-    }
-
-    #endregion
+    // DeclareLoopVariable and EmitStoreLoopVariable are handled by StatementEmitterBase
+    // using the GetHoistedVariableField hook (overridden in .Statements.cs).
 
     /// <summary>
     /// Emits the complete MoveNextAsync method body.

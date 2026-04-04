@@ -42,39 +42,8 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
     // Variable resolver for hoisted fields and non-hoisted locals
     private IVariableResolver? _resolver;
 
-    #region StatementEmitterBase Overrides
-
-    protected override LocalBuilder? DeclareLoopVariable(string name)
-    {
-        // Check if variable is hoisted to state machine field
-        var field = _builder.GetVariableField(name);
-        if (field != null)
-            return null; // Hoisted to field, no local needed
-
-        var local = _il.DeclareLocal(typeof(object));
-        _ctx!.Locals.RegisterLocal(name, local);
-        return local;
-    }
-
-    protected override void EmitStoreLoopVariable(LocalBuilder? local, string name, Action emitValue)
-    {
-        var field = _builder.GetVariableField(name);
-        if (field != null)
-        {
-            // Store to hoisted field
-            _il.Emit(OpCodes.Ldarg_0);
-            emitValue();
-            _il.Emit(OpCodes.Stfld, field);
-        }
-        else if (local != null)
-        {
-            // Store to local
-            emitValue();
-            _il.Emit(OpCodes.Stloc, local);
-        }
-    }
-
-    #endregion
+    // DeclareLoopVariable and EmitStoreLoopVariable are handled by StatementEmitterBase
+    // using the GetHoistedVariableField hook (overridden in .Statements.cs).
 
     public GeneratorMoveNextEmitter(GeneratorStateMachineBuilder builder, GeneratorStateAnalyzer.GeneratorFunctionAnalysis analysis, TypeProvider types)
         : base(new StateMachineEmitHelpers(builder.MoveNextMethod.GetILGenerator(), types))

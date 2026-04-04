@@ -37,8 +37,6 @@ public class EmitterSyncTests
             "get_Resolver",         // Abstract: provides IVariableResolver
             "GetThisField",         // Abstract: provides hoisted 'this' field
             "GetHoistedVariableField", // Hoisted variable fields on state machine
-            "DeclareLoopVariable",  // Loop variable hoisting
-            "EmitStoreLoopVariable", // Loop variable hoisting
             "SharpTS.Compilation.Emitters.IEmitterContext.get_IL", // IEmitterContext impl
             "SharpTS.Compilation.Emitters.IEmitterContext.SetStackUnknown", // IEmitterContext impl
             "SharpTS.Compilation.Emitters.IEmitterContext.SetStackType",   // IEmitterContext impl
@@ -70,8 +68,8 @@ public class EmitterSyncTests
             "get_Ctx",
             "get_Types",
             "get_Resolver",
-            "DeclareLoopVariable",
-            "EmitStoreLoopVariable",
+            "GetHoistedVariableField", // Hoisted variable fields on state machine
+            "RegisterLoopLocal",    // Loop locals stored in _locals dict instead of Ctx.Locals
             "SharpTS.Compilation.Emitters.IEmitterContext.get_IL",           // IEmitterContext impl
             "SharpTS.Compilation.Emitters.IEmitterContext.SetStackUnknown", // IEmitterContext impl
             "SharpTS.Compilation.Emitters.IEmitterContext.SetStackType",   // IEmitterContext impl
@@ -98,8 +96,6 @@ public class EmitterSyncTests
             "get_Resolver",
             "GetThisField",
             "GetHoistedVariableField",
-            "DeclareLoopVariable",
-            "EmitStoreLoopVariable",
             // --- Genuinely different behavior ---
             "EmitReturn",           // Generator return: set state -2, return false
             "EmitTryCatch",         // Generator exception handling
@@ -117,8 +113,6 @@ public class EmitterSyncTests
             "get_Resolver",
             "GetThisField",
             "GetHoistedVariableField",
-            "DeclareLoopVariable",
-            "EmitStoreLoopVariable",
             // --- Genuinely different behavior ---
             "EmitReturn",           // Async generator return: store in CurrentField + state -2
             "EmitTryCatch",         // Suspension-aware exception handling (flag-based)

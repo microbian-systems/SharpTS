@@ -128,10 +128,8 @@ public partial class ILEmitter : StatementEmitterBase, IEmitterContext
             builder.Emit_Br(target);
     }
 
-    protected override LocalBuilder? DeclareLoopVariable(string name)
-    {
-        return _ctx.Locals.DeclareLocal(name, _ctx.Types.Object);
-    }
+    // DeclareLoopVariable uses the base StatementEmitterBase implementation
+    // (IL.DeclareLocal + Ctx.Locals.RegisterLocal), which is equivalent.
 
     #endregion
 

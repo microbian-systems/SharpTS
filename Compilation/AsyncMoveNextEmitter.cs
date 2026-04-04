@@ -109,39 +109,8 @@ public partial class AsyncMoveNextEmitter : StatementEmitterBase, IEmitterContex
     private LocalBuilder? _returnValueLocal;
     private bool _hasReturnValue;
 
-    #region StatementEmitterBase Overrides
-
-    protected override LocalBuilder? DeclareLoopVariable(string name)
-    {
-        // Check if variable is hoisted to state machine field
-        var field = _builder.GetVariableField(name);
-        if (field != null)
-            return null; // Hoisted to field, no local needed
-
-        var local = _il.DeclareLocal(typeof(object));
-        _ctx!.Locals.RegisterLocal(name, local);
-        return local;
-    }
-
-    protected override void EmitStoreLoopVariable(LocalBuilder? local, string name, Action emitValue)
-    {
-        var field = _builder.GetVariableField(name);
-        if (field != null)
-        {
-            // Store to hoisted field
-            _il.Emit(OpCodes.Ldarg_0);
-            emitValue();
-            _il.Emit(OpCodes.Stfld, field);
-        }
-        else if (local != null)
-        {
-            // Store to local
-            emitValue();
-            _il.Emit(OpCodes.Stloc, local);
-        }
-    }
-
-    #endregion
+    // DeclareLoopVariable and EmitStoreLoopVariable are handled by StatementEmitterBase
+    // using the GetHoistedVariableField hook (overridden in .Statements.Variables.cs).
 
     // For try/catch with awaits: track where to store caught exceptions
     private LocalBuilder? _currentTryCatchExceptionLocal = null;

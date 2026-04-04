@@ -701,22 +701,49 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     #region Loop Variable Helpers
 
     /// <summary>
-    /// Declares a loop variable. Override in state machine emitters to handle hoisted fields.
-    /// Returns a LocalBuilder for non-hoisted variables, or null if hoisted to field.
+    /// Declares a loop variable. If the variable is hoisted to a state machine field
+    /// (detected via <see cref="GetHoistedVariableField"/>), returns null.
+    /// Otherwise declares a local and registers it via <see cref="RegisterLoopLocal"/>.
     /// </summary>
     protected virtual LocalBuilder? DeclareLoopVariable(string name)
     {
+        if (GetHoistedVariableField(name) != null)
+            return null;
+
         var local = IL.DeclareLocal(Types.Object);
-        Ctx.Locals.RegisterLocal(name, local);
+        RegisterLoopLocal(name, local);
         return local;
     }
 
     /// <summary>
-    /// Stores a value into a loop variable. Override in state machine emitters to handle hoisted fields.
+    /// Registers a newly declared loop local variable for later lookup.
+    /// Override to use a different local variable store (e.g. a private dictionary).
+    /// </summary>
+    protected virtual void RegisterLoopLocal(string name, LocalBuilder local)
+    {
+        Ctx.Locals.RegisterLocal(name, local);
+    }
+
+    /// <summary>
+    /// Stores a value into a loop variable. If the variable is hoisted to a state machine
+    /// field, emits a safe store through a temp local to avoid stack ordering issues.
     /// </summary>
     protected virtual void EmitStoreLoopVariable(LocalBuilder? local, string name, Action emitValue)
     {
-        if (local != null)
+        var field = GetHoistedVariableField(name);
+        if (field != null)
+        {
+            // Use temp local to avoid stack corruption:
+            // emitValue() may have complex stack effects, so we evaluate first,
+            // then load 'this' and store to field.
+            var temp = IL.DeclareLocal(Types.Object);
+            emitValue();
+            IL.Emit(OpCodes.Stloc, temp);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldloc, temp);
+            IL.Emit(OpCodes.Stfld, field);
+        }
+        else if (local != null)
         {
             emitValue();
             IL.Emit(OpCodes.Stloc, local);

@@ -191,33 +191,11 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
 
     #region StatementEmitterBase Overrides
 
-    protected override LocalBuilder? DeclareLoopVariable(string name)
-    {
-        var field = _builder.GetVariableField(name);
-        if (field != null)
-            return null;
-        var local = _il.DeclareLocal(_types.Object);
-        _locals[name] = local;
-        return local;
-    }
+    protected override FieldBuilder? GetHoistedVariableField(string name) => _builder.GetVariableField(name);
 
-    protected override void EmitStoreLoopVariable(LocalBuilder? local, string name, Action emitValue)
+    protected override void RegisterLoopLocal(string name, LocalBuilder local)
     {
-        var field = _builder.GetVariableField(name);
-        if (field != null)
-        {
-            var temp = _il.DeclareLocal(_types.Object);
-            emitValue();
-            _il.Emit(OpCodes.Stloc, temp);
-            _il.Emit(OpCodes.Ldarg_0);
-            _il.Emit(OpCodes.Ldloc, temp);
-            _il.Emit(OpCodes.Stfld, field);
-        }
-        else if (local != null)
-        {
-            emitValue();
-            _il.Emit(OpCodes.Stloc, local);
-        }
+        _locals[name] = local;
     }
 
     protected override void EmitVarDeclaration(Stmt.Var v)
