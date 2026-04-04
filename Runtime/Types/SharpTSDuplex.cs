@@ -23,6 +23,11 @@ public class SharpTSDuplex : SharpTSReadable
     private ISharpTSCallable? _writeCallback;
     private ISharpTSCallable? _finalCallback;
     private ISharpTSCallable? _readCallback;
+    private int _writableHighWaterMark = 16384;
+    private int _pendingWrites;
+    private int _writableLength;
+    private bool _needDrain;
+    private bool _writableObjectMode;
 
     /// <summary>
     /// Sets the custom write callback (from constructor options).
@@ -38,6 +43,16 @@ public class SharpTSDuplex : SharpTSReadable
     /// Sets the custom read callback (from constructor options).
     /// </summary>
     public void SetReadCallback(ISharpTSCallable callback) => _readCallback = callback;
+
+    /// <summary>
+    /// Gets or sets the writable-side high water mark.
+    /// </summary>
+    public int WritableHighWaterMark { get => _writableHighWaterMark; set => _writableHighWaterMark = value; }
+
+    /// <summary>
+    /// Gets or sets whether the writable side operates in object mode.
+    /// </summary>
+    public bool WritableObjectMode { get => _writableObjectMode; set => _writableObjectMode = value; }
 
     /// <summary>
     /// Gets a member (method or property) by name for interpreter dispatch.
@@ -56,8 +71,10 @@ public class SharpTSDuplex : SharpTSReadable
             "writable" => _writable && !_writableEnded && !_writableDestroyed,
             "writableEnded" => _writableEnded,
             "writableFinished" => _writableFinished,
-            "writableLength" => (double)_corkBuffer.Count,
+            "writableLength" => (double)_writableLength,
             "writableCorked" => (double)(_corked ? 1 : 0),
+            "writableHighWaterMark" => (double)_writableHighWaterMark,
+            "writableObjectMode" => _writableObjectMode,
 
             // Override destroy to handle both sides
             "destroy" => new BuiltInMethod("destroy", 0, 1, DestroyDuplex),
@@ -108,9 +125,13 @@ public class SharpTSDuplex : SharpTSReadable
 
     private object? DoWrite(Interp interpreter, object? chunk, string? encoding, ISharpTSCallable? callback)
     {
+        _pendingWrites++;
+        var chunkSize = SharpTSWritable.GetChunkSize(chunk, _writableObjectMode);
+        _writableLength += chunkSize;
+
         if (_writeCallback != null)
         {
-            var cbWrapper = new WriteCallbackWrapper(callback, interpreter);
+            var cbWrapper = new WriteCallbackWrapper(callback, interpreter, this, chunkSize);
             var writeArgs = new List<object?> { chunk, encoding ?? "utf8", cbWrapper };
             try
             {
@@ -124,10 +145,30 @@ public class SharpTSDuplex : SharpTSReadable
         }
         else
         {
+            // Sync completion
+            _pendingWrites--;
+            _writableLength -= chunkSize;
             callback?.Call(interpreter, []);
+            CheckDrain(interpreter);
+        }
+
+        // Return false when buffered data exceeds highWaterMark (backpressure)
+        if (_writableLength >= _writableHighWaterMark)
+        {
+            _needDrain = true;
+            return false;
         }
 
         return true;
+    }
+
+    private void CheckDrain(Interp interpreter)
+    {
+        if (_needDrain && _writableLength < _writableHighWaterMark)
+        {
+            _needDrain = false;
+            EmitEvent(interpreter, "drain", []);
+        }
     }
 
     private object? End(Interp interpreter, object? receiver, List<object?> args)
@@ -183,7 +224,7 @@ public class SharpTSDuplex : SharpTSReadable
 
         if (_finalCallback != null)
         {
-            var finalCbWrapper = new WriteCallbackWrapper(null, interpreter);
+            var finalCbWrapper = new WriteCallbackWrapper(null, interpreter, this, 0);
             try
             {
                 _finalCallback.Call(interpreter, [finalCbWrapper]);
@@ -244,18 +285,25 @@ public class SharpTSDuplex : SharpTSReadable
     {
         private readonly ISharpTSCallable? _callback;
         private readonly Interp _interpreter;
+        private readonly SharpTSDuplex _stream;
+        private readonly int _chunkSize;
 
-        public WriteCallbackWrapper(ISharpTSCallable? callback, Interp interpreter)
+        public WriteCallbackWrapper(ISharpTSCallable? callback, Interp interpreter, SharpTSDuplex stream, int chunkSize)
         {
             _callback = callback;
             _interpreter = interpreter;
+            _stream = stream;
+            _chunkSize = chunkSize;
         }
 
         public int Arity() => 1;
 
         public object? Call(Interp interpreter, List<object?> arguments)
         {
+            _stream._pendingWrites--;
+            _stream._writableLength -= _chunkSize;
             _callback?.Call(_interpreter, []);
+            _stream.CheckDrain(_interpreter);
             return null;
         }
     }

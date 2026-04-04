@@ -2136,6 +2136,7 @@ public static class BuiltInModuleTypes
             ["readable"] = boolType,
             ["readableEnded"] = boolType,
             ["readableLength"] = numberType,
+            ["readableHighWaterMark"] = numberType,
             ["readableEncoding"] = stringType,
             ["readableFlowing"] = new TypeInfo.Union([boolType, new TypeInfo.Null()]),
             ["readableObjectMode"] = boolType,

@@ -23,6 +23,7 @@ public class SharpTSWritable : SharpTSEventEmitter
     private ISharpTSCallable? _destroyCallback;
     private int _highWaterMark = 16384;
     private int _pendingWrites;
+    private int _writableLength; // total bytes of in-flight writes (backpressure tracking)
     private bool _needDrain;
     private bool _objectMode;
     private bool _autoDestroy;
@@ -36,6 +37,11 @@ public class SharpTSWritable : SharpTSEventEmitter
     /// Gets or sets whether the stream auto-destroys after finishing.
     /// </summary>
     public bool AutoDestroy { get => _autoDestroy; set => _autoDestroy = value; }
+
+    /// <summary>
+    /// Gets or sets the high water mark for this stream.
+    /// </summary>
+    public int HighWaterMark { get => _highWaterMark; set => _highWaterMark = value; }
 
     /// <summary>
     /// Sets the custom write callback (from constructor options).
@@ -71,7 +77,7 @@ public class SharpTSWritable : SharpTSEventEmitter
             "writable" => _writable && !_ended && !_destroyed,
             "writableEnded" => _ended,
             "writableFinished" => _finished,
-            "writableLength" => (double)_corkBuffer.Count,
+            "writableLength" => (double)_writableLength,
             "writableCorked" => (double)(_corked ? 1 : 0),
             "writableHighWaterMark" => (double)_highWaterMark,
             "writableObjectMode" => _objectMode,
@@ -128,11 +134,13 @@ public class SharpTSWritable : SharpTSEventEmitter
     private object? DoWrite(Interp interpreter, object? chunk, string? encoding, ISharpTSCallable? callback)
     {
         _pendingWrites++;
+        var chunkSize = GetChunkSize(chunk, _objectMode);
+        _writableLength += chunkSize;
 
         if (_writeCallback != null)
         {
             // Custom write callback: (chunk, encoding, callback)
-            var cbWrapper = new WriteCallbackWrapper(callback, interpreter, this);
+            var cbWrapper = new WriteCallbackWrapper(callback, interpreter, this, chunkSize);
             var writeArgs = new List<object?> { chunk, encoding ?? "utf8", cbWrapper };
             try
             {
@@ -146,14 +154,15 @@ public class SharpTSWritable : SharpTSEventEmitter
         }
         else
         {
-            // Default behavior: just accept the data
+            // Default behavior: just accept the data (sync completion)
             _pendingWrites--;
+            _writableLength -= chunkSize;
             callback?.Call(interpreter, []);
             CheckDrain(interpreter);
         }
 
-        // Return false when pending writes exceed threshold (backpressure)
-        if (_pendingWrites >= 16)
+        // Return false when buffered data exceeds highWaterMark (backpressure)
+        if (_writableLength >= _highWaterMark)
         {
             _needDrain = true;
             return false;
@@ -164,11 +173,25 @@ public class SharpTSWritable : SharpTSEventEmitter
 
     private void CheckDrain(Interp interpreter)
     {
-        if (_needDrain && _pendingWrites < 16)
+        if (_needDrain && _writableLength < _highWaterMark)
         {
             _needDrain = false;
             EmitEvent(interpreter, "drain", []);
         }
+    }
+
+    /// <summary>
+    /// Gets the byte size of a chunk (or 1 for object mode).
+    /// </summary>
+    internal static int GetChunkSize(object? chunk, bool objectMode)
+    {
+        if (objectMode) return 1;
+        return chunk switch
+        {
+            string s => s.Length,
+            SharpTSBuffer buf => buf.Length,
+            _ => 0
+        };
     }
 
     /// <summary>
@@ -244,7 +267,7 @@ public class SharpTSWritable : SharpTSEventEmitter
         // Call final callback
         if (_finalCallback != null)
         {
-            var finalCbWrapper = new WriteCallbackWrapper(null, interpreter, this);
+            var finalCbWrapper = new WriteCallbackWrapper(null, interpreter, this, 0);
             try
             {
                 _finalCallback.Call(interpreter, [finalCbWrapper]);
@@ -377,6 +400,7 @@ public class SharpTSWritable : SharpTSEventEmitter
         _corked = false;
         _corkBuffer.Clear();
         _pendingWrites = 0;
+        _writableLength = 0;
         _needDrain = false;
         ClearAllListenersInternal();
     }
@@ -391,12 +415,14 @@ public class SharpTSWritable : SharpTSEventEmitter
         private readonly ISharpTSCallable? _callback;
         private readonly Interp _interpreter;
         private readonly SharpTSWritable _stream;
+        private readonly int _chunkSize;
 
-        public WriteCallbackWrapper(ISharpTSCallable? callback, Interp interpreter, SharpTSWritable stream)
+        public WriteCallbackWrapper(ISharpTSCallable? callback, Interp interpreter, SharpTSWritable stream, int chunkSize)
         {
             _callback = callback;
             _interpreter = interpreter;
             _stream = stream;
+            _chunkSize = chunkSize;
         }
 
         public int Arity() => 0;
@@ -405,8 +431,9 @@ public class SharpTSWritable : SharpTSEventEmitter
         {
             // error argument
             var error = arguments.Count > 0 ? arguments[0] : null;
-            // Decrement pending writes and check for drain
+            // Decrement pending writes and buffered length
             _stream._pendingWrites--;
+            _stream._writableLength -= _chunkSize;
             // Call the original callback
             _callback?.Call(_interpreter, []);
             // Check if we need to emit drain

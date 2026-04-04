@@ -674,33 +674,66 @@ public abstract partial class ExpressionEmitterBase
             IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSWritableType.GetMethod("SetFinalCallback")!);
             IL.MarkLabel(skipFinalLabel);
 
-            // Extract 'objectMode'
-            var skipObjectModeLabel = IL.DefineLabel();
-            var afterObjectModeLabel2 = IL.DefineLabel();
-            IL.Emit(OpCodes.Ldloc, optionsLocal);
-            IL.Emit(OpCodes.Ldstr, "objectMode");
-            IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
-            IL.Emit(OpCodes.Dup);
-            IL.Emit(OpCodes.Brfalse, skipObjectModeLabel);
-            IL.Emit(OpCodes.Pop);
-            IL.Emit(OpCodes.Ldloc, instanceLocal);
-            IL.Emit(OpCodes.Ldc_I4_1);
-            IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSWritableType.GetMethod("SetObjectMode")!);
-            IL.Emit(OpCodes.Br, afterObjectModeLabel2);
-            IL.MarkLabel(skipObjectModeLabel);
-            IL.Emit(OpCodes.Pop);
-            IL.MarkLabel(afterObjectModeLabel2);
+            // Extract 'objectMode' — check if value is boxed true (not just non-null)
+            {
+                var skipObjectModeLabel = IL.DefineLabel();
+                var objectModeValLocal = IL.DeclareLocal(typeof(object));
+                IL.Emit(OpCodes.Ldloc, optionsLocal);
+                IL.Emit(OpCodes.Ldstr, "objectMode");
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+                IL.Emit(OpCodes.Stloc, objectModeValLocal);
+                // Check if value is boxed Boolean true
+                IL.Emit(OpCodes.Ldloc, objectModeValLocal);
+                IL.Emit(OpCodes.Isinst, typeof(bool));
+                IL.Emit(OpCodes.Brfalse, skipObjectModeLabel);
+                IL.Emit(OpCodes.Ldloc, objectModeValLocal);
+                IL.Emit(OpCodes.Unbox_Any, typeof(bool));
+                IL.Emit(OpCodes.Brfalse, skipObjectModeLabel);
+                IL.Emit(OpCodes.Ldloc, instanceLocal);
+                IL.Emit(OpCodes.Ldc_I4_1);
+                IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSWritableType.GetMethod("SetObjectMode")!);
+                IL.MarkLabel(skipObjectModeLabel);
+            }
 
-            // Extract 'autoDestroy'
-            var skipAutoDestroyLabel = IL.DefineLabel();
-            IL.Emit(OpCodes.Ldloc, optionsLocal);
-            IL.Emit(OpCodes.Ldstr, "autoDestroy");
-            IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
-            IL.Emit(OpCodes.Brfalse, skipAutoDestroyLabel);
-            IL.Emit(OpCodes.Ldloc, instanceLocal);
-            IL.Emit(OpCodes.Ldc_I4_1);
-            IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSWritableType.GetMethod("SetAutoDestroy")!);
-            IL.MarkLabel(skipAutoDestroyLabel);
+            // Extract 'autoDestroy' — check if value is boxed true
+            {
+                var skipAutoDestroyLabel = IL.DefineLabel();
+                var autoDestroyValLocal = IL.DeclareLocal(typeof(object));
+                IL.Emit(OpCodes.Ldloc, optionsLocal);
+                IL.Emit(OpCodes.Ldstr, "autoDestroy");
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+                IL.Emit(OpCodes.Stloc, autoDestroyValLocal);
+                IL.Emit(OpCodes.Ldloc, autoDestroyValLocal);
+                IL.Emit(OpCodes.Isinst, typeof(bool));
+                IL.Emit(OpCodes.Brfalse, skipAutoDestroyLabel);
+                IL.Emit(OpCodes.Ldloc, autoDestroyValLocal);
+                IL.Emit(OpCodes.Unbox_Any, typeof(bool));
+                IL.Emit(OpCodes.Brfalse, skipAutoDestroyLabel);
+                IL.Emit(OpCodes.Ldloc, instanceLocal);
+                IL.Emit(OpCodes.Ldc_I4_1);
+                IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSWritableType.GetMethod("SetAutoDestroy")!);
+                IL.MarkLabel(skipAutoDestroyLabel);
+            }
+
+            // Extract 'highWaterMark'
+            {
+                var skipHwmLabel = IL.DefineLabel();
+                var hwmValLocal = IL.DeclareLocal(typeof(object));
+                IL.Emit(OpCodes.Ldloc, optionsLocal);
+                IL.Emit(OpCodes.Ldstr, "highWaterMark");
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+                IL.Emit(OpCodes.Stloc, hwmValLocal);
+                IL.Emit(OpCodes.Ldloc, hwmValLocal);
+                IL.Emit(OpCodes.Brfalse, skipHwmLabel);
+                IL.Emit(OpCodes.Ldloc, hwmValLocal);
+                IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+                IL.Emit(OpCodes.Brtrue, skipHwmLabel);
+                IL.Emit(OpCodes.Ldloc, instanceLocal);
+                IL.Emit(OpCodes.Ldloc, hwmValLocal);
+                IL.Emit(OpCodes.Call, typeof(Convert).GetMethod("ToInt32", [typeof(object)])!);
+                IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSWritableType.GetMethod("SetHighWaterMark")!);
+                IL.MarkLabel(skipHwmLabel);
+            }
 
             IL.Emit(OpCodes.Br, endLabel);
             IL.MarkLabel(optionsNullLabel);

@@ -13,6 +13,8 @@ public partial class RuntimeEmitter
     private TypeBuilder _tsWriteCallbackWrapperType = null!;
     private ConstructorBuilder _tsWriteCallbackWrapperCtor = null!;
     private FieldBuilder _tsWriteCallbackWrapperUserCallbackField = null!;
+    private FieldBuilder _tsWriteCallbackWrapperStreamField = null!;
+    private FieldBuilder _tsWriteCallbackWrapperChunkSizeField = null!;
 
     // $Writable fields
     private FieldBuilder _tsWritableWritableField = null!;
@@ -26,6 +28,8 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsWritableHighWaterMarkField = null!;
     private FieldBuilder _tsWritableObjectModeField = null!;
     private FieldBuilder _tsWritableAutoDestroyField = null!;
+    private FieldBuilder _tsWritableLengthField = null!;
+    private FieldBuilder _tsWritableNeedDrainField = null!;
 
     /// <summary>
     /// Emits the $WriteCallbackWrapper helper class.
@@ -46,12 +50,18 @@ public partial class RuntimeEmitter
         // Field: _userCallback (object, may be null)
         _tsWriteCallbackWrapperUserCallbackField = typeBuilder.DefineField(
             "_userCallback", _types.Object, FieldAttributes.Private);
+        // Field: _stream (object, the parent $Writable or $Duplex)
+        _tsWriteCallbackWrapperStreamField = typeBuilder.DefineField(
+            "_stream", _types.Object, FieldAttributes.Private);
+        // Field: _chunkSize (int)
+        _tsWriteCallbackWrapperChunkSizeField = typeBuilder.DefineField(
+            "_chunkSize", _types.Int32, FieldAttributes.Private);
 
-        // Constructor: public $WriteCallbackWrapper(object userCallback)
+        // Constructor: public $WriteCallbackWrapper(object userCallback, object stream, int chunkSize)
         var ctorBuilder = typeBuilder.DefineConstructor(
             MethodAttributes.Public,
             CallingConventions.Standard,
-            [_types.Object]
+            [_types.Object, _types.Object, _types.Int32]
         );
         _tsWriteCallbackWrapperCtor = ctorBuilder;
         runtime.WriteCallbackWrapperCtor = ctorBuilder;
@@ -62,6 +72,12 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldarg_1);
         ctorIL.Emit(OpCodes.Stfld, _tsWriteCallbackWrapperUserCallbackField);
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_2);
+        ctorIL.Emit(OpCodes.Stfld, _tsWriteCallbackWrapperStreamField);
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_3);
+        ctorIL.Emit(OpCodes.Stfld, _tsWriteCallbackWrapperChunkSizeField);
         ctorIL.Emit(OpCodes.Ret);
 
         // Invoke method: public object Invoke(object[] args)
@@ -77,6 +93,73 @@ public partial class RuntimeEmitter
 
         var invokeIL = invokeBuilder.GetILGenerator();
         var noCallbackLabel = invokeIL.DefineLabel();
+
+        // Subtract _chunkSize from _stream._writableLength (if _stream is $Writable)
+        // _stream._writableLength -= _chunkSize
+        var notWritableLabel = invokeIL.DefineLabel();
+        var afterSubtractLabel = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperStreamField);
+        invokeIL.Emit(OpCodes.Brfalse, afterSubtractLabel);
+
+        // Try cast to $Writable first
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperStreamField);
+        invokeIL.Emit(OpCodes.Isinst, runtime.TSWritableType);
+        invokeIL.Emit(OpCodes.Brfalse, notWritableLabel);
+
+        // stream._writableLength -= _chunkSize
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperStreamField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.TSWritableType);
+        invokeIL.Emit(OpCodes.Dup);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWritableLengthField);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperChunkSizeField);
+        invokeIL.Emit(OpCodes.Sub);
+        invokeIL.Emit(OpCodes.Stfld, _tsWritableLengthField);
+
+        // Check drain: if (_needDrain && _writableLength < _highWaterMark) emit drain
+        var noDrainLabel1 = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperStreamField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.TSWritableType);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWritableNeedDrainField);
+        invokeIL.Emit(OpCodes.Brfalse, noDrainLabel1);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperStreamField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.TSWritableType);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWritableLengthField);
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperStreamField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.TSWritableType);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWritableHighWaterMarkField);
+        invokeIL.Emit(OpCodes.Bge, noDrainLabel1);
+        // _needDrain = false
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperStreamField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.TSWritableType);
+        invokeIL.Emit(OpCodes.Ldc_I4_0);
+        invokeIL.Emit(OpCodes.Stfld, _tsWritableNeedDrainField);
+        // emit('drain', [])
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, _tsWriteCallbackWrapperStreamField);
+        invokeIL.Emit(OpCodes.Castclass, runtime.TSWritableType);
+        invokeIL.Emit(OpCodes.Ldstr, "drain");
+        invokeIL.Emit(OpCodes.Ldc_I4_0);
+        invokeIL.Emit(OpCodes.Newarr, _types.Object);
+        invokeIL.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
+        invokeIL.Emit(OpCodes.Pop);
+        invokeIL.MarkLabel(noDrainLabel1);
+        invokeIL.Emit(OpCodes.Br, afterSubtractLabel);
+
+        invokeIL.MarkLabel(notWritableLabel);
+        // For Duplex: try cast to $Duplex and subtract from its _writableLength
+        // (Duplex inherits from $Readable, not $Writable, so needs separate handling)
+        // This is handled by $Duplex's own WriteCallbackWrapper or shared field access
+        // For now, skip — Duplex will be handled in task #7
+
+        invokeIL.MarkLabel(afterSubtractLabel);
 
         // if (_userCallback != null && _userCallback is $TSFunction)
         invokeIL.Emit(OpCodes.Ldarg_0);
@@ -105,9 +188,6 @@ public partial class RuntimeEmitter
 
     private void EmitTSWritableClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
-        // Emit the helper callback wrapper class first
-        EmitTSWriteCallbackWrapperClass(moduleBuilder, runtime);
-
         // Define class: public class $Writable : $EventEmitter
         var typeBuilder = moduleBuilder.DefineType(
             "$Writable",
@@ -127,9 +207,14 @@ public partial class RuntimeEmitter
         _tsWritableCorkBufferField = typeBuilder.DefineField("_corkBuffer", listType, FieldAttributes.Private);
         _tsWritableWriteCallbackField = typeBuilder.DefineField("_writeCallback", _types.Object, FieldAttributes.Private);
         _tsWritableFinalCallbackField = typeBuilder.DefineField("_finalCallback", _types.Object, FieldAttributes.Private);
-        _tsWritableHighWaterMarkField = typeBuilder.DefineField("_highWaterMark", _types.Int32, FieldAttributes.Private);
+        _tsWritableHighWaterMarkField = typeBuilder.DefineField("_highWaterMark", _types.Int32, FieldAttributes.Public);
         _tsWritableObjectModeField = typeBuilder.DefineField("_objectMode", _types.Boolean, FieldAttributes.Private);
         _tsWritableAutoDestroyField = typeBuilder.DefineField("_autoDestroy", _types.Boolean, FieldAttributes.Private);
+        _tsWritableLengthField = typeBuilder.DefineField("_writableLength", _types.Int32, FieldAttributes.Public);
+        _tsWritableNeedDrainField = typeBuilder.DefineField("_needDrain", _types.Boolean, FieldAttributes.Public);
+
+        // Emit the helper callback wrapper class (after fields so it can reference them)
+        EmitTSWriteCallbackWrapperClass(moduleBuilder, runtime);
 
         // Constructor
         EmitTSWritableCtor(typeBuilder, runtime);
@@ -147,6 +232,7 @@ public partial class RuntimeEmitter
         EmitTSWritableSetFinalCallback(typeBuilder, runtime);
         EmitTSWritableSetObjectMode(typeBuilder, runtime);
         EmitTSWritableSetAutoDestroy(typeBuilder, runtime);
+        EmitTSWritableSetHighWaterMark(typeBuilder, runtime);
 
         // Property getters
         EmitTSWritablePropertyGetters(typeBuilder, runtime);
@@ -269,14 +355,49 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notCorkedLabel);
 
+        // Compute chunk size: chunk is string ? string.Length : 0
+        // (objectMode uses 1, but for simplicity we just use string length)
+        var chunkSizeLocal = il.DeclareLocal(_types.Int32);
+        var notStringLabel = il.DefineLabel();
+        var afterChunkSizeLabel = il.DefineLabel();
+
+        // if (_objectMode) chunkSize = 1
+        var notObjectModeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableObjectModeField);
+        il.Emit(OpCodes.Brfalse, notObjectModeLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, chunkSizeLocal);
+        il.Emit(OpCodes.Br, afterChunkSizeLabel);
+
+        il.MarkLabel(notObjectModeLabel);
+        il.Emit(OpCodes.Ldarg_1); // chunk
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, _types.String.GetProperty("Length")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, chunkSizeLocal);
+        il.Emit(OpCodes.Br, afterChunkSizeLabel);
+        il.MarkLabel(notStringLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, chunkSizeLocal);
+        il.MarkLabel(afterChunkSizeLabel);
+
+        // _writableLength += chunkSize
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableLengthField);
+        il.Emit(OpCodes.Ldloc, chunkSizeLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stfld, _tsWritableLengthField);
+
         // If _writeCallback is set, invoke it
         var noCallbackLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsWritableWriteCallbackField);
         il.Emit(OpCodes.Brfalse, noCallbackLabel);
 
-        // Call _writeCallback with (chunk, encoding, done_callback)
-        // For simplicity, we invoke via $TSFunction.Invoke if it's a function
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsWritableWriteCallbackField);
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
@@ -311,22 +432,35 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_2);
-        // Wrap the callback in $WriteCallbackWrapper so the user's write handler
-        // always receives a callable "done" function (matching Node.js behavior)
+        // Wrap the callback in $WriteCallbackWrapper(userCallback, stream, chunkSize)
         il.Emit(OpCodes.Ldarg_3); // callback (may be null)
+        il.Emit(OpCodes.Ldarg_0); // this (stream)
+        il.Emit(OpCodes.Ldloc, chunkSizeLocal);
         il.Emit(OpCodes.Newobj, _tsWriteCallbackWrapperCtor);
         il.Emit(OpCodes.Stelem_Ref);
 
-        // Call InvokeWithThis(this, args) instead of Invoke(args)
+        // Call InvokeWithThis(this, args)
         il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
         il.Emit(OpCodes.Pop);
 
-        // return true
+        // return _writableLength < _highWaterMark
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableLengthField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableHighWaterMarkField);
+        il.Emit(OpCodes.Bge, returnFalseLabel);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(noCallbackLabel);
-        // Default: just accept the data, call user callback if provided
+        // Default: sync completion — subtract chunkSize immediately, call user callback
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableLengthField);
+        il.Emit(OpCodes.Ldloc, chunkSizeLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stfld, _tsWritableLengthField);
+
         il.Emit(OpCodes.Ldarg_3);
         il.Emit(OpCodes.Brfalse, callCallbackLabel);
         il.Emit(OpCodes.Ldarg_3);
@@ -340,11 +474,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
 
         il.MarkLabel(callCallbackLabel);
-        // return true
+        // return _writableLength < _highWaterMark
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableLengthField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsWritableHighWaterMarkField);
+        il.Emit(OpCodes.Bge, returnFalseLabel);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(returnFalseLabel);
+        // Set _needDrain = true before returning false
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _tsWritableNeedDrainField);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
     }
@@ -418,6 +561,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldnull); // no user callback
+        il.Emit(OpCodes.Ldarg_0); // stream
+        il.Emit(OpCodes.Ldc_I4_0); // chunkSize = 0
         il.Emit(OpCodes.Newobj, _tsWriteCallbackWrapperCtor);
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
@@ -719,6 +864,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    private void EmitTSWritableSetHighWaterMark(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // public void SetHighWaterMark(int value)
+        var method = typeBuilder.DefineMethod(
+            "SetHighWaterMark",
+            MethodAttributes.Public,
+            _types.Void,
+            [_types.Int32]
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, _tsWritableHighWaterMarkField);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitTSWritablePropertyGetters(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // writable property: _writable && !_ended && !_destroyed
@@ -786,8 +948,7 @@ public partial class RuntimeEmitter
         );
         il = getWritableLength.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, _tsWritableCorkBufferField);
-        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldfld, _tsWritableLengthField);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Ret);
         writableLengthProp.SetGetMethod(getWritableLength);

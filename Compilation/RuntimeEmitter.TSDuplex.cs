@@ -18,6 +18,9 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsDuplexWriteCallbackField = null!;
     private FieldBuilder _tsDuplexFinalCallbackField = null!;
     private FieldBuilder _tsDuplexWritableObjectModeField = null!;
+    private FieldBuilder _tsDuplexWritableLengthField = null!;
+    private FieldBuilder _tsDuplexWritableHighWaterMarkField = null!;
+    private FieldBuilder _tsDuplexWritableNeedDrainField = null!;
 
     /// <summary>
     /// Phase 1: Define the $Duplex type, fields, and methods.
@@ -42,6 +45,9 @@ public partial class RuntimeEmitter
         _tsDuplexWriteCallbackField = typeBuilder.DefineField("_writeCallback", _types.Object, FieldAttributes.Family);
         _tsDuplexFinalCallbackField = typeBuilder.DefineField("_finalCallback", _types.Object, FieldAttributes.Family);
         _tsDuplexWritableObjectModeField = typeBuilder.DefineField("_writableObjectMode", _types.Boolean, FieldAttributes.Family);
+        _tsDuplexWritableLengthField = typeBuilder.DefineField("_duplexWritableLength", _types.Int32, FieldAttributes.Family);
+        _tsDuplexWritableHighWaterMarkField = typeBuilder.DefineField("_duplexWritableHwm", _types.Int32, FieldAttributes.Family);
+        _tsDuplexWritableNeedDrainField = typeBuilder.DefineField("_duplexNeedDrain", _types.Boolean, FieldAttributes.Family);
 
         // Constructor
         EmitTSDuplexCtor(typeBuilder, runtime);
@@ -123,6 +129,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, _tsDuplexWritableObjectModeField);
 
+        // _duplexWritableHwm = 16384
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, 16384);
+        il.Emit(OpCodes.Stfld, _tsDuplexWritableHighWaterMarkField);
+
         il.Emit(OpCodes.Ret);
     }
 
@@ -189,9 +200,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_2);
-        // Wrap the callback in $WriteCallbackWrapper so the user's write handler
-        // always receives a callable "done" function (matching Node.js behavior)
+        // Wrap the callback in $WriteCallbackWrapper(userCallback, stream, chunkSize=0)
+        // Duplex uses chunkSize=0 for simplicity (backpressure tracked differently)
         il.Emit(OpCodes.Ldarg_3); // callback (may be null)
+        il.Emit(OpCodes.Ldnull); // stream (null — Duplex doesn't use Writable's _writableLength)
+        il.Emit(OpCodes.Ldc_I4_0); // chunkSize
         il.Emit(OpCodes.Newobj, _tsWriteCallbackWrapperCtor);
         il.Emit(OpCodes.Stelem_Ref);
 
@@ -360,6 +373,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsDuplexWritableObjectModeField);
         il.Emit(OpCodes.Ret);
         writableObjectModeProp.SetGetMethod(getWritableObjectMode);
+
+        // writableHighWaterMark property
+        var writableHwmProp = typeBuilder.DefineProperty("WritableHighWaterMark", PropertyAttributes.None, _types.Double, null);
+        var getWritableHwm = typeBuilder.DefineMethod(
+            "get_WritableHighWaterMark",
+            MethodAttributes.Public | MethodAttributes.SpecialName,
+            _types.Double,
+            Type.EmptyTypes
+        );
+        il = getWritableHwm.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsDuplexWritableHighWaterMarkField);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+        writableHwmProp.SetGetMethod(getWritableHwm);
 
         // writableFinished property
         var writableFinishedProp = typeBuilder.DefineProperty("WritableFinished", PropertyAttributes.None, _types.Boolean, null);

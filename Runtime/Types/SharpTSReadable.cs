@@ -74,6 +74,7 @@ public class SharpTSReadable : SharpTSEventEmitter
             "readable" => _readable && !_ended && !_destroyed,
             "readableEnded" => _ended,
             "readableLength" => (double)_readBuffer.Count,
+            "readableHighWaterMark" => (double)_highWaterMark,
             "readableEncoding" => _encoding,
             "readableFlowing" => _flowing ?? (object)false,
             "readableObjectMode" => _objectMode,
@@ -412,7 +413,13 @@ public class SharpTSReadable : SharpTSEventEmitter
         while (_readBuffer.Count > 0)
         {
             var chunk = _readBuffer.Dequeue();
-            WriteToDestination(interpreter, destObj, chunk, _encoding);
+            var ok = WriteToDestination(interpreter, destObj, chunk, _encoding);
+            if (!ok)
+            {
+                // Destination backpressure — stop draining, stay paused
+                RegisterDrainListener(interpreter, destObj);
+                return destObj;
+            }
         }
 
         // Enter flowing mode so future pushes emit 'data' and flow to pipes
@@ -428,32 +435,33 @@ public class SharpTSReadable : SharpTSEventEmitter
     }
 
     /// <summary>
-    /// Writes a chunk to any writable-like destination.
+    /// Writes a chunk to any writable-like destination. Returns false on backpressure.
     /// </summary>
-    private static void WriteToDestination(Interp interpreter, object destObj, object? chunk, string encoding)
+    private static bool WriteToDestination(Interp interpreter, object destObj, object? chunk, string encoding)
     {
         if (destObj is SharpTSWritable writable)
         {
-            writable.WriteInternal(interpreter, chunk, encoding);
+            return writable.WriteInternal(interpreter, chunk, encoding);
         }
         else if (destObj is SharpTSPassThrough passThrough)
         {
-            // PassThrough - call via GetMember to get the inherited Transform write method
             var writeMethod = passThrough.GetMember("write") as BuiltInMethod;
-            writeMethod?.Bind(passThrough).Call(interpreter, [chunk, encoding]);
+            var result = writeMethod?.Bind(passThrough).Call(interpreter, [chunk, encoding]);
+            return result is not false;
         }
         else if (destObj is SharpTSTransform transform)
         {
-            // Transform - call via GetMember which returns the TransformWrite method
             var writeMethod = transform.GetMember("write") as BuiltInMethod;
-            writeMethod?.Bind(transform).Call(interpreter, [chunk, encoding]);
+            var result = writeMethod?.Bind(transform).Call(interpreter, [chunk, encoding]);
+            return result is not false;
         }
         else if (destObj is SharpTSDuplex duplex)
         {
-            // For Duplex streams, call the write method
             var writeMethod = duplex.GetMember("write") as BuiltInMethod;
-            writeMethod?.Bind(duplex).Call(interpreter, [chunk, encoding]);
+            var result = writeMethod?.Bind(duplex).Call(interpreter, [chunk, encoding]);
+            return result is not false;
         }
+        return true;
     }
 
     /// <summary>
@@ -578,7 +586,29 @@ public class SharpTSReadable : SharpTSEventEmitter
     {
         foreach (var dest in _pipeDestinations.ToList())
         {
-            WriteToDestination(interpreter, dest, chunk, _encoding);
+            var ok = WriteToDestination(interpreter, dest, chunk, _encoding);
+            if (!ok && _flowing == true)
+            {
+                // Destination signaled backpressure — pause this readable
+                _flowing = false;
+                // Register a drain listener on the destination to resume
+                RegisterDrainListener(interpreter, dest);
+            }
+        }
+    }
+
+    private void RegisterDrainListener(Interp interpreter, object dest)
+    {
+        var listener = new DrainResumeListener(this);
+        if (dest is SharpTSWritable writable)
+        {
+            var onceMethod = ((SharpTSEventEmitter)writable).GetMember("once") as BuiltInMethod;
+            onceMethod?.Bind(writable).Call(interpreter, ["drain", listener]);
+        }
+        else if (dest is SharpTSDuplex duplex)
+        {
+            var onceMethod = ((SharpTSEventEmitter)duplex).GetMember("once") as BuiltInMethod;
+            onceMethod?.Bind(duplex).Call(interpreter, ["drain", listener]);
         }
     }
 

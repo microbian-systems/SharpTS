@@ -60,6 +60,14 @@ public sealed class SharpTSDuplexConstructor : ISharpTSCallable
             if (options.GetProperty("objectMode") is true)
             {
                 stream.ObjectMode = true;
+                stream.WritableObjectMode = true;
+            }
+
+            // highWaterMark option - sets both readable and writable sides
+            if (options.GetProperty("highWaterMark") is double hwm)
+            {
+                stream.HighWaterMark = (int)hwm;
+                stream.WritableHighWaterMark = (int)hwm;
             }
         }
 

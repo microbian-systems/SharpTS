@@ -1254,6 +1254,143 @@ public class StreamModuleTests
         Assert.Contains("16", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_Writable_HighWaterMark_WriteReturnsFalse(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Writable } from 'stream';
+                const callbacks: Function[] = [];
+                const w = new Writable({
+                    highWaterMark: 10,
+                    write(chunk: any, encoding: string, cb: Function) {
+                        callbacks.push(cb);
+                    }
+                });
+                const r1 = w.write('hello');
+                const r2 = w.write('world!');
+                console.log(r1, r2);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("true false", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_Writable_HighWaterMark_DrainEvent(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Writable } from 'stream';
+                const callbacks: Function[] = [];
+                const w = new Writable({
+                    highWaterMark: 5,
+                    write(chunk: any, encoding: string, cb: Function) {
+                        callbacks.push(cb);
+                    }
+                });
+                let drained = false;
+                w.on('drain', () => { drained = true; });
+                w.write('abcdef');
+                console.log('before:', drained);
+                callbacks[0]();
+                console.log('after:', drained);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("before: false", output);
+        Assert.Contains("after: true", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_ReadableHighWaterMark_Property(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = new Readable({ highWaterMark: 1024 });
+                console.log(r.readableHighWaterMark);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("1024", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_WritableHighWaterMark_Property(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Writable } from 'stream';
+                const w = new Writable({ highWaterMark: 2048 });
+                console.log(w.writableHighWaterMark);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("2048", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_Writable_SyncWrite_NeverBackpressures(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Writable } from 'stream';
+                const w = new Writable({ highWaterMark: 5 });
+                let allTrue = true;
+                for (let i = 0; i < 100; i++) {
+                    if (!w.write('abcdefghij')) { allTrue = false; break; }
+                }
+                console.log(allTrue);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        // Sync writes complete immediately, so _writableLength drops to 0 after each write
+        Assert.Contains("true", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_Writable_WritableLength_TracksInFlight(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Writable } from 'stream';
+                const callbacks: Function[] = [];
+                const w = new Writable({
+                    highWaterMark: 100,
+                    write(chunk: any, encoding: string, cb: Function) {
+                        callbacks.push(cb);
+                    }
+                });
+                w.write('hello');
+                console.log('after write:', w.writableLength);
+                callbacks[0]();
+                console.log('after cb:', w.writableLength);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("after write: 5", output);
+        Assert.Contains("after cb: 0", output);
+    }
+
     #endregion
 
     #region toArray, forEach, isReadable, isWritable

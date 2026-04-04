@@ -364,6 +364,8 @@ public partial class RuntimeEmitter
         var tryWritable = il.DefineLabel();
         var afterWrite = il.DefineLabel();
 
+        var writeResultLocal = il.DeclareLocal(_types.Boolean);
+
         il.Emit(OpCodes.Ldloc, destLocal);
         il.Emit(OpCodes.Isinst, runtime.TSDuplexType);
         il.Emit(OpCodes.Brfalse, tryWritable);
@@ -374,7 +376,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Callvirt, runtime.TSDuplexWrite);
-        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Stloc, writeResultLocal);
         il.Emit(OpCodes.Br, afterWrite);
 
         il.MarkLabel(tryWritable);
@@ -388,7 +390,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Callvirt, runtime.TSWritableWrite);
-        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Stloc, writeResultLocal);
+
+        // If write returned false (backpressure), set _flowing = 0 (paused)
+        var noBackpressureLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, writeResultLocal);
+        il.Emit(OpCodes.Brtrue, noBackpressureLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, _tsReadableFlowingField);
+        il.MarkLabel(noBackpressureLabel);
 
         il.MarkLabel(afterWrite);
         il.Emit(OpCodes.Ldloc, idxLocal);
@@ -686,7 +697,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldnull); // encoding
         il.Emit(OpCodes.Ldnull); // callback
         il.Emit(OpCodes.Callvirt, runtime.TSDuplexWrite);
-        il.Emit(OpCodes.Pop);
+        // If write returned false, stop draining (backpressure)
+        il.Emit(OpCodes.Brfalse, loopEnd);
         il.Emit(OpCodes.Br, loopStart);
 
         // Handle $Writable destination
@@ -699,7 +711,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldnull); // encoding
         il.Emit(OpCodes.Ldnull); // callback
         il.Emit(OpCodes.Callvirt, runtime.TSWritableWrite);
-        il.Emit(OpCodes.Pop);
+        // If write returned false, stop draining (backpressure)
+        il.Emit(OpCodes.Brfalse, loopEnd);
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(notWritableLabel);
@@ -1196,6 +1209,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsReadableDestroyedField);
         il.Emit(OpCodes.Ret);
         destroyedProp.SetGetMethod(getDestroyed);
+
+        // readableHighWaterMark property
+        var readableHwmProp = typeBuilder.DefineProperty("ReadableHighWaterMark", PropertyAttributes.None, _types.Double, null);
+        var getReadableHwm = typeBuilder.DefineMethod(
+            "get_ReadableHighWaterMark",
+            MethodAttributes.Public | MethodAttributes.SpecialName,
+            _types.Double,
+            Type.EmptyTypes
+        );
+        il = getReadableHwm.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableHighWaterMarkField);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+        readableHwmProp.SetGetMethod(getReadableHwm);
 
         // readableObjectMode property
         var readableObjectModeProp = typeBuilder.DefineProperty("ReadableObjectMode", PropertyAttributes.None, _types.Boolean, null);

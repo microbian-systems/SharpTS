@@ -61,6 +61,12 @@ public sealed class SharpTSWritableConstructor : ISharpTSCallable
             {
                 stream.AutoDestroy = true;
             }
+
+            // highWaterMark option
+            if (options.GetProperty("highWaterMark") is double hwm)
+            {
+                stream.HighWaterMark = (int)hwm;
+            }
         }
 
         return stream;
