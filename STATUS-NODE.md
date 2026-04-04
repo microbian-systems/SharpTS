@@ -432,7 +432,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `readableObjectMode` | ✅ | Property: whether readable side is in object mode |
 | `writableObjectMode` | ✅ | Property: whether writable side is in object mode |
 | **Not Implemented** | | |
-| highWaterMark enforcement | ❌ | No read-side backpressure (push always succeeds) |
+| highWaterMark enforcement | ✅ | push() returns false at threshold; write() byte-based backpressure; pipe pauses/resumes on drain |
 
 ---
 
@@ -787,10 +787,10 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `createSecureContext(options?)` | ✅ | Create reusable secure context |
 | `DEFAULT_MIN_VERSION` | ✅ | 'TLSv1.2' |
 | `DEFAULT_MAX_VERSION` | ✅ | 'TLSv1.3' |
-| **Not Implemented** | | |
-| ALPN negotiation | ❌ | ALPNProtocols option not yet supported |
+| **Advanced** | | |
+| ALPN negotiation | ✅ | `ALPNProtocols` option on client and server; `socket.alpnProtocol` returns negotiated protocol |
 | Client certificate auth | ⚠️ | requestCert option exists but limited |
-| SNI callback | ❌ | SNICallback not implemented |
+| SNI callback | ✅ | `SNICallback` option on server; receives hostname, returns `{ cert, key }` for dynamic cert selection |
 
 ---
 
@@ -884,7 +884,6 @@ SharpTS provides comprehensive support for file system operations (sync, callbac
 
 **Key Gaps:**
 - No HTTP port sharing in cluster (round-robin load balancing)
-- No highWaterMark enforcement on read-side backpressure
 
 **Recommended Workarounds:**
 - Use ES module syntax instead of `require()`
