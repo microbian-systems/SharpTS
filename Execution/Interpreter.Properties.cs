@@ -264,9 +264,10 @@ public partial class Interpreter
         var category = TypeCategoryResolver.ClassifyRuntime(obj);
         string memberName = get.Name.Lexeme;
 
-        // Category-based dispatch for user-defined types
+        // Category-based dispatch
         return category switch
         {
+            // User-defined types
             TypeCategory.Class when obj is SharpTSClass klass =>
                 EvaluateGetOnClassRV(klass, memberName),
             TypeCategory.Namespace when obj is SharpTSNamespace nsObj =>
@@ -279,6 +280,15 @@ public partial class Interpreter
                 EvaluateGetOnInstanceRV(instance, get.Name),
             TypeCategory.Record when obj is SharpTSObject simpleObj =>
                 EvaluateGetOnRecordRV(simpleObj, memberName),
+
+            // Array: needs override checks (named properties, ISharpTSPropertyAccessor)
+            TypeCategory.Array => EvaluateGetOnArrayRV(obj!, memberName),
+
+            // Fast path: built-in types with category-indexed dispatch
+            _ when BuiltInRegistry.Instance.HasCategoryType(category) =>
+                EvaluateGetOnBuiltInRV(category, obj!, memberName),
+
+            // Fallback for remaining types (IDictionary, ISharpTSPropertyAccessor, unknown types)
             _ => RuntimeValue.FromBoxed(EvaluateGetOnFallback(obj, memberName))
         };
     }
@@ -291,6 +301,55 @@ public partial class Interpreter
 
     private static RuntimeValue EvaluateGetOnNamespaceRV(SharpTSNamespace nsObj, string memberName)
         => RuntimeValue.FromBoxed(EvaluateGetOnNamespace(nsObj, memberName));
+
+    /// <summary>
+    /// Fast path for property access on built-in types (string, number, map, set, etc.).
+    /// Uses TypeCategory-indexed array dispatch instead of GetType() + Dictionary lookup.
+    /// </summary>
+    private static RuntimeValue EvaluateGetOnBuiltInRV(TypeCategory category, object obj, string memberName)
+    {
+        var member = BuiltInRegistry.Instance.GetMemberByCategory(category, obj, memberName);
+        if (member != null)
+            return RuntimeValue.FromBoxed(BindBuiltInMember(member, obj));
+
+        string typeName = GetRuntimeTypeName(obj);
+        throw new InterpreterException($"Property '{memberName}' does not exist on {typeName}.");
+    }
+
+    /// <summary>
+    /// Property access on arrays. Checks named properties and ISharpTSPropertyAccessor
+    /// before falling through to built-in array members.
+    /// </summary>
+    private static RuntimeValue EvaluateGetOnArrayRV(object obj, string memberName)
+    {
+        // ISharpTSPropertyAccessor check (handles SharpTSTemplateStringsArray.raw)
+        if (obj is ISharpTSPropertyAccessor accessor && accessor.HasProperty(memberName))
+            return RuntimeValue.FromBoxed(accessor.GetProperty(memberName));
+
+        // Named properties from Object.defineProperty
+        if (obj is SharpTSArray array && array.HasNamedProperty(memberName))
+            return RuntimeValue.FromBoxed(array.GetNamedProperty(memberName));
+
+        // Standard array built-in members via category dispatch
+        var member = BuiltInRegistry.Instance.GetMemberByCategory(TypeCategory.Array, obj, memberName);
+        if (member != null)
+            return RuntimeValue.FromBoxed(BindBuiltInMember(member, obj));
+
+        throw new InterpreterException($"Property '{memberName}' does not exist on array.");
+    }
+
+    /// <summary>
+    /// Binds a method to its receiver if needed. Methods from BuiltInTypeMemberLookup
+    /// are already bound; inline BuiltInMethod instances need binding.
+    /// </summary>
+    private static object BindBuiltInMember(object member, object receiver)
+    {
+        if (member is BuiltInMethod m && !m.IsBound)
+            return m.Bind(receiver);
+        if (member is BuiltInAsyncMethod am)
+            return am.Bind(receiver);
+        return member;
+    }
 
     private static object? EvaluateGetOnClass(SharpTSClass klass, string memberName)
     {
@@ -497,6 +556,7 @@ public partial class Interpreter
 
     /// <summary>
     /// Core property assignment logic, shared between sync and async evaluation.
+    /// Uses TypeCategoryResolver for fast dispatch on common types.
     /// </summary>
     private object? EvaluateSetOnObject(Expr.Set set, object? obj, object? value)
     {
@@ -507,133 +567,127 @@ public partial class Interpreter
             return value;
         }
 
+        var category = TypeCategoryResolver.ClassifyRuntime(obj);
+        string memberName = set.Name.Lexeme;
         bool strictMode = _environment.IsStrictMode;
 
-        // Handle static property assignment
-        if (obj is SharpTSClass klass)
+        switch (category)
         {
-            // Check for static auto-accessor (TypeScript 4.9+)
-            if (klass.HasStaticAutoAccessor(set.Name.Lexeme))
-            {
-                klass.SetStaticAutoAccessorValue(set.Name.Lexeme, value);
+            case TypeCategory.Class when obj is SharpTSClass klass:
+                if (klass.HasStaticAutoAccessor(memberName))
+                {
+                    klass.SetStaticAutoAccessorValue(memberName, value);
+                    return value;
+                }
+                klass.SetStaticProperty(memberName, value);
                 return value;
-            }
-            klass.SetStaticProperty(set.Name.Lexeme, value);
-            return value;
-        }
 
-        // Handle globalThis property assignment
-        if (obj is SharpTSGlobalThis globalThis)
-        {
-            globalThis.SetProperty(set.Name.Lexeme, value);
-            return value;
-        }
+            case TypeCategory.Instance when obj is SharpTSInstance instance:
+                instance.SetInterpreter(this);
+                if (strictMode)
+                    instance.SetStrict(set.Name, value, strictMode);
+                else
+                    instance.Set(set.Name, value);
+                return value;
 
-        if (obj is SharpTSInstance instance)
-        {
-            instance.SetInterpreter(this);
-            if (strictMode)
-            {
-                instance.SetStrict(set.Name, value, strictMode);
-            }
-            else
-            {
-                instance.Set(set.Name, value);
-            }
-            return value;
+            case TypeCategory.Record:
+                return EvaluateSetOnRecord(set, obj!, memberName, value, strictMode);
+
+            case TypeCategory.RegExp when obj is SharpTSRegExp regex:
+                if (memberName == "lastIndex")
+                {
+                    regex.LastIndex = (int)(double)value!;
+                    return value;
+                }
+                throw new InterpreterException($"Cannot set property '{memberName}' on RegExp.");
+
+            case TypeCategory.Error when obj is SharpTSError error:
+                if (ErrorBuiltIns.SetMember(error, memberName, value))
+                    return value;
+                throw new InterpreterException($"Cannot set property '{memberName}' on Error.");
+
+            default:
+                return EvaluateSetFallback(obj, memberName, value);
         }
+    }
+
+    /// <summary>
+    /// Handles property assignment on Record-category types (SharpTSObject, HttpResponse,
+    /// NetServer, TlsServer).
+    /// </summary>
+    private object? EvaluateSetOnRecord(Expr.Set set, object obj, string memberName, object? value, bool strictMode)
+    {
         if (obj is SharpTSObject simpleObj)
         {
-            // Check for setter first
-            var setter = simpleObj.GetSetter(set.Name.Lexeme);
+            var setter = simpleObj.GetSetter(memberName);
             if (setter != null)
             {
-                // Invoke the setter with 'this' bound to the object
                 var boundSetter = BindAccessorToObject(setter, simpleObj);
                 boundSetter.Call(this, [value]);
                 return value;
             }
 
-            // If there's a getter but no setter, the property is read-only
-            if (simpleObj.HasGetter(set.Name.Lexeme))
+            if (simpleObj.HasGetter(memberName))
             {
                 if (strictMode)
-                {
-                    throw new InterpreterException($"Cannot set property '{set.Name.Lexeme}' which has only a getter.");
-                }
-                // Non-strict mode silently fails
+                    throw new InterpreterException($"Cannot set property '{memberName}' which has only a getter.");
                 return value;
             }
 
             if (strictMode)
-            {
-                simpleObj.SetPropertyStrict(set.Name.Lexeme, value, strictMode);
-            }
+                simpleObj.SetPropertyStrict(memberName, value, strictMode);
             else
-            {
-                simpleObj.SetProperty(set.Name.Lexeme, value);
-            }
+                simpleObj.SetProperty(memberName, value);
             return value;
         }
 
-        // Handle RegExp.lastIndex assignment
-        if (obj is SharpTSRegExp regex)
-        {
-            if (set.Name.Lexeme == "lastIndex")
-            {
-                regex.LastIndex = (int)(double)value!;
-                return value;
-            }
-            throw new InterpreterException($"Cannot set property '{set.Name.Lexeme}' on RegExp.");
-        }
-
-        // Handle Error property assignment (name, message, stack)
-        if (obj is SharpTSError error)
-        {
-            if (ErrorBuiltIns.SetMember(error, set.Name.Lexeme, value))
-            {
-                return value;
-            }
-            throw new InterpreterException($"Cannot set property '{set.Name.Lexeme}' on Error.");
-        }
-
-        // Handle HTTP response property assignment (statusCode, statusMessage)
         if (obj is SharpTSHttpResponse httpRes)
         {
-            httpRes.SetMember(set.Name.Lexeme, value);
+            httpRes.SetMember(memberName, value);
             return value;
         }
 
-        // Handle net server property assignment (maxConnections)
         if (obj is SharpTSNetServer netServer)
         {
-            netServer.SetMember(set.Name.Lexeme, value);
+            netServer.SetMember(memberName, value);
             return value;
         }
 
-        // Handle TLS server property assignment (maxConnections)
         if (obj is SharpTSTlsServer tlsServer)
         {
-            tlsServer.SetMember(set.Name.Lexeme, value);
+            tlsServer.SetMember(memberName, value);
             return value;
         }
 
-        // Handle Agent property assignment (maxSockets, keepAlive, etc.)
+        throw new InterpreterException("Only instances and objects have fields.");
+    }
+
+    /// <summary>
+    /// Fallback for property assignment on types without TypeCategory dispatch
+    /// (GlobalThis, Agent, AbortSignal).
+    /// </summary>
+    private static object? EvaluateSetFallback(object? obj, string memberName, object? value)
+    {
+        if (obj is SharpTSGlobalThis globalThis)
+        {
+            globalThis.SetProperty(memberName, value);
+            return value;
+        }
+
         if (obj is SharpTSAgent agent)
         {
-            agent.SetMember(set.Name.Lexeme, value);
+            agent.SetMember(memberName, value);
             return value;
         }
 
-        // Handle AbortSignal property assignment (onabort)
         if (obj is SharpTSAbortSignal signal)
         {
-            if (set.Name.Lexeme == "onabort")
+            if (memberName == "onabort")
             {
                 signal.OnAbort = value;
                 return value;
             }
-            throw new InterpreterException($"Cannot set property '{set.Name.Lexeme}' on AbortSignal.");
+            throw new InterpreterException($"Cannot set property '{memberName}' on AbortSignal.");
         }
 
         throw new InterpreterException("Only instances and objects have fields.");

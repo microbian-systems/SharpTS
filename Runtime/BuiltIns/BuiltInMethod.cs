@@ -47,6 +47,12 @@ public class BuiltInMethod : ISharpTSCallable, ISharpTSCallableV2
     public string Name => _name;
 
     /// <summary>
+    /// Returns true if this method has a receiver bound via Bind().
+    /// Used by fast-path dispatch to avoid redundant double-binding.
+    /// </summary>
+    public bool IsBound => _receiver != null || _hasV2Receiver;
+
+    /// <summary>
     /// Returns true if this method has a native V2 (RuntimeValue) implementation,
     /// meaning CallV2 can bypass the legacy wrapper for better performance.
     /// </summary>

@@ -1,6 +1,7 @@
 using SharpTS.Execution;
 using SharpTS.Runtime.BuiltIns.Modules.Interpreter;
 using SharpTS.Runtime.Types;
+using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.BuiltIns;
 
@@ -17,6 +18,12 @@ public sealed class BuiltInRegistry
 
     private readonly Dictionary<string, BuiltInNamespace> _namespaces = new();
     private readonly Dictionary<Type, Func<object, string, object?>> _instanceTypes = new();
+
+    /// <summary>
+    /// TypeCategory-indexed dispatch array for fast built-in member lookup.
+    /// Eliminates GetType() + Dictionary hash lookup by using a direct array index.
+    /// </summary>
+    private readonly Func<object, string, object?>?[] _categoryTypes = new Func<object, string, object?>?[64];
 
     private BuiltInRegistry() { }
 
@@ -109,6 +116,24 @@ public sealed class BuiltInRegistry
     }
 
     /// <summary>
+    /// Gets a built-in member using a TypeCategory-indexed array for fast dispatch.
+    /// Avoids GetType() + Dictionary hash lookup by using a direct array index.
+    /// </summary>
+    public object? GetMemberByCategory(TypeCategory category, object instance, string memberName)
+    {
+        var getMember = _categoryTypes[(int)category];
+        return getMember?.Invoke(instance, memberName);
+    }
+
+    /// <summary>
+    /// Checks if a TypeCategory has a registered fast-dispatch handler.
+    /// </summary>
+    public bool HasCategoryType(TypeCategory category)
+    {
+        return _categoryTypes[(int)category] != null;
+    }
+
+    /// <summary>
     /// Registers instance member lookup for a type.
     /// </summary>
     /// <param name="type">The runtime type (e.g., typeof(string))</param>
@@ -116,6 +141,15 @@ public sealed class BuiltInRegistry
     public void RegisterInstanceType(Type type, Func<object, string, object?> getMember)
     {
         _instanceTypes[type] = getMember;
+    }
+
+    /// <summary>
+    /// Registers fast category-indexed dispatch for a built-in type.
+    /// Use alongside RegisterInstanceType for types that have a TypeCategory mapping.
+    /// </summary>
+    public void RegisterCategoryType(TypeCategory category, Func<object, string, object?> getMember)
+    {
+        _categoryTypes[(int)category] = getMember;
     }
 
     /// <summary>
@@ -204,7 +238,98 @@ public sealed class BuiltInRegistry
         RegisterIntlDisplayNamesType(registry);
         RegisterAsyncLocalStorageType(registry);
 
+        // Register fast category-indexed dispatch for built-in types.
+        // These use the already-computed TypeCategory from ClassifyRuntime() to skip
+        // GetType() + Dictionary lookup in the hot path.
+        RegisterCategoryDispatch(registry);
+
         return registry;
+    }
+
+    private static void RegisterCategoryDispatch(BuiltInRegistry registry)
+    {
+        registry.RegisterCategoryType(TypeCategory.String, (instance, name) =>
+            StringBuiltIns.GetMember((string)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.Number, (instance, name) =>
+            NumberBuiltIns.GetInstanceMember((double)instance, name));
+
+        // Array category is shared by SharpTSArray and SharpTSTypedArray
+        registry.RegisterCategoryType(TypeCategory.Array, (instance, name) => instance switch
+        {
+            SharpTSArray arr => ArrayBuiltIns.GetMember(arr, name),
+            SharpTSTypedArray ta => ta.GetMember(name),
+            _ => null
+        });
+
+        registry.RegisterCategoryType(TypeCategory.Map, (instance, name) =>
+            MapBuiltIns.GetMember((SharpTSMap)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.Set, (instance, name) =>
+            SetBuiltIns.GetMember((SharpTSSet)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.Date, (instance, name) =>
+            DateBuiltIns.GetMember((SharpTSDate)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.RegExp, (instance, name) =>
+            RegExpBuiltIns.GetMember((SharpTSRegExp)instance, name));
+
+        Func<object, string, object?> errorMember = (instance, name) =>
+            ErrorBuiltIns.GetMember((SharpTSError)instance, name);
+        registry.RegisterCategoryType(TypeCategory.Error, errorMember);
+
+        registry.RegisterCategoryType(TypeCategory.Promise, (instance, name) =>
+            PromiseBuiltIns.GetMember((SharpTSPromise)instance, name));
+
+        // Buffer category is NOT registered here — it's shared by SharpTSBuffer,
+        // SharpTSArrayBuffer, SharpTSDataView, SharpTSSharedArrayBuffer which each have
+        // their own member resolution. These fall through to _instanceTypes lookup.
+
+        registry.RegisterCategoryType(TypeCategory.EventEmitter, (instance, name) =>
+            ((SharpTSEventEmitter)instance).GetMember(name));
+
+        registry.RegisterCategoryType(TypeCategory.WeakMap, (instance, name) =>
+            WeakMapBuiltIns.GetMember((SharpTSWeakMap)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.WeakSet, (instance, name) =>
+            WeakSetBuiltIns.GetMember((SharpTSWeakSet)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.WeakRef, (instance, name) =>
+            WeakRefBuiltIns.GetMember((SharpTSWeakRef)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.FinalizationRegistry, (instance, name) =>
+            FinalizationRegistryBuiltIns.GetMember((SharpTSFinalizationRegistry)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.Iterator, (instance, name) =>
+            IteratorBuiltIns.GetMember((SharpTSIterator)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.Generator, (instance, name) =>
+            GeneratorBuiltIns.GetMember((SharpTSGenerator)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.AsyncGenerator, (instance, name) =>
+            AsyncGeneratorBuiltIns.GetMember((SharpTSAsyncGenerator)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.Timeout, (instance, name) =>
+            TimerBuiltIns.GetMember((SharpTSTimeout)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.AbortController, (instance, name) =>
+            AbortControllerBuiltIns.GetMember((SharpTSAbortController)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.AbortSignal, (instance, name) =>
+            AbortSignalBuiltIns.GetMember((SharpTSAbortSignal)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.Function, (instance, name) =>
+            FunctionBuiltIns.GetMember((ISharpTSCallable)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.Symbol, (instance, name) =>
+        {
+            var symbol = (SharpTSSymbol)instance;
+            return name switch
+            {
+                "description" => symbol.Description ?? (object)SharpTSUndefined.Instance,
+                _ => null
+            };
+        });
     }
 
     private static void RegisterMathNamespace(BuiltInRegistry registry)
