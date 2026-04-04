@@ -538,9 +538,14 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(noClient);
 
-        // EventLoop.Unref() since socket is no longer listening
+        // EventLoop.Unref() only if socket was bound (i.e., Ref() was called during bind)
+        var skipUnref = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _dgramBoundField);
+        il.Emit(OpCodes.Brfalse, skipUnref);
         il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
         il.Emit(OpCodes.Call, runtime.EventLoopUnref);
+        il.MarkLabel(skipUnref);
 
         // Call callback if provided
         EmitDgramCallbackInvocation(il, runtime, () => il.Emit(OpCodes.Ldarg_1), 0);
