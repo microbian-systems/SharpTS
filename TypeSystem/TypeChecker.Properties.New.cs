@@ -338,81 +338,31 @@ public partial class TypeChecker
             return new TypeInfo.AbortController();
         }
 
-        // Handle new Headers() constructor
-        if (isSimpleName && simpleClassName == "Headers")
-        {
-            // Headers accepts 0 or 1 argument (optional init object)
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        // Handle new URL() constructor
-        if (isSimpleName && simpleClassName == "URL")
+        // Handle constructors that accept any arguments and return Any
+        if (isSimpleName && simpleClassName is "Headers" or "URL" or "URLSearchParams" or "Request" or "Response")
         {
             foreach (var arg in newExpr.Arguments)
                 CheckExpr(arg);
             return new TypeInfo.Any();
         }
 
-        // Handle new URLSearchParams() constructor
-        if (isSimpleName && simpleClassName == "URLSearchParams")
+        // Handle new SharedArrayBuffer(byteLength) / new ArrayBuffer(byteLength)
+        if (isSimpleName && simpleClassName is "SharedArrayBuffer" or "ArrayBuffer")
         {
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        // Handle new Request(url, init?) constructor
-        if (isSimpleName && simpleClassName == "Request")
-        {
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        // Handle new Response(body?, init?) constructor
-        if (isSimpleName && simpleClassName == "Response")
-        {
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        // Handle new SharedArrayBuffer(byteLength) constructor
-        if (isSimpleName && simpleClassName == "SharedArrayBuffer")
-        {
-            // SharedArrayBuffer accepts 1 argument (byteLength)
             if (newExpr.Arguments.Count != 1)
             {
-                throw new TypeCheckException("SharedArrayBuffer constructor requires exactly 1 argument (byteLength).");
+                throw new TypeCheckException($"{simpleClassName} constructor requires exactly 1 argument (byteLength).");
             }
 
             var byteLengthType = CheckExpr(newExpr.Arguments[0]);
             if (!IsNumber(byteLengthType) && byteLengthType is not TypeInfo.Any)
             {
-                throw new TypeCheckException($" SharedArrayBuffer byteLength must be a number, got '{byteLengthType}'.");
+                throw new TypeCheckException($"{simpleClassName} byteLength must be a number, got '{byteLengthType}'.");
             }
 
-            return new TypeInfo.SharedArrayBuffer();
-        }
-
-        // Handle new ArrayBuffer(byteLength) constructor
-        if (isSimpleName && simpleClassName == "ArrayBuffer")
-        {
-            // ArrayBuffer accepts 1 argument (byteLength)
-            if (newExpr.Arguments.Count != 1)
-            {
-                throw new TypeCheckException("ArrayBuffer constructor requires exactly 1 argument (byteLength).");
-            }
-
-            var byteLengthType = CheckExpr(newExpr.Arguments[0]);
-            if (!IsNumber(byteLengthType) && byteLengthType is not TypeInfo.Any)
-            {
-                throw new TypeCheckException($" ArrayBuffer byteLength must be a number, got '{byteLengthType}'.");
-            }
-
-            return new TypeInfo.ArrayBuffer();
+            return simpleClassName == "SharedArrayBuffer"
+                ? new TypeInfo.SharedArrayBuffer()
+                : new TypeInfo.ArrayBuffer();
         }
 
         // Handle new DataView(buffer, byteOffset?, byteLength?) constructor
@@ -627,64 +577,10 @@ public partial class TypeChecker
             return new TypeInfo.Any();
         }
 
-        // Handle new Intl.NumberFormat() constructor
-        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "NumberFormat" })
-        {
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        // Handle new Intl.DateTimeFormat() constructor
-        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "DateTimeFormat" })
-        {
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        // Handle new Intl.Collator() constructor
-        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "Collator" })
-        {
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        // Handle new Intl.PluralRules() constructor
-        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "PluralRules" })
-        {
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        // Handle new Intl.RelativeTimeFormat() constructor
-        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "RelativeTimeFormat" })
-        {
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        // Handle new Intl.ListFormat() constructor
-        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "ListFormat" })
-        {
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        // Handle new Intl.Segmenter() constructor
-        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "Segmenter" })
-        {
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        // Handle new Intl.DisplayNames() constructor
-        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: "DisplayNames" })
+        // Handle new Intl.*() constructors — all accept any arguments and return Any
+        if (newExpr.Callee is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Intl" }, Name.Lexeme: var intlName }
+            && intlName is "NumberFormat" or "DateTimeFormat" or "Collator" or "PluralRules"
+                        or "RelativeTimeFormat" or "ListFormat" or "Segmenter" or "DisplayNames")
         {
             foreach (var arg in newExpr.Arguments)
                 CheckExpr(arg);
@@ -749,55 +645,7 @@ public partial class TypeChecker
 
             // Check constructor with substituted parameter types (walk inheritance chain)
             var (ctorTypeInfo, _) = FindInheritedConstructor(genericClass);
-            if (ctorTypeInfo != null)
-            {
-                // Handle both Function and OverloadedFunction for constructor
-                if (ctorTypeInfo is TypeInfo.OverloadedFunction overloadedCtor)
-                {
-                    // Resolve overloaded constructor call
-                    List<TypeInfo> argTypes = newExpr.Arguments.Select(CheckExpr).ToList();
-                    bool matched = false;
-                    foreach (var sig in overloadedCtor.Signatures)
-                    {
-                        var substitutedParamTypes = sig.ParamTypes.Select(p => Substitute(p, subs)).ToList();
-                        if (TryMatchConstructorArgs(argTypes, substitutedParamTypes, sig.MinArity, sig.HasRestParam))
-                        {
-                            matched = true;
-                            break;
-                        }
-                    }
-                    if (!matched)
-                    {
-                        throw new TypeCheckException($" No constructor overload matches the call for '{qualifiedName}'.");
-                    }
-                }
-                else if (ctorTypeInfo is TypeInfo.Function ctorType)
-                {
-                    var substitutedParamTypes = ctorType.ParamTypes.Select(p => Substitute(p, subs)).ToList();
-
-                    if (newExpr.Arguments.Count < ctorType.MinArity)
-                    {
-                        throw new TypeCheckException($" Constructor for '{qualifiedName}' expected at least {ctorType.MinArity} arguments but got {newExpr.Arguments.Count}.");
-                    }
-                    if (newExpr.Arguments.Count > ctorType.ParamTypes.Count)
-                    {
-                        throw new TypeCheckException($" Constructor for '{qualifiedName}' expected at most {ctorType.ParamTypes.Count} arguments but got {newExpr.Arguments.Count}.");
-                    }
-
-                    for (int i = 0; i < newExpr.Arguments.Count; i++)
-                    {
-                        TypeInfo argType = CheckExpr(newExpr.Arguments[i]);
-                        if (!IsCompatible(substitutedParamTypes[i], argType))
-                        {
-                            throw new TypeCheckException($" Constructor argument {i + 1} expected type '{substitutedParamTypes[i]}' but got '{argType}'.");
-                        }
-                    }
-                }
-            }
-            else if (newExpr.Arguments.Count > 0)
-            {
-                throw new TypeCheckException($" Constructor for '{qualifiedName}' expected 0 arguments but got {newExpr.Arguments.Count}.");
-            }
+            ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, subs);
 
             return new TypeInfo.Instance(instantiated);
         }
@@ -806,53 +654,7 @@ public partial class TypeChecker
         {
             // Walk inheritance chain to find constructor
             var (ctorTypeInfo, _) = FindInheritedConstructor(classType);
-            if (ctorTypeInfo != null)
-            {
-                // Handle both Function and OverloadedFunction for constructor
-                if (ctorTypeInfo is TypeInfo.OverloadedFunction overloadedCtor)
-                {
-                    // Resolve overloaded constructor call
-                    List<TypeInfo> argTypes = newExpr.Arguments.Select(CheckExpr).ToList();
-                    bool matched = false;
-                    foreach (var sig in overloadedCtor.Signatures)
-                    {
-                        if (TryMatchConstructorArgs(argTypes, sig.ParamTypes, sig.MinArity, sig.HasRestParam))
-                        {
-                            matched = true;
-                            break;
-                        }
-                    }
-                    if (!matched)
-                    {
-                        throw new TypeCheckException($" No constructor overload matches the call for '{qualifiedName}'.");
-                    }
-                }
-                else if (ctorTypeInfo is TypeInfo.Function ctorType)
-                {
-                    // Use MinArity to allow optional parameters
-                    if (newExpr.Arguments.Count < ctorType.MinArity)
-                    {
-                        throw new TypeCheckException($" Constructor for '{qualifiedName}' expected at least {ctorType.MinArity} arguments but got {newExpr.Arguments.Count}.");
-                    }
-                    if (newExpr.Arguments.Count > ctorType.ParamTypes.Count)
-                    {
-                        throw new TypeCheckException($" Constructor for '{qualifiedName}' expected at most {ctorType.ParamTypes.Count} arguments but got {newExpr.Arguments.Count}.");
-                    }
-
-                    for (int i = 0; i < newExpr.Arguments.Count; i++)
-                    {
-                        TypeInfo argType = CheckExpr(newExpr.Arguments[i]);
-                        if (!IsCompatible(ctorType.ParamTypes[i], argType))
-                        {
-                            throw new TypeCheckException($" Constructor argument {i + 1} expected type '{ctorType.ParamTypes[i]}' but got '{argType}'.");
-                        }
-                    }
-                }
-            }
-            else if (newExpr.Arguments.Count > 0)
-            {
-                throw new TypeCheckException($" Constructor for '{qualifiedName}' expected 0 arguments but got {newExpr.Arguments.Count}.");
-            }
+            ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName);
 
             return new TypeInfo.Instance(classType);
         }
@@ -865,6 +667,57 @@ public partial class TypeChecker
         }
 
         throw new TypeCheckException($" '{qualifiedName}' is not a class.");
+    }
+
+    /// <summary>
+    /// Validates a constructor call (overloaded or simple) against the provided arguments.
+    /// Applies optional generic substitutions to parameter types when provided.
+    /// </summary>
+    private void ValidateConstructorCall(
+        TypeInfo? ctorTypeInfo,
+        Expr.New newExpr,
+        string qualifiedName,
+        Dictionary<string, TypeInfo>? subs = null)
+    {
+        if (ctorTypeInfo == null)
+        {
+            if (newExpr.Arguments.Count > 0)
+                throw new TypeCheckException($" Constructor for '{qualifiedName}' expected 0 arguments but got {newExpr.Arguments.Count}.");
+            return;
+        }
+
+        if (ctorTypeInfo is TypeInfo.OverloadedFunction overloadedCtor)
+        {
+            List<TypeInfo> argTypes = newExpr.Arguments.Select(CheckExpr).ToList();
+            bool matched = false;
+            foreach (var sig in overloadedCtor.Signatures)
+            {
+                var paramTypes = subs != null ? sig.ParamTypes.Select(p => Substitute(p, subs)).ToList() : sig.ParamTypes;
+                if (TryMatchConstructorArgs(argTypes, paramTypes, sig.MinArity, sig.HasRestParam))
+                {
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched)
+                throw new TypeCheckException($" No constructor overload matches the call for '{qualifiedName}'.");
+        }
+        else if (ctorTypeInfo is TypeInfo.Function ctorType)
+        {
+            var paramTypes = subs != null ? ctorType.ParamTypes.Select(p => Substitute(p, subs)).ToList() : ctorType.ParamTypes;
+
+            if (newExpr.Arguments.Count < ctorType.MinArity)
+                throw new TypeCheckException($" Constructor for '{qualifiedName}' expected at least {ctorType.MinArity} arguments but got {newExpr.Arguments.Count}.");
+            if (newExpr.Arguments.Count > ctorType.ParamTypes.Count)
+                throw new TypeCheckException($" Constructor for '{qualifiedName}' expected at most {ctorType.ParamTypes.Count} arguments but got {newExpr.Arguments.Count}.");
+
+            for (int i = 0; i < newExpr.Arguments.Count; i++)
+            {
+                TypeInfo argType = CheckExpr(newExpr.Arguments[i]);
+                if (!IsCompatible(paramTypes[i], argType))
+                    throw new TypeCheckException($" Constructor argument {i + 1} expected type '{paramTypes[i]}' but got '{argType}'.");
+            }
+        }
     }
 
     /// <summary>

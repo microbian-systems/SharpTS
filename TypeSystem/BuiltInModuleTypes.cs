@@ -11,87 +11,20 @@ public static class BuiltInModuleTypes
     private static TypeInfo BooleanType => new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
 
     /// <summary>
-    /// Gets the exported types for the path module.
+    /// Builds the common path method/property signatures shared by the module and its posix/win32 sub-objects.
     /// </summary>
-    public static Dictionary<string, TypeInfo> GetPathModuleTypes()
+    private static Dictionary<string, TypeInfo> BuildPathMembers()
     {
-        var pathObjectType = GetPathObjectType();
+        var parsedPathType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["root"] = new TypeInfo.String(),
+            ["dir"] = new TypeInfo.String(),
+            ["base"] = new TypeInfo.String(),
+            ["name"] = new TypeInfo.String(),
+            ["ext"] = new TypeInfo.String()
+        }.ToFrozenDictionary());
 
         return new Dictionary<string, TypeInfo>
-        {
-            // Methods
-            ["join"] = new TypeInfo.Function(
-                [new TypeInfo.Any()],
-                new TypeInfo.String(),
-                HasRestParam: true
-            ),
-            ["resolve"] = new TypeInfo.Function(
-                [new TypeInfo.Any()],
-                new TypeInfo.String(),
-                HasRestParam: true
-            ),
-            ["basename"] = new TypeInfo.Function(
-                [new TypeInfo.String(), new TypeInfo.String()],
-                new TypeInfo.String(),
-                RequiredParams: 1  // Second param is optional
-            ),
-            ["dirname"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["extname"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["normalize"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["isAbsolute"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                BooleanType
-            ),
-            ["relative"] = new TypeInfo.Function(
-                [new TypeInfo.String(), new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["parse"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                new TypeInfo.Record(new Dictionary<string, TypeInfo>
-                {
-                    ["root"] = new TypeInfo.String(),
-                    ["dir"] = new TypeInfo.String(),
-                    ["base"] = new TypeInfo.String(),
-                    ["name"] = new TypeInfo.String(),
-                    ["ext"] = new TypeInfo.String()
-                }.ToFrozenDictionary())
-            ),
-            ["format"] = new TypeInfo.Function(
-                [new TypeInfo.Record(new Dictionary<string, TypeInfo>
-                {
-                    ["root"] = new TypeInfo.String(),
-                    ["dir"] = new TypeInfo.String(),
-                    ["base"] = new TypeInfo.String(),
-                    ["name"] = new TypeInfo.String(),
-                    ["ext"] = new TypeInfo.String()
-                }.ToFrozenDictionary())],
-                new TypeInfo.String()
-            ),
-            // Properties
-            ["sep"] = new TypeInfo.String(),
-            ["delimiter"] = new TypeInfo.String(),
-            // Platform-specific variants
-            ["posix"] = pathObjectType,
-            ["win32"] = pathObjectType
-        };
-    }
-
-    /// <summary>
-    /// Gets the type for the path.posix and path.win32 objects.
-    /// </summary>
-    private static TypeInfo.Record GetPathObjectType()
-    {
-        return new TypeInfo.Record(new Dictionary<string, TypeInfo>
         {
             ["join"] = new TypeInfo.Function(
                 [new TypeInfo.Any()],
@@ -130,29 +63,35 @@ public static class BuiltInModuleTypes
             ),
             ["parse"] = new TypeInfo.Function(
                 [new TypeInfo.String()],
-                new TypeInfo.Record(new Dictionary<string, TypeInfo>
-                {
-                    ["root"] = new TypeInfo.String(),
-                    ["dir"] = new TypeInfo.String(),
-                    ["base"] = new TypeInfo.String(),
-                    ["name"] = new TypeInfo.String(),
-                    ["ext"] = new TypeInfo.String()
-                }.ToFrozenDictionary())
+                parsedPathType
             ),
             ["format"] = new TypeInfo.Function(
-                [new TypeInfo.Record(new Dictionary<string, TypeInfo>
-                {
-                    ["root"] = new TypeInfo.String(),
-                    ["dir"] = new TypeInfo.String(),
-                    ["base"] = new TypeInfo.String(),
-                    ["name"] = new TypeInfo.String(),
-                    ["ext"] = new TypeInfo.String()
-                }.ToFrozenDictionary())],
+                [parsedPathType],
                 new TypeInfo.String()
             ),
             ["sep"] = new TypeInfo.String(),
             ["delimiter"] = new TypeInfo.String()
-        }.ToFrozenDictionary());
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the path module.
+    /// </summary>
+    public static Dictionary<string, TypeInfo> GetPathModuleTypes()
+    {
+        var pathObjectType = GetPathObjectType();
+        var members = BuildPathMembers();
+        members["posix"] = pathObjectType;
+        members["win32"] = pathObjectType;
+        return members;
+    }
+
+    /// <summary>
+    /// Gets the type for the path.posix and path.win32 objects.
+    /// </summary>
+    private static TypeInfo.Record GetPathObjectType()
+    {
+        return new TypeInfo.Record(BuildPathMembers().ToFrozenDictionary());
     }
 
     /// <summary>
