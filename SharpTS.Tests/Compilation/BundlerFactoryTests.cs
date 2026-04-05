@@ -1,5 +1,5 @@
-using SharpTS.Compilation.Bundling;
-using SharpTS.Diagnostics.Exceptions;
+using PEPacker;
+using PEPacker.Bundling;
 using Xunit;
 
 namespace SharpTS.Tests.Compilation;
@@ -66,7 +66,7 @@ public class BundlerFactoryTests
         }
         else
         {
-            Assert.Throws<CompileException>(() =>
+            Assert.Throws<PEPackerException>(() =>
                 BundlerFactory.GetBundler(BundleTechnique.SdkBundler));
         }
     }

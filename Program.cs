@@ -36,7 +36,8 @@
 using System.Reflection;
 using SharpTS.Cli;
 using SharpTS.Compilation;
-using SharpTS.Compilation.Bundling;
+using PEPacker;
+using PEPacker.Bundling;
 using SharpTS.Declaration;
 using SharpTS.Diagnostics;
 using SharpTS.Diagnostics.Exceptions;

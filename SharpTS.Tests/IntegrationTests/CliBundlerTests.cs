@@ -1,4 +1,4 @@
-using SharpTS.Compilation.Bundling;
+using PEPacker.Bundling;
 using Xunit;
 
 namespace SharpTS.Tests.IntegrationTests;

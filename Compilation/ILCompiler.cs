@@ -3,6 +3,7 @@ using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using PEPacker;
 using SharpTS.Compilation.Emitters;
 using SharpTS.Compilation.Emitters.Modules;
 using SharpTS.Compilation.Registries;

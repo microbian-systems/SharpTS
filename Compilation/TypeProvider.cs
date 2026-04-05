@@ -8,9 +8,9 @@ namespace SharpTS.Compilation;
 /// Provides type resolution for IL compilation using runtime types.
 /// </summary>
 /// <remarks>
-/// Uses typeof() directly for fast compilation. The AssemblyReferenceRewriter is used
-/// as a post-processing step when --ref-asm is enabled to rewrite System.Private.CoreLib
-/// references to SDK reference assemblies.
+/// Uses typeof() directly for fast compilation. The AssemblyReferenceRewriter (from the
+/// NickNa.PEPacker package) is used as a post-processing step when --ref-asm is enabled
+/// to rewrite System.Private.CoreLib references to SDK reference assemblies.
 /// </remarks>
 public class TypeProvider
 {

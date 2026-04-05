@@ -14,7 +14,7 @@
 // =============================================================================
 
 using SharpTS.Compilation;
-using SharpTS.Compilation.Bundling;
+using PEPacker.Bundling;
 using SharpTS.Parsing;
 
 namespace SharpTS.Cli;
