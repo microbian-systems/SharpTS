@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-04-05 (dns.Resolver class: setServers/getServers, all resolve methods with custom DNS servers)
+**Last Updated:** 2026-04-06 (timers/promises: setTimeout, setImmediate, setInterval)
 
 ## Legend
 - ✅ Implemented
@@ -31,6 +31,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough (sync mode) |
 | `buffer` | ✅ | Full Buffer class with multi-byte LE/BE, float/double, BigInt, search, swap |
 | `timers` | ✅ | setTimeout, setInterval, setImmediate + clear variants (module import) |
+| `timers/promises` | ✅ | Promise-based setTimeout, setImmediate, setInterval |
 | `string_decoder` | ✅ | StringDecoder class for multi-byte character handling |
 | `perf_hooks` | ✅ | performance.now(), timeOrigin, mark(), measure(), getEntries/ByName/ByType(), clearMarks/Measures(); PerformanceObserver |
 | `http` / `https` | ✅ | createServer, request, get; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
@@ -517,7 +518,27 @@ This document tracks Node.js module and API implementation status in SharpTS.
 
 ---
 
-## 16. STRING_DECODER
+## 16. TIMERS/PROMISES
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Import** | | |
+| `import { setTimeout } from 'timers/promises'` | ✅ | Named import |
+| `import * as timers from 'timers/promises'` | ✅ | Namespace import |
+| `import { setTimeout } from 'node:timers/promises'` | ✅ | Node prefix import |
+| **Methods** | | |
+| `setTimeout(delay?, value?)` | ✅ | Returns `Promise<T>` that resolves with value after delay ms |
+| `setImmediate(value?)` | ✅ | Returns `Promise<T>` that resolves with value immediately |
+| `setInterval(delay?, value?)` | ✅ | Simplified: resolves once after delay (not async iterable) |
+| **Not Implemented** | | |
+| `options.signal` (AbortSignal) | ❌ | Cancellation via AbortSignal |
+| `options.ref` | ❌ | Timer ref/unref control |
+| `setInterval` as AsyncIterable | ❌ | Full async iterator protocol |
+| `scheduler.wait()` / `scheduler.yield()` | ❌ | Scheduler API |
+
+---
+
+## 17. STRING_DECODER
 
 | Feature | Status | Notes |
 |---------|--------|-------|

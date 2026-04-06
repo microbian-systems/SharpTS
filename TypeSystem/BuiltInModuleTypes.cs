@@ -1401,6 +1401,7 @@ public static class BuiltInModuleTypes
             "zlib" => GetZlibModuleTypes(),
             "events" => GetEventsModuleTypes(),
             "timers" => GetTimersModuleTypes(),
+            "timers/promises" => GetTimersPromisesModuleTypes(),
             "string_decoder" => GetStringDecoderModuleTypes(),
             "perf_hooks" => GetPerfHooksModuleTypes(),
             "stream" => GetStreamModuleTypes(),
@@ -1927,6 +1928,35 @@ public static class BuiltInModuleTypes
             ["clearImmediate"] = new TypeInfo.Function(
                 [timeoutType],
                 new TypeInfo.Void(),
+                RequiredParams: 0
+            )
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the timers/promises module.
+    /// </summary>
+    public static Dictionary<string, TypeInfo> GetTimersPromisesModuleTypes()
+    {
+        var anyType = new TypeInfo.Any();
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        var promiseAny = new TypeInfo.Promise(anyType);
+
+        return new Dictionary<string, TypeInfo>
+        {
+            ["setTimeout"] = new TypeInfo.Function(
+                [numberType, anyType],
+                promiseAny,
+                RequiredParams: 0
+            ),
+            ["setImmediate"] = new TypeInfo.Function(
+                [anyType],
+                promiseAny,
+                RequiredParams: 0
+            ),
+            ["setInterval"] = new TypeInfo.Function(
+                [numberType, anyType],
+                promiseAny,
                 RequiredParams: 0
             )
         };

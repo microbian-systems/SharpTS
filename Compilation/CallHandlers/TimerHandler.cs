@@ -19,6 +19,11 @@ public class TimerHandler : ICallHandler
         var il = emitter.IL;
         var ctx = emitter.Context;
 
+        // Skip if this variable is bound to a built-in module import (e.g., timers/promises)
+        // to let the module emitter handle it instead of the global timer handler
+        if (ctx.BuiltInModuleMethodBindings?.ContainsKey(v.Name.Lexeme) == true)
+            return false;
+
         return v.Name.Lexeme switch
         {
             "setTimeout" => EmitTimer(emitter, il, ctx, call, ctx.Runtime!.SetTimeout),

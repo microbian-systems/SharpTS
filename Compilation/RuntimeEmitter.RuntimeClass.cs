@@ -445,8 +445,12 @@ public partial class RuntimeEmitter
         EmitClearTimeoutMethod(typeBuilder, runtime);
         EmitSetIntervalMethod(typeBuilder, runtime);
         EmitClearIntervalMethod(typeBuilder, runtime);
+        // Timer promise methods (timers/promises module)
+        EmitTimerPromisesMethods(typeBuilder, runtime);
         // Timer module wrappers for namespace imports (import * as timers from 'timers')
         EmitTimerModuleWrappers(typeBuilder, runtime);
+        // Timer promises module wrappers for named/namespace imports (import { setTimeout } from 'timers/promises')
+        EmitTimerPromisesModuleWrappers(typeBuilder, runtime);
         // Process global methods (env, argv, nextTick) - must be after timer methods for nextTick
         EmitProcessMethods(typeBuilder, runtime);
         // Zlib module methods

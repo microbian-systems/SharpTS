@@ -118,18 +118,24 @@ public partial class Interpreter
         }
 
         // Handle global functions via registry (Symbol, BigInt, parseInt, setTimeout, Error types, etc.)
+        // Skip if the variable is shadowed by a module import (e.g., timers/promises setTimeout)
         if (call.Callee is Expr.Variable globalVar)
         {
             var gvName = globalVar.Name.Lexeme;
-            if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
+            bool isShadowed = _environment.TryGet(gvName, out var shadowVal) &&
+                shadowVal.ToObject() is ISharpTSAsyncCallable;
+            if (!isShadowed)
             {
-                Func<Expr, ValueTask<RuntimeValue>> evalWrapper = expr => ctx.EvaluateExprAsync(expr);
-                return await handlerV2!(evalWrapper, call.Arguments, this);
-            }
-            if (GlobalFunctionRegistry.Instance.TryGetHandler(gvName, out var handler))
-            {
-                Func<Expr, ValueTask<object?>> evalWrapperLegacy = async expr => (await ctx.EvaluateExprAsync(expr)).ToObject();
-                return RuntimeValue.FromBoxed(await handler!(evalWrapperLegacy, call.Arguments, this));
+                if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
+                {
+                    Func<Expr, ValueTask<RuntimeValue>> evalWrapper = expr => ctx.EvaluateExprAsync(expr);
+                    return await handlerV2!(evalWrapper, call.Arguments, this);
+                }
+                if (GlobalFunctionRegistry.Instance.TryGetHandler(gvName, out var handler))
+                {
+                    Func<Expr, ValueTask<object?>> evalWrapperLegacy = async expr => (await ctx.EvaluateExprAsync(expr)).ToObject();
+                    return RuntimeValue.FromBoxed(await handler!(evalWrapperLegacy, call.Arguments, this));
+                }
             }
         }
 
@@ -274,18 +280,24 @@ public partial class Interpreter
         }
 
         // Handle global functions via registry (Symbol, BigInt, parseInt, setTimeout, Error types, etc.)
+        // Skip if the variable is shadowed by a module import (e.g., timers/promises setTimeout)
         if (call.Callee is Expr.Variable globalVar)
         {
             var gvName = globalVar.Name.Lexeme;
-            if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
+            bool isShadowed = _environment.TryGet(gvName, out var shadowVal) &&
+                shadowVal.ToObject() is ISharpTSAsyncCallable;
+            if (!isShadowed)
             {
-                _syncEvalWrapperV2Cached ??= expr => _syncContext.EvaluateExprAsync(expr);
-                return handlerV2!(_syncEvalWrapperV2Cached, call.Arguments, this).GetAwaiter().GetResult();
-            }
-            if (GlobalFunctionRegistry.Instance.TryGetHandler(gvName, out var handler))
-            {
-                _syncEvalWrapperCached ??= expr => new ValueTask<object?>(_syncContext.EvaluateExprAsync(expr).Result.ToObject());
-                return RuntimeValue.FromBoxed(handler!(_syncEvalWrapperCached, call.Arguments, this).GetAwaiter().GetResult());
+                if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
+                {
+                    _syncEvalWrapperV2Cached ??= expr => _syncContext.EvaluateExprAsync(expr);
+                    return handlerV2!(_syncEvalWrapperV2Cached, call.Arguments, this).GetAwaiter().GetResult();
+                }
+                if (GlobalFunctionRegistry.Instance.TryGetHandler(gvName, out var handler))
+                {
+                    _syncEvalWrapperCached ??= expr => new ValueTask<object?>(_syncContext.EvaluateExprAsync(expr).Result.ToObject());
+                    return RuntimeValue.FromBoxed(handler!(_syncEvalWrapperCached, call.Arguments, this).GetAwaiter().GetResult());
+                }
             }
         }
 

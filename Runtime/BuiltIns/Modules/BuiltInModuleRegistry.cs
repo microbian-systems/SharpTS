@@ -25,6 +25,7 @@ public static class BuiltInModuleRegistry
         "zlib",
         "events",
         "timers",
+        "timers/promises",
         "string_decoder",
         "perf_hooks",
         "stream",

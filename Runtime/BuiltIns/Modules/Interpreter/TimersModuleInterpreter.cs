@@ -9,9 +9,61 @@ namespace SharpTS.Runtime.BuiltIns.Modules.Interpreter;
 /// <remarks>
 /// Provides timer functions that are also available as globals.
 /// Includes setTimeout, setInterval, setImmediate and their clear counterparts.
+/// Also provides promise-based variants via GetPromisesExports().
 /// </remarks>
 public static class TimersModuleInterpreter
 {
+    /// <summary>
+    /// Gets exported values for the timers/promises module.
+    /// </summary>
+    public static Dictionary<string, object?> GetPromisesExports()
+    {
+        return new Dictionary<string, object?>
+        {
+            ["setTimeout"] = new BuiltInAsyncMethod("setTimeout", 0, 2, SetTimeoutPromise),
+            ["setImmediate"] = new BuiltInAsyncMethod("setImmediate", 0, 1, SetImmediatePromise),
+            ["setInterval"] = new BuiltInAsyncMethod("setInterval", 0, 2, SetIntervalPromise)
+        };
+    }
+
+    /// <summary>
+    /// Promise-based setTimeout: resolves with value after delay milliseconds.
+    /// Uses Task.Delay instead of virtual timers to avoid event loop deadlock.
+    /// </summary>
+    private static async Task<object?> SetTimeoutPromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        double delay = args.Count > 0 && args[0] is double d ? d : 0;
+        object? value = args.Count > 1 ? args[1] : SharpTSUndefined.Instance;
+
+        int delayMs = Math.Max(0, (int)delay);
+        await Task.Delay(delayMs);
+        return value;
+    }
+
+    /// <summary>
+    /// Promise-based setImmediate: resolves with value on the next event loop tick.
+    /// </summary>
+    private static async Task<object?> SetImmediatePromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        object? value = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
+
+        await Task.Delay(0);
+        return value;
+    }
+
+    /// <summary>
+    /// Promise-based setInterval: resolves with value after one interval delay (simplified).
+    /// </summary>
+    private static async Task<object?> SetIntervalPromise(Interp interpreter, object? receiver, List<object?> args)
+    {
+        double delay = args.Count > 0 && args[0] is double d ? d : 0;
+        object? value = args.Count > 1 ? args[1] : SharpTSUndefined.Instance;
+
+        int delayMs = Math.Max(0, (int)delay);
+        await Task.Delay(delayMs);
+        return value;
+    }
+
     /// <summary>
     /// Gets all exported values for the timers module.
     /// </summary>
