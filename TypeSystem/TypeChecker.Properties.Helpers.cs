@@ -55,8 +55,27 @@ public partial class TypeChecker
                 BuiltInTypes.GetIteratorMemberType(memberName, gen.YieldType),
             TypeCategory.AsyncGenerator when objType is TypeInfo.AsyncGenerator asyncGen =>
                 BuiltInTypes.GetIteratorMemberType(memberName, asyncGen.YieldType),
+            TypeCategory.Promise when objType is TypeInfo.Promise promise =>
+                BuiltInTypes.GetPromiseMemberType(memberName, promise.ValueType),
+            TypeCategory.EventEmitter =>
+                BuiltInTypes.GetEventEmitterMemberType(memberName),
             _ => null
         };
+    }
+
+    /// <summary>
+    /// Computes the union of all element types in a tuple (including rest element).
+    /// Returns a single type if all elements are the same, or a Union type otherwise.
+    /// </summary>
+    private static TypeInfo ComputeTupleElementUnion(TypeInfo.Tuple tuple)
+    {
+        var allTypes = tuple.ElementTypes.ToList();
+        if (tuple.RestElementType != null)
+            allTypes.Add(tuple.RestElementType);
+        var unique = allTypes.Distinct(TypeInfoEqualityComparer.Instance).ToList();
+        return unique.Count == 0
+            ? new TypeInfo.Any()
+            : (unique.Count == 1 ? unique[0] : new TypeInfo.Union(unique));
     }
 
     /// <summary>
@@ -64,14 +83,7 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo? ResolveArrayMemberForTuple(TypeInfo.Tuple tuple, string memberName)
     {
-        var allTypes = tuple.ElementTypes.ToList();
-        if (tuple.RestElementType != null)
-            allTypes.Add(tuple.RestElementType);
-        var unique = allTypes.Distinct(TypeInfoEqualityComparer.Instance).ToList();
-        TypeInfo unionElem = unique.Count == 0
-            ? new TypeInfo.Any()
-            : (unique.Count == 1 ? unique[0] : new TypeInfo.Union(unique));
-        return BuiltInTypes.GetArrayMemberType(memberName, unionElem);
+        return BuiltInTypes.GetArrayMemberType(memberName, ComputeTupleElementUnion(tuple));
     }
 
     /// <summary>

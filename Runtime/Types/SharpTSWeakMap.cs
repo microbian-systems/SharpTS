@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
 
@@ -12,8 +13,11 @@ namespace SharpTS.Runtime.Types;
 /// - No size property (not enumerable per spec)
 /// - No iteration methods (keys(), values(), entries(), forEach())
 /// </remarks>
-public class SharpTSWeakMap
+public class SharpTSWeakMap : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.WeakMap;
+
     private readonly ConditionalWeakTable<object, object?> _map = new();
 
     /// <summary>

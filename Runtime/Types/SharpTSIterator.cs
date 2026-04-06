@@ -1,3 +1,5 @@
+using SharpTS.TypeSystem;
+
 namespace SharpTS.Runtime.Types;
 
 /// <summary>
@@ -9,8 +11,10 @@ namespace SharpTS.Runtime.Types;
 /// Each call to keys/values/entries creates a new iterator with its own enumeration state.
 /// The Next()/Return() protocol methods allow manual iteration.
 /// </remarks>
-public class SharpTSIterator
+public class SharpTSIterator : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.Iterator;
     private readonly IEnumerable<object?> _source;
     private IEnumerator<object?>? _enumerator;
     private bool _done;

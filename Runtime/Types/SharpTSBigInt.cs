@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
 
@@ -10,8 +11,11 @@ namespace SharpTS.Runtime.Types;
 /// Wraps System.Numerics.BigInteger to provide TypeScript bigint semantics.
 /// Supports arbitrary precision integers with full arithmetic operations.
 /// </remarks>
-public class SharpTSBigInt
+public class SharpTSBigInt : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.BigInt;
+
     public BigInteger Value { get; }
 
     public SharpTSBigInt(BigInteger value)

@@ -768,12 +768,38 @@ public static class BuiltInTypes
     }
 
     /// <summary>
+    /// Type signatures for instance members on Promise objects.
+    /// </summary>
+    public static TypeInfo? GetPromiseMemberType(string name, TypeInfo valueType)
+    {
+        var promiseAny = new TypeInfo.Promise(AnyType);
+
+        return name switch
+        {
+            "then" => new TypeInfo.Function(
+                [new TypeInfo.Union([new TypeInfo.Function([valueType], AnyType), new TypeInfo.Undefined()]),
+                 new TypeInfo.Union([new TypeInfo.Function([AnyType], AnyType), new TypeInfo.Undefined()])],
+                promiseAny,
+                RequiredParams: 0),
+            "catch" => new TypeInfo.Function(
+                [new TypeInfo.Function([AnyType], AnyType)],
+                promiseAny),
+            "finally" => new TypeInfo.Function(
+                [new TypeInfo.Function([], new TypeInfo.Union([VoidType, new TypeInfo.Promise(VoidType)]))],
+                new TypeInfo.Promise(valueType)),
+            _ => null
+        };
+    }
+
+    /// <summary>
     /// Type signatures for instance members on EventEmitter objects.
     /// </summary>
     public static TypeInfo? GetEventEmitterMemberType(string name)
     {
         var eventEmitterType = new TypeInfo.EventEmitter();
-        var listenerType = new TypeInfo.Function([AnyType], VoidType);
+        // Listener type is 'any' because EventEmitter callbacks are inherently untyped
+        // and can have any number/type of parameters
+        var listenerType = AnyType;
 
         return name switch
         {

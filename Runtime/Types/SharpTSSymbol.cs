@@ -1,3 +1,5 @@
+using SharpTS.TypeSystem;
+
 namespace SharpTS.Runtime.Types;
 
 /// <summary>
@@ -7,8 +9,10 @@ namespace SharpTS.Runtime.Types;
 /// Symbols are unique identifiers. Each <c>Symbol()</c> call creates a distinct symbol,
 /// even with the same description. Symbols can be used as property keys in objects.
 /// </remarks>
-public class SharpTSSymbol
+public class SharpTSSymbol : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.Symbol;
     private static int _nextId = 0;
     private readonly int _id;
     private readonly string? _description;

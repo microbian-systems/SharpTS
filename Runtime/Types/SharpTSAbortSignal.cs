@@ -1,5 +1,6 @@
 using SharpTS.Compilation;
 using SharpTS.Runtime.BuiltIns;
+using SharpTS.TypeSystem;
 using Interp = SharpTS.Execution.Interpreter;
 
 namespace SharpTS.Runtime.Types;
@@ -15,8 +16,11 @@ namespace SharpTS.Runtime.Types;
 /// - AbortSignal.timeout(ms)
 /// - AbortSignal.any(signals)
 /// </remarks>
-public class SharpTSAbortSignal
+public class SharpTSAbortSignal : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.AbortSignal;
+
     private readonly CancellationToken _token;
     private CancellationTokenSource? _ownedCts; // owned by timeout/any factories
     private object? _reason;

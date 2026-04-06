@@ -239,7 +239,17 @@ public partial class TypeChecker
         TypeCategory.RegExp => "RegExp",
         TypeCategory.Error when objType is TypeInfo.Error err => err.Name,
         TypeCategory.Timeout => "Timeout",
+        TypeCategory.Buffer => "Buffer",
         TypeCategory.Function => "function",
+        TypeCategory.WeakRef => "WeakRef",
+        TypeCategory.FinalizationRegistry => "FinalizationRegistry",
+        TypeCategory.AbortController => "AbortController",
+        TypeCategory.AbortSignal => "AbortSignal",
+        TypeCategory.Iterator => "Iterator",
+        TypeCategory.Generator => "Generator",
+        TypeCategory.AsyncGenerator => "AsyncGenerator",
+        TypeCategory.Promise => "Promise",
+        TypeCategory.EventEmitter => "EventEmitter",
         _ => objType.ToString() ?? "unknown"
     };
 
@@ -524,41 +534,19 @@ public partial class TypeChecker
             throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{record}'.");
         }
 
-        // Handle String type - check string methods
-        if (objType is TypeInfo.String or TypeInfo.StringLiteral)
+        // Handle built-in types via category-based dispatch
+        var builtInCategory = TypeCategoryResolver.Classify(objType);
+        if (TypeCategoryResolver.HasBuiltInMemberValidation(builtInCategory))
         {
-            var memberType = BuiltInTypes.GetStringMemberType(memberName.Lexeme);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'string'.");
+            var builtInMemberType = ResolveBuiltInMemberType(builtInCategory, objType, memberName.Lexeme);
+            if (builtInMemberType != null) return builtInMemberType;
+            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{GetTypeDisplayName(builtInCategory, objType)}'.");
         }
 
         // Handle primitive number type - no methods
         if (objType is TypeInfo.Primitive p && p.Type == TokenType.TYPE_NUMBER)
         {
             throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'number'.");
-        }
-
-        // Handle Array type - check array methods
-        if (objType is TypeInfo.Array arrayType)
-        {
-            var memberType = BuiltInTypes.GetArrayMemberType(memberName.Lexeme, arrayType.ElementType);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'array'.");
-        }
-
-        // Handle Tuple type - treat as array with union element type
-        if (objType is TypeInfo.Tuple tupleType)
-        {
-            var allTypes = tupleType.ElementTypes.ToList();
-            if (tupleType.RestElementType != null)
-                allTypes.Add(tupleType.RestElementType);
-            var unique = allTypes.Distinct(TypeInfoEqualityComparer.Instance).ToList();
-            TypeInfo unionElem = unique.Count == 0
-                ? new TypeInfo.Any()
-                : (unique.Count == 1 ? unique[0] : new TypeInfo.Union(unique));
-            var memberType = BuiltInTypes.GetArrayMemberType(memberName.Lexeme, unionElem);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on tuple type.");
         }
 
         // Handle Class type - check static members
@@ -666,77 +654,6 @@ public partial class TypeChecker
                 }
             }
             throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{intersection}'.");
-        }
-
-        // Handle Date, RegExp, Map, Set, WeakMap, WeakSet
-        if (objType is TypeInfo.Date)
-        {
-            var memberType = BuiltInTypes.GetDateInstanceMemberType(memberName.Lexeme);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'Date'.");
-        }
-        if (objType is TypeInfo.RegExp)
-        {
-            var memberType = BuiltInTypes.GetRegExpMemberType(memberName.Lexeme);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'RegExp'.");
-        }
-        if (objType is TypeInfo.Error errorType)
-        {
-            var memberType = BuiltInTypes.GetErrorMemberType(memberName.Lexeme, errorType.Name);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{errorType.Name}'.");
-        }
-        if (objType is TypeInfo.Map mapType)
-        {
-            var memberType = BuiltInTypes.GetMapMemberType(memberName.Lexeme, mapType.KeyType, mapType.ValueType);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'Map'.");
-        }
-        if (objType is TypeInfo.Set setType)
-        {
-            var memberType = BuiltInTypes.GetSetMemberType(memberName.Lexeme, setType.ElementType);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'Set'.");
-        }
-        if (objType is TypeInfo.WeakMap weakMapType)
-        {
-            var memberType = BuiltInTypes.GetWeakMapMemberType(memberName.Lexeme, weakMapType.KeyType, weakMapType.ValueType);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'WeakMap'.");
-        }
-        if (objType is TypeInfo.WeakSet weakSetType)
-        {
-            var memberType = BuiltInTypes.GetWeakSetMemberType(memberName.Lexeme, weakSetType.ElementType);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'WeakSet'.");
-        }
-        if (objType is TypeInfo.WeakRef weakRefType)
-        {
-            var memberType = BuiltInTypes.GetWeakRefMemberType(memberName.Lexeme, weakRefType.TargetType);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'WeakRef'.");
-        }
-        // Handle Timeout instance methods (ref, unref) and properties (hasRef)
-        if (objType is TypeInfo.Timeout)
-        {
-            var memberType = BuiltInTypes.GetTimeoutMemberType(memberName.Lexeme);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'Timeout'.");
-        }
-        // Handle Buffer instance methods and properties
-        if (objType is TypeInfo.Buffer)
-        {
-            var memberType = BuiltInTypes.GetBufferMemberType(memberName.Lexeme);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'Buffer'.");
-        }
-        // Handle EventEmitter instance methods and properties
-        if (objType is TypeInfo.EventEmitter)
-        {
-            var memberType = BuiltInTypes.GetEventEmitterMemberType(memberName.Lexeme);
-            if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'EventEmitter'.");
         }
 
         // Handle Any type

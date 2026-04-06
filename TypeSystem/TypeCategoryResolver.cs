@@ -139,6 +139,8 @@ public static class TypeCategoryResolver
         TypeCategory.Iterator => true,
         TypeCategory.Generator => true,
         TypeCategory.AsyncGenerator => true,
+        TypeCategory.Promise => true,
+        TypeCategory.EventEmitter => true,
         _ => false
     };
 

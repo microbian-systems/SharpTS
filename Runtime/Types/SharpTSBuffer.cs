@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Numerics;
 using System.Text;
 using SharpTS.Runtime.BuiltIns;
+using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
 
@@ -16,8 +17,11 @@ namespace SharpTS.Runtime.Types;
 /// - Buffer.concat(buffers, totalLength?) - concatenate buffers
 /// - Instance methods: toString, slice, copy, compare, equals, fill, write
 /// </remarks>
-public class SharpTSBuffer
+public class SharpTSBuffer : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.Buffer;
+
     private readonly byte[] _data;
 
     /// <summary>

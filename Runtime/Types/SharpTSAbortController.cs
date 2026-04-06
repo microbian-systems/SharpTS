@@ -1,3 +1,4 @@
+using SharpTS.TypeSystem;
 using Interp = SharpTS.Execution.Interpreter;
 
 namespace SharpTS.Runtime.Types;
@@ -6,8 +7,11 @@ namespace SharpTS.Runtime.Types;
 /// Runtime representation of the AbortController Web API.
 /// Wraps a .NET CancellationTokenSource for native cancellation support.
 /// </summary>
-public class SharpTSAbortController
+public class SharpTSAbortController : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.AbortController;
+
     private readonly CancellationTokenSource _cts;
     private readonly SharpTSAbortSignal _signal;
 

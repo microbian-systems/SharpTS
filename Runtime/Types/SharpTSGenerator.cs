@@ -4,6 +4,7 @@ using SharpTS.Compilation;
 using SharpTS.Parsing;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.Execution;
+using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
 
@@ -18,8 +19,10 @@ namespace SharpTS.Runtime.Types;
 /// </remarks>
 /// <seealso cref="SharpTSGeneratorFunction"/>
 /// <seealso cref="SharpTSIteratorResult"/>
-public class SharpTSGenerator : IEnumerable<object?>, IDisposable
+public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.Generator;
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _environment;
     private readonly Interpreter _interpreter;

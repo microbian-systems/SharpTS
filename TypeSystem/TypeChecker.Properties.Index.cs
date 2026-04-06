@@ -152,11 +152,7 @@ public partial class TypeChecker
                         throw new TypeCheckException($" Tuple index {i} is out of bounds.");
                 }
                 // Dynamic index -> union of all possible types
-                var allTypes = tupleType.ElementTypes.ToList();
-                if (tupleType.RestElementType != null)
-                    allTypes.Add(tupleType.RestElementType);
-                var unique = allTypes.Distinct(TypeInfoEqualityComparer.Instance).ToList();
-                return unique.Count == 1 ? unique[0] : new TypeInfo.Union(unique);
+                return ComputeTupleElementUnion(tupleType);
             }
 
             if (objType is TypeInfo.Array arrayType)

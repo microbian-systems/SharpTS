@@ -67,8 +67,9 @@ public partial class ILEmitter
 
     /// <summary>
     /// Resolves class name considering namespace imports and imported class aliases.
+    /// Extends base with additional external type checks.
     /// </summary>
-    private string ResolveClassNameForNew(List<string> namespaceParts, string className)
+    protected override string ResolveClassNameForNew(List<string> namespaceParts, string className)
     {
         if (namespaceParts.Count > 0)
         {

@@ -1,3 +1,5 @@
+using SharpTS.TypeSystem;
+
 namespace SharpTS.Runtime.Types;
 
 /// <summary>
@@ -11,8 +13,10 @@ namespace SharpTS.Runtime.Types;
 /// - Timer reference for System.Threading.Timer-based implementation
 /// - ref()/unref() methods for controlling program exit behavior
 /// </remarks>
-public class SharpTSTimeout
+public class SharpTSTimeout : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.Timeout;
     private static int _nextId = 0;
     private readonly int _id;
     private readonly CancellationTokenSource _cts;

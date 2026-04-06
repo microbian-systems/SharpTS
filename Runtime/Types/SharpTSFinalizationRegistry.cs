@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
 
@@ -7,8 +8,11 @@ namespace SharpTS.Runtime.Types;
 /// Runtime representation of JavaScript FinalizationRegistry.
 /// Invokes a cleanup callback when registered objects are garbage collected.
 /// </summary>
-public class SharpTSFinalizationRegistry
+public class SharpTSFinalizationRegistry : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.FinalizationRegistry;
+
     private readonly ISharpTSCallable _cleanupCallback;
     private readonly ConcurrentQueue<object?> _pendingCleanups = new();
     private readonly List<RegistrationEntry> _entries = [];

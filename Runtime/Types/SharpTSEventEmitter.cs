@@ -1,5 +1,6 @@
 using SharpTS.Compilation;
 using SharpTS.Runtime.BuiltIns;
+using SharpTS.TypeSystem;
 using Interp = SharpTS.Execution.Interpreter;
 
 namespace SharpTS.Runtime.Types;
@@ -11,8 +12,17 @@ namespace SharpTS.Runtime.Types;
 /// Provides event subscription, emission, and management following Node.js EventEmitter semantics.
 /// Supports once listeners, prepend operations, listener inspection, and max listener warnings.
 /// </remarks>
-public class SharpTSEventEmitter
+public class SharpTSEventEmitter : ITypeCategorized
 {
+    /// <inheritdoc />
+    /// <remarks>
+    /// Returns EventEmitter only for direct instances. Subclasses that have their own
+    /// property dispatch (via ISharpTSPropertyAccessor) should override to return their
+    /// specific category or Unknown to use the general dispatch path.
+    /// </remarks>
+    public virtual TypeCategory RuntimeCategory =>
+        GetType() == typeof(SharpTSEventEmitter) ? TypeCategory.EventEmitter : TypeCategory.Unknown;
+
     /// <summary>
     /// Wraps a listener function with metadata for once tracking.
     /// </summary>

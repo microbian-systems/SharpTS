@@ -1,3 +1,5 @@
+using SharpTS.TypeSystem;
+
 namespace SharpTS.Runtime.Types;
 
 /// <summary>
@@ -8,8 +10,11 @@ namespace SharpTS.Runtime.Types;
 /// - Target must be an object (not a primitive)
 /// - deref() returns the target if still alive, or undefined
 /// </remarks>
-public class SharpTSWeakRef
+public class SharpTSWeakRef : ITypeCategorized
 {
+    /// <inheritdoc />
+    public TypeCategory RuntimeCategory => TypeCategory.WeakRef;
+
     private readonly WeakReference<object> _ref;
 
     public SharpTSWeakRef(object? target)

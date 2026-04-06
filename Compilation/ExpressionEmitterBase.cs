@@ -1135,15 +1135,16 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitUserClassNew(List<string> namespaceParts, string className, Expr.New n)
     {
-        string resolvedClassName;
-        if (namespaceParts.Count > 0)
+        string resolvedClassName = ResolveClassNameForNew(namespaceParts, className);
+
+        // Check class expression constructors (e.g., const C = class { }; new C())
+        if (Ctx.VarToClassExpr != null &&
+            Ctx.VarToClassExpr.TryGetValue(className, out var classExpr) &&
+            Ctx.ClassExprConstructors != null &&
+            Ctx.ClassExprConstructors.TryGetValue(classExpr, out var classExprCtor))
         {
-            string nsPath = string.Join("_", namespaceParts);
-            resolvedClassName = $"{nsPath}_{className}";
-        }
-        else
-        {
-            resolvedClassName = Ctx.ResolveClassName(className);
+            EmitClassExprConstruction(classExprCtor, n);
+            return;
         }
 
         var ctorBuilder = Ctx.ClassRegistry?.GetConstructorByQualifiedName(resolvedClassName);
@@ -1245,6 +1246,71 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// Resolves a TypeScript type argument name to a CLR type (stub — all map to object).
     /// </summary>
     protected virtual Type ResolveTypeArg(string typeArg) => typeof(object);
+
+    /// <summary>
+    /// Resolves class name considering namespace imports and imported class aliases.
+    /// Overridden by ILEmitter for additional resolution paths (external types, etc.).
+    /// </summary>
+    protected virtual string ResolveClassNameForNew(List<string> namespaceParts, string className)
+    {
+        if (namespaceParts.Count > 0)
+        {
+            string nsAlias = namespaceParts[0];
+            if (Ctx.NamespaceImports?.TryGetValue(nsAlias, out var modulePath) == true)
+            {
+                if (Ctx.ExportedClasses?.TryGetValue(modulePath, out var exportedClasses) == true &&
+                    exportedClasses.TryGetValue(className, out var qualifiedName))
+                    return qualifiedName;
+            }
+
+            string nsPath = string.Join("_", namespaceParts);
+            return $"{nsPath}_{className}";
+        }
+
+        if (Ctx.ImportedClassAliases?.TryGetValue(className, out var importedClassName) == true)
+            return importedClassName;
+
+        return Ctx.ResolveClassName(className);
+    }
+
+    /// <summary>
+    /// Emits class expression construction with argument temps (safe across await/yield).
+    /// </summary>
+    private void EmitClassExprConstruction(ConstructorBuilder classExprCtor, Expr.New n)
+    {
+        var ctorParams = classExprCtor.GetParameters();
+        int expectedParamCount = ctorParams.Length;
+
+        // Pre-evaluate arguments to temps (safe across await/yield boundaries)
+        List<LocalBuilder> argTemps = [];
+        foreach (var arg in n.Arguments)
+        {
+            EmitExpression(arg);
+            EnsureBoxed();
+            var temp = IL.DeclareLocal(typeof(object));
+            IL.Emit(OpCodes.Stloc, temp);
+            argTemps.Add(temp);
+        }
+
+        for (int i = 0; i < argTemps.Count; i++)
+        {
+            IL.Emit(OpCodes.Ldloc, argTemps[i]);
+            if (i < ctorParams.Length)
+            {
+                var targetParamType = ctorParams[i].ParameterType;
+                if (targetParamType.IsValueType && targetParamType != typeof(object))
+                {
+                    IL.Emit(OpCodes.Unbox_Any, targetParamType);
+                }
+            }
+        }
+
+        for (int i = n.Arguments.Count; i < expectedParamCount; i++)
+            EmitDefaultForType(ctorParams[i].ParameterType);
+
+        IL.Emit(OpCodes.Newobj, classExprCtor);
+        SetStackUnknown();
+    }
 
     /// <summary>
     /// Emits an arrow function. Default looks up in ArrowMethods and creates TSFunction.

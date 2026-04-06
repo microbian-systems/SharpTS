@@ -138,14 +138,7 @@ public partial class TypeChecker
         // Handle Tuple type - treat as array for member access
         if (type is TypeInfo.Tuple tuple)
         {
-            var allTypes = tuple.ElementTypes.ToList();
-            if (tuple.RestElementType != null)
-                allTypes.Add(tuple.RestElementType);
-            var unique = allTypes.Distinct(TypeInfoEqualityComparer.Instance).ToList();
-            TypeInfo unionElem = unique.Count == 0
-                ? new TypeInfo.Any()
-                : (unique.Count == 1 ? unique[0] : new TypeInfo.Union(unique));
-            return BuiltInTypes.GetArrayMemberType(name, unionElem);
+            return BuiltInTypes.GetArrayMemberType(name, ComputeTupleElementUnion(tuple));
         }
 
         // Handle TypeParameter with constraint - delegate to constraint
