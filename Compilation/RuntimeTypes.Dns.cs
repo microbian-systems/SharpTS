@@ -118,4 +118,134 @@ public static partial class RuntimeTypes
         var h = hostname?.ToString() ?? "";
         return Task.Run<object?>(() => (object?)DnsRecordResolver.ResolveNaptr(h));
     }
+
+    /// <summary>
+    /// Factory for dns.Resolver in compiled mode.
+    /// Returns a Dictionary&lt;string,object?&gt; with all resolver methods bound to a shared DnsResolverInstance.
+    /// </summary>
+    public static Dictionary<string, object?> DnsCreateResolver()
+    {
+        var instance = new DnsResolverInstance();
+        return new Dictionary<string, object?>
+        {
+            ["setServers"] = (Func<object?[], object?>)(args =>
+            {
+                var servers = ExtractStringArray(args[0]);
+                instance.SetServers(servers);
+                return null;
+            }),
+            ["getServers"] = (Func<object?[], object?>)(_ =>
+            {
+                var servers = instance.GetServers();
+                return servers.Select(s => (object?)s).ToList();
+            }),
+            ["resolve"] = (Func<object?[], object?>)(args =>
+            {
+                var hostname = args[0]?.ToString() ?? "";
+                string rrtype = "A";
+                if (args.Length > 2 && args[1] is string rt) rrtype = rt;
+                var callback = args[^1];
+                DnsAsyncInvoke(callback, () => instance.Resolve(hostname, rrtype), hostname);
+                return null;
+            }),
+            ["resolve4"] = (Func<object?[], object?>)(args =>
+            {
+                var hostname = args[0]?.ToString() ?? "";
+                var callback = args[^1];
+                DnsAsyncInvoke(callback, () => (object)instance.Resolve4(hostname), hostname);
+                return null;
+            }),
+            ["resolve6"] = (Func<object?[], object?>)(args =>
+            {
+                var hostname = args[0]?.ToString() ?? "";
+                var callback = args[^1];
+                DnsAsyncInvoke(callback, () => (object)instance.Resolve6(hostname), hostname);
+                return null;
+            }),
+            ["reverse"] = (Func<object?[], object?>)(args =>
+            {
+                var ip = args[0]?.ToString() ?? "";
+                var callback = args[^1];
+                DnsAsyncInvoke(callback, () => (object)instance.Reverse(ip), ip);
+                return null;
+            }),
+            ["resolveMx"] = DnsRecordMethod(instance, h => instance.ResolveMx(h)),
+            ["resolveTxt"] = DnsRecordMethod(instance, h => instance.ResolveTxt(h)),
+            ["resolveSrv"] = DnsRecordMethod(instance, h => instance.ResolveSrv(h)),
+            ["resolveCname"] = DnsRecordMethod(instance, h => instance.ResolveCname(h)),
+            ["resolveNs"] = DnsRecordMethod(instance, h => instance.ResolveNs(h)),
+            ["resolveSoa"] = DnsRecordMethod(instance, h => instance.ResolveSoa(h)),
+            ["resolvePtr"] = DnsRecordMethod(instance, h => instance.ResolvePtr(h)),
+            ["resolveCaa"] = DnsRecordMethod(instance, h => instance.ResolveCaa(h)),
+            ["resolveNaptr"] = DnsRecordMethod(instance, h => instance.ResolveNaptr(h)),
+            ["cancel"] = (Func<object?[], object?>)(_ => null)
+        };
+    }
+
+    private static Func<object?[], object?> DnsRecordMethod(DnsResolverInstance instance, Func<string, object> resolve)
+    {
+        return args =>
+        {
+            var hostname = args[0]?.ToString() ?? "";
+            var callback = args[^1];
+            DnsAsyncInvoke(callback, () => resolve(hostname), hostname);
+            return null;
+        };
+    }
+
+    /// <summary>
+    /// Invokes a DNS resolve callback synchronously (matching compiled mode pattern
+    /// where callbacks are called inline after resolution).
+    /// Handles both Delegate (Func&lt;&gt;) and emitted TSFunction types.
+    /// </summary>
+    private static void DnsAsyncInvoke(object? callback, Func<object> resolve, string identifier)
+    {
+        if (callback == null) return;
+        try
+        {
+            var result = resolve();
+            InvokeCallback(callback, new object?[] { null, result });
+        }
+        catch (Exception ex)
+        {
+            var code = ex.Message.Contains("ENOTFOUND") ? "ENOTFOUND" :
+                       ex.Message.Contains("ETIMEOUT") ? "ETIMEOUT" :
+                       ex.Message.Contains("ENODATA") ? "ENODATA" : "EAI_FAIL";
+            var err = new Dictionary<string, object?>
+            {
+                ["code"] = code,
+                ["hostname"] = identifier,
+                ["message"] = $"query {code} {identifier}"
+            };
+            InvokeCallback(callback, new object?[] { err, null });
+        }
+    }
+
+    /// <summary>
+    /// Invokes a callback that may be a Delegate (interpreter) or an emitted TSFunction (compiled).
+    /// TSFunction has an Invoke(object?[]) method found via reflection.
+    /// </summary>
+    private static void InvokeCallback(object callback, object?[] args)
+    {
+        if (callback is Delegate del)
+        {
+            del.DynamicInvoke(new object?[] { args });
+            return;
+        }
+
+        // Emitted TSFunction: look for Invoke(object[]) method
+        var invokeMethod = callback.GetType().GetMethod("Invoke",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+            null, [typeof(object?[])], null);
+        invokeMethod?.Invoke(callback, [args]);
+    }
+
+    private static string[] ExtractStringArray(object? value)
+    {
+        if (value is List<object?> list)
+            return list.Select(e => e?.ToString() ?? "").ToArray();
+        if (value is object?[] arr)
+            return arr.Select(e => e?.ToString() ?? "").ToArray();
+        throw new Exception("Runtime Error: dns.setServers requires an array of strings");
+    }
 }

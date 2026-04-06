@@ -1513,6 +1513,9 @@ public static class BuiltInModuleTypes
                 [stringType, anyType],
                 new TypeInfo.Void()),
 
+            // dns.Resolver class constructor
+            ["Resolver"] = new TypeInfo.Function([], anyType, RequiredParams: 0),
+
             // dns.promises sub-module
             ["promises"] = anyType,
 

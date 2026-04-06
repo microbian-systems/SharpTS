@@ -20,7 +20,7 @@ public sealed class DnsModuleEmitter : IBuiltInModuleEmitter
         "resolve", "resolve4", "resolve6", "reverse",
         "resolveMx", "resolveTxt", "resolveSrv", "resolveCname", "resolveNs",
         "resolveSoa", "resolvePtr", "resolveCaa", "resolveNaptr",
-        "promises",
+        "promises", "Resolver",
         "ADDRCONFIG", "V4MAPPED", "ALL",
         "NODATA", "FORMERR", "SERVFAIL", "NOTFOUND", "NOTIMP", "REFUSED",
         "BADQUERY", "BADNAME", "BADFAMILY", "BADRESP", "CONNREFUSED", "TIMEOUT",
@@ -77,6 +77,7 @@ public sealed class DnsModuleEmitter : IBuiltInModuleEmitter
             "LOADIPHLPAPI" => EmitStringConstant(il, "ELOADIPHLPAPI"),
             "ADDRGETNETWORKPARAMS" => EmitStringConstant(il, "EADDRGETNETWORKPARAMS"),
             "CANCELLED" => EmitStringConstant(il, "ECANCELLED"),
+            "Resolver" => EmitResolverProperty(il),
             _ => false
         };
     }
@@ -115,6 +116,16 @@ public sealed class DnsModuleEmitter : IBuiltInModuleEmitter
     private static bool EmitStringConstant(ILGenerator il, string value)
     {
         il.Emit(OpCodes.Ldstr, value);
+        return true;
+    }
+
+    /// <summary>
+    /// Emits a placeholder for dns.Resolver — actual instantiation via 'new dns.Resolver()'
+    /// is handled by TryEmitModuleQualifiedConstructor → DnsResolverFactory.
+    /// </summary>
+    private static bool EmitResolverProperty(ILGenerator il)
+    {
+        il.Emit(OpCodes.Ldstr, "[DnsResolver]");
         return true;
     }
 

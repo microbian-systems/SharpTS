@@ -2059,6 +2059,9 @@ public class EmittedRuntime
     public MethodBuilder DnsGetPromisesNamespace { get; set; } = null!;
     public Dictionary<string, MethodBuilder> DnsPromisesWrapperMethods { get; set; } = new();
 
+    // DNS Resolver factory
+    public MethodBuilder DnsResolverFactory { get; set; } = null!;
+
     // ============================================================
     // Private Field/Method Access Helpers for Async Contexts
     // ============================================================

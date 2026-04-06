@@ -43,6 +43,17 @@ public static class DnsWireProtocol
     }
 
     /// <summary>
+    /// Resolves DNS records using a specific DNS server address.
+    /// Used by dns.Resolver instances with custom servers.
+    /// </summary>
+    public static object Query(string hostname, int queryType, string serverAddress)
+    {
+        var queryPacket = BuildQuery(hostname, queryType);
+        var response = SendReceive(queryPacket, serverAddress);
+        return ParseResponse(response, queryType, hostname);
+    }
+
+    /// <summary>
     /// Builds a DNS query packet per RFC 1035.
     /// </summary>
     public static byte[] BuildQuery(string hostname, int queryType)
@@ -109,10 +120,37 @@ public static class DnsWireProtocol
     /// Sends a DNS query and receives the response.
     /// Uses UDP with TCP fallback if response is truncated.
     /// </summary>
-    public static byte[] SendReceive(byte[] query)
+    public static byte[] SendReceive(byte[] query) =>
+        SendReceive(query, GetSystemDnsServer());
+
+    /// <summary>
+    /// Sends a DNS query to a specific DNS server and waits for the response.
+    /// </summary>
+    public static byte[] SendReceive(byte[] query, string dnsServer)
     {
-        var dnsServer = GetSystemDnsServer();
-        var endpoint = new IPEndPoint(IPAddress.Parse(dnsServer), DnsPort);
+        // Parse optional port from server address (e.g., "8.8.8.8:5353" or "[::1]:5353")
+        int port = DnsPort;
+        if (dnsServer.StartsWith('['))
+        {
+            var closeBracket = dnsServer.IndexOf(']');
+            if (closeBracket > 0 && closeBracket + 1 < dnsServer.Length && dnsServer[closeBracket + 1] == ':')
+            {
+                port = int.Parse(dnsServer.AsSpan(closeBracket + 2));
+                dnsServer = dnsServer[1..closeBracket];
+            }
+            else if (closeBracket > 0)
+            {
+                dnsServer = dnsServer[1..closeBracket];
+            }
+        }
+        else if (dnsServer.IndexOf(':') is var colonIdx && colonIdx >= 0
+                 && dnsServer.IndexOf(':', colonIdx + 1) < 0) // single colon = IPv4:port
+        {
+            port = int.Parse(dnsServer.AsSpan(colonIdx + 1));
+            dnsServer = dnsServer[..colonIdx];
+        }
+
+        var endpoint = new IPEndPoint(IPAddress.Parse(dnsServer), port);
 
         for (var attempt = 0; attempt <= MaxRetries; attempt++)
         {

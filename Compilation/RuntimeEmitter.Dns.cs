@@ -44,6 +44,9 @@ public partial class RuntimeEmitter
 
         // Async wrappers for DNS record types
         EmitDnsRecordTypeWrappers(typeBuilder, runtime);
+
+        // DNS Resolver factory
+        EmitDnsResolverFactory(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -3919,5 +3922,13 @@ public partial class RuntimeEmitter
 
         closureType.CreateType();
         return (ctor, worker);
+    }
+
+    /// <summary>
+    /// Emits DnsResolverFactory stub — actual implementation in RuntimeEmitter.DnsResolver.cs.
+    /// </summary>
+    private void EmitDnsResolverFactory(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        EmitDnsResolverFactoryMethod(typeBuilder, runtime);
     }
 }

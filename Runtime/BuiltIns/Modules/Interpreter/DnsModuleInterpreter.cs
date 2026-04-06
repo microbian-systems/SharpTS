@@ -46,6 +46,9 @@ public static class DnsModuleInterpreter
             // Promises API
             ["promises"] = new SharpTSObject(GetPromisesExports()),
 
+            // Resolver class constructor
+            ["Resolver"] = new BuiltInMethod("Resolver", 0, 1, CreateResolver),
+
             // Constants
             ["ADDRCONFIG"] = (double)1,
             ["V4MAPPED"] = (double)2,
@@ -217,6 +220,199 @@ public static class DnsModuleInterpreter
     }
 
     private static bool IsTruthy(object? value) => RuntimeTypes.IsTruthy(value);
+
+    #region Resolver
+
+    /// <summary>
+    /// Creates a dns.Resolver instance — an object with resolve methods that use
+    /// configurable DNS servers via setServers()/getServers().
+    /// </summary>
+    private static object? CreateResolver(Interp interpreter, object? receiver, List<object?> args)
+    {
+        var instance = new DnsResolverInstance();
+        var fields = new Dictionary<string, object?>
+        {
+            ["setServers"] = new BuiltInMethod("setServers", 1, 1, (interp, _, a) =>
+            {
+                var servers = ExtractStringArray(a[0]);
+                instance.SetServers(servers);
+                return SharpTSUndefined.Instance;
+            }),
+            ["getServers"] = new BuiltInMethod("getServers", 0, 0, (interp, _, _) =>
+            {
+                var servers = instance.GetServers();
+                return new SharpTSArray(servers.Select(s => (object?)s).ToList());
+            }),
+            ["resolve"] = new BuiltInMethod("resolve", 2, 3, (interp, _, a) =>
+                ResolverResolveAsync(interp, instance, a)),
+            ["resolve4"] = new BuiltInMethod("resolve4", 2, 2, (interp, _, a) =>
+                ResolverResolveByFamilyAsync(interp, instance, "resolve4", a, 4)),
+            ["resolve6"] = new BuiltInMethod("resolve6", 2, 2, (interp, _, a) =>
+                ResolverResolveByFamilyAsync(interp, instance, "resolve6", a, 6)),
+            ["reverse"] = new BuiltInMethod("reverse", 2, 2, (interp, _, a) =>
+                ResolverReverseAsync(interp, instance, a)),
+            ["resolveMx"] = new BuiltInMethod("resolveMx", 2, 2, (interp, _, a) =>
+                ResolverRecordAsync(interp, instance, "resolveMx", a, r => r.ResolveMx)),
+            ["resolveTxt"] = new BuiltInMethod("resolveTxt", 2, 2, (interp, _, a) =>
+                ResolverRecordAsync(interp, instance, "resolveTxt", a, r => r.ResolveTxt)),
+            ["resolveSrv"] = new BuiltInMethod("resolveSrv", 2, 2, (interp, _, a) =>
+                ResolverRecordAsync(interp, instance, "resolveSrv", a, r => r.ResolveSrv)),
+            ["resolveCname"] = new BuiltInMethod("resolveCname", 2, 2, (interp, _, a) =>
+                ResolverRecordAsync(interp, instance, "resolveCname", a, r => r.ResolveCname)),
+            ["resolveNs"] = new BuiltInMethod("resolveNs", 2, 2, (interp, _, a) =>
+                ResolverRecordAsync(interp, instance, "resolveNs", a, r => r.ResolveNs)),
+            ["resolveSoa"] = new BuiltInMethod("resolveSoa", 2, 2, (interp, _, a) =>
+                ResolverRecordAsync(interp, instance, "resolveSoa", a, r => r.ResolveSoa)),
+            ["resolvePtr"] = new BuiltInMethod("resolvePtr", 2, 2, (interp, _, a) =>
+                ResolverRecordAsync(interp, instance, "resolvePtr", a, r => r.ResolvePtr)),
+            ["resolveCaa"] = new BuiltInMethod("resolveCaa", 2, 2, (interp, _, a) =>
+                ResolverRecordAsync(interp, instance, "resolveCaa", a, r => r.ResolveCaa)),
+            ["resolveNaptr"] = new BuiltInMethod("resolveNaptr", 2, 2, (interp, _, a) =>
+                ResolverRecordAsync(interp, instance, "resolveNaptr", a, r => r.ResolveNaptr)),
+            ["cancel"] = new BuiltInMethod("cancel", 0, 0, (_, _, _) => SharpTSUndefined.Instance)
+        };
+        return new SharpTSObject(fields);
+    }
+
+    private static string[] ExtractStringArray(object? value)
+    {
+        if (value is SharpTSArray arr)
+            return arr.Elements.Select(e => e?.ToString() ?? "").ToArray();
+        if (value is List<object?> list)
+            return list.Select(e => e?.ToString() ?? "").ToArray();
+        throw new Exception("Runtime Error: dns.setServers requires an array of strings");
+    }
+
+    private static object? ResolverResolveAsync(Interp interpreter, DnsResolverInstance instance, List<object?> args)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        var callback = args[^1] as ISharpTSCallable
+            ?? throw new Exception("Runtime Error: dns.resolve callback is required");
+        string rrtype = "A";
+        if (args.Count > 2 && args[1] is string rt) rrtype = rt;
+
+        interpreter.Ref();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var raw = instance.Resolve(hostname, rrtype);
+                var result = WrapDnsResult(raw);
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter, [null, result]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+            catch (Exception ex)
+            {
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+        });
+        return SharpTSUndefined.Instance;
+    }
+
+    private static object? ResolverResolveByFamilyAsync(Interp interpreter, DnsResolverInstance instance,
+        string methodName, List<object?> args, int family)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        var callback = args[^1] as ISharpTSCallable
+            ?? throw new Exception($"Runtime Error: dns.{methodName} callback is required");
+
+        interpreter.Ref();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var result = family == 4 ? instance.Resolve4(hostname) : instance.Resolve6(hostname);
+                var wrapped = new SharpTSArray(result);
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter, [null, wrapped]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+            catch (Exception ex)
+            {
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+        });
+        return SharpTSUndefined.Instance;
+    }
+
+    private static object? ResolverReverseAsync(Interp interpreter, DnsResolverInstance instance, List<object?> args)
+    {
+        var ip = args[0]?.ToString() ?? "";
+        var callback = args[^1] as ISharpTSCallable
+            ?? throw new Exception("Runtime Error: dns.reverse callback is required");
+
+        interpreter.Ref();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var result = instance.Reverse(ip);
+                var wrapped = new SharpTSArray(result);
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter, [null, wrapped]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+            catch (Exception ex)
+            {
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), ip), null]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+        });
+        return SharpTSUndefined.Instance;
+    }
+
+    private static object? ResolverRecordAsync(Interp interpreter, DnsResolverInstance instance,
+        string methodName, List<object?> args, Func<DnsResolverInstance, Func<string, object>> resolveSelector)
+    {
+        var hostname = args[0]?.ToString() ?? "";
+        var callback = args[^1] as ISharpTSCallable
+            ?? throw new Exception($"Runtime Error: dns.{methodName} callback is required");
+
+        var resolveFunc = resolveSelector(instance);
+        interpreter.Ref();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var raw = resolveFunc(hostname);
+                var result = WrapDnsResult(raw);
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter, [null, result]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+            catch (Exception ex)
+            {
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+        });
+        return SharpTSUndefined.Instance;
+    }
+
+    #endregion
 
     private static string GetErrorCode(SocketException ex)
     {

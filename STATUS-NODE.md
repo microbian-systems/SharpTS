@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-04-03 (IPC sockets: server.address() returns string, connect timeout, error codes with code/syscall properties)
+**Last Updated:** 2026-04-05 (dns.Resolver class: setServers/getServers, all resolve methods with custom DNS servers)
 
 ## Legend
 - ✅ Implemented
@@ -677,8 +677,12 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | **Promise API** | | |
 | `dns/promises` | ✅ | Promise-based: all callback methods available as promise variants |
 | `dns.promises` | ✅ | Sub-module access to promise API |
-| **Not Implemented** | | |
-| `Resolver` class | ❌ | Use module methods |
+| **Resolver** | | |
+| `Resolver` class | ✅ | `new dns.Resolver()` with configurable servers |
+| `resolver.setServers()` | ✅ | Set custom DNS servers (IP addresses with optional port) |
+| `resolver.getServers()` | ✅ | Get configured DNS server list |
+| `resolver.resolve()` | ✅ | All resolve methods use configured servers |
+| `resolver.cancel()` | ⚠️ | No-op (no cancellation tracking) |
 
 ---
 

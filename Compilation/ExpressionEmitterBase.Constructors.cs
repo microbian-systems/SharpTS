@@ -134,6 +134,11 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
+            case "Resolver":
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.DnsResolverFactory);
+                SetStackUnknown();
+                return true;
+
             case "AbortController":
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateAbortController);
                 SetStackUnknown();
@@ -435,6 +440,7 @@ public abstract partial class ExpressionEmitterBase
             "StringDecoder" => TryEmitBuiltInConstructor("StringDecoder", arguments),
             "PerformanceObserver" => TryEmitBuiltInConstructor("PerformanceObserver", arguments),
             "Agent" => TryEmitAgentConstructor(arguments),
+            "Resolver" => TryEmitResolverConstructor(),
             _ => false
         };
     }
@@ -451,6 +457,13 @@ public abstract partial class ExpressionEmitterBase
             IL.Emit(OpCodes.Ldnull);
         }
         IL.Emit(OpCodes.Call, Ctx.Runtime!.HttpAgentFactory);
+        _helpers.SetStackUnknown();
+        return true;
+    }
+
+    private bool TryEmitResolverConstructor()
+    {
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.DnsResolverFactory);
         _helpers.SetStackUnknown();
         return true;
     }

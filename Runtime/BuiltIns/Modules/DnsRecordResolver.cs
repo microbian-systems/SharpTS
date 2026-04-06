@@ -94,4 +94,55 @@ public static class DnsRecordResolver
             throw new SocketException((int)SocketError.HostNotFound);
         return addresses.Select(a => (object?)a.ToString()).ToList();
     }
+
+    #region Overloads with custom DNS server
+
+    /// <summary>
+    /// Resolves DNS records using a specific DNS server. Used by dns.Resolver instances.
+    /// </summary>
+    public static object Resolve(string hostname, string rrtype, string server) =>
+        rrtype.ToUpperInvariant() switch
+        {
+            "MX" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeMX, server),
+            "TXT" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeTXT, server),
+            "SRV" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeSRV, server),
+            "CNAME" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeCNAME, server),
+            "NS" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeNS, server),
+            "SOA" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeSOA, server),
+            "PTR" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypePTR, server),
+            "CAA" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeCAA, server),
+            "NAPTR" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeNAPTR, server),
+            "A" => ResolveA(hostname),    // A/AAAA use system DNS (Dns.GetHostEntry)
+            "AAAA" => ResolveAaaa(hostname),
+            _ => throw new Exception($"Runtime Error: dns.resolve unknown rrtype: {rrtype}")
+        };
+
+    public static List<object?> ResolveMx(string hostname, string server) =>
+        (List<object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeMX, server);
+
+    public static List<object?> ResolveTxt(string hostname, string server) =>
+        (List<object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeTXT, server);
+
+    public static List<object?> ResolveSrv(string hostname, string server) =>
+        (List<object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeSRV, server);
+
+    public static List<object?> ResolveCname(string hostname, string server) =>
+        (List<object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeCNAME, server);
+
+    public static List<object?> ResolveNs(string hostname, string server) =>
+        (List<object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeNS, server);
+
+    public static Dictionary<string, object?> ResolveSoa(string hostname, string server) =>
+        (Dictionary<string, object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeSOA, server);
+
+    public static List<object?> ResolvePtr(string hostname, string server) =>
+        (List<object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypePTR, server);
+
+    public static List<object?> ResolveCaa(string hostname, string server) =>
+        (List<object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeCAA, server);
+
+    public static List<object?> ResolveNaptr(string hostname, string server) =>
+        (List<object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeNAPTR, server);
+
+    #endregion
 }
