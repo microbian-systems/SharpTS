@@ -2,7 +2,10 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SharpTS.Compilation;
 
@@ -22,7 +25,15 @@ public partial class RuntimeEmitter
     private FieldBuilder _dgramConnectedField = null!;
     private FieldBuilder _dgramConnectedAddressField = null!;
     private FieldBuilder _dgramConnectedPortField = null!;
+    private FieldBuilder _dgramReceiveCtsField = null!;
+    private FieldBuilder _dgramPendingCloseCallbackField = null!;
+    private FieldBuilder _dgramPendingErrorField = null!;
     private MethodBuilder _dgramReceiveWorkerMethod = null!;
+    private MethodBuilder _dgramEmitListeningMethod = null!;
+    private MethodBuilder _dgramEmitCloseMethod = null!;
+    private MethodBuilder _dgramEmitConnectMethod = null!;
+    private MethodBuilder _dgramFireCloseCallbackMethod = null!;
+    private MethodBuilder _dgramFireBindErrorMethod = null!;
     private TypeBuilder _dgramMessageClosureType = null!;
     private ConstructorBuilder _dgramMessageClosureCtor = null!;
     private MethodBuilder _dgramMessageClosureRun = null!;
@@ -49,6 +60,9 @@ public partial class RuntimeEmitter
         _dgramConnectedField = typeBuilder.DefineField("_connected", _types.Boolean, FieldAttributes.Private);
         _dgramConnectedAddressField = typeBuilder.DefineField("_connectedAddress", _types.String, FieldAttributes.Private);
         _dgramConnectedPortField = typeBuilder.DefineField("_connectedPort", _types.Int32, FieldAttributes.Private);
+        _dgramReceiveCtsField = typeBuilder.DefineField("_receiveCts", typeof(CancellationTokenSource), FieldAttributes.Private);
+        _dgramPendingCloseCallbackField = typeBuilder.DefineField("_pendingCloseCallback", _types.Object, FieldAttributes.Private);
+        _dgramPendingErrorField = typeBuilder.DefineField("_pendingError", _types.Object, FieldAttributes.Private);
 
         // Constructor: public $DatagramSocket(object typeArg)
         var ctor = typeBuilder.DefineConstructor(
@@ -113,6 +127,18 @@ public partial class RuntimeEmitter
             typeof(void),
             [_types.Object]
         );
+
+        // Define event-emit helper instance methods used as Action delegate targets
+        // for deferred event emission via EventLoop.Schedule. These bind 'this' implicitly.
+        EmitDgramEventHelper(typeBuilder, runtime, "_EmitListening", "listening", out _dgramEmitListeningMethod);
+        EmitDgramEventHelper(typeBuilder, runtime, "_EmitClose",     "close",     out _dgramEmitCloseMethod);
+        EmitDgramEventHelper(typeBuilder, runtime, "_EmitConnect",   "connect",   out _dgramEmitConnectMethod);
+
+        // Define helpers that read pending callback/error fields and dispatch.
+        // Used as Action delegate targets to defer user close-callback and bind-error
+        // emission to the event loop without needing a separate closure class.
+        EmitDgramFireCloseCallbackHelper(typeBuilder, runtime, out _dgramFireCloseCallbackMethod);
+        EmitDgramFireBindErrorHelper(typeBuilder, runtime, out _dgramFireBindErrorMethod);
 
         // Emit all methods (none need InvokeValue, so all go in Phase 1)
         EmitDgramBind(typeBuilder, runtime);
@@ -212,6 +238,170 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
         il.Emit(OpCodes.Pop); // discard bool return
+    }
+
+    /// <summary>
+    /// Helper: defines a private instance method that calls this.Emit(eventName, []).
+    /// Used as the target of an Action delegate scheduled on the event loop, so that
+    /// 'listening'/'close'/'connect' fire on a future tick instead of synchronously
+    /// inside Bind/Close/Connect (matching the interpreter and Node.js semantics).
+    /// </summary>
+    private void EmitDgramEventHelper(
+        TypeBuilder typeBuilder,
+        EmittedRuntime runtime,
+        string methodName,
+        string eventName,
+        out MethodBuilder methodBuilder)
+    {
+        methodBuilder = typeBuilder.DefineMethod(
+            methodName,
+            MethodAttributes.Private,
+            typeof(void),
+            Type.EmptyTypes);
+
+        var il = methodBuilder.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0); // this
+        il.Emit(OpCodes.Ldstr, eventName);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop); // discard bool
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Helper: emits IL that schedules an Action(this.<paramref name="instanceMethod"/>) on $EventLoop.
+    /// Stack on entry: empty. Stack on exit: empty.
+    /// </summary>
+    private void EmitDgramScheduleAction(
+        ILGenerator il,
+        EmittedRuntime runtime,
+        MethodBuilder instanceMethod)
+    {
+        // EventLoop.GetInstance()
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        // new Action(this, instanceMethod)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldftn, instanceMethod);
+        il.Emit(OpCodes.Newobj, typeof(Action).GetConstructor([_types.Object, typeof(IntPtr)])!);
+        // EventLoop.Schedule(action)
+        il.Emit(OpCodes.Call, runtime.EventLoopSchedule);
+    }
+
+    /// <summary>
+    /// Helper: emits a private instance method `_FireCloseCallback()` that reads
+    /// `_pendingCloseCallback` and invokes it as $TSFunction or $BoundTSFunction with
+    /// no args. This is the deferred-callback mechanism for Close() — the field is
+    /// set by Close() and the method is scheduled via EventLoop.Schedule(new Action(this._FireCloseCallback)).
+    /// Close() is idempotent (`if (_closed) return null`), so the field is set at most once.
+    /// </summary>
+    private void EmitDgramFireCloseCallbackHelper(
+        TypeBuilder typeBuilder,
+        EmittedRuntime runtime,
+        out MethodBuilder methodBuilder)
+    {
+        methodBuilder = typeBuilder.DefineMethod(
+            "_FireCloseCallback",
+            MethodAttributes.Private,
+            typeof(void),
+            Type.EmptyTypes);
+
+        var il = methodBuilder.GetILGenerator();
+
+        var notTSFunc = il.DefineLabel();
+        var notBound = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        // var cb = _pendingCloseCallback; if (cb == null) return;
+        var cbLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _dgramPendingCloseCallbackField);
+        il.Emit(OpCodes.Stloc, cbLocal);
+        il.Emit(OpCodes.Ldloc, cbLocal);
+        il.Emit(OpCodes.Brfalse, doneLabel);
+
+        // _pendingCloseCallback = null  (release reference, single-shot semantics)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stfld, _dgramPendingCloseCallbackField);
+
+        // if (cb is TSFunction) ((TSFunction)cb).Invoke(new object[0]);
+        il.Emit(OpCodes.Ldloc, cbLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notTSFunc);
+
+        il.Emit(OpCodes.Ldloc, cbLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        // else if (cb is BoundTSFunction) ((BoundTSFunction)cb).Invoke(new object[0]);
+        il.MarkLabel(notTSFunc);
+        il.Emit(OpCodes.Ldloc, cbLocal);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brfalse, notBound);
+
+        il.Emit(OpCodes.Ldloc, cbLocal);
+        il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvoke);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(notBound);
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Helper: emits a private instance method `_FireBindError()` that reads
+    /// `_pendingError` and emits an 'error' event with it. Used as the deferred
+    /// dispatch for Bind()'s catch block.
+    /// </summary>
+    private void EmitDgramFireBindErrorHelper(
+        TypeBuilder typeBuilder,
+        EmittedRuntime runtime,
+        out MethodBuilder methodBuilder)
+    {
+        methodBuilder = typeBuilder.DefineMethod(
+            "_FireBindError",
+            MethodAttributes.Private,
+            typeof(void),
+            Type.EmptyTypes);
+
+        var il = methodBuilder.GetILGenerator();
+        var doneLabel = il.DefineLabel();
+
+        // var err = _pendingError; if (err == null) return;
+        var errLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _dgramPendingErrorField);
+        il.Emit(OpCodes.Stloc, errLocal);
+        il.Emit(OpCodes.Ldloc, errLocal);
+        il.Emit(OpCodes.Brfalse, doneLabel);
+
+        // _pendingError = null
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stfld, _dgramPendingErrorField);
+
+        // this.Emit("error", new object[] { err });
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "error");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, errLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
@@ -424,6 +614,20 @@ public partial class RuntimeEmitter
         // Parse address (default based on family)
         var addressLocal = EmitDgramParseAddress(il, 2);
 
+        // If callback != null, register it as a one-time 'listening' listener.
+        // This matches the interpreter's `Once("listening", callback)` and Node's
+        // documented bind(port, addr, cb) behavior. The callback then fires as part of
+        // the deferred 'listening' event below, after Bind() has returned to the caller.
+        var noCallback = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Brfalse, noCallback);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "listening");
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOnce);
+        il.Emit(OpCodes.Pop); // discard returned this
+        il.MarkLabel(noCallback);
+
         // Try/catch block for binding
         var tryStart = il.BeginExceptionBlock();
 
@@ -450,6 +654,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _dgramBoundField);
 
+        // _receiveCts = new CancellationTokenSource()
+        // Must be set before queueing the receive worker so the worker observes a non-null CTS.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Newobj, typeof(CancellationTokenSource).GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stfld, _dgramReceiveCtsField);
+
         // EventLoop.Ref() to keep process alive while socket is bound
         il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
         il.Emit(OpCodes.Call, runtime.EventLoopRef);
@@ -462,29 +672,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, typeof(ThreadPool).GetMethod("QueueUserWorkItem", [typeof(WaitCallback)])!);
         il.Emit(OpCodes.Pop);
 
-        // Call callback if provided
-        EmitDgramCallbackInvocation(il, runtime, () => il.Emit(OpCodes.Ldloc, callbackLocal), 0);
+        // Schedule 'listening' event on the event loop (NOT synchronous).
+        // Node guarantees bind() is async — listening fires on a future tick.
+        EmitDgramScheduleAction(il, runtime, _dgramEmitListeningMethod);
 
-        // Emit 'listening' event
-        EmitDgramEmitEvent(il, runtime, "listening");
-
-        // Catch block: emit 'error' event
+        // Catch block: store the exception in _pendingError and schedule _FireBindError
+        // on the event loop. This defers the 'error' event so user-attached error handlers
+        // (which may be attached after Bind() returns) can still observe it.
+        // On entry to a catch block, the exception is on the evaluation stack.
         il.BeginCatchBlock(typeof(Exception));
         var exLocal = il.DeclareLocal(typeof(Exception));
-        il.Emit(OpCodes.Stloc, exLocal);
-
-        // this.Emit("error", new object[] { exception })
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldstr, "error");
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldloc, exLocal);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
-        il.Emit(OpCodes.Pop);
-
+        il.Emit(OpCodes.Stloc, exLocal);     // exception → exLocal
+        il.Emit(OpCodes.Ldarg_0);            // this
+        il.Emit(OpCodes.Ldloc, exLocal);     // exception
+        il.Emit(OpCodes.Stfld, _dgramPendingErrorField);  // this._pendingError = exception
+        // EventLoop.Schedule(new Action(this._FireBindError))
+        EmitDgramScheduleAction(il, runtime, _dgramFireBindErrorMethod);
         il.EndExceptionBlock();
 
         // return this
@@ -517,6 +720,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _dgramClosedField);
 
+        // Cancel the receive worker BEFORE disposing the client. This is the cooperative
+        // wakeup mechanism: ReceiveAsync(token) observes the cancellation at the runtime
+        // layer (not the kernel), so it works on macOS/BSD where closing a socket from
+        // another thread does not reliably interrupt a blocked recvfrom().
+        var noCts = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _dgramReceiveCtsField);
+        il.Emit(OpCodes.Brfalse, noCts);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _dgramReceiveCtsField);
+        il.Emit(OpCodes.Callvirt, typeof(CancellationTokenSource).GetMethod("Cancel", Type.EmptyTypes)!);
+        il.MarkLabel(noCts);
+
         // if _client != null: _client.Close(), _client.Dispose()
         var noClient = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -547,11 +763,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.EventLoopUnref);
         il.MarkLabel(skipUnref);
 
-        // Call callback if provided
-        EmitDgramCallbackInvocation(il, runtime, () => il.Emit(OpCodes.Ldarg_1), 0);
+        // Schedule the user close callback (if any) on the event loop, before the
+        // 'close' event. The interpreter does the same: ScheduleTimer(callback) then
+        // ScheduleTimer(EmitEvent("close")). FIFO ordering on the queue preserves this.
+        // Close() is gated by `if (_closed) return null` so this runs at most once,
+        // making the field-based handoff safe (no concurrent close calls).
+        var noCallback = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, noCallback);
+        // _pendingCloseCallback = callback
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, _dgramPendingCloseCallbackField);
+        // EventLoop.Schedule(new Action(this._FireCloseCallback))
+        EmitDgramScheduleAction(il, runtime, _dgramFireCloseCallbackMethod);
+        il.MarkLabel(noCallback);
 
-        // Emit 'close' event
-        EmitDgramEmitEvent(il, runtime, "close");
+        // Schedule 'close' event (deferred to a future tick)
+        EmitDgramScheduleAction(il, runtime, _dgramEmitCloseMethod);
 
         il.MarkLabel(returnNull);
         il.Emit(OpCodes.Ldnull);
@@ -690,6 +919,17 @@ public partial class RuntimeEmitter
         // Parse address (default based on family)
         var addressLocal = EmitDgramParseAddress(il, 2);
 
+        // If callback != null, register as one-time 'connect' listener (mirrors interpreter).
+        var noCallback = il.DefineLabel();
+        EmitDgramIsCallable(il, runtime, () => il.Emit(OpCodes.Ldarg_3));
+        il.Emit(OpCodes.Brfalse, noCallback);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "connect");
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOnce);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(noCallback);
+
         // Create UdpClient if null
         var clientExists = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -722,11 +962,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, portLocal);
         il.Emit(OpCodes.Stfld, _dgramConnectedPortField);
 
-        // Call callback if provided
-        EmitDgramCallbackInvocation(il, runtime, () => il.Emit(OpCodes.Ldarg_3), 0);
-
-        // Emit 'connect' event
-        EmitDgramEmitEvent(il, runtime, "connect");
+        // Schedule 'connect' event on the event loop. The Once-registered callback (if any)
+        // fires as part of this event.
+        EmitDgramScheduleAction(il, runtime, _dgramEmitConnectMethod);
 
         // return null
         il.Emit(OpCodes.Ldnull);
@@ -1344,4 +1582,5 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
     }
+
 }

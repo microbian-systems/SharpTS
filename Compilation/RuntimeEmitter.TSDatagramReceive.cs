@@ -151,8 +151,16 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits the _DgramReceiveWorker body:
-    /// Blocking loop that calls _client.Receive(ref remoteEP), then schedules
-    /// a $DgramMessageClosure.Run on the EventLoop for each received packet.
+    /// Async-capable loop that calls _client.ReceiveAsync(_receiveCts.Token) via
+    /// ValueTaskAwaiter.GetResult(), then schedules a $DgramMessageClosure.Run on
+    /// the EventLoop for each received packet.
+    ///
+    /// IMPORTANT: this MUST use the cancellable async overload, not the blocking
+    /// Receive(ref EndPoint). On macOS/BSD, closing a socket from another thread
+    /// does not reliably interrupt a blocked recvfrom() — the worker would park
+    /// indefinitely in unmanaged code, blocking process shutdown. ReceiveAsync(token)
+    /// supports cooperative cancellation at the .NET runtime layer, which works
+    /// uniformly across Linux, Windows, and macOS.
     /// </summary>
     private void EmitDgramReceiveWorkerBody(EmittedRuntime runtime)
     {
@@ -162,6 +170,10 @@ public partial class RuntimeEmitter
         var loopExit = il.DefineLabel();
         var remoteEPLocal = il.DeclareLocal(typeof(IPEndPoint));
         var dataLocal = il.DeclareLocal(typeof(byte[]));
+        var tokenLocal = il.DeclareLocal(typeof(System.Threading.CancellationToken));
+        var vtLocal = il.DeclareLocal(typeof(System.Threading.Tasks.ValueTask<UdpReceiveResult>));
+        var awaiterLocal = il.DeclareLocal(typeof(System.Runtime.CompilerServices.ValueTaskAwaiter<UdpReceiveResult>));
+        var resultLocal = il.DeclareLocal(typeof(UdpReceiveResult));
 
         il.MarkLabel(loopTop);
 
@@ -175,21 +187,57 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _dgramClientField);
         il.Emit(OpCodes.Brfalse, loopExit);
 
-        // try { remoteEP = new IPEndPoint(IPAddress.Any, 0); data = _client.Receive(ref remoteEP) }
+        // try {
         il.BeginExceptionBlock();
 
-        // remoteEP = new IPEndPoint(IPAddress.Any, 0)
-        il.Emit(OpCodes.Ldsfld, typeof(IPAddress).GetField("Any")!);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newobj, typeof(IPEndPoint).GetConstructor([typeof(IPAddress), typeof(int)])!);
-        il.Emit(OpCodes.Stloc, remoteEPLocal);
+        // token = (_receiveCts != null) ? _receiveCts.Token : default
+        var ctsNonNull = il.DefineLabel();
+        var tokenReady = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _dgramReceiveCtsField);
+        il.Emit(OpCodes.Brtrue, ctsNonNull);
+        // default(CancellationToken)
+        il.Emit(OpCodes.Ldloca, tokenLocal);
+        il.Emit(OpCodes.Initobj, typeof(System.Threading.CancellationToken));
+        il.Emit(OpCodes.Br, tokenReady);
+        il.MarkLabel(ctsNonNull);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _dgramReceiveCtsField);
+        il.Emit(OpCodes.Callvirt, typeof(System.Threading.CancellationTokenSource)
+            .GetProperty("Token")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, tokenLocal);
+        il.MarkLabel(tokenReady);
 
-        // data = _client.Receive(ref remoteEP)
+        // vt = _client.ReceiveAsync(token)   — ValueTask<UdpReceiveResult>
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _dgramClientField);
-        il.Emit(OpCodes.Ldloca, remoteEPLocal);
-        il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetMethod("Receive", [typeof(IPEndPoint).MakeByRefType()])!);
+        il.Emit(OpCodes.Ldloc, tokenLocal);
+        il.Emit(OpCodes.Callvirt, typeof(UdpClient)
+            .GetMethod("ReceiveAsync", [typeof(System.Threading.CancellationToken)])!);
+        il.Emit(OpCodes.Stloc, vtLocal);
+
+        // awaiter = vt.GetAwaiter()
+        il.Emit(OpCodes.Ldloca, vtLocal);
+        il.Emit(OpCodes.Call, typeof(System.Threading.Tasks.ValueTask<UdpReceiveResult>)
+            .GetMethod("GetAwaiter", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, awaiterLocal);
+
+        // result = awaiter.GetResult()  — blocks until receive completes,
+        // throws OperationCanceledException if the token is cancelled.
+        il.Emit(OpCodes.Ldloca, awaiterLocal);
+        il.Emit(OpCodes.Call, typeof(System.Runtime.CompilerServices.ValueTaskAwaiter<UdpReceiveResult>)
+            .GetMethod("GetResult", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // data = result.Buffer
+        il.Emit(OpCodes.Ldloca, resultLocal);
+        il.Emit(OpCodes.Call, typeof(UdpReceiveResult).GetProperty("Buffer")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, dataLocal);
+
+        // remoteEP = result.RemoteEndPoint
+        il.Emit(OpCodes.Ldloca, resultLocal);
+        il.Emit(OpCodes.Call, typeof(UdpReceiveResult).GetProperty("RemoteEndPoint")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, remoteEPLocal);
 
         // Extract remote endpoint info for the closure
         var addrStrLocal = il.DeclareLocal(_types.String);
