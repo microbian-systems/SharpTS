@@ -16,7 +16,7 @@ namespace SharpTS.Runtime.Types;
 /// Methods: writeHead, write, end, setHeader, getHeader, removeHeader, getHeaderNames, hasHeader
 /// Inherits stream methods: on, once, cork, uncork, destroy, etc.
 /// </remarks>
-public class SharpTSHttpResponse : SharpTSWritable, ITypeCategorized
+public class SharpTSHttpResponse : SharpTSWritable
 {
     /// <inheritdoc />
     public override TypeCategory RuntimeCategory => TypeCategory.Record;

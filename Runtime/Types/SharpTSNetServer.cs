@@ -12,7 +12,7 @@ namespace SharpTS.Runtime.Types;
 /// Extends SharpTSEventEmitter for full event handling support.
 /// Events: 'connection', 'listening', 'close', 'error'
 /// </summary>
-public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposable
+public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
 {
     /// <inheritdoc />
     public override TypeCategory RuntimeCategory => TypeCategory.Record;

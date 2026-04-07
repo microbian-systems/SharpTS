@@ -15,7 +15,7 @@ namespace SharpTS.Runtime.Types;
 /// Methods: listen(port, callback?), close(callback?)
 /// Events: 'listening', 'request', 'error', 'close'
 /// </remarks>
-public class SharpTSHttpServer : SharpTSEventEmitter, ITypeCategorized, IDisposable
+public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
 {
     /// <inheritdoc />
     public override TypeCategory RuntimeCategory => TypeCategory.Record;

@@ -13,7 +13,7 @@ namespace SharpTS.Runtime.Types;
 /// or between a pair of ports created via MessageChannel. Messages are cloned using the
 /// structured clone algorithm, except SharedArrayBuffer which is shared by reference.
 /// </remarks>
-public class SharpTSMessagePort : SharpTSEventEmitter, ITypeCategorized
+public class SharpTSMessagePort : SharpTSEventEmitter
 {
     /// <summary>
     /// Internal queue for incoming messages.

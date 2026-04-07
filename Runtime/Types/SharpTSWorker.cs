@@ -19,7 +19,7 @@ namespace SharpTS.Runtime.Types;
 /// Workers load script files from disk - inline functions are not supported.
 /// This enforces a clean separation between threads and prevents closure issues.
 /// </remarks>
-public class SharpTSWorker : SharpTSEventEmitter, ITypeCategorized, IDisposable
+public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 {
     private static int _nextThreadId = 1;
 
@@ -488,7 +488,7 @@ public class SharpTSWorker : SharpTSEventEmitter, ITypeCategorized, IDisposable
 /// <summary>
 /// MessagePort-like object for worker to communicate with parent.
 /// </summary>
-internal class WorkerParentPort : SharpTSEventEmitter, ITypeCategorized
+internal class WorkerParentPort : SharpTSEventEmitter
 {
     private readonly SharpTSWorker _worker;
 

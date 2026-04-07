@@ -15,7 +15,7 @@ namespace SharpTS.Runtime.Types;
 /// Properties: method, url, headers, httpVersion, statusCode, statusMessage
 /// Inherits stream methods: on, once, pipe, read, pause, resume, etc.
 /// </remarks>
-public class SharpTSHttpRequest : SharpTSReadable, ITypeCategorized
+public class SharpTSHttpRequest : SharpTSReadable
 {
     /// <inheritdoc />
     public override TypeCategory RuntimeCategory => TypeCategory.Record;

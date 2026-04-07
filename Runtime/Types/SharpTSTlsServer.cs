@@ -14,7 +14,7 @@ namespace SharpTS.Runtime.Types;
 /// Extends SharpTSEventEmitter for full event handling support.
 /// Events: 'secureConnection', 'tlsClientError', 'listening', 'close', 'error'
 /// </summary>
-public class SharpTSTlsServer : SharpTSEventEmitter, ITypeCategorized, IDisposable
+public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
 {
     /// <inheritdoc />
     public override TypeCategory RuntimeCategory => TypeCategory.Record;
