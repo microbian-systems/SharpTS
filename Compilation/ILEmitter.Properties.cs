@@ -17,6 +17,9 @@ public partial class ILEmitter
 {
     protected override void EmitGet(Expr.Get g)
     {
+        // CommonJS: `module.exports` reads → ldsfld $exports
+        if (TryEmitCjsGet(g)) return;
+
         // Static type property dispatch via registry (Math.PI, Number.MAX_VALUE, Symbol.iterator, etc.)
         if (g.Object is Expr.Variable staticVar && _ctx.TypeEmitterRegistry != null)
         {
@@ -262,6 +265,9 @@ public partial class ILEmitter
 
     protected override void EmitSet(Expr.Set s)
     {
+        // CommonJS: `module.exports = X` writes → stsfld $exports
+        if (TryEmitCjsSet(s)) return;
+
         // Handle globalThis.x = value
         if (s.Object is Expr.Variable gtVar && gtVar.Name.Lexeme == "globalThis")
         {

@@ -161,6 +161,7 @@ public static class BuiltInNames
     public const string SetImmediate = "setImmediate";
     public const string ClearImmediate = "clearImmediate";
     public const string QueueMicrotask = "queueMicrotask";
+    public const string Require = "require";
 
     #endregion
 

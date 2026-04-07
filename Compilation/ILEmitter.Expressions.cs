@@ -63,6 +63,9 @@ public partial class ILEmitter
             return;
         }
 
+        // CommonJS: bare `exports` resolves to the current module's $exports static field.
+        if (TryEmitCjsVariable(name)) return;
+
         // Fallback: pseudo-variables (Math, process, classes, functions, namespaces)
         if (name == "Math")
         {

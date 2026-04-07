@@ -109,6 +109,7 @@ public class Lexer(string source)
         { "yield", TokenType.YIELD },
         { "using", TokenType.USING },
         { "void", TokenType.VOID },
+        { "var", TokenType.VAR },
         { "delete", TokenType.DELETE },
         { "string", TokenType.TYPE_STRING },
         { "number", TokenType.TYPE_NUMBER },

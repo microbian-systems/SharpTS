@@ -491,6 +491,9 @@ public partial class ILCompiler
                 AsyncArrowParentBuilders = _async.ArrowParentBuilders,
                 // Module support for multi-module compilation
                 CurrentModulePath = _modules.CurrentPath,
+                ModuleResolver = _modules.Resolver,
+                CommonJsExportFields = _modules.CommonJsExportFields,
+                CommonJsGetExportsMethods = _modules.CommonJsGetExportsMethods,
                 ClassToModule = _modules.ClassToModule,
                 FunctionToModule = _modules.FunctionToModule,
                 EnumToModule = _modules.EnumToModule,

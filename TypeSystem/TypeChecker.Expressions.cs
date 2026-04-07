@@ -1182,6 +1182,14 @@ public partial class TypeChecker
         if (name.Lexeme == "Infinity") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER); // Global Infinity
         if (name.Lexeme == "__dirname") return new TypeInfo.Primitive(TokenType.TYPE_STRING); // Node.js __dirname
         if (name.Lexeme == "__filename") return new TypeInfo.Primitive(TokenType.TYPE_STRING); // Node.js __filename
+        // CommonJS globals — bound by the CJS module wrapper at runtime. Treated as `any` because
+        // CJS modules don't carry static type info for module.exports.
+        if (name.Lexeme == "require") return new TypeInfo.Any();
+        if (_currentModule?.IsCommonJs == true)
+        {
+            if (name.Lexeme == "module" || name.Lexeme == "exports" || name.Lexeme == "global")
+                return new TypeInfo.Any();
+        }
         // Worker Threads globals
         if (name.Lexeme == "structuredClone") return new TypeInfo.Any(); // structuredClone() global function
         if (name.Lexeme == "SharedArrayBuffer") return new TypeInfo.Any(); // SharedArrayBuffer constructor

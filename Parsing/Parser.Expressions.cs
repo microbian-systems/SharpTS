@@ -660,6 +660,14 @@ public partial class Parser
         // Symbol and BigInt are special callable constructors
         if (Match(TokenType.SYMBOL, TokenType.BIGINT)) return new Expr.Variable(Previous());
 
+        // Contextual keyword `module` accepted as identifier in expression context
+        // (so `module.exports = X` parses correctly in CommonJS files).
+        if (Match(TokenType.MODULE))
+        {
+            var prev = Previous();
+            return new Expr.Variable(new Token(TokenType.IDENTIFIER, prev.Lexeme, null, prev.Line));
+        }
+
         if (Match(TokenType.LEFT_BRACKET))
         {
             List<Expr> elements = [];

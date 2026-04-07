@@ -377,12 +377,12 @@ public class LexerTests
     public void Keyword_Let() => AssertTokens("let", TokenType.LET);
 
     [Fact]
-    public void Keyword_Var_IsIdentifier()
+    public void Keyword_Var()
     {
-        // Note: SharpTS treats "var" as an identifier, not a keyword
-        // (prefers let/const for variable declarations)
+        // SharpTS supports `var` as a keyword for npm package compatibility (real-world JS uses
+        // var heavily). Function-scoped semantics are implemented via parser-time hoisting.
         var tokens = Tokenize("var");
-        Assert.Equal(TokenType.IDENTIFIER, tokens[0].Type);
+        Assert.Equal(TokenType.VAR, tokens[0].Type);
         Assert.Equal("var", tokens[0].Lexeme);
     }
 

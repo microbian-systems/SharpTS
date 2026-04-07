@@ -25,6 +25,14 @@ public class ModuleInstance
     public bool IsExecuted { get; set; }
 
     /// <summary>
+    /// For CommonJS modules: the live <c>module</c> object whose <c>exports</c> property is the
+    /// module's current exports value. Used so circular requires see the up-to-date value
+    /// (including any reassignment via <c>module.exports = X</c>) at the moment they execute.
+    /// Null for ES modules and built-ins.
+    /// </summary>
+    public SharpTSObject? CommonJsModuleObject { get; set; }
+
+    /// <summary>
     /// Gets all exports as a SharpTSObject for namespace imports.
     /// </summary>
     public SharpTSObject ExportsAsObject()

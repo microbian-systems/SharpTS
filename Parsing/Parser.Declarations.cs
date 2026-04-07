@@ -90,6 +90,7 @@ public partial class Parser
             return FunctionDeclaration("function", isAsync: false, isGenerator: isGenerator);
         }
         if (Match(TokenType.LET)) return VarDeclaration();
+        if (Match(TokenType.VAR)) return VarDeclaration(isConst: false, isVar: true);
 
         // Handle 'using' declaration (contextual keyword for explicit resource management)
         if (Check(TokenType.USING) && IsUsingDeclarationContext())
@@ -547,7 +548,7 @@ public partial class Parser
         return new Stmt.Enum(name, members, isConst);
     }
 
-    private Stmt VarDeclaration(bool isConst = false)
+    private Stmt VarDeclaration(bool isConst = false, bool isVar = false)
     {
         // Check for destructuring patterns
         if (Check(TokenType.LEFT_BRACKET))
@@ -555,7 +556,32 @@ public partial class Parser
         if (Check(TokenType.LEFT_BRACE))
             return DestructureObjectDeclaration();
 
-        // Standard single-variable declaration
+        // Parse the first declarator.
+        var first = ParseSingleDeclarator(isConst, isVar);
+
+        // Multi-declarator support: `let a = 1, b = 2, c;`
+        // We accumulate into a Stmt.Sequence — same scope, just multiple statements.
+        if (Check(TokenType.COMMA))
+        {
+            var statements = new List<Stmt> { first };
+            while (Match(TokenType.COMMA))
+            {
+                statements.Add(ParseSingleDeclarator(isConst, isVar));
+            }
+            Consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.");
+            return new Stmt.Sequence(statements);
+        }
+
+        Consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.");
+        return first;
+    }
+
+    /// <summary>
+    /// Parses a single declarator (no leading keyword, no trailing semicolon or comma).
+    /// Used by <see cref="VarDeclaration"/> to build both single and multi-declarator forms.
+    /// </summary>
+    private Stmt ParseSingleDeclarator(bool isConst, bool isVar = false)
+    {
         Token name = Consume(TokenType.IDENTIFIER, "Expect variable name.");
 
         // Check for definite assignment assertion: let x!: number;
@@ -567,13 +593,11 @@ public partial class Parser
             typeAnnotation = ParseTypeAnnotation();
         }
 
-        // Validate: ! requires type annotation
         if (hasDefiniteAssignment && typeAnnotation == null)
         {
             throw new Exception($"Parse Error at line {name.Line}: Definite assignment assertion '!' requires a type annotation.");
         }
 
-        // Validate: ! cannot be used with const
         if (hasDefiniteAssignment && isConst)
         {
             throw new Exception($"Parse Error at line {name.Line}: 'const' declarations cannot use definite assignment assertion '!' (const must be initialized).");
@@ -585,24 +609,19 @@ public partial class Parser
             initializer = Expression();
         }
 
-        // Validate: ! cannot coexist with initializer
         if (hasDefiniteAssignment && initializer != null)
         {
             throw new Exception($"Parse Error at line {name.Line}: Definite assignment assertion '!' cannot be used with an initializer.");
         }
 
-        // const declarations require an initializer
         if (isConst && initializer == null)
         {
             throw new Exception($"Parse Error at line {name.Line}: 'const' declarations must be initialized.");
         }
 
-        Consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.");
-
-        // Return Stmt.Const for const declarations, Stmt.Var otherwise
         if (isConst)
             return new Stmt.Const(name, typeAnnotation, initializer!);
-        return new Stmt.Var(name, typeAnnotation, initializer, hasDefiniteAssignment);
+        return new Stmt.Var(name, typeAnnotation, initializer, hasDefiniteAssignment, isVar);
     }
 
     /// <summary>
@@ -695,8 +714,8 @@ public partial class Parser
                 return new Stmt.Export(exportKeyword, varDecl, null, null, null, false);
             }
 
-            // export let x: number;
-            if (Match(TokenType.LET))
+            // export let x: number; / export var x: number;
+            if (Match(TokenType.LET) || Match(TokenType.VAR))
             {
                 var varDecl = AmbientVarDeclaration(isConst: false);
                 return new Stmt.Export(exportKeyword, varDecl, null, null, null, false);
@@ -742,7 +761,7 @@ public partial class Parser
             return AmbientVarDeclaration(isConst: true);
         }
 
-        if (Match(TokenType.LET))
+        if (Match(TokenType.LET) || Match(TokenType.VAR))
         {
             return AmbientVarDeclaration(isConst: false);
         }

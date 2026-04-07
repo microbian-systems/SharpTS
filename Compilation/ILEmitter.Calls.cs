@@ -13,6 +13,9 @@ public partial class ILEmitter
 {
     protected override void EmitCall(Expr.Call c)
     {
+        // CommonJS require() lowering is handled by ExpressionEmitterBase.EmitCall
+        // (called via base.EmitCall below), so it works in async/generator emitters too.
+
         // External .NET type static methods (e.g., Console.WriteLine() via @DotNetType)
         // This is ILEmitter-only — requires TypeMapper.ExternalTypes + complex type conversion helpers
         if (c.Callee is Expr.Get externalStaticGet &&

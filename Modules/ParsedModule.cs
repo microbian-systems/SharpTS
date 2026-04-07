@@ -98,6 +98,12 @@ public class ParsedModule
     public bool IsScript { get; set; }
 
     /// <summary>
+    /// True if file is a CommonJS module (uses require/module.exports semantics).
+    /// Determined by <see cref="CommonJsDetector"/> at load time.
+    /// </summary>
+    public bool IsCommonJs { get; set; }
+
+    /// <summary>
     /// Triple-slash path references from this file.
     /// Only applicable for script files.
     /// </summary>

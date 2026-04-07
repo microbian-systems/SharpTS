@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-04-06 (timers/promises: AsyncIterable setInterval + AbortSignal in interpreter & compiled modes)
+**Last Updated:** 2026-04-06 (CommonJS in both interpreter & compiled modes: require/module.exports, .cjs detection, ESM↔CJS interop, circular requires)
 
 ## Legend
 - ✅ Implemented
@@ -349,9 +349,13 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | **CommonJS Interop** | | |
 | `import x = require('path')` | ✅ | CommonJS import syntax |
 | `export =` | ✅ | CommonJS export syntax |
-| `require()` function | ❌ | Not as global function |
-| `module.exports` | ❌ | Not manipulable |
-| `exports` shorthand | ❌ | |
+| `require()` function | ✅ | Both interpreter and compiled modes. Loads .cjs/.js files, follows package.json `type` field, supports circular requires with partial exports, throws `MODULE_NOT_FOUND` on missing modules (catchable via try/catch). Compiled mode requires string-literal specifiers — non-literals are a `SHARPTS_CJS001` compile error. |
+| `module.exports` | ✅ | Both modes. `module.exports = X` and `exports.foo = X` patterns supported. Reassignment semantics match Node. Compiled mode lowers `module.exports`/`exports` to direct static field accesses on the per-file `$Module_X` class. |
+| `exports` shorthand | ✅ | Both modes. |
+| ESM imports CJS | ✅ | `import x from './file.cjs'`, named imports, and namespace imports all work; CJS exports are typed as `any`. |
+| `.cjs` extension | ✅ | Always treated as CommonJS regardless of nearest package.json. |
+| `.mjs` extension | ✅ | Always treated as ES module. |
+| package.json `type` field | ✅ | `"module"` → ESM, `"commonjs"` or absent → CJS for `.js` files. |
 | **Resolution** | | |
 | Relative paths | ✅ | `./foo`, `../bar` |
 | Bare specifiers | ✅ | `node_modules` lookup |
@@ -378,7 +382,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `setInterval` / `clearInterval` | ✅ | |
 | `__dirname` | ✅ | Directory of current module |
 | `__filename` | ✅ | Full path of current module |
-| `require` | ❌ | Use `import` syntax |
+| `require` | ✅ | Available globally in both interpreter and compiled modes. Compiled mode requires string-literal specifiers (non-literals are a compile error). |
 | `module` | ❌ | |
 | `exports` | ❌ | |
 | `Buffer` | ✅ | Full Buffer class available globally |

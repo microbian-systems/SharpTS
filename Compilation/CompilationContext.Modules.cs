@@ -68,6 +68,29 @@ public partial class CompilationContext
     /// </summary>
     public Dictionary<string, string>? NamespaceImports { get; set; }
 
+    // ============================================
+    // CommonJS Support
+    // ============================================
+
+    /// <summary>
+    /// When emitting a CommonJS module's $Initialize body, points at the module's $exports
+    /// static field. Used by ILEmitter to lower `module.exports`/`exports` reads and writes.
+    /// Null when not currently inside a CJS module body.
+    /// </summary>
+    public FieldBuilder? CurrentCjsExportsField { get; set; }
+
+    /// <summary>
+    /// Maps each CommonJS module path → its $exports static field.
+    /// Populated in Phase 4 (DefineCommonJsModuleType).
+    /// </summary>
+    public Dictionary<string, FieldBuilder>? CommonJsExportFields { get; set; }
+
+    /// <summary>
+    /// Maps each CommonJS module path → its $GetExports static method.
+    /// Used by `require('./literal')` lowering to emit a direct static call.
+    /// </summary>
+    public Dictionary<string, MethodBuilder>? CommonJsGetExportsMethods { get; set; }
+
     // Cache for sanitized module names to avoid repeated string operations
     private readonly Dictionary<string, string> _sanitizedModuleNameCache = [];
 

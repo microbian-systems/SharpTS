@@ -143,8 +143,13 @@ static void RunFile(string path, DecoratorMode decoratorMode, bool emitDecorator
     lexer.ScanTokens();
     bool hasPathReferences = lexer.TripleSlashDirectives.Any(d => d.Type == TripleSlashReferenceType.Path);
 
+    // CommonJS files need module mode for require()/module.exports semantics
+    bool isCjsFile = SharpTS.Modules.CommonJsDetector.Detect(absolutePath)
+        == SharpTS.Modules.CommonJsDetector.ModuleKind.CommonJs
+        && (source.Contains("require(") || source.Contains("module.exports") || source.Contains("exports."));
+
     // Check if the file contains imports/exports or path references - if so, use module mode
-    if (hasPathReferences || source.Contains("import ") || source.Contains("export "))
+    if (hasPathReferences || source.Contains("import ") || source.Contains("export ") || isCjsFile)
     {
         RunModuleFile(absolutePath, decoratorMode, emitDecoratorMetadata, scriptArgs);
     }
@@ -333,6 +338,19 @@ static void CompileFile(string inputPath, string outputPath, bool preserveConstE
         // Check AST for import/export statements or path references
         // Include ImportRequire for CommonJS-style: import X = require('./module')
         bool hasModules = hasPathReferences || statements.Any(s => s is Stmt.Import or Stmt.Export or Stmt.ImportRequire);
+
+        // CommonJS files (.cjs, or .js classified as CJS) also need module-mode compilation
+        // because they use the CJS module pipeline (per-file class with $exports field).
+        if (!hasModules)
+        {
+            bool isCjsFile = SharpTS.Modules.CommonJsDetector.Detect(absolutePath)
+                == SharpTS.Modules.CommonJsDetector.ModuleKind.CommonJs
+                && (source.Contains("require(") || source.Contains("module.exports") || source.Contains("exports."));
+            if (isCjsFile)
+            {
+                hasModules = true;
+            }
+        }
 
         if (hasModules)
         {

@@ -1133,24 +1133,42 @@ public partial class TypeChecker
                     throw new TypeCheckException($"Cannot find module '{import.ModulePath}'", import.Keyword.Line);
                 }
 
+                // CommonJS modules carry no static type info — treat all imports as `any`.
+                // The actual values come from `module.exports` at runtime via the CJS interop path.
+                bool isCjsImport = importedModule.IsCommonJs;
+
                 // Default import
                 if (import.DefaultImport != null)
                 {
-                    if (importedModule.DefaultExportType == null)
+                    if (isCjsImport)
                     {
-                        throw new TypeCheckException($"Module '{import.ModulePath}' has no default export", import.Keyword.Line);
+                        env.Define(import.DefaultImport.Lexeme, new TypeInfo.Any());
                     }
-                    env.Define(import.DefaultImport.Lexeme, importedModule.DefaultExportType);
+                    else
+                    {
+                        if (importedModule.DefaultExportType == null)
+                        {
+                            throw new TypeCheckException($"Module '{import.ModulePath}' has no default export", import.Keyword.Line);
+                        }
+                        env.Define(import.DefaultImport.Lexeme, importedModule.DefaultExportType);
+                    }
                 }
 
                 // Namespace import: import * as Module from './file'
                 if (import.NamespaceImport != null)
                 {
-                    // Create a record type with all exports
-                    var namespaceType = new TypeInfo.Record(
-                        importedModule.ExportedTypes.ToFrozenDictionary()
-                    );
-                    env.Define(import.NamespaceImport.Lexeme, namespaceType);
+                    if (isCjsImport)
+                    {
+                        env.Define(import.NamespaceImport.Lexeme, new TypeInfo.Any());
+                    }
+                    else
+                    {
+                        // Create a record type with all exports
+                        var namespaceType = new TypeInfo.Record(
+                            importedModule.ExportedTypes.ToFrozenDictionary()
+                        );
+                        env.Define(import.NamespaceImport.Lexeme, namespaceType);
+                    }
                 }
 
                 // Named imports: import { x, y as z } from './file'
@@ -1160,6 +1178,12 @@ public partial class TypeChecker
                     {
                         string importedName = spec.Imported.Lexeme;
                         string localName = spec.LocalName?.Lexeme ?? importedName;
+
+                        if (isCjsImport)
+                        {
+                            env.Define(localName, new TypeInfo.Any());
+                            continue;
+                        }
 
                         if (!importedModule.ExportedTypes.TryGetValue(importedName, out var type))
                         {

@@ -1,0 +1,192 @@
+using Xunit;
+
+namespace SharpTS.Tests.IntegrationTests;
+
+/// <summary>
+/// End-to-end tests for the <c>var</c> keyword and JavaScript var-hoisting semantics.
+/// Covers both interpreter and compiled modes.
+/// </summary>
+public class CliVarTests
+{
+    private static (int ExitCode, string StdOut) CompileAndRun(
+        TempTestDirectory tempDir, string entryFile)
+    {
+        var compile = CliTestHelper.RunCli($"-c \"{entryFile}\"", tempDir.Path);
+        if (compile.ExitCode != 0)
+        {
+            return (compile.ExitCode, compile.StandardOutput + compile.StandardError);
+        }
+
+        var dllName = Path.GetFileNameWithoutExtension(entryFile) + ".dll";
+        var dllPath = tempDir.GetPath(dllName);
+        Assert.True(File.Exists(dllPath), $"Expected output DLL at {dllPath}");
+
+        var psi = new System.Diagnostics.ProcessStartInfo("dotnet", $"\"{dllPath}\"")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            WorkingDirectory = tempDir.Path
+        };
+
+        using var process = System.Diagnostics.Process.Start(psi)!;
+        var stdOut = process.StandardOutput.ReadToEnd();
+        var stdErr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return (process.ExitCode, stdOut + stdErr);
+    }
+
+    [Fact]
+    public void Interpreted_VarBasic()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("basic.cjs", """
+            var a = 1;
+            var b = "hello";
+            console.log(a, b);
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("1 hello", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Interpreted_VarMultiDeclarator()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("multi.cjs", """
+            var a = 1, b = 2, c = a + b;
+            console.log(a, b, c);
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("1 2 3", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Interpreted_LetMultiDeclarator()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("let-multi.cjs", """
+            let a = 10, b = 20, c = 30;
+            console.log(a + b + c);
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("60", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Interpreted_VarHoistedFromNestedBlock()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("hoist.ts", """
+            function test(): number {
+              if (true) {
+                var inner = 42;
+              }
+              return inner;
+            }
+            console.log(test());
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("42", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Interpreted_VarHoistedFromForLoop()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("for-hoist.ts", """
+            function sum(): number {
+              var total = 0;
+              for (var i = 0; i < 5; i++) {
+                total = total + i;
+              }
+              return total + i;
+            }
+            console.log(sum());
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        // 0+1+2+3+4 = 10, plus i=5 after loop = 15
+        Assert.Contains("15", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Interpreted_VarReDeclarationInDifferentBlocks()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("redecl.ts", """
+            function pick(useA: boolean): string {
+              if (useA) {
+                var x = "a-branch";
+              } else {
+                var x = "b-branch";
+              }
+              return x;
+            }
+            console.log(pick(true));
+            console.log(pick(false));
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("a-branch", result.StandardOutput);
+        Assert.Contains("b-branch", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Compiled_VarBasic()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var entry = tempDir.CreateFile("basic.cjs", """
+            var a = 1;
+            var b = "hello";
+            console.log(a, b);
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        Assert.Contains("1 hello", output);
+    }
+
+    [Fact]
+    public void Compiled_VarHoistedFromNestedBlock()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var entry = tempDir.CreateFile("hoist.ts", """
+            function test(): number {
+              if (true) {
+                var inner = 42;
+              }
+              return inner;
+            }
+            console.log(test());
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        Assert.Contains("42", output);
+    }
+
+    [Fact]
+    public void Compiled_VarMultiDeclarator()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var entry = tempDir.CreateFile("multi.cjs", """
+            var a = 1, b = 2, c = a + b;
+            console.log(a, b, c);
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        Assert.Contains("1 2 3", output);
+    }
+}

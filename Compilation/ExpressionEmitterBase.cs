@@ -452,6 +452,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return;
         }
 
+        // CommonJS: bare `exports` → ldsfld $exports of the current CJS module.
+        if (TryEmitCjsVariable(name)) return;
+
         if (TryEmitGlobalVariable(name)) return;
 
         IL.Emit(OpCodes.Ldnull);
@@ -484,6 +487,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitSet(Expr.Set s)
     {
+        // CommonJS: `module.exports = X` → stsfld $exports.
+        if (TryEmitCjsSet(s)) return;
+
         // Handle globalThis.x = value
         if (s.Object is Expr.Variable gtVar && gtVar.Name.Lexeme == "globalThis")
         {
@@ -1669,6 +1675,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitGet(Expr.Get g)
     {
+        // CommonJS: `module.exports` reads → ldsfld $exports.
+        if (TryEmitCjsGet(g)) return;
+
         if (TryEmitSymbolWellKnown(g)) return;
         if (TryEmitStaticFieldAccess(g)) return;
 

@@ -44,6 +44,14 @@ public partial class ILEmitter
 
         string importedPath = _ctx.ModuleResolver.ResolveModulePath(import.ModulePath, _ctx.CurrentModulePath);
 
+        // CommonJS target: route through the CJS-specific import lowering. CJS modules don't
+        // have per-export fields — they have a single $exports dictionary accessed via $GetExports.
+        if (_ctx.CommonJsGetExportsMethods?.TryGetValue(importedPath, out var cjsGetExports) == true)
+        {
+            EmitImportFromCommonJs(import, importedPath, cjsGetExports);
+            return;
+        }
+
         if (!_ctx.ModuleExportFields.TryGetValue(importedPath, out var exportFields) ||
             !_ctx.ModuleTypes.TryGetValue(importedPath, out var moduleType))
         {

@@ -12,6 +12,7 @@ internal sealed class ModulePackageJson
     public string? Types { get; init; }
     public string? Typings { get; init; }
     public string? Module { get; init; }
+    public string? Type { get; init; }
     public JsonElement? Exports { get; init; }
     public JsonElement? Imports { get; init; }
 
@@ -49,6 +50,7 @@ internal sealed class ModulePackageJson
                 Types = GetString(root, "types"),
                 Typings = GetString(root, "typings"),
                 Module = GetString(root, "module"),
+                Type = GetString(root, "type"),
                 Exports = GetElement(root, "exports"),
                 Imports = GetElement(root, "imports"),
             };

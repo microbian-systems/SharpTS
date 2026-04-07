@@ -118,7 +118,7 @@ public partial class Parser
             bool isGenerator = Match(TokenType.STAR);
             return WrapIfExported(FunctionDeclaration("function", isAsync: false, isGenerator: isGenerator), isExported);
         }
-        if (Match(TokenType.LET))
+        if (Match(TokenType.LET) || Match(TokenType.VAR))
         {
             return WrapIfExported(VarDeclaration(), isExported);
         }

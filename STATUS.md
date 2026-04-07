@@ -256,6 +256,9 @@ This document tracks TypeScript language features and their implementation statu
 
 | Feature | Status | Notes |
 |---------|--------|-------|
+| `let` / `const` declarations | ✅ | Block-scoped per spec |
+| `var` declarations | ✅ | Function-scoped semantics via parser-time hoisting; supports declarations in nested blocks (if/for/while/try) referenced in the enclosing function scope. Multi-declarator (`var a = 1, b = 2`) supported. |
+| Multi-declarator `let`/`const` | ✅ | `let a = 1, b = 2` and `const x = 1, y = 2` |
 | Line comments (`//`) | ✅ | |
 | Double-quoted strings | ✅ | |
 | Template literals | ✅ | With interpolation |

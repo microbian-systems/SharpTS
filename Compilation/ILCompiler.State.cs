@@ -247,6 +247,18 @@ public partial class ILCompiler
         /// Example: ImportFields["./module-a.ts"]["createCounter"] = (FieldBuilder for static field)
         /// </summary>
         public Dictionary<string, Dictionary<string, FieldBuilder>> ImportFields { get; } = [];
+
+        /// <summary>
+        /// CommonJS modules: maps module path → its $exports static field. Used by both
+        /// the CJS module body emitter (to read/write module.exports) and the require() lowering.
+        /// </summary>
+        public Dictionary<string, FieldBuilder> CommonJsExportFields { get; } = [];
+
+        /// <summary>
+        /// CommonJS modules: maps module path → its $GetExports static method. Used by
+        /// require('./literal') lowering and ESM-imports-CJS lowering.
+        /// </summary>
+        public Dictionary<string, MethodBuilder> CommonJsGetExportsMethods { get; } = [];
     }
 
     /// <summary>

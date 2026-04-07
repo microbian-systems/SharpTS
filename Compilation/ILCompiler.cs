@@ -730,7 +730,14 @@ public partial class ILCompiler
     {
         foreach (var module in modules)
         {
-            DefineModuleType(module);
+            if (module.IsCommonJs)
+            {
+                DefineCommonJsModuleType(module);
+            }
+            else
+            {
+                DefineModuleType(module);
+            }
         }
     }
 
@@ -868,7 +875,14 @@ public partial class ILCompiler
     {
         foreach (var module in modules)
         {
-            EmitModuleInit(module);
+            if (module.IsCommonJs)
+            {
+                EmitCommonJsModuleInit(module);
+            }
+            else
+            {
+                EmitModuleInit(module);
+            }
         }
     }
 

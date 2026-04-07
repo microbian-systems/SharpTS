@@ -292,7 +292,7 @@ public partial class Parser
                 decl = VarDeclaration();
             }
         }
-        else if (Match(TokenType.LET))
+        else if (Match(TokenType.LET) || Match(TokenType.VAR))
         {
             decl = VarDeclaration();
         }

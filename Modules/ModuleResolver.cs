@@ -1,5 +1,6 @@
 using System.Collections.Frozen;
 using SharpTS.Parsing;
+using SharpTS.Parsing.Visitors;
 using SharpTS.Runtime.BuiltIns.Modules;
 using SharpTS.TypeSystem;
 
@@ -111,12 +112,15 @@ public class ModuleResolver
                     return result;
             }
 
-            // Also try as a direct .ts file (e.g., node_modules/foo.ts)
+            // Also try as a direct file (e.g., node_modules/foo.ts, node_modules/foo.js)
             if (subpath == ".")
             {
-                string directPath = Path.Combine(currentDir, "node_modules", packageName + ".ts");
-                if (File.Exists(directPath))
-                    return directPath;
+                foreach (var ext in SourceExtensions)
+                {
+                    string directPath = Path.Combine(currentDir, "node_modules", packageName + ext);
+                    if (File.Exists(directPath))
+                        return directPath;
+                }
             }
 
             // Move up one directory
@@ -165,10 +169,13 @@ public class ModuleResolver
             return TryAddExtension(subFile);
         }
 
-        // Legacy fallback: try index.ts
-        string indexPath = Path.Combine(packageDir, "index.ts");
-        if (File.Exists(indexPath))
-            return indexPath;
+        // Legacy fallback: try index.* (any known source extension)
+        foreach (var ext in SourceExtensions)
+        {
+            string indexPath = Path.Combine(packageDir, "index" + ext);
+            if (File.Exists(indexPath))
+                return indexPath;
+        }
 
         return null;
     }
@@ -205,15 +212,22 @@ public class ModuleResolver
             if (File.Exists(ctsPath)) return ctsPath;
         }
 
-        // Try appending .ts
-        string withTs = fullPath + ".ts";
-        if (File.Exists(withTs))
-            return withTs;
+        // Try appending each known extension
+        foreach (var ext in SourceExtensions)
+        {
+            string candidate = fullPath + ext;
+            if (File.Exists(candidate)) return candidate;
+        }
 
-        // Try as directory with index.ts
-        string indexTs = Path.Combine(fullPath, "index.ts");
-        if (Directory.Exists(fullPath) && File.Exists(indexTs))
-            return indexTs;
+        // Try as directory with index.* file
+        if (Directory.Exists(fullPath))
+        {
+            foreach (var ext in SourceExtensions)
+            {
+                string indexPath = Path.Combine(fullPath, "index" + ext);
+                if (File.Exists(indexPath)) return indexPath;
+            }
+        }
 
         return null;
     }
@@ -226,19 +240,27 @@ public class ModuleResolver
         if (File.Exists(path))
             return path;
 
-        string withTs = path + ".ts";
-        if (File.Exists(withTs))
-            return withTs;
+        foreach (var ext in SourceExtensions)
+        {
+            string candidate = path + ext;
+            if (File.Exists(candidate)) return candidate;
+        }
 
+        // .js → .ts (TS-source-for-JS-spec)
         if (path.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
         {
             string tsPath = path[..^3] + ".ts";
             if (File.Exists(tsPath)) return tsPath;
         }
 
-        string indexTs = Path.Combine(path, "index.ts");
-        if (Directory.Exists(path) && File.Exists(indexTs))
-            return indexTs;
+        if (Directory.Exists(path))
+        {
+            foreach (var ext in SourceExtensions)
+            {
+                string indexPath = Path.Combine(path, "index" + ext);
+                if (File.Exists(indexPath)) return indexPath;
+            }
+        }
 
         return null;
     }
@@ -337,35 +359,54 @@ public class ModuleResolver
         return pkg;
     }
 
+    private static readonly string[] SourceExtensions = [".ts", ".tsx", ".cts", ".mts", ".js", ".jsx", ".cjs", ".mjs"];
+
     private string AddExtensionIfNeeded(string path)
     {
-        // If path already has .ts extension and exists, use it
-        if (path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+        // If path already has a known extension and exists, use it
+        if (HasKnownSourceExtension(path) && File.Exists(path))
         {
             return path;
         }
 
-        // Try adding .ts extension
-        string withTs = path + ".ts";
-        if (File.Exists(withTs))
+        // Try each known extension
+        foreach (var ext in SourceExtensions)
         {
-            return withTs;
+            string candidate = path + ext;
+            if (File.Exists(candidate))
+                return candidate;
         }
 
-        // Try path as-is (might be a directory with index.ts)
-        string indexPath = Path.Combine(path, "index.ts");
-        if (Directory.Exists(path) && File.Exists(indexPath))
+        // Try path as-is as a directory with index.* file
+        if (Directory.Exists(path))
         {
-            return indexPath;
+            foreach (var ext in SourceExtensions)
+            {
+                string indexPath = Path.Combine(path, "index" + ext);
+                if (File.Exists(indexPath))
+                    return indexPath;
+            }
         }
 
-        // If original path exists (maybe .js or no extension), use it
+        // If original path exists (e.g. an unusual extension), use it
         if (File.Exists(path))
         {
             return path;
         }
 
         throw new Exception($"Module Error: Cannot resolve module '{path}'. File not found.");
+    }
+
+    private static bool HasKnownSourceExtension(string path)
+    {
+        var ext = Path.GetExtension(path);
+        if (string.IsNullOrEmpty(ext)) return false;
+        foreach (var known in SourceExtensions)
+        {
+            if (string.Equals(ext, known, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -504,6 +545,16 @@ public class ModuleResolver
             // Determine if this is a script or module file
             module.IsScript = ScriptDetector.IsScriptFile(statements);
 
+            // Determine if this is a CommonJS module
+            module.IsCommonJs = CommonJsDetector.Detect(absolutePath) == CommonJsDetector.ModuleKind.CommonJs;
+
+            // CommonJS files are modules, not scripts — they have isolated scope and their own
+            // synthetic require/module/exports bindings. Override the no-import/export heuristic.
+            if (module.IsCommonJs)
+            {
+                module.IsScript = false;
+            }
+
             // Process triple-slash path references (only valid for scripts)
             // NOTE: Process BEFORE caching to properly detect circular references
             var directives = lexer.TripleSlashDirectives;
@@ -534,6 +585,16 @@ public class ModuleResolver
 
             // Cache AFTER processing path references to properly detect circular references
             _moduleCache[absolutePath] = module;
+
+            // CommonJS modules use runtime require() instead of static imports. We still walk
+            // their bodies for literal `require('./literal')` calls so the compiler can pre-load
+            // the dependency graph (interpreter mode tolerates lazy discovery, but the AOT
+            // compiler needs every CJS module to be present in the same assembly).
+            if (module.IsCommonJs)
+            {
+                CollectCjsRequireDependencies(module, statements, absolutePath, decoratorMode);
+                return module;
+            }
 
             // Recursively load imported modules
             foreach (var stmt in statements)
@@ -587,6 +648,80 @@ public class ModuleResolver
         finally
         {
             _loadingModules.Remove(absolutePath);
+        }
+    }
+
+    /// <summary>
+    /// Walks a CommonJS module's body for literal `require('./literal')` calls and recursively
+    /// loads each target. Adds resolved targets to <see cref="ParsedModule.Dependencies"/>.
+    /// Non-literal specifiers are ignored here — the IL compiler will reject them later.
+    /// Unresolvable specifiers are also ignored — they'll either resolve via the optional-dep
+    /// runtime throw path or surface as a compile error from the IL emitter.
+    /// </summary>
+    private void CollectCjsRequireDependencies(
+        ParsedModule module,
+        List<Stmt> statements,
+        string absolutePath,
+        DecoratorMode decoratorMode)
+    {
+        var walker = new CjsRequireWalker();
+        foreach (var stmt in statements)
+        {
+            walker.Visit(stmt);
+        }
+
+        foreach (var specifier in walker.Specifiers)
+        {
+            // Built-in modules: skip — they're not loaded via the file system.
+            if (BuiltInModuleRegistry.IsBuiltIn(specifier.StartsWith("node:") ? specifier[5..] : specifier))
+                continue;
+
+            string requiredPath;
+            try
+            {
+                requiredPath = ResolveModulePath(specifier, absolutePath);
+            }
+            catch
+            {
+                // Optional dep / will be handled at runtime by the optional-dep throw path.
+                continue;
+            }
+
+            ParsedModule requiredModule;
+            try
+            {
+                requiredModule = LoadModule(requiredPath, decoratorMode);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (!module.Dependencies.Contains(requiredModule))
+            {
+                module.Dependencies.Add(requiredModule);
+            }
+        }
+    }
+
+    /// <summary>
+    /// AST walker that collects literal-specifier require() call arguments from a CJS body.
+    /// </summary>
+    private sealed class CjsRequireWalker : AstVisitorBase
+    {
+        public List<string> Specifiers { get; } = [];
+
+        protected override void VisitCall(Expr.Call expr)
+        {
+            if (expr.Callee is Expr.Variable v &&
+                v.Name.Lexeme == "require" &&
+                expr.Arguments.Count == 1 &&
+                expr.Arguments[0] is Expr.Literal lit &&
+                lit.Value is string specifier)
+            {
+                Specifiers.Add(specifier);
+            }
+            base.VisitCall(expr);
         }
     }
 

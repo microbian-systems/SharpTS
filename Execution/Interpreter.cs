@@ -913,11 +913,26 @@ public partial class Interpreter : IDisposable
             // Create a shared script environment for script files (they share global scope)
             var scriptEnv = new RuntimeEnvironment(_environment);
 
+            // Determine the entry module — the last one in topological order — so we can run
+            // CJS modules lazily. Pre-emptive init of CJS modules would change visible execution
+            // order in circular-require scenarios (a non-entry CJS file would run before the
+            // entry, inverting the require()-trigger semantics that real Node packages depend on).
+            ParsedModule? entryModule = modules.Count > 0 ? modules[^1] : null;
+
             foreach (var module in modules)
             {
                 if (module.IsScript)
                 {
                     ExecuteScriptFile(module, scriptEnv);
+                }
+                else if (module.IsCommonJs)
+                {
+                    // Only the entry CJS module is initialized eagerly. Non-entry CJS modules
+                    // wait for require() to trigger them.
+                    if (module == entryModule)
+                    {
+                        ExecuteModule(module);
+                    }
                 }
                 else
                 {
@@ -1070,6 +1085,17 @@ public partial class Interpreter : IDisposable
     /// </summary>
     private void ExecuteModule(ParsedModule module)
     {
+        // CommonJS modules go through their own execution path which sets up the
+        // synthetic require/module/exports scope.
+        if (module.IsCommonJs)
+        {
+            if (!_loadedModules.ContainsKey(module.Path))
+            {
+                ExecuteCommonJsModule(module);
+            }
+            return;
+        }
+
         // Create module instance to track exports (TryAdd returns false if already executed)
         var moduleInstance = new ModuleInstance();
         if (!_loadedModules.TryAdd(module.Path, moduleInstance))
@@ -1150,21 +1176,55 @@ public partial class Interpreter : IDisposable
                 string importedPath = _moduleResolver!.ResolveModulePath(import.ModulePath, module.Path);
                 var importedModuleInstance = _loadedModules.GetValueOrDefault(importedPath);
 
+                // CJS modules are lazy-initialized — ESM imports of CJS need to trigger init now
+                // because BindModuleImports runs BEFORE the body executes (so we can't rely on a
+                // later require() call to set things up).
+                if (importedModuleInstance == null)
+                {
+                    var importedParsed = _moduleResolver.GetCachedModule(importedPath);
+                    if (importedParsed?.IsCommonJs == true)
+                    {
+                        ExecuteCommonJsModule(importedParsed);
+                        importedModuleInstance = _loadedModules.GetValueOrDefault(importedPath);
+                    }
+                }
+
                 if (importedModuleInstance == null)
                 {
                     throw new InterpreterException($"Module '{import.ModulePath}' not loaded.");
                 }
 
+                // For CJS imports, the exports live on the live `module.exports` object.
+                // Resolve once and reuse for all import forms in this statement.
+                bool isCjsSource = importedModuleInstance.CommonJsModuleObject != null;
+                object? cjsExports = isCjsSource
+                    ? importedModuleInstance.CommonJsModuleObject!.GetProperty("exports")
+                    : null;
+
                 // Default import
                 if (import.DefaultImport != null)
                 {
-                    env.Define(import.DefaultImport.Lexeme, importedModuleInstance.DefaultExport);
+                    if (isCjsSource)
+                    {
+                        env.Define(import.DefaultImport.Lexeme, cjsExports);
+                    }
+                    else
+                    {
+                        env.Define(import.DefaultImport.Lexeme, importedModuleInstance.DefaultExport);
+                    }
                 }
 
                 // Namespace import: import * as Module from './file'
                 if (import.NamespaceImport != null)
                 {
-                    env.Define(import.NamespaceImport.Lexeme, importedModuleInstance.ExportsAsObject());
+                    if (isCjsSource)
+                    {
+                        env.Define(import.NamespaceImport.Lexeme, cjsExports);
+                    }
+                    else
+                    {
+                        env.Define(import.NamespaceImport.Lexeme, importedModuleInstance.ExportsAsObject());
+                    }
                 }
 
                 // Named imports: import { x, y as z } from './file'
@@ -1175,7 +1235,16 @@ public partial class Interpreter : IDisposable
                     {
                         string importedName = spec.Imported.Lexeme;
                         string localName = spec.LocalName?.Lexeme ?? importedName;
-                        var value = importedModuleInstance.GetExport(importedName);
+                        object? value;
+                        if (isCjsSource)
+                        {
+                            // Pull named imports off the live module.exports object.
+                            value = cjsExports is SharpTSObject so ? so.GetProperty(importedName) : null;
+                        }
+                        else
+                        {
+                            value = importedModuleInstance.GetExport(importedName);
+                        }
                         env.Define(localName, value);
                     }
                 }

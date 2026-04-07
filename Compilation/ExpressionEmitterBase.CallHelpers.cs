@@ -29,6 +29,12 @@ public abstract partial class ExpressionEmitterBase
     /// </summary>
     protected virtual void EmitCall(Expr.Call c)
     {
+        // CommonJS: literal require('./literal') → direct $GetExports() call.
+        // Placed at the top so it works in async/generator state machine emitters too
+        // (which inherit this method without overriding the prefix dispatch).
+        if (TryEmitCjsRequireCall(c))
+            return;
+
         // Handler chain covers: console methods, fetch, parseInt/parseFloat/isNaN/isFinite,
         // setTimeout/clearTimeout/setInterval/clearInterval/queueMicrotask, Symbol/BigInt/Date/Error,
         // Date.now(), Math/JSON/Object/Array/Number/Promise/Symbol statics, built-in module methods,

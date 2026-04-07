@@ -438,6 +438,8 @@ public partial class ILCompiler
         ctx.ModuleInitMethods = _modules.InitMethods;
         ctx.ModuleImportFields = _modules.ImportFields;
         ctx.ModuleResolver = _modules.Resolver;
+        ctx.CommonJsExportFields = _modules.CommonJsExportFields;
+        ctx.CommonJsGetExportsMethods = _modules.CommonJsGetExportsMethods;
 
         // Populate TopLevelStaticVars with this module's import fields
         // This allows functions in this module to access imported values
@@ -599,9 +601,18 @@ public partial class ILCompiler
             }
         }
 
-        // Call each module/script's $Initialize method in dependency order
+        // Call each module/script's $Initialize method in dependency order.
+        // CommonJS modules are initialized lazily — only the entry CJS module is run eagerly,
+        // and require() triggers the rest. This matches Node semantics for the visible execution
+        // order of circular-require scenarios.
+        ParsedModule? entryModule = modules.Count > 0 ? modules[^1] : null;
         foreach (var module in modules)
         {
+            if (module.IsCommonJs && module != entryModule)
+            {
+                continue; // wait for require() to trigger
+            }
+
             if (_modules.InitMethods.TryGetValue(module.Path, out var initMethod))
             {
                 il.Emit(OpCodes.Call, initMethod);

@@ -40,6 +40,9 @@ internal static class GlobalFunctionHandlers
         // Microtask function
         registry.RegisterV2(BuiltInNames.QueueMicrotask, HandleQueueMicrotask);
 
+        // CommonJS require
+        registry.RegisterV2(BuiltInNames.Require, HandleRequire);
+
         // Internal helper
         registry.RegisterV2(BuiltInNames.ObjectRest, HandleObjectRest);
 
@@ -301,6 +304,32 @@ internal static class GlobalFunctionHandlers
             return RuntimeValue.FromBoxed(ObjectBuiltIns.ObjectRest(source, excludeKeys?.Elements ?? []));
         }
         throw new Exception($"{BuiltInNames.ObjectRest} requires 2 arguments");
+    }
+
+    /// <summary>
+    /// Implements the CommonJS <c>require(specifier)</c> function. Resolves the module relative
+    /// to the calling module and returns its <c>module.exports</c> value. Specifier must be a
+    /// string at runtime; throws an error with code <c>MODULE_NOT_FOUND</c> if resolution fails.
+    /// </summary>
+    private static async ValueTask<RuntimeValue> HandleRequire(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
+        IReadOnlyList<Expr> arguments,
+        Interpreter interpreter)
+    {
+        if (arguments.Count != 1)
+        {
+            throw new InterpreterException("require() requires exactly one argument.");
+        }
+
+        var argRV = await evaluateArg(arguments[0]);
+        var specifier = argRV.ToObject()?.ToString();
+        if (string.IsNullOrEmpty(specifier))
+        {
+            throw new InterpreterException("require() argument must be a non-empty string.");
+        }
+
+        var result = interpreter.RequireCommonJsModule(specifier);
+        return RuntimeValue.FromBoxed(result);
     }
 
     /// <summary>

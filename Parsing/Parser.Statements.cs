@@ -73,9 +73,11 @@ public partial class Parser
 
         Consume(TokenType.LEFT_PAREN, "Expect '(' after 'for" + (isAsync ? " await" : "") + "'.");
 
-        // Check for for...of pattern: for (let/const varName of iterable)
-        if (Match(TokenType.LET, TokenType.CONST))
+        // Check for for...of pattern: for (let/const/var varName of iterable)
+        if (Match(TokenType.LET, TokenType.CONST, TokenType.VAR))
         {
+            // Track whether the keyword was `var` so the for-loop initializer is hoistable.
+            bool initIsVar = Previous().Type == TokenType.VAR;
             // Check for destructuring patterns: for (const [a, b] of ...) or for (const {x, y} of ...)
             if (Check(TokenType.LEFT_BRACKET) || Check(TokenType.LEFT_BRACE))
             {
@@ -124,7 +126,7 @@ public partial class Parser
             }
             Consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.");
 
-            Stmt initializer = new Stmt.Var(varName, typeAnnotation, initValue);
+            Stmt initializer = new Stmt.Var(varName, typeAnnotation, initValue, IsVar: initIsVar);
             return FinishTraditionalFor(initializer);
         }
 
