@@ -46,7 +46,7 @@ public class SharpTSMessagePort : SharpTSEventEmitter, ITypeCategorized
     internal Interp? OwnerInterpreter { get; set; }
 
     /// <inheritdoc />
-    public TypeCategory RuntimeCategory => TypeCategory.EventEmitter;
+    public override TypeCategory RuntimeCategory => TypeCategory.EventEmitter;
 
     /// <summary>
     /// Represents a cloned message ready for delivery.

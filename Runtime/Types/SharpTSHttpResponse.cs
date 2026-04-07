@@ -19,7 +19,7 @@ namespace SharpTS.Runtime.Types;
 public class SharpTSHttpResponse : SharpTSWritable, ITypeCategorized
 {
     /// <inheritdoc />
-    public TypeCategory RuntimeCategory => TypeCategory.Record;
+    public override TypeCategory RuntimeCategory => TypeCategory.Record;
 
     private readonly HttpListenerResponse _response;
     private bool _headersSent;

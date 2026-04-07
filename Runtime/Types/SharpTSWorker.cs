@@ -54,7 +54,7 @@ public class SharpTSWorker : SharpTSEventEmitter, ITypeCategorized, IDisposable
     public bool IsRunning => _isRunning;
 
     /// <inheritdoc />
-    public TypeCategory RuntimeCategory => TypeCategory.Instance;
+    public override TypeCategory RuntimeCategory => TypeCategory.Instance;
 
     /// <summary>
     /// Creates a new Worker that will execute the specified script file.
@@ -492,7 +492,7 @@ internal class WorkerParentPort : SharpTSEventEmitter, ITypeCategorized
 {
     private readonly SharpTSWorker _worker;
 
-    public TypeCategory RuntimeCategory => TypeCategory.EventEmitter;
+    public override TypeCategory RuntimeCategory => TypeCategory.EventEmitter;
 
     public WorkerParentPort(SharpTSWorker worker)
     {

@@ -9,9 +9,9 @@ namespace SharpTS.Runtime.Types;
 /// Implements the async iterable protocol: Symbol.asyncIterator returns self,
 /// next() returns Promise&lt;{value, done}&gt;, return() cleans up.
 /// </summary>
-public class SharpTSAsyncIntervalIterator : SharpTSObject, ITypeCategorized
+public class SharpTSAsyncIntervalIterator : SharpTSObject
 {
-    public TypeCategory RuntimeCategory => TypeCategory.AsyncGenerator;
+    public override TypeCategory RuntimeCategory => TypeCategory.AsyncGenerator;
 
     private readonly int _delayMs;
     private readonly object? _value;

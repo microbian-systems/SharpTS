@@ -15,7 +15,7 @@ namespace SharpTS.Runtime.Types;
 public class SharpTSNetServer : SharpTSEventEmitter, ITypeCategorized, IDisposable
 {
     /// <inheritdoc />
-    public TypeCategory RuntimeCategory => TypeCategory.Record;
+    public override TypeCategory RuntimeCategory => TypeCategory.Record;
 
     private TcpListener? _listener;
     private bool _isListening;

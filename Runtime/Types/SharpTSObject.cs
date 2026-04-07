@@ -23,7 +23,7 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
     private Dictionary<string, PropertyDescriptorFlags>? _descriptors;
 
     /// <inheritdoc />
-    public TypeCategory RuntimeCategory => TypeCategory.Record;
+    public virtual TypeCategory RuntimeCategory => TypeCategory.Record;
 
     /// <summary>
     /// Whether this object is frozen (no property additions, removals, or modifications).

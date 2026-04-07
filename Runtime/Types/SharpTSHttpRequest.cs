@@ -18,7 +18,7 @@ namespace SharpTS.Runtime.Types;
 public class SharpTSHttpRequest : SharpTSReadable, ITypeCategorized
 {
     /// <inheritdoc />
-    public TypeCategory RuntimeCategory => TypeCategory.Record;
+    public override TypeCategory RuntimeCategory => TypeCategory.Record;
 
     private readonly HttpListenerRequest _request;
     private bool _bodyRead;

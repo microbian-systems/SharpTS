@@ -18,7 +18,7 @@ namespace SharpTS.Runtime.Types;
 public class SharpTSHttpServer : SharpTSEventEmitter, ITypeCategorized, IDisposable
 {
     /// <inheritdoc />
-    public TypeCategory RuntimeCategory => TypeCategory.Record;
+    public override TypeCategory RuntimeCategory => TypeCategory.Record;
 
     private HttpListener? _listener;
     private readonly ISharpTSCallable _requestHandler;
