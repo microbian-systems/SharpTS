@@ -288,13 +288,13 @@ public partial class TypeChecker
             return new TypeInfo.Primitive(Parsing.TokenType.TYPE_BOOLEAN);
         }
 
-        // Handle setTimeout(callback, delay?, ...args) — skip for timers/promises version (returns Promise)
+        // Handle setTimeout(callback, delay?, ...args) — skip for timers/promises version (returns Promise/AsyncIterable)
         if (call.Callee is Expr.Variable setTimeoutVar && setTimeoutVar.Name.Lexeme == "setTimeout")
         {
             var varType = _environment.Get(setTimeoutVar.Name.Lexeme);
-            var isPromiseVersion = varType is TypeInfo.Function { ReturnType: TypeInfo.Promise };
+            var isModuleVersion = varType is TypeInfo.Function { ReturnType: TypeInfo.Promise or TypeInfo.AsyncIterable };
 
-            if (!isPromiseVersion)
+            if (!isModuleVersion)
             {
                 if (call.Arguments.Count < 1)
                 {
@@ -332,13 +332,13 @@ public partial class TypeChecker
         if (call.Callee is Expr.Variable clearTimeoutVar && clearTimeoutVar.Name.Lexeme == "clearTimeout")
             return CheckClearTimerCall(call, "clearTimeout");
 
-        // Handle setInterval(callback, delay?, ...args) — skip for timers/promises version (returns Promise)
+        // Handle setInterval(callback, delay?, ...args) — skip for timers/promises version (returns AsyncIterable)
         if (call.Callee is Expr.Variable setIntervalVar && setIntervalVar.Name.Lexeme == "setInterval")
         {
             var varType = _environment.Get(setIntervalVar.Name.Lexeme);
-            var isPromiseVersion = varType is TypeInfo.Function { ReturnType: TypeInfo.Promise };
+            var isModuleVersion = varType is TypeInfo.Function { ReturnType: TypeInfo.Promise or TypeInfo.AsyncIterable };
 
-            if (!isPromiseVersion)
+            if (!isModuleVersion)
             {
                 if (call.Arguments.Count < 1)
                 {

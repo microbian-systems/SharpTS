@@ -123,7 +123,7 @@ public partial class Interpreter
         {
             var gvName = globalVar.Name.Lexeme;
             bool isShadowed = _environment.TryGet(gvName, out var shadowVal) &&
-                shadowVal.ToObject() is ISharpTSAsyncCallable;
+                shadowVal.ToObject() is ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
             if (!isShadowed)
             {
                 if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
@@ -285,7 +285,7 @@ public partial class Interpreter
         {
             var gvName = globalVar.Name.Lexeme;
             bool isShadowed = _environment.TryGet(gvName, out var shadowVal) &&
-                shadowVal.ToObject() is ISharpTSAsyncCallable;
+                shadowVal.ToObject() is ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
             if (!isShadowed)
             {
                 if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))

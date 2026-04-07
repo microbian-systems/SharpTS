@@ -80,9 +80,22 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Call, _ctx.Runtime.InvokeIteratorNext);
 
             // The result should be a Task/Promise - await it
-            // Store as object first, then check if it's a Task
+            // Store as object first, then check if it's a $TSPromise or Task
             var nextResultLocal = _il.DeclareLocal(_types.Object);
             _il.Emit(OpCodes.Stloc, nextResultLocal);
+
+            // If it's a $TSPromise, unwrap to its inner Task<object?>
+            // (custom async iterators may return $TSPromise via WrapTaskAsPromise)
+            var notTSPromiseLabel = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldloc, nextResultLocal);
+            _il.Emit(OpCodes.Isinst, _ctx.Runtime.TSPromiseType);
+            _il.Emit(OpCodes.Brfalse, notTSPromiseLabel);
+            // Replace nextResultLocal with the inner Task
+            _il.Emit(OpCodes.Ldloc, nextResultLocal);
+            _il.Emit(OpCodes.Castclass, _ctx.Runtime.TSPromiseType);
+            _il.Emit(OpCodes.Callvirt, _ctx.Runtime.TSPromiseTaskGetter);
+            _il.Emit(OpCodes.Stloc, nextResultLocal);
+            _il.MarkLabel(notTSPromiseLabel);
 
             // Check if result is a Task<object> and await it
             var isTaskLabel = _il.DefineLabel();
@@ -169,9 +182,21 @@ public partial class AsyncMoveNextEmitter
                 _il.Emit(OpCodes.Newarr, _types.Object);
                 _il.Emit(OpCodes.Call, _ctx.Runtime.InvokeMethodValue);
 
-                // If result is a Task, await it
+                // If result is a Task, await it. Unwrap $TSPromise first if present.
                 var returnResultLocal = _il.DeclareLocal(_types.Object);
                 _il.Emit(OpCodes.Stloc, returnResultLocal);
+
+                // If $TSPromise, replace with inner Task<object?>
+                var returnNotTSPromiseLabel = _il.DefineLabel();
+                _il.Emit(OpCodes.Ldloc, returnResultLocal);
+                _il.Emit(OpCodes.Isinst, _ctx.Runtime.TSPromiseType);
+                _il.Emit(OpCodes.Brfalse, returnNotTSPromiseLabel);
+                _il.Emit(OpCodes.Ldloc, returnResultLocal);
+                _il.Emit(OpCodes.Castclass, _ctx.Runtime.TSPromiseType);
+                _il.Emit(OpCodes.Callvirt, _ctx.Runtime.TSPromiseTaskGetter);
+                _il.Emit(OpCodes.Stloc, returnResultLocal);
+                _il.MarkLabel(returnNotTSPromiseLabel);
+
                 _il.Emit(OpCodes.Ldloc, returnResultLocal);
                 _il.Emit(OpCodes.Isinst, _types.TaskOfObject);
                 _il.Emit(OpCodes.Brfalse, endLabel);

@@ -940,6 +940,16 @@ public abstract record TypeInfo
         public override string ToString() => $"AsyncGenerator<{YieldType}>";
     }
 
+    /// <summary>
+    /// Represents an AsyncIterable type (AsyncIterable&lt;T&gt;).
+    /// Used for objects that implement the async iterable protocol via Symbol.asyncIterator,
+    /// such as the result of timers/promises setInterval(). Consumed by `for await...of`.
+    /// </summary>
+    public record AsyncIterable(TypeInfo ElementType) : TypeInfo
+    {
+        public override string ToString() => $"AsyncIterable<{ElementType}>";
+    }
+
     public record StringLiteral(string Value) : TypeInfo
     {
         public override string ToString() => $"\"{Value}\"";

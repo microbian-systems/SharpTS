@@ -404,7 +404,12 @@ public class EmittedRuntime
 
     // Timer promise methods (timers/promises module)
     public MethodBuilder SetTimeoutPromise { get; set; } = null!;
+    public MethodBuilder SetTimeoutPromiseWithSignal { get; set; } = null!;
     public MethodBuilder SetImmediatePromise { get; set; } = null!;
+    public MethodBuilder SetImmediatePromiseWithSignal { get; set; } = null!;
+    public MethodBuilder SetIntervalAsyncIterable { get; set; } = null!;
+    public MethodBuilder SetIntervalAsyncIterableWithSignal { get; set; } = null!;
+    public MethodBuilder ExtractTimerOptionsToken { get; set; } = null!;
 
     // Timer closure for callback execution
     public TypeBuilder TimeoutClosureType { get; set; } = null!;

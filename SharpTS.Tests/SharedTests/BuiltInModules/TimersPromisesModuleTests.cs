@@ -292,4 +292,251 @@ public class TimersPromisesModuleTests
     }
 
     #endregion
+
+    #region setInterval AsyncIterable Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TimersPromises_SetInterval_ForAwaitOf_Basic(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { setInterval } from 'timers/promises';
+                async function main() {
+                    let count = 0;
+                    for await (const val of setInterval(10, 'tick')) {
+                        console.log(val);
+                        count++;
+                        if (count >= 3) break;
+                    }
+                    console.log('done');
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("tick\ntick\ntick\ndone\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TimersPromises_SetInterval_ForAwaitOf_NumericValue(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { setInterval } from 'timers/promises';
+                async function main() {
+                    let sum = 0;
+                    for await (const val of setInterval(10, 5)) {
+                        sum += val;
+                        if (sum >= 15) break;
+                    }
+                    console.log(sum);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("15\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TimersPromises_SetInterval_ForAwaitOf_BreakCleanup(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { setInterval } from 'timers/promises';
+                async function main() {
+                    for await (const val of setInterval(10, 'x')) {
+                        break;
+                    }
+                    console.log('after break');
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("after break\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TimersPromises_SetInterval_ForAwaitOf_DefaultValue(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { setInterval } from 'timers/promises';
+                async function main() {
+                    for await (const val of setInterval(10)) {
+                        console.log(val === undefined);
+                        break;
+                    }
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
+
+    #region AbortSignal Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TimersPromises_SetTimeout_AbortSignal_PreAborted(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { setTimeout } from 'timers/promises';
+                async function main() {
+                    const ac = new AbortController();
+                    ac.abort();
+                    try {
+                        await setTimeout(1000, 'val', { signal: ac.signal });
+                        console.log('should not reach');
+                    } catch (e) {
+                        const msg = (e as any).message ?? e;
+                        console.log(msg);
+                    }
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("AbortError: The operation was aborted\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TimersPromises_SetImmediate_AbortSignal_PreAborted(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { setImmediate } from 'timers/promises';
+                async function main() {
+                    const ac = new AbortController();
+                    ac.abort();
+                    try {
+                        await setImmediate('val', { signal: ac.signal });
+                        console.log('should not reach');
+                    } catch (e) {
+                        const msg = (e as any).message ?? e;
+                        console.log(msg);
+                    }
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("AbortError: The operation was aborted\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TimersPromises_SetInterval_AbortSignal_PreAborted(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { setInterval } from 'timers/promises';
+                async function main() {
+                    const ac = new AbortController();
+                    ac.abort();
+                    try {
+                        for await (const val of setInterval(10, 'tick', { signal: ac.signal })) {
+                            console.log('should not reach:', val);
+                        }
+                        console.log('should not reach end');
+                    } catch (e) {
+                        const msg = (e as any).message ?? e;
+                        console.log(msg);
+                    }
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("AbortError: The operation was aborted\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TimersPromises_SetTimeout_AbortSignal_MidDelay(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { setTimeout } from 'timers/promises';
+                async function main() {
+                    const ac = new AbortController();
+                    // Schedule abort after 20ms in a fire-and-forget async helper
+                    const scheduleAbort = async () => {
+                        await setTimeout(20);
+                        ac.abort();
+                    };
+                    scheduleAbort();
+                    try {
+                        await setTimeout(5000, 'val', { signal: ac.signal });
+                        console.log('should not reach');
+                    } catch (e) {
+                        console.log('caught');
+                    }
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("caught\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TimersPromises_SetInterval_AbortSignal_MidIteration(ExecutionMode mode)
+    {
+        // Aborts the signal from within the loop after 3 iterations.
+        // This is deterministic (no time-based race) and verifies that:
+        //   1. The loop yields values even with a signal attached
+        //   2. Calling ac.abort() ends the iterator cleanly (no throw)
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { setInterval } from 'timers/promises';
+                async function main() {
+                    const ac = new AbortController();
+                    let count = 0;
+                    for await (const val of setInterval(10, 'tick', { signal: ac.signal })) {
+                        count++;
+                        if (count >= 3) {
+                            ac.abort();
+                        }
+                        if (count > 100) break; // safety
+                    }
+                    console.log('count:', count);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("count: 3\n", output);
+    }
+
+    #endregion
 }

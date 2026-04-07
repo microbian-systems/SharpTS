@@ -1945,18 +1945,18 @@ public static class BuiltInModuleTypes
         return new Dictionary<string, TypeInfo>
         {
             ["setTimeout"] = new TypeInfo.Function(
-                [numberType, anyType],
+                [numberType, anyType, anyType],
                 promiseAny,
                 RequiredParams: 0
             ),
             ["setImmediate"] = new TypeInfo.Function(
-                [anyType],
+                [anyType, anyType],
                 promiseAny,
                 RequiredParams: 0
             ),
             ["setInterval"] = new TypeInfo.Function(
-                [numberType, anyType],
-                promiseAny,
+                [numberType, anyType, anyType],
+                new TypeInfo.AsyncIterable(anyType),
                 RequiredParams: 0
             )
         };

@@ -558,12 +558,17 @@ public partial class TypeChecker
     internal VoidResult VisitForOf(Stmt.ForOf stmt)
     {
         TypeInfo iterableType = CheckExpr(stmt.Iterable);
+
+        // For `for await...of`, an AsyncIterable<T> yields T.
+        // (AsyncGenerator yield types are intentionally NOT extracted here — async generators
+        // still produce TypeInfo.Any element bindings to preserve flexibility for legacy tests.)
         TypeInfo elementType = iterableType switch
         {
             TypeInfo.Array arr => arr.ElementType,
             TypeInfo.Map mapType => TypeInfo.Tuple.FromTypes([mapType.KeyType, mapType.ValueType], 2),
             TypeInfo.Set setType => setType.ElementType,
             TypeInfo.Iterator iterType => iterType.ElementType,
+            TypeInfo.AsyncIterable asyncIter when stmt.IsAsync => asyncIter.ElementType,
             _ => new TypeInfo.Any()
         };
 

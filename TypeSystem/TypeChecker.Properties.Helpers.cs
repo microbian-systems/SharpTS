@@ -55,6 +55,8 @@ public partial class TypeChecker
                 BuiltInTypes.GetIteratorMemberType(memberName, gen.YieldType),
             TypeCategory.AsyncGenerator when objType is TypeInfo.AsyncGenerator asyncGen =>
                 BuiltInTypes.GetIteratorMemberType(memberName, asyncGen.YieldType),
+            TypeCategory.AsyncGenerator when objType is TypeInfo.AsyncIterable asyncIter =>
+                BuiltInTypes.GetIteratorMemberType(memberName, asyncIter.ElementType),
             TypeCategory.Promise when objType is TypeInfo.Promise promise =>
                 BuiltInTypes.GetPromiseMemberType(memberName, promise.ValueType),
             TypeCategory.EventEmitter =>

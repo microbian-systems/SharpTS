@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-04-06 (timers/promises: setTimeout, setImmediate, setInterval)
+**Last Updated:** 2026-04-06 (timers/promises: AsyncIterable setInterval + AbortSignal in interpreter & compiled modes)
 
 ## Legend
 - ✅ Implemented
@@ -31,7 +31,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough (sync mode) |
 | `buffer` | ✅ | Full Buffer class with multi-byte LE/BE, float/double, BigInt, search, swap |
 | `timers` | ✅ | setTimeout, setInterval, setImmediate + clear variants (module import) |
-| `timers/promises` | ✅ | Promise-based setTimeout, setImmediate, setInterval |
+| `timers/promises` | ✅ | Promise-based setTimeout/setImmediate (with AbortSignal), AsyncIterable setInterval |
 | `string_decoder` | ✅ | StringDecoder class for multi-byte character handling |
 | `perf_hooks` | ✅ | performance.now(), timeOrigin, mark(), measure(), getEntries/ByName/ByType(), clearMarks/Measures(); PerformanceObserver |
 | `http` / `https` | ✅ | createServer, request, get; IncomingMessage extends Readable; ServerResponse extends Writable; full event lifecycle |
@@ -527,13 +527,15 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `import * as timers from 'timers/promises'` | ✅ | Namespace import |
 | `import { setTimeout } from 'node:timers/promises'` | ✅ | Node prefix import |
 | **Methods** | | |
-| `setTimeout(delay?, value?)` | ✅ | Returns `Promise<T>` that resolves with value after delay ms |
-| `setImmediate(value?)` | ✅ | Returns `Promise<T>` that resolves with value immediately |
-| `setInterval(delay?, value?)` | ✅ | Simplified: resolves once after delay (not async iterable) |
+| `setTimeout(delay?, value?, options?)` | ✅ | Returns `Promise<T>` that resolves with value after delay ms; supports `options.signal` |
+| `setImmediate(value?, options?)` | ✅ | Returns `Promise<T>` that resolves with value immediately; supports `options.signal` |
+| `setInterval(delay?, value?, options?)` | ✅ | Returns an async iterable for `for await...of`; supports `options.signal` (interpreter mode) |
+| **AbortSignal Support** | | |
+| `setTimeout` with `options.signal` | ✅ | Throws AbortError on pre-aborted signal or mid-delay abort (both modes) |
+| `setImmediate` with `options.signal` | ✅ | Throws AbortError on pre-aborted signal (both modes) |
+| `setInterval` with `options.signal` | ✅ | Throws AbortError on pre-abort; iterator ends cleanly on mid-iteration abort (both modes) |
 | **Not Implemented** | | |
-| `options.signal` (AbortSignal) | ❌ | Cancellation via AbortSignal |
 | `options.ref` | ❌ | Timer ref/unref control |
-| `setInterval` as AsyncIterable | ❌ | Full async iterator protocol |
 | `scheduler.wait()` / `scheduler.yield()` | ❌ | Scheduler API |
 
 ---

@@ -20,48 +20,106 @@ public static class TimersModuleInterpreter
     {
         return new Dictionary<string, object?>
         {
-            ["setTimeout"] = new BuiltInAsyncMethod("setTimeout", 0, 2, SetTimeoutPromise),
-            ["setImmediate"] = new BuiltInAsyncMethod("setImmediate", 0, 1, SetImmediatePromise),
-            ["setInterval"] = new BuiltInAsyncMethod("setInterval", 0, 2, SetIntervalPromise)
+            ["setTimeout"] = new BuiltInAsyncMethod("setTimeout", 0, 3, SetTimeoutPromise),
+            ["setImmediate"] = new BuiltInAsyncMethod("setImmediate", 0, 2, SetImmediatePromise),
+            ["setInterval"] = new BuiltInMethod("setInterval", 0, 3, SetIntervalIterable)
         };
+    }
+
+    private const string AbortMessage = "AbortError: The operation was aborted";
+
+    /// <summary>
+    /// Throws a JavaScript-style AbortError. Wraps in SharpTSPromiseRejectedException so
+    /// the catch handler receives a SharpTSError with a .message property (matching compiled mode).
+    /// </summary>
+    private static Exception NewAbortError() =>
+        new SharpTSPromiseRejectedException(new SharpTSError(AbortMessage));
+
+    /// <summary>
+    /// Extracts a CancellationToken from the options argument if it has a signal.
+    /// Returns null if no signal is present. Throws AbortError if signal is already aborted.
+    /// </summary>
+    private static CancellationToken? ExtractSignalToken(object? optionsArg)
+    {
+        if (optionsArg == null) return null;
+
+        SharpTSAbortSignal? signal = null;
+        if (optionsArg is SharpTSObject options &&
+            options.Fields.TryGetValue("signal", out var signalObj) &&
+            signalObj is SharpTSAbortSignal s)
+        {
+            signal = s;
+        }
+        // Also accept a bare SharpTSAbortSignal as the options arg (legacy/convenience)
+        else if (optionsArg is SharpTSAbortSignal directSignal)
+        {
+            signal = directSignal;
+        }
+
+        if (signal == null) return null;
+        if (signal.Aborted) throw NewAbortError();
+        return signal.Token;
     }
 
     /// <summary>
     /// Promise-based setTimeout: resolves with value after delay milliseconds.
-    /// Uses Task.Delay instead of virtual timers to avoid event loop deadlock.
+    /// Supports options.signal for AbortSignal cancellation.
+    /// Signature: setTimeout(delay?, value?, options?)
     /// </summary>
     private static async Task<object?> SetTimeoutPromise(Interp interpreter, object? receiver, List<object?> args)
     {
         double delay = args.Count > 0 && args[0] is double d ? d : 0;
         object? value = args.Count > 1 ? args[1] : SharpTSUndefined.Instance;
+        var token = ExtractSignalToken(args.Count > 2 ? args[2] : null) ?? CancellationToken.None;
 
         int delayMs = Math.Max(0, (int)delay);
-        await Task.Delay(delayMs);
+
+        try
+        {
+            await Task.Delay(delayMs, token);
+        }
+        catch (OperationCanceledException)
+        {
+            throw NewAbortError();
+        }
+
         return value;
     }
 
     /// <summary>
     /// Promise-based setImmediate: resolves with value on the next event loop tick.
+    /// Supports options.signal for AbortSignal cancellation.
     /// </summary>
     private static async Task<object?> SetImmediatePromise(Interp interpreter, object? receiver, List<object?> args)
     {
         object? value = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
+        var token = ExtractSignalToken(args.Count > 1 ? args[1] : null) ?? CancellationToken.None;
 
-        await Task.Delay(0);
+        try
+        {
+            await Task.Delay(0, token);
+        }
+        catch (OperationCanceledException)
+        {
+            throw NewAbortError();
+        }
+
         return value;
     }
 
     /// <summary>
-    /// Promise-based setInterval: resolves with value after one interval delay (simplified).
+    /// Promise-based setInterval: returns an AsyncIterable that yields value on each interval.
+    /// Supports options.signal for AbortSignal cancellation. Pre-aborted signal throws synchronously.
     /// </summary>
-    private static async Task<object?> SetIntervalPromise(Interp interpreter, object? receiver, List<object?> args)
+    private static object? SetIntervalIterable(Interp interpreter, object? receiver, List<object?> args)
     {
         double delay = args.Count > 0 && args[0] is double d ? d : 0;
         object? value = args.Count > 1 ? args[1] : SharpTSUndefined.Instance;
-
         int delayMs = Math.Max(0, (int)delay);
-        await Task.Delay(delayMs);
-        return value;
+
+        var token = ExtractSignalToken(args.Count > 2 ? args[2] : null);
+
+        return new SharpTSAsyncIntervalIterator(delayMs, value, token);
     }
 
     /// <summary>
