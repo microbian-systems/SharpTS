@@ -1261,6 +1261,13 @@ public class EmittedRuntime
 
     // HTTP module methods
     public MethodBuilder Fetch { get; set; } = null!;
+
+    // fetch.cookieJar.{getCookies,setCookie,clear} introspection helpers — emitted
+    // by EmitCachedHttpClients alongside the cookie container static field.
+    public MethodBuilder CookieJarGetCookies { get; set; } = null!;
+    public MethodBuilder CookieJarSetCookie { get; set; } = null!;
+    public MethodBuilder CookieJarClear { get; set; } = null!;
+
     public MethodBuilder HttpCreateServer { get; set; } = null!;
     public MethodBuilder HttpRequest { get; set; } = null!;
     public MethodBuilder HttpGet { get; set; } = null!;

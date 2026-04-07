@@ -28,6 +28,7 @@ public class CallHandlerRegistry
             new BuiltInModuleHandler(),      // Priority 40 - path, os, fs modules
             new ProcessStreamHandler(),      // Priority 43 - process.stdin/stdout/stderr
             new TimerHandler(),              // Priority 45 - setTimeout, clearTimeout
+            new CookieJarHandler(),          // Priority 44 - fetch.cookieJar.{getCookies,setCookie,clear}
             new FetchHandler(),              // Priority 46 - fetch()
             new GlobalFunctionHandler(),     // Priority 50 - parseInt, parseFloat, isNaN, isFinite
             new BuiltInConstructorHandler(), // Priority 60 - Symbol, BigInt, Date()

@@ -24,27 +24,55 @@ public class SharpTSHeaders : ITypeCategorized
 
     /// <summary>
     /// Creates a Headers object from a dictionary (e.g., from response headers).
-    /// Values may be strings or other objects (ToString'd).
+    /// Values may be strings, string[], <see cref="List{T}"/> of string, or other
+    /// objects (ToString'd). Array/list values are stored as multi-value entries —
+    /// this is how Set-Cookie preserves its individual cookies through the
+    /// compiled-mode fetch path.
     /// </summary>
     public SharpTSHeaders(Dictionary<string, object?> init)
         : this()
     {
         foreach (var kv in init)
         {
-            var value = kv.Value?.ToString() ?? "";
-            _headers[kv.Key] = [value];
+            switch (kv.Value)
+            {
+                case string s:
+                    _headers[kv.Key] = [s];
+                    break;
+                case string[] arr:
+                    _headers[kv.Key] = [.. arr];
+                    break;
+                case List<string> list:
+                    _headers[kv.Key] = [.. list];
+                    break;
+                default:
+                    _headers[kv.Key] = [kv.Value?.ToString() ?? ""];
+                    break;
+            }
         }
     }
 
     /// <summary>
     /// Creates a Headers object from an HttpResponseMessage's headers.
     /// </summary>
+    /// <remarks>
+    /// Set-Cookie is preserved as a list of distinct values (each header line is a
+    /// separate cookie). All other multi-valued headers are joined with ", " — that
+    /// matches the WHATWG fetch combined-value semantics.
+    /// </remarks>
     public SharpTSHeaders(System.Net.Http.HttpResponseMessage response)
         : this()
     {
         foreach (var header in response.Headers)
         {
-            _headers[header.Key] = [string.Join(", ", header.Value)];
+            if (string.Equals(header.Key, "Set-Cookie", StringComparison.OrdinalIgnoreCase))
+            {
+                _headers[header.Key] = [.. header.Value];
+            }
+            else
+            {
+                _headers[header.Key] = [string.Join(", ", header.Value)];
+            }
         }
 
         if (response.Content?.Headers != null)
@@ -70,16 +98,36 @@ public class SharpTSHeaders : ITypeCategorized
     }
 
     /// <summary>
-    /// Gets the value of a header. Multiple values are joined with ", ".
+    /// Gets the value of a header. Multiple values are joined with ", ", except
+    /// for <c>Set-Cookie</c> which per the WHATWG fetch spec returns the first
+    /// value only (use <see cref="GetSetCookie"/> for the full list).
     /// Returns null if the header doesn't exist.
     /// </summary>
     public string? Get(string name)
     {
         if (_headers.TryGetValue(name, out var values))
         {
+            if (string.Equals(name, "Set-Cookie", StringComparison.OrdinalIgnoreCase))
+            {
+                return values.Count > 0 ? values[0] : null;
+            }
             return string.Join(", ", values);
         }
         return null;
+    }
+
+    /// <summary>
+    /// Returns all <c>Set-Cookie</c> header values as a list. Empty list if there
+    /// are no Set-Cookie headers. This mirrors the WHATWG fetch
+    /// <c>headers.getSetCookie()</c> method.
+    /// </summary>
+    public IList<string> GetSetCookie()
+    {
+        if (_headers.TryGetValue("Set-Cookie", out var values))
+        {
+            return values.ToList();
+        }
+        return [];
     }
 
     /// <summary>
@@ -123,14 +171,27 @@ public class SharpTSHeaders : ITypeCategorized
 
     /// <summary>
     /// Returns all header entries as key-value pairs (lowercase keys, joined values).
+    /// Per the WHATWG fetch spec, <c>Set-Cookie</c> yields one entry per cookie
+    /// rather than a single comma-joined entry.
     /// </summary>
     public IEnumerable<KeyValuePair<string, string>> GetEntries()
     {
         foreach (var kv in _headers.OrderBy(h => h.Key, StringComparer.OrdinalIgnoreCase))
         {
-            yield return new KeyValuePair<string, string>(
-                kv.Key.ToLowerInvariant(),
-                string.Join(", ", kv.Value));
+            var lowerKey = kv.Key.ToLowerInvariant();
+            if (lowerKey == "set-cookie")
+            {
+                foreach (var v in kv.Value)
+                {
+                    yield return new KeyValuePair<string, string>(lowerKey, v);
+                }
+            }
+            else
+            {
+                yield return new KeyValuePair<string, string>(
+                    lowerKey,
+                    string.Join(", ", kv.Value));
+            }
         }
     }
 
@@ -169,6 +230,11 @@ public class SharpTSHeaders : ITypeCategorized
                 var headerValue = args.Count > 1 ? args[1]?.ToString() ?? "" : "";
                 Append(headerName, headerValue);
                 return SharpTSUndefined.Instance;
+            }),
+            "getSetCookie" => new BuiltInMethod("getSetCookie", 0, (_, _, _) =>
+            {
+                var cookies = GetSetCookie();
+                return new SharpTSArray(cookies.Select(c => (object?)c).ToList());
             }),
             "forEach" => new BuiltInMethod("forEach", 1, (interp, _, args) =>
             {

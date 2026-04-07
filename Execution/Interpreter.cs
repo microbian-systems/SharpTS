@@ -59,7 +59,7 @@ public partial class Interpreter : IDisposable
             [BuiltInNames.NaN] = double.NaN,
             [BuiltInNames.Infinity] = double.PositiveInfinity,
             [BuiltInNames.Undefined] = Runtime.Types.SharpTSUndefined.Instance,
-            [BuiltInNames.Fetch] = Runtime.BuiltIns.FetchBuiltIns.FetchMethod,
+            [BuiltInNames.Fetch] = Runtime.Types.SharpTSFetchGlobal.Instance,
 
             // SharedArrayBuffer constructor
             [BuiltInNames.SharedArrayBuffer] = WorkerBuiltIns.SharedArrayBufferConstructor,

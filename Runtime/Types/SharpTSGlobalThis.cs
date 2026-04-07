@@ -71,7 +71,7 @@ public sealed class SharpTSGlobalThis : ISharpTSPropertyAccessor
         // Global async functions
         if (name == "fetch")
         {
-            return BuiltIns.FetchBuiltIns.FetchMethod;
+            return SharpTSFetchGlobal.Instance;
         }
 
         // Built-in constants

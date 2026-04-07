@@ -43,6 +43,7 @@ public partial class RuntimeEmitter
     private Type? _httpRequestHeadersType;
     private Type? _httpResponseHeadersType;
     private Type? _httpContentHeadersType;
+    private Type? _cookieContainerType;
 
     private void InitializeHttpTypes()
     {
@@ -56,6 +57,9 @@ public partial class RuntimeEmitter
         _httpRequestHeadersType = Type.GetType("System.Net.Http.Headers.HttpRequestHeaders, System.Net.Http");
         _httpResponseHeadersType = Type.GetType("System.Net.Http.Headers.HttpResponseHeaders, System.Net.Http");
         _httpContentHeadersType = Type.GetType("System.Net.Http.Headers.HttpContentHeaders, System.Net.Http");
+        // CookieContainer lives in System.Net.Primitives — referenced for the
+        // process-wide cookie jar wired into the with-cookies HttpClientHandler instances.
+        _cookieContainerType = Type.GetType("System.Net.CookieContainer, System.Net.Primitives");
     }
 
     /// <summary>
@@ -416,14 +420,47 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Call, keyProp.GetGetMethod()!);
         ctorIL.Emit(OpCodes.Stloc, keyLocal);
 
-        // Get value as string: value?.ToString() ?? ""
+        // The value can be:
+        //   - null         -> store as a single empty string
+        //   - List<string> -> copy directly (this is how Set-Cookie preserves multi-value)
+        //   - other        -> ToString() ?? "", store as single-element list
         var valueProp = kvpType.GetProperty("Value")!;
+        var rawValueLocal = ctorIL.DeclareLocal(_types.Object);
+        ctorIL.Emit(OpCodes.Ldloca, kvpLocal);
+        ctorIL.Emit(OpCodes.Call, valueProp.GetGetMethod()!);
+        ctorIL.Emit(OpCodes.Stloc, rawValueLocal);
+
+        var listOfStringCtorFromEnum = listOfStringType.GetConstructor([typeof(IEnumerable<string>)])!;
+        var listOfStringDefaultCtor = listOfStringType.GetConstructor(Type.EmptyTypes)!;
+        var listOfStringAdd = listOfStringType.GetMethod("Add", [_types.String])!;
+
+        // if (rawValue is List<string> existingList) { _data[key] = new List<string>(existingList); }
+        var notListLabel = ctorIL.DefineLabel();
+        var afterValueStoreLabel = ctorIL.DefineLabel();
+        ctorIL.Emit(OpCodes.Ldloc, rawValueLocal);
+        ctorIL.Emit(OpCodes.Isinst, listOfStringType);
+        var asListLocal = ctorIL.DeclareLocal(listOfStringType);
+        ctorIL.Emit(OpCodes.Stloc, asListLocal);
+        ctorIL.Emit(OpCodes.Ldloc, asListLocal);
+        ctorIL.Emit(OpCodes.Brfalse, notListLabel);
+
+        // List branch: copy
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldfld, _headersDataField);
+        ctorIL.Emit(OpCodes.Ldloc, keyLocal);
+        ctorIL.Emit(OpCodes.Ldloc, asListLocal);
+        ctorIL.Emit(OpCodes.Newobj, listOfStringCtorFromEnum);
+        ctorIL.Emit(OpCodes.Callvirt, dictType.GetMethod("set_Item")!);
+        ctorIL.Emit(OpCodes.Br, afterValueStoreLabel);
+
+        ctorIL.MarkLabel(notListLabel);
+
+        // Scalar branch: value?.ToString() ?? "" → new List<string> { stringValue }
         var valueLocal = ctorIL.DeclareLocal(_types.String);
         var hasValueLabel = ctorIL.DefineLabel();
         var valueDoneLabel = ctorIL.DefineLabel();
 
-        ctorIL.Emit(OpCodes.Ldloca, kvpLocal);
-        ctorIL.Emit(OpCodes.Call, valueProp.GetGetMethod()!);
+        ctorIL.Emit(OpCodes.Ldloc, rawValueLocal);
         ctorIL.Emit(OpCodes.Dup);
         ctorIL.Emit(OpCodes.Brtrue, hasValueLabel);
         ctorIL.Emit(OpCodes.Pop);
@@ -444,11 +481,13 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldfld, _headersDataField);
         ctorIL.Emit(OpCodes.Ldloc, keyLocal);
-        ctorIL.Emit(OpCodes.Newobj, listOfStringType.GetConstructor(Type.EmptyTypes)!);
+        ctorIL.Emit(OpCodes.Newobj, listOfStringDefaultCtor);
         ctorIL.Emit(OpCodes.Dup);
         ctorIL.Emit(OpCodes.Ldloc, valueLocal);
-        ctorIL.Emit(OpCodes.Callvirt, listOfStringType.GetMethod("Add", [_types.String])!);
+        ctorIL.Emit(OpCodes.Callvirt, listOfStringAdd);
         ctorIL.Emit(OpCodes.Callvirt, dictType.GetMethod("set_Item")!);
+
+        ctorIL.MarkLabel(afterValueStoreLabel);
 
         ctorIL.Emit(OpCodes.Br, loopStart);
         ctorIL.MarkLabel(loopEnd);
@@ -474,6 +513,7 @@ public partial class RuntimeEmitter
         EmitHeadersEntriesMethod(typeBuilder, listOfStringType, dictType, runtime);
         EmitHeadersKeysMethod(typeBuilder, listOfStringType, dictType, runtime);
         EmitHeadersValuesMethod(typeBuilder, listOfStringType, dictType, runtime);
+        EmitHeadersGetSetCookieMethod(typeBuilder, listOfStringType, dictType);
 
         runtime.TSHeadersType = typeBuilder;
         runtime.TSHeadersCtor = ctor;
@@ -485,6 +525,10 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits: public object get(object name) → string | null
     /// </summary>
+    /// <remarks>
+    /// Per WHATWG fetch, <c>Set-Cookie</c> returns the first value only — use
+    /// <c>getSetCookie()</c> to get the full list.
+    /// </remarks>
     private void EmitHeadersGetMethod(TypeBuilder typeBuilder, Type listOfStringType, Type dictType)
     {
         var method = typeBuilder.DefineMethod("get", MethodAttributes.Public, _types.Object, [_types.Object]);
@@ -504,7 +548,29 @@ public partial class RuntimeEmitter
         var notFoundLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notFoundLabel);
 
-        // return string.Join(", ", values)
+        // if (string.Equals(name, "set-cookie", OrdinalIgnoreCase)) return values.Count > 0 ? values[0] : null;
+        var notSetCookieLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldstr, "set-cookie");
+        il.Emit(OpCodes.Ldc_I4_5); // StringComparison.OrdinalIgnoreCase
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String, _types.String, typeof(StringComparison)])!);
+        il.Emit(OpCodes.Brfalse, notSetCookieLabel);
+
+        // values.Count > 0 ? values[0] : null
+        var emptySetCookieLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valuesLocal);
+        il.Emit(OpCodes.Callvirt, listOfStringType.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, emptySetCookieLabel);
+        il.Emit(OpCodes.Ldloc, valuesLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, listOfStringType.GetMethod("get_Item", [_types.Int32])!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(emptySetCookieLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        // Default: return string.Join(", ", values)
+        il.MarkLabel(notSetCookieLabel);
         il.Emit(OpCodes.Ldstr, ", ");
         il.Emit(OpCodes.Ldloc, valuesLocal);
         il.Emit(OpCodes.Call, _types.String.GetMethod("Join", [_types.String, typeof(IEnumerable<string>)])!);
@@ -513,6 +579,40 @@ public partial class RuntimeEmitter
         // return null
         il.MarkLabel(notFoundLabel);
         il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public object getSetCookie() → string[]
+    /// </summary>
+    /// <remarks>
+    /// Returns all <c>Set-Cookie</c> values as a <c>string[]</c>. Empty array if none.
+    /// The compiled-mode array dispatch path treats <c>string[]</c> the same as a JS
+    /// array for length and indexed access.
+    /// </remarks>
+    private void EmitHeadersGetSetCookieMethod(TypeBuilder typeBuilder, Type listOfStringType, Type dictType)
+    {
+        var method = typeBuilder.DefineMethod("getSetCookie", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+
+        var valuesLocal = il.DeclareLocal(listOfStringType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _headersDataField);
+        il.Emit(OpCodes.Ldstr, "Set-Cookie");
+        il.Emit(OpCodes.Ldloca, valuesLocal);
+        il.Emit(OpCodes.Callvirt, dictType.GetMethod("TryGetValue")!);
+        var notFoundLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notFoundLabel);
+
+        // return values.ToArray()
+        il.Emit(OpCodes.Ldloc, valuesLocal);
+        il.Emit(OpCodes.Callvirt, listOfStringType.GetMethod("ToArray", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ret);
+
+        // return new string[0]
+        il.MarkLabel(notFoundLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.String);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1360,8 +1460,14 @@ public partial class RuntimeEmitter
             return;
         }
 
-        // Emit cached HttpClient infrastructure (two static fields + getter method)
+        // Emit cached HttpClient infrastructure (four static fields + getter method)
         EmitCachedHttpClients(typeBuilder);
+
+        // Emit the fetch.cookieJar.{getCookies,setCookie,clear} helpers — they
+        // operate on the same _cookieContainer static field as the with-cookies
+        // HttpClient handlers, so the JS-facing introspection sees the same jar
+        // that fetch reads/writes.
+        EmitCookieJarHelpers(typeBuilder, runtime);
 
         // First emit the headers helper
         var applyHeadersMethod = EmitApplyRequestHeaders(typeBuilder, runtime);
@@ -1419,20 +1525,42 @@ public partial class RuntimeEmitter
     /// cached client based on the redirect mode string. Creates the client lazily on first use.
     /// This avoids creating a new HttpClient per fetch call (the .NET recommended pattern).
     /// </summary>
+    /// <summary>
+    /// Emits four cached HttpClient static fields and a 2-arg
+    /// <c>GetOrCreateHttpClient(redirectMode, useCookies)</c> selector. The two
+    /// with-cookies clients share a single static <c>_cookieContainer</c> field that
+    /// is lazily constructed on first use, giving each compiled DLL its own
+    /// process-wide cookie jar.
+    /// </summary>
+    /// <remarks>
+    /// Pure IL — no reflection back to SharpTS.dll. <see cref="System.Net.CookieContainer"/>
+    /// lives in <c>System.Net.Primitives</c>, which is part of the BCL surface always
+    /// present at runtime.
+    /// </remarks>
+    private FieldBuilder _cookieContainerField = null!;
+
     private void EmitCachedHttpClients(TypeBuilder typeBuilder)
     {
-        // Static fields for cached clients
+        // Static fields for the four cached clients
         var followField = typeBuilder.DefineField(
             "_httpClientFollow", _httpClientType!, FieldAttributes.Private | FieldAttributes.Static);
         var noRedirectField = typeBuilder.DefineField(
             "_httpClientNoRedirect", _httpClientType!, FieldAttributes.Private | FieldAttributes.Static);
+        var followCookiesField = typeBuilder.DefineField(
+            "_httpClientFollowCookies", _httpClientType!, FieldAttributes.Private | FieldAttributes.Static);
+        var noRedirectCookiesField = typeBuilder.DefineField(
+            "_httpClientNoRedirectCookies", _httpClientType!, FieldAttributes.Private | FieldAttributes.Static);
 
-        // GetOrCreateHttpClient(string redirectMode) -> HttpClient
+        // Static field holding the shared CookieContainer (process-wide, lazy-init)
+        _cookieContainerField = typeBuilder.DefineField(
+            "_cookieContainer", _cookieContainerType!, FieldAttributes.Assembly | FieldAttributes.Static);
+
+        // GetOrCreateHttpClient(string redirectMode, bool useCookies) -> HttpClient
         var method = typeBuilder.DefineMethod(
             "GetOrCreateHttpClient",
             MethodAttributes.Private | MethodAttributes.Static,
             _httpClientType!,
-            [_types.String]
+            [_types.String, _types.Boolean]
         );
         _getOrCreateHttpClientMethod = method;
 
@@ -1440,66 +1568,354 @@ public partial class RuntimeEmitter
         var handlerCtor = _httpClientHandlerType!.GetConstructor(Type.EmptyTypes)!;
         var httpClientCtor = _httpClientType!.GetConstructor([typeof(System.Net.Http.HttpMessageHandler)])!;
         var allowAutoRedirectProp = _httpClientHandlerType.GetProperty("AllowAutoRedirect")!;
+        var useCookiesProp = _httpClientHandlerType.GetProperty("UseCookies")!;
+        var cookieContainerProp = _httpClientHandlerType.GetProperty("CookieContainer")!;
+        var cookieContainerCtor = _cookieContainerType!.GetConstructor(Type.EmptyTypes)!;
         var timeoutProp = _httpClientType.GetProperty("Timeout")!;
         var fromSecondsMethod = _types.TimeSpan.GetMethod("FromSeconds", [_types.Double])!;
 
-        // if (redirectMode == "follow" || redirectMode == null) use follow client, else use no-redirect client
-        var useNoRedirectLabel = il.DefineLabel();
+        // Local helper: emit the create-and-cache sequence for one of the four field combinations.
+        // Note: this is C# code that emits IL, not a runtime helper.
+        void EmitCreateAndCacheClient(FieldBuilder field, bool followRedirects, bool useCookies)
+        {
+            var doneLabel = il.DefineLabel();
+
+            // if (field != null) goto done
+            il.Emit(OpCodes.Ldsfld, field);
+            il.Emit(OpCodes.Brtrue, doneLabel);
+
+            // var handler = new HttpClientHandler();
+            var handlerLocal = il.DeclareLocal(_httpClientHandlerType);
+            il.Emit(OpCodes.Newobj, handlerCtor);
+            il.Emit(OpCodes.Stloc, handlerLocal);
+
+            // handler.AllowAutoRedirect = followRedirects;
+            il.Emit(OpCodes.Ldloc, handlerLocal);
+            il.Emit(followRedirects ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, allowAutoRedirectProp.GetSetMethod()!);
+
+            // handler.UseCookies = useCookies;
+            il.Emit(OpCodes.Ldloc, handlerLocal);
+            il.Emit(useCookies ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, useCookiesProp.GetSetMethod()!);
+
+            if (useCookies)
+            {
+                // _cookieContainer ??= new CookieContainer();
+                var cookieReadyLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldsfld, _cookieContainerField);
+                il.Emit(OpCodes.Brtrue, cookieReadyLabel);
+                il.Emit(OpCodes.Newobj, cookieContainerCtor);
+                il.Emit(OpCodes.Stsfld, _cookieContainerField);
+                il.MarkLabel(cookieReadyLabel);
+
+                // handler.CookieContainer = _cookieContainer;
+                il.Emit(OpCodes.Ldloc, handlerLocal);
+                il.Emit(OpCodes.Ldsfld, _cookieContainerField);
+                il.Emit(OpCodes.Callvirt, cookieContainerProp.GetSetMethod()!);
+            }
+
+            // var client = new HttpClient(handler); client.Timeout = TimeSpan.FromSeconds(30);
+            il.Emit(OpCodes.Ldloc, handlerLocal);
+            il.Emit(OpCodes.Newobj, httpClientCtor);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_R8, 30.0);
+            il.Emit(OpCodes.Call, fromSecondsMethod);
+            il.Emit(OpCodes.Callvirt, timeoutProp.GetSetMethod()!);
+            // field = client;
+            il.Emit(OpCodes.Stsfld, field);
+
+            il.MarkLabel(doneLabel);
+            il.Emit(OpCodes.Ldsfld, field);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // Decision tree:
+        //   bool follow = redirectMode == "follow"  (the only follow value; "manual"/"error" both → no-redirect)
+        //   if (follow)
+        //     if (useCookies) -> followCookies else -> follow
+        //   else
+        //     if (useCookies) -> noRedirectCookies else -> noRedirect
+
+        var notFollowLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "follow");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brfalse, useNoRedirectLabel);
+        il.Emit(OpCodes.Brfalse, notFollowLabel);
 
-        // --- Follow path: return cached _httpClientFollow ---
-        var followDoneLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldsfld, followField);
-        il.Emit(OpCodes.Brtrue, followDoneLabel);
+        // follow path: branch on useCookies
+        var followNoCookiesLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, followNoCookiesLabel);
+        EmitCreateAndCacheClient(followCookiesField, followRedirects: true, useCookies: true);
 
-        // Create: var handler = new HttpClientHandler { AllowAutoRedirect = true }
-        il.Emit(OpCodes.Newobj, handlerCtor);
-        var handlerLocal = il.DeclareLocal(_httpClientHandlerType);
-        il.Emit(OpCodes.Stloc, handlerLocal);
-        il.Emit(OpCodes.Ldloc, handlerLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Callvirt, allowAutoRedirectProp.GetSetMethod()!);
-        // var client = new HttpClient(handler) { Timeout = 30s }
-        il.Emit(OpCodes.Ldloc, handlerLocal);
-        il.Emit(OpCodes.Newobj, httpClientCtor);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_R8, 30.0);
-        il.Emit(OpCodes.Call, fromSecondsMethod);
-        il.Emit(OpCodes.Callvirt, timeoutProp.GetSetMethod()!);
-        il.Emit(OpCodes.Stsfld, followField);
+        il.MarkLabel(followNoCookiesLabel);
+        EmitCreateAndCacheClient(followField, followRedirects: true, useCookies: false);
 
-        il.MarkLabel(followDoneLabel);
-        il.Emit(OpCodes.Ldsfld, followField);
-        il.Emit(OpCodes.Ret);
+        // not-follow path: branch on useCookies
+        il.MarkLabel(notFollowLabel);
+        var noRedirectNoCookiesLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, noRedirectNoCookiesLabel);
+        EmitCreateAndCacheClient(noRedirectCookiesField, followRedirects: false, useCookies: true);
 
-        // --- No-redirect path: return cached _httpClientNoRedirect ---
-        il.MarkLabel(useNoRedirectLabel);
-        var noRedirectDoneLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldsfld, noRedirectField);
-        il.Emit(OpCodes.Brtrue, noRedirectDoneLabel);
+        il.MarkLabel(noRedirectNoCookiesLabel);
+        EmitCreateAndCacheClient(noRedirectField, followRedirects: false, useCookies: false);
+    }
 
-        // Create: var handler = new HttpClientHandler { AllowAutoRedirect = false }
-        il.Emit(OpCodes.Newobj, handlerCtor);
-        var handlerLocal2 = il.DeclareLocal(_httpClientHandlerType);
-        il.Emit(OpCodes.Stloc, handlerLocal2);
-        il.Emit(OpCodes.Ldloc, handlerLocal2);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Callvirt, allowAutoRedirectProp.GetSetMethod()!);
-        // var client = new HttpClient(handler) { Timeout = 30s }
-        il.Emit(OpCodes.Ldloc, handlerLocal2);
-        il.Emit(OpCodes.Newobj, httpClientCtor);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_R8, 30.0);
-        il.Emit(OpCodes.Call, fromSecondsMethod);
-        il.Emit(OpCodes.Callvirt, timeoutProp.GetSetMethod()!);
-        il.Emit(OpCodes.Stsfld, noRedirectField);
+    /// <summary>
+    /// Emits the three <c>fetch.cookieJar.*</c> introspection helpers as static
+    /// methods on the runtime type. They share the lazily-initialized
+    /// <c>_cookieContainer</c> field that the with-cookies HttpClientHandlers point at,
+    /// so the script-side jar view always matches what fetch is sending/receiving.
+    /// </summary>
+    /// <remarks>
+    /// Pure-IL — no reflection back to SharpTS.dll. <c>CookieContainer</c> lives in
+    /// <c>System.Net.Primitives</c> which is part of the BCL surface.
+    /// </remarks>
+    private void EmitCookieJarHelpers(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var cookieContainerCtor = _cookieContainerType!.GetConstructor(Type.EmptyTypes)!;
+        var getCookieHeaderMethod = _cookieContainerType.GetMethod("GetCookieHeader", [typeof(Uri)])!;
+        var setCookiesMethod = _cookieContainerType.GetMethod("SetCookies", [typeof(Uri), _types.String])!;
+        var getAllCookiesMethod = _cookieContainerType.GetMethod("GetAllCookies", Type.EmptyTypes);
+        var uriTryCreate = typeof(Uri).GetMethod("TryCreate", [_types.String, typeof(UriKind), typeof(Uri).MakeByRefType()])!;
+        var uriKindAbsolute = (int)UriKind.Absolute;
+        var typeErrorCtor = runtime.TSTypeErrorCtor;
+        var cookieType = Type.GetType("System.Net.Cookie, System.Net.Primitives")!;
+        var cookieExpiredProp = cookieType.GetProperty("Expired")!;
 
-        il.MarkLabel(noRedirectDoneLabel);
-        il.Emit(OpCodes.Ldsfld, noRedirectField);
-        il.Emit(OpCodes.Ret);
+        // Local helper: lazily initialize _cookieContainer if null and leave it on the stack.
+        void EmitEnsureContainerOnStack(ILGenerator gen)
+        {
+            var readyLabel = gen.DefineLabel();
+            gen.Emit(OpCodes.Ldsfld, _cookieContainerField);
+            gen.Emit(OpCodes.Brtrue, readyLabel);
+            gen.Emit(OpCodes.Newobj, cookieContainerCtor);
+            gen.Emit(OpCodes.Stsfld, _cookieContainerField);
+            gen.MarkLabel(readyLabel);
+            gen.Emit(OpCodes.Ldsfld, _cookieContainerField);
+        }
+
+        // Local helper: validate url arg via Uri.TryCreate, throw "TypeError: Invalid URL: ..."
+        // on failure, leave the Uri on the stack on success. Matches the interpreter-side
+        // SharpTSCookieJar contract where invalid URLs throw a JS-catchable TypeError.
+        void EmitParseUrlOrThrow(ILGenerator gen, int argIndex)
+        {
+            var uriLocal = gen.DeclareLocal(typeof(Uri));
+            var okLabel = gen.DefineLabel();
+
+            // Uri.TryCreate(url, UriKind.Absolute, out uriLocal)
+            gen.Emit(OpCodes.Ldarg, argIndex);
+            gen.Emit(OpCodes.Ldc_I4, uriKindAbsolute);
+            gen.Emit(OpCodes.Ldloca, uriLocal);
+            gen.Emit(OpCodes.Call, uriTryCreate);
+            gen.Emit(OpCodes.Brtrue, okLabel);
+
+            // throw new $TypeError("Invalid URL: " + url) — wrapped in .NET exception
+            // via CreateException so try/catch can catch it as a JS TypeError.
+            gen.Emit(OpCodes.Ldstr, "Invalid URL: ");
+            gen.Emit(OpCodes.Ldarg, argIndex);
+            gen.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.String])!);
+            gen.Emit(OpCodes.Newobj, typeErrorCtor);
+            gen.Emit(OpCodes.Call, runtime.CreateException);
+            gen.Emit(OpCodes.Throw);
+
+            gen.MarkLabel(okLabel);
+            gen.Emit(OpCodes.Ldloc, uriLocal);
+        }
+
+        // public static string CookieJarGetCookies(string url)
+        {
+            var method = typeBuilder.DefineMethod(
+                "CookieJarGetCookies",
+                MethodAttributes.Public | MethodAttributes.Static,
+                _types.String,
+                [_types.String]
+            );
+            runtime.CookieJarGetCookies = method;
+            var il = method.GetILGenerator();
+
+            // Reject null/empty url with the same TypeError as the validation path
+            var validLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Brtrue, validLabel);
+            il.Emit(OpCodes.Ldstr, "Invalid URL: (null)");
+            il.Emit(OpCodes.Newobj, typeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(validLabel);
+
+            EmitEnsureContainerOnStack(il);
+            EmitParseUrlOrThrow(il, 0);
+            il.Emit(OpCodes.Callvirt, getCookieHeaderMethod);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // public static void CookieJarSetCookie(string cookie, string url)
+        {
+            var method = typeBuilder.DefineMethod(
+                "CookieJarSetCookie",
+                MethodAttributes.Public | MethodAttributes.Static,
+                _types.Void,
+                [_types.String, _types.String]
+            );
+            runtime.CookieJarSetCookie = method;
+            var il = method.GetILGenerator();
+
+            // Reject null url
+            var validLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Brtrue, validLabel);
+            il.Emit(OpCodes.Ldstr, "Invalid URL: (null)");
+            il.Emit(OpCodes.Newobj, typeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(validLabel);
+
+            EmitEnsureContainerOnStack(il);
+            EmitParseUrlOrThrow(il, 1);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, setCookiesMethod);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // public static void CookieJarClear()
+        //
+        // Walks every cookie, sets Expired=true, collects unique domains, then calls
+        // GetCookieHeader for each domain to trigger the in-place expiry sweep. After
+        // this method returns, GetAllCookies().Count is zero. See SharpTSCookieJar.Clear
+        // for the rationale (CookieContainer has no public Clear and the snapshot
+        // returned by GetAllCookies isn't live).
+        {
+            var method = typeBuilder.DefineMethod(
+                "CookieJarClear",
+                MethodAttributes.Public | MethodAttributes.Static,
+                _types.Void,
+                Type.EmptyTypes
+            );
+            runtime.CookieJarClear = method;
+            var il = method.GetILGenerator();
+
+            // If the container is null there's nothing to clear.
+            var doneLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldsfld, _cookieContainerField);
+            il.Emit(OpCodes.Brfalse, doneLabel);
+
+            if (getAllCookiesMethod != null)
+            {
+                var enumerableType = typeof(System.Collections.IEnumerable);
+                var enumeratorMethod = enumerableType.GetMethod("GetEnumerator")!;
+                var moveNextMethod = typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!;
+                var currentProp = typeof(System.Collections.IEnumerator).GetProperty("Current")!;
+                var cookieDomainProp = cookieType.GetProperty("Domain")!;
+
+                // var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var hashSetType = typeof(HashSet<string>);
+                var hashSetCtor = hashSetType.GetConstructor([typeof(IEqualityComparer<string>)])!;
+                var hashSetAdd = hashSetType.GetMethod("Add", [_types.String])!;
+                var ordinalIgnoreCase = typeof(StringComparer).GetProperty("OrdinalIgnoreCase")!.GetGetMethod()!;
+                var domainsLocal = il.DeclareLocal(hashSetType);
+                il.Emit(OpCodes.Call, ordinalIgnoreCase);
+                il.Emit(OpCodes.Newobj, hashSetCtor);
+                il.Emit(OpCodes.Stloc, domainsLocal);
+
+                // Phase 1: foreach (Cookie c in _cookieContainer.GetAllCookies())
+                //   c.Expired = true; domains.Add(c.Domain);
+                il.Emit(OpCodes.Ldsfld, _cookieContainerField);
+                il.Emit(OpCodes.Callvirt, getAllCookiesMethod);
+                il.Emit(OpCodes.Castclass, enumerableType);
+                il.Emit(OpCodes.Callvirt, enumeratorMethod);
+                var enumLocal = il.DeclareLocal(typeof(System.Collections.IEnumerator));
+                il.Emit(OpCodes.Stloc, enumLocal);
+
+                var phase1Start = il.DefineLabel();
+                var phase1End = il.DefineLabel();
+                il.MarkLabel(phase1Start);
+                il.Emit(OpCodes.Ldloc, enumLocal);
+                il.Emit(OpCodes.Callvirt, moveNextMethod);
+                il.Emit(OpCodes.Brfalse, phase1End);
+
+                var cookieLocal = il.DeclareLocal(cookieType);
+                il.Emit(OpCodes.Ldloc, enumLocal);
+                il.Emit(OpCodes.Callvirt, currentProp.GetGetMethod()!);
+                il.Emit(OpCodes.Castclass, cookieType);
+                il.Emit(OpCodes.Stloc, cookieLocal);
+
+                // c.Expired = true
+                il.Emit(OpCodes.Ldloc, cookieLocal);
+                il.Emit(OpCodes.Ldc_I4_1);
+                il.Emit(OpCodes.Callvirt, cookieExpiredProp.GetSetMethod()!);
+
+                // domains.Add(c.Domain)
+                il.Emit(OpCodes.Ldloc, domainsLocal);
+                il.Emit(OpCodes.Ldloc, cookieLocal);
+                il.Emit(OpCodes.Callvirt, cookieDomainProp.GetGetMethod()!);
+                il.Emit(OpCodes.Callvirt, hashSetAdd);
+                il.Emit(OpCodes.Pop); // discard Add's bool result
+
+                il.Emit(OpCodes.Br, phase1Start);
+                il.MarkLabel(phase1End);
+
+                // Phase 2: foreach (string domain in domains)
+                //   try { _cookieContainer.GetCookieHeader(new Uri("http://" + domain.TrimStart('.') + "/")); }
+                //   catch { }
+                var domainsEnumMethod = hashSetType.GetMethod("GetEnumerator", Type.EmptyTypes)!;
+                var domainsEnumeratorType = domainsEnumMethod.ReturnType;
+                var domainsMoveNext = domainsEnumeratorType.GetMethod("MoveNext")!;
+                var domainsCurrent = domainsEnumeratorType.GetProperty("Current")!;
+                var domainsEnumLocal = il.DeclareLocal(domainsEnumeratorType);
+
+                il.Emit(OpCodes.Ldloc, domainsLocal);
+                il.Emit(OpCodes.Callvirt, domainsEnumMethod);
+                il.Emit(OpCodes.Stloc, domainsEnumLocal);
+
+                var phase2Start = il.DefineLabel();
+                var phase2End = il.DefineLabel();
+                il.MarkLabel(phase2Start);
+                il.Emit(OpCodes.Ldloca, domainsEnumLocal);
+                il.Emit(OpCodes.Call, domainsMoveNext);
+                il.Emit(OpCodes.Brfalse, phase2End);
+
+                // var host = domain.TrimStart('.')
+                var hostLocal = il.DeclareLocal(_types.String);
+                il.Emit(OpCodes.Ldloca, domainsEnumLocal);
+                il.Emit(OpCodes.Call, domainsCurrent.GetGetMethod()!);
+                il.Emit(OpCodes.Ldc_I4_1);
+                il.Emit(OpCodes.Newarr, typeof(char));
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Ldc_I4, (int)'.');
+                il.Emit(OpCodes.Stelem_I2);
+                il.Emit(OpCodes.Callvirt, _types.String.GetMethod("TrimStart", [typeof(char[])])!);
+                il.Emit(OpCodes.Stloc, hostLocal);
+
+                // if (string.IsNullOrEmpty(host)) continue;
+                il.Emit(OpCodes.Ldloc, hostLocal);
+                il.Emit(OpCodes.Call, _types.String.GetMethod("IsNullOrEmpty", [_types.String])!);
+                il.Emit(OpCodes.Brtrue, phase2Start);
+
+                // try { _cookieContainer.GetCookieHeader(new Uri("http://" + host + "/")); } catch { }
+                il.BeginExceptionBlock();
+                il.Emit(OpCodes.Ldsfld, _cookieContainerField);
+                il.Emit(OpCodes.Ldstr, "http://");
+                il.Emit(OpCodes.Ldloc, hostLocal);
+                il.Emit(OpCodes.Ldstr, "/");
+                il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.String, _types.String])!);
+                il.Emit(OpCodes.Newobj, typeof(Uri).GetConstructor([_types.String])!);
+                il.Emit(OpCodes.Callvirt, getCookieHeaderMethod);
+                il.Emit(OpCodes.Pop);
+                il.BeginCatchBlock(_types.Exception);
+                il.Emit(OpCodes.Pop);
+                il.EndExceptionBlock();
+
+                il.Emit(OpCodes.Br, phase2Start);
+                il.MarkLabel(phase2End);
+            }
+
+            il.MarkLabel(doneLabel);
+            il.Emit(OpCodes.Ret);
+        }
     }
 
     /// <summary>
@@ -1582,10 +1998,37 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, redirectLocal);
         il.MarkLabel(skipRedirectExtract);
 
-        // Select cached HttpClient based on redirect mode
-        // Uses two static fields: _httpClientFollow and _httpClientNoRedirect
-        // Lazy-initialized on first use to avoid static constructor ordering issues
+        // Extract credentials option from options (default: "same-origin")
+        // 'omit' → useCookies=false, 'same-origin'/'include'/anything-else → useCookies=true
+        var useCookiesLocal = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, useCookiesLocal);
+
+        var skipCredsExtract = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, skipCredsExtract);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "credentials");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        var credsValLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, credsValLocal);
+        il.Emit(OpCodes.Ldloc, credsValLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, skipCredsExtract);
+
+        // useCookies = (creds != "omit")
+        il.Emit(OpCodes.Ldloc, credsValLocal);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldstr, "omit");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Inequality", _types.String, _types.String));
+        il.Emit(OpCodes.Stloc, useCookiesLocal);
+        il.MarkLabel(skipCredsExtract);
+
+        // Select cached HttpClient based on (redirect mode, useCookies)
+        // Uses four static fields wired into a 2-arg selector. Lazy-initialized on
+        // first use to avoid static constructor ordering issues.
         il.Emit(OpCodes.Ldloc, redirectLocal);
+        il.Emit(OpCodes.Ldloc, useCookiesLocal);
         il.Emit(OpCodes.Call, _getOrCreateHttpClientMethod!);
         il.Emit(OpCodes.Stloc, clientLocal);
 
@@ -1843,17 +2286,42 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, hdrCurrentProp.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, hdrKvpLocal);
 
-        // headers[kvp.Key.ToLowerInvariant()] = string.Join(", ", kvp.Value)
-        il.Emit(OpCodes.Ldloc, headersLocal);
+        // string lowerKey = kvp.Key.ToLowerInvariant();
+        var lowerKeyLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldloca, hdrKvpLocal);
         il.Emit(OpCodes.Call, hdrKvpType.GetProperty("Key")!.GetGetMethod()!);
         il.Emit(OpCodes.Callvirt, _types.String.GetMethod("ToLowerInvariant", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, lowerKeyLocal);
+
+        // if (lowerKey == "set-cookie") store as List<string>; else store joined string.
+        var notSetCookieLabel = il.DefineLabel();
+        var afterStoreLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, lowerKeyLocal);
+        il.Emit(OpCodes.Ldstr, "set-cookie");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notSetCookieLabel);
+
+        // Set-Cookie branch: headers["set-cookie"] = new List<string>(kvp.Value)
+        var listStringCtorFromEnum = typeof(List<string>).GetConstructor([typeof(IEnumerable<string>)])!;
+        il.Emit(OpCodes.Ldloc, headersLocal);
+        il.Emit(OpCodes.Ldloc, lowerKeyLocal);
+        il.Emit(OpCodes.Ldloca, hdrKvpLocal);
+        il.Emit(OpCodes.Call, hdrKvpType.GetProperty("Value")!.GetGetMethod()!);
+        il.Emit(OpCodes.Newobj, listStringCtorFromEnum);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.Emit(OpCodes.Br, afterStoreLabel);
+
+        // Default branch: headers[lowerKey] = string.Join(", ", kvp.Value)
+        il.MarkLabel(notSetCookieLabel);
+        il.Emit(OpCodes.Ldloc, headersLocal);
+        il.Emit(OpCodes.Ldloc, lowerKeyLocal);
         il.Emit(OpCodes.Ldstr, ", ");
         il.Emit(OpCodes.Ldloca, hdrKvpLocal);
         il.Emit(OpCodes.Call, hdrKvpType.GetProperty("Value")!.GetGetMethod()!);
         il.Emit(OpCodes.Call, _types.String.GetMethod("Join", [_types.String, typeof(IEnumerable<string>)])!);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
+        il.MarkLabel(afterStoreLabel);
         il.Emit(OpCodes.Br, hdrLoopStart);
         il.MarkLabel(hdrLoopEnd);
 
@@ -1912,9 +2380,8 @@ public partial class RuntimeEmitter
         il.MarkLabel(noContentHdrsLabel);
         il.MarkLabel(noContentLabel);
 
-        // Dispose client
-        il.Emit(OpCodes.Ldloc, clientLocal);
-        il.Emit(OpCodes.Callvirt, _types.DisposableDispose);
+        // NOTE: do not dispose the client — it is one of the cached static instances
+        // shared across all fetch calls (see EmitCachedHttpClients).
 
         // Build success result array
         il.Emit(OpCodes.Ldc_I4_8);

@@ -18,6 +18,12 @@ public class ILVerificationTests
         // URL helper methods use Uri.TryCreate with byref parameters
         "$Runtime.UrlParse",
         "$Runtime.UrlResolve",
+        // CookieJar helpers use System.Net.CookieContainer methods that resolve against
+        // the host runtime — same Uri/CookieContainer reference-assembly mismatch as
+        // the URL helpers above. All three work correctly at runtime.
+        "$Runtime.CookieJarGetCookies",
+        "$Runtime.CookieJarSetCookie",
+        "$Runtime.CookieJarClear",
         // Headers, URL, URLSearchParams use List<string>/Dictionary methods resolved
         // against host runtime rather than reference assemblies
         "$Headers.",

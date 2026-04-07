@@ -383,8 +383,8 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `__dirname` | ✅ | Directory of current module |
 | `__filename` | ✅ | Full path of current module |
 | `require` | ✅ | Available globally in both interpreter and compiled modes. Compiled mode requires string-literal specifiers (non-literals are a compile error). |
-| `module` | ❌ | |
-| `exports` | ❌ | |
+| `module` | ✅ | Per-module CJS binding (matches Node — not on `globalThis`). Interpreter binds in module scope; compiled mode lowers `module.exports` to the per-file `$Module_X.exports` static field. |
+| `exports` | ✅ | Per-module CJS binding (matches Node — not on `globalThis`). Same lowering as `module.exports` in compiled mode. |
 | `Buffer` | ✅ | Full Buffer class available globally |
 | `global` | ⚠️ | Use `globalThis` |
 
@@ -671,8 +671,16 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | **Not Implemented** | | |
 | `Request` class | ✅ | `new Request(url, init?)` with method, headers, body, clone(); json(), text(), arrayBuffer() |
 | `Response` class | ✅ | `new Response(body?, init?)` with status, statusText, ok, headers, clone(); json(), text(), arrayBuffer(); static json(), redirect(), error() |
-| `credentials` option | ❌ | No cookie handling |
+| `credentials` option | ✅ | `'omit'`, `'same-origin'` (default, matches Node/undici), `'include'`. Backed by a process-wide cookie jar via `System.Net.CookieContainer` — handles RFC 6265 parsing, domain/path matching, expiry, Secure/HttpOnly. Each compiled DLL has its own jar. |
 | `redirect` option | ✅ | `follow` (default), `manual` (return 3xx), `error` (throw on redirect) |
+| **Cookie jar** | | |
+| `fetch.cookieJar.getCookies(url)` | ✅ | Returns the `Cookie:` header that would be sent for `url`. SharpTS extension. |
+| `fetch.cookieJar.setCookie(cookie, url)` | ✅ | Manually inject a cookie into the jar as if received from `url`. SharpTS extension. |
+| `fetch.cookieJar.clear()` | ✅ | Removes all cookies from the jar. SharpTS extension. |
+| `headers.getSetCookie()` | ✅ | Returns all `Set-Cookie` values as an array (WHATWG spec). |
+| `headers.get('set-cookie')` | ✅ | Returns first cookie value (WHATWG spec). |
+| Cookies persisted to disk | ❌ | Process-only; lost on exit. |
+| `http.Agent` cookies option | ❌ | Cookies are jar-wide; per-Agent jars deferred. |
 
 ---
 

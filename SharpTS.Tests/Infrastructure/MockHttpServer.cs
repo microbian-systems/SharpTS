@@ -162,12 +162,70 @@ public class MockHttpServer : IDisposable
     private readonly Dictionary<string, (string TargetPath, int StatusCode)> _redirectRoutes = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Custom routes that get full access to the response context (for setting arbitrary
+    /// headers like Set-Cookie or for echoing request headers into the response body).
+    /// </summary>
+    private readonly Dictionary<string, Action<HttpListenerContext>> _customRoutes = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Adds a route with a specific status code.
     /// </summary>
     public void AddStatusRoute(string path, int statusCode, string body = "")
     {
         var bodyBytes = Encoding.UTF8.GetBytes(body);
         _routes[path] = _ => (statusCode, "text/plain", bodyBytes);
+    }
+
+    /// <summary>
+    /// Adds a route that emits one or more <c>Set-Cookie</c> response headers and a
+    /// 200 OK with empty body. Each entry in <paramref name="cookies"/> becomes its own
+    /// <c>Set-Cookie</c> header line — this is the only way to send multi-value
+    /// Set-Cookie since HttpListener treats them specially.
+    /// </summary>
+    public void AddSetCookieRoute(string path, params string[] cookies)
+    {
+        _customRoutes[path] = ctx =>
+        {
+            foreach (var cookie in cookies)
+            {
+                ctx.Response.Headers.Add("Set-Cookie", cookie);
+            }
+            ctx.Response.StatusCode = 200;
+            ctx.Response.ContentType = "text/plain";
+            ctx.Response.ContentLength64 = 0;
+        };
+    }
+
+    /// <summary>
+    /// Adds a route that echoes the incoming request's <c>Cookie:</c> header verbatim
+    /// into the response body. Used to verify which cookies a fetch sent.
+    /// </summary>
+    public void AddCookieEchoRoute(string path)
+    {
+        _customRoutes[path] = ctx =>
+        {
+            var cookieHeader = ctx.Request.Headers["Cookie"] ?? "";
+            var bodyBytes = Encoding.UTF8.GetBytes(cookieHeader);
+            ctx.Response.StatusCode = 200;
+            ctx.Response.ContentType = "text/plain";
+            ctx.Response.ContentLength64 = bodyBytes.Length;
+            ctx.Response.OutputStream.Write(bodyBytes, 0, bodyBytes.Length);
+        };
+    }
+
+    /// <summary>
+    /// Adds a redirect route that also sets a Set-Cookie header on the redirect response.
+    /// Used to verify cookies are stored from intermediate redirect responses.
+    /// </summary>
+    public void AddSetCookieRedirectRoute(string path, string targetPath, string cookie, int statusCode = 302)
+    {
+        _customRoutes[path] = ctx =>
+        {
+            ctx.Response.Headers.Add("Set-Cookie", cookie);
+            ctx.Response.StatusCode = statusCode;
+            ctx.Response.RedirectLocation = $"http://localhost:{Port}{targetPath}";
+            ctx.Response.ContentLength64 = 0;
+        };
     }
 
     /// <summary>
@@ -231,8 +289,13 @@ public class MockHttpServer : IDisposable
         {
             var path = context.Request.Url?.AbsolutePath ?? "/";
 
-            // Check redirect routes first
-            if (_redirectRoutes.TryGetValue(path, out var redirect))
+            // Check custom routes first (full context access)
+            if (_customRoutes.TryGetValue(path, out var customHandler))
+            {
+                customHandler(context);
+            }
+            // Check redirect routes
+            else if (_redirectRoutes.TryGetValue(path, out var redirect))
             {
                 context.Response.StatusCode = redirect.StatusCode;
                 context.Response.RedirectLocation = $"http://localhost:{Port}{redirect.TargetPath}";

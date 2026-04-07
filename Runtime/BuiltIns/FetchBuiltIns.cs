@@ -19,24 +19,57 @@ namespace SharpTS.Runtime.BuiltIns;
 /// </remarks>
 public static class FetchBuiltIns
 {
-    // Shared HttpClient instances (best practice for .NET - reuse to benefit from connection pooling)
-    private static readonly HttpClient _httpClientFollow = CreateHttpClient(allowAutoRedirect: true);
-    private static readonly HttpClient _httpClientNoRedirect = CreateHttpClient(allowAutoRedirect: false);
+    // Shared HttpClient instances (best practice for .NET - reuse to benefit from connection pooling).
+    // Four clients: {follow, noRedirect} × {with-cookies, without-cookies}.
+    // The two with-cookies clients share the process-wide CookieContainer from SharpTSCookieJar.
+    private static readonly HttpClient _httpClientFollow = CreateHttpClient(allowAutoRedirect: true, useCookies: false);
+    private static readonly HttpClient _httpClientNoRedirect = CreateHttpClient(allowAutoRedirect: false, useCookies: false);
+    private static readonly HttpClient _httpClientFollowCookies = CreateHttpClient(allowAutoRedirect: true, useCookies: true);
+    private static readonly HttpClient _httpClientNoRedirectCookies = CreateHttpClient(allowAutoRedirect: false, useCookies: true);
 
-    private static HttpClient CreateHttpClient(bool allowAutoRedirect)
+    private static HttpClient CreateHttpClient(bool allowAutoRedirect, bool useCookies)
     {
         var handler = new HttpClientHandler
         {
             AutomaticDecompression = System.Net.DecompressionMethods.All,
             AllowAutoRedirect = allowAutoRedirect,
-            MaxAutomaticRedirections = 20
+            MaxAutomaticRedirections = 20,
+            UseCookies = useCookies,
         };
+        if (useCookies)
+        {
+            handler.CookieContainer = SharpTSCookieJar.GlobalContainer;
+        }
         var client = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(30)
         };
         client.DefaultRequestHeaders.Add("User-Agent", "SharpTS/1.0");
         return client;
+    }
+
+    /// <summary>
+    /// Selects the cached HttpClient for a given (redirectMode, credentials) pair.
+    /// </summary>
+    /// <remarks>
+    /// <c>credentials: 'omit'</c> uses a no-cookie handler so the request is sent
+    /// without any stored cookies AND any <c>Set-Cookie</c> response headers are
+    /// dropped. <c>'same-origin'</c> and <c>'include'</c> both use the with-cookies
+    /// handler — without a top-level realm there's no meaningful distinction, and
+    /// <see cref="System.Net.CookieContainer"/>'s domain matching naturally limits
+    /// cookies to the host that set them.
+    /// </remarks>
+    private static HttpClient SelectHttpClient(string redirectMode, string credentials)
+    {
+        bool follow = redirectMode is not ("manual" or "error");
+        bool useCookies = credentials != "omit";
+        return (follow, useCookies) switch
+        {
+            (true, true) => _httpClientFollowCookies,
+            (true, false) => _httpClientFollow,
+            (false, true) => _httpClientNoRedirectCookies,
+            (false, false) => _httpClientNoRedirect,
+        };
     }
 
     /// <summary>
@@ -67,6 +100,7 @@ public static class FetchBuiltIns
             {
                 ["method"] = request.Method,
                 ["headers"] = request.Headers,
+                ["credentials"] = request.Credentials,
             });
             if (request.Body != null)
                 requestInit.SetProperty("body", request.Body);
@@ -162,7 +196,16 @@ public static class FetchBuiltIns
             redirectMode = rm;
         }
 
-        var client = redirectMode is "manual" or "error" ? _httpClientNoRedirect : _httpClientFollow;
+        // Handle credentials option: "same-origin" (default), "omit", "include"
+        // Without a top-level realm, "same-origin" and "include" behave identically
+        // and rely on CookieContainer's domain matching.
+        string credentials = "same-origin";
+        if (options?.Fields.TryGetValue("credentials", out var credsObj) == true && credsObj is string cs)
+        {
+            credentials = cs;
+        }
+
+        var client = SelectHttpClient(redirectMode, credentials);
         var response = await client.SendAsync(request, cancellationToken);
 
         // For "error" mode, throw on redirect responses
