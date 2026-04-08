@@ -346,6 +346,17 @@ public partial class TypeChecker
             return new TypeInfo.Any();
         }
 
+        // Handle new BroadcastChannel(name) constructor
+        if (isSimpleName && simpleClassName == "BroadcastChannel")
+        {
+            if (newExpr.Arguments.Count != 1)
+                throw new TypeCheckException("BroadcastChannel constructor requires exactly 1 argument (name).");
+            var nameType = CheckExpr(newExpr.Arguments[0]);
+            if (!IsString(nameType) && nameType is not TypeInfo.Any)
+                throw new TypeCheckException($"BroadcastChannel name must be a string, got '{nameType}'.");
+            return new TypeInfo.Any();
+        }
+
         // Handle new SharedArrayBuffer(byteLength) / new ArrayBuffer(byteLength)
         if (isSimpleName && simpleClassName is "SharedArrayBuffer" or "ArrayBuffer")
         {

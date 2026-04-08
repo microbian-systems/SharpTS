@@ -936,6 +936,10 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSMessageChannel), (instance, name) =>
             ((SharpTSMessageChannel)instance).GetMember(name));
 
+        // Register BroadcastChannel instance members
+        registry.RegisterInstanceType(typeof(SharpTSBroadcastChannel), (instance, name) =>
+            ((SharpTSBroadcastChannel)instance).GetMember(name));
+
         // Register SharedArrayBuffer instance members
         registry.RegisterInstanceType(typeof(SharpTSSharedArrayBuffer), (instance, name) =>
         {

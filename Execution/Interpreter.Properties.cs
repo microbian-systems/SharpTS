@@ -690,6 +690,13 @@ public partial class Interpreter
             throw new InterpreterException($"Cannot set property '{memberName}' on AbortSignal.");
         }
 
+        if (obj is SharpTSBroadcastChannel bc)
+        {
+            if (bc.SetMember(memberName, value))
+                return value;
+            throw new InterpreterException($"Cannot set property '{memberName}' on BroadcastChannel.");
+        }
+
         throw new InterpreterException("Only instances and objects have fields.");
     }
 

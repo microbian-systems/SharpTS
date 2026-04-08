@@ -181,6 +181,30 @@ public class StandaloneDllTests
     }
 
     [Fact]
+    public void Isolated_BroadcastChannel_ShouldExecuteWithoutSharpTsDll()
+    {
+        var source = """
+            const a = new BroadcastChannel('iso');
+            const b = new BroadcastChannel('iso');
+            b.on('message', (e: any) => { console.log('got:', e.data); });
+            a.postMessage('hello');
+            a.close();
+            b.close();
+            """;
+
+        var (tempDir, dllPath) = CompileStandalone(source);
+        try
+        {
+            var output = ExecuteCompiledDllIsolated(dllPath, timeoutMs: 15000);
+            Assert.Equal("got: hello\n", output);
+        }
+        finally
+        {
+            CleanupTempDir(tempDir);
+        }
+    }
+
+    [Fact]
     public void Isolated_Atomics_ShouldExecuteWithoutSharpTsDll()
     {
         var source = """

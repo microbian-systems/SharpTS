@@ -1416,7 +1416,45 @@ public static class BuiltInModuleTypes
             "cluster" => GetClusterModuleTypes(),
             "vm" => GetVmModuleTypes(),
             "async_hooks" => GetAsyncHooksModuleTypes(),
+            "worker_threads" => GetWorkerThreadsModuleTypes(),
             _ => null
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the worker_threads module.
+    /// </summary>
+    public static Dictionary<string, TypeInfo> GetWorkerThreadsModuleTypes()
+    {
+        var anyType = new TypeInfo.Any();
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        var boolType = BooleanType;
+        var stringType = new TypeInfo.String();
+        var voidType = new TypeInfo.Void();
+
+        return new Dictionary<string, TypeInfo>
+        {
+            // Constructors — typed as Any so `new wt.X(...)` type-checks and the compiler
+            // routes through TryEmitModuleQualifiedConstructor for the actual IL.
+            ["Worker"] = anyType,
+            ["MessageChannel"] = anyType,
+            ["MessagePort"] = anyType,
+            ["BroadcastChannel"] = anyType,
+
+            // Thread identity
+            ["isMainThread"] = boolType,
+            ["threadId"] = numberType,
+            ["parentPort"] = anyType,
+            ["workerData"] = anyType,
+
+            // Functions / constants
+            ["receiveMessageOnPort"] = new TypeInfo.Function([anyType], anyType),
+            ["markAsUntransferable"] = new TypeInfo.Function([anyType], voidType),
+            ["moveMessagePortToContext"] = new TypeInfo.Function([anyType, anyType], anyType),
+            ["getEnvironmentData"] = new TypeInfo.Function([stringType], anyType),
+            ["setEnvironmentData"] = new TypeInfo.Function([stringType, anyType], voidType),
+            ["SHARE_ENV"] = anyType,
+            ["resourceLimits"] = anyType,
         };
     }
 

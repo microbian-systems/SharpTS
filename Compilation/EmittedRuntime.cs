@@ -2213,6 +2213,17 @@ public class EmittedRuntime
     public MethodBuilder ClusterIsWorker { get; set; } = null!;
 
     // ============================================================
+    // $BroadcastChannel — emitted WHATWG/Node BroadcastChannel
+    // Pure-IL: extends $EventEmitter, uses $EventLoop for delivery scheduling.
+    // ============================================================
+    public Type BroadcastChannelType { get; set; } = null!;
+    public ConstructorBuilder BroadcastChannelCtor { get; set; } = null!;
+    public MethodBuilder BroadcastChannelPostMessage { get; set; } = null!;
+    public MethodBuilder BroadcastChannelClose { get; set; } = null!;
+    public MethodBuilder BroadcastChannelRef { get; set; } = null!;
+    public MethodBuilder BroadcastChannelUnref { get; set; } = null!;
+
+    // ============================================================
     // $EventLoop — singleton event loop for compiled mode
     // ============================================================
     public TypeBuilder EventLoopType { get; set; } = null!;

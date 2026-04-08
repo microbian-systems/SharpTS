@@ -65,7 +65,8 @@ public static class BuiltInConstructorFactory
         BuiltInNames.IsErrorTypeName(name) ||
         name == BuiltInNames.MessageChannel ||
         name == BuiltInNames.SharedArrayBuffer ||
-        name == BuiltInNames.ArrayBuffer;
+        name == BuiltInNames.ArrayBuffer ||
+        name == BuiltInNames.BroadcastChannel;
 
     /// <summary>
     /// Creates a built-in object using the appropriate constructor.
@@ -108,6 +109,16 @@ public static class BuiltInConstructorFactory
         if (name == BuiltInNames.ArrayBuffer)
         {
             return WorkerBuiltIns.ArrayBufferConstructor.Call(interpreter!, args.ToList());
+        }
+
+        if (name == BuiltInNames.BroadcastChannel)
+        {
+            // BroadcastChannel needs the interpreter wired so message delivery can be
+            // scheduled on the correct event loop.
+            if (args.Count < 1)
+                throw new Exception("Runtime Error: BroadcastChannel constructor requires a name argument.");
+            var channelName = args[0]?.ToString() ?? throw new Exception("Runtime Error: BroadcastChannel name must be a string.");
+            return new SharpTSBroadcastChannel(channelName) { OwnerInterpreter = interpreter };
         }
 
         return null;

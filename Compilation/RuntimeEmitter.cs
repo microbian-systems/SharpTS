@@ -297,6 +297,13 @@ public partial class RuntimeEmitter
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime);
 
+        // Emit $BroadcastChannel — extends $EventEmitter, dispatches via $EventLoop,
+        // and clones messages via $Runtime.StructuredClone (populated during EmitRuntimeClass
+        // → EmitWorkerHelpers → EmitStructuredCloneHelper).
+        // NOTE: Must come after EmitRuntimeClass so runtime.StructuredCloneClone is set.
+        // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSBroadcastChannel
+        EmitBroadcastChannelClass(moduleBuilder, runtime);
+
         // Emit $ReflectMetadataDecorator closure class
         // Must come after EmitRuntimeClass (calls ReflectDefineMetadata)
         EmitReflectMetadataDecoratorClass(moduleBuilder, runtime);

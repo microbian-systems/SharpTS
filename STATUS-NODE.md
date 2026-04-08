@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-04-06 (CommonJS in both interpreter & compiled modes: require/module.exports, .cjs detection, ESM↔CJS interop, circular requires)
+**Last Updated:** 2026-04-07 (BroadcastChannel — global + worker_threads export, both interpreter and compiled modes)
 
 ## Legend
 - ✅ Implemented
@@ -891,7 +891,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | **Not Implemented** | | |
 | `moveMessagePortToContext` | ❌ | Requires VM module |
 | `resourceLimits` | ❌ | No resource limiting |
-| `BroadcastChannel` | ❌ | |
+| `BroadcastChannel` | ✅ | new BroadcastChannel(name); postMessage, close, on('message'), addEventListener, ref/unref; also exported from `worker_threads`. Cross-thread delivery within a single process via the singleton event loop. |
 
 ---
 

@@ -122,6 +122,7 @@ public static class BuiltInNames
     public const string TextDecoder = "TextDecoder";
     public const string AbortController = "AbortController";
     public const string AbortSignal = "AbortSignal";
+    public const string BroadcastChannel = "BroadcastChannel";
     public const string Headers = "Headers";
     public const string URL = "URL";
     public const string URLSearchParams = "URLSearchParams";

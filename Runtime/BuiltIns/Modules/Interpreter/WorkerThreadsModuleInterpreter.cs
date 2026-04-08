@@ -39,6 +39,9 @@ public static class WorkerThreadsModuleInterpreter
             // MessageChannel constructor
             ["MessageChannel"] = new MessageChannelConstructor(),
 
+            // BroadcastChannel constructor
+            ["BroadcastChannel"] = new BroadcastChannelConstructor(),
+
             // Synchronous message receive
             ["receiveMessageOnPort"] = new BuiltInMethod("receiveMessageOnPort", 1, (interp, recv, args) =>
             {

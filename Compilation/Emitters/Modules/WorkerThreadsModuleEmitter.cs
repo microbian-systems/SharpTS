@@ -13,7 +13,7 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
 
     private static readonly string[] _exportedMembers =
     [
-        "Worker", "MessageChannel", "MessagePort",
+        "Worker", "MessageChannel", "MessagePort", "BroadcastChannel",
         "isMainThread", "threadId", "workerData", "parentPort",
         "receiveMessageOnPort"
     ];
@@ -46,8 +46,21 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
             "Worker" => EmitWorkerConstructor(emitter),
             "MessageChannel" => EmitMessageChannelConstructor(emitter),
             "MessagePort" => EmitMessagePortConstructor(emitter),
+            "BroadcastChannel" => EmitBroadcastChannelConstructorRef(emitter),
             _ => false
         };
+    }
+
+    private static bool EmitBroadcastChannelConstructorRef(IEmitterContext emitter)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // Load the $BroadcastChannel Type so callers can recognize the constructor reference.
+        // Actual `new BroadcastChannel(...)` is wired through TryEmitBuiltInConstructor.
+        il.Emit(OpCodes.Ldtoken, ctx.Runtime!.BroadcastChannelType);
+        il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Type, "GetTypeFromHandle", ctx.Types.RuntimeTypeHandle));
+        return true;
     }
 
     private static bool EmitIsMainThread(IEmitterContext emitter)

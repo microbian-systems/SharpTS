@@ -159,6 +159,19 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
+            // BroadcastChannel(name) — pure-IL emitted $BroadcastChannel class.
+            // Inherited by all four async/generator state-machine emitters via
+            // ExpressionEmitterBase, so no per-emitter duplication is needed.
+            case "BroadcastChannel":
+                if (arguments.Count != 1)
+                    throw new CompileException("BroadcastChannel constructor requires exactly 1 argument (name).");
+                EmitExpression(arguments[0]);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.Stringify);
+                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.BroadcastChannelCtor);
+                SetStackUnknown();
+                return true;
+
             // --- Single boxed arg (null if missing) ---
             case "WeakRef":
                 EmitBoxedArgOrNull(arguments, 0);
@@ -439,6 +452,7 @@ public abstract partial class ExpressionEmitterBase
             "TextDecoder" => TryEmitBuiltInConstructor("TextDecoder", arguments),
             "StringDecoder" => TryEmitBuiltInConstructor("StringDecoder", arguments),
             "PerformanceObserver" => TryEmitBuiltInConstructor("PerformanceObserver", arguments),
+            "BroadcastChannel" => TryEmitBuiltInConstructor("BroadcastChannel", arguments),
             "Agent" => TryEmitAgentConstructor(arguments),
             "Resolver" => TryEmitResolverConstructor(),
             _ => false
