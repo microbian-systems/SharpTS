@@ -29,6 +29,11 @@ public class ILVerificationTests
         "$Headers.",
         "$URL.",
         "$URLSearchParams.",
+        // Web Streams emitted types use Task/TaskCompletionSource/Queue methods resolved
+        // against host runtime rather than reference assemblies
+        "$ReadableStream",
+        "$WritableStream",
+        "$TransformStream",
     };
 
     private static List<string> FilterKnownErrors(List<string> errors)
