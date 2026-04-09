@@ -339,7 +339,9 @@ public partial class TypeChecker
         }
 
         // Handle constructors that accept any arguments and return Any
-        if (isSimpleName && simpleClassName is "Headers" or "URL" or "URLSearchParams" or "Request" or "Response")
+        if (isSimpleName && simpleClassName is "Headers" or "URL" or "URLSearchParams" or "Request" or "Response"
+            or "ReadableStream" or "WritableStream" or "TransformStream"
+            or "ByteLengthQueuingStrategy" or "CountQueuingStrategy")
         {
             foreach (var arg in newExpr.Arguments)
                 CheckExpr(arg);

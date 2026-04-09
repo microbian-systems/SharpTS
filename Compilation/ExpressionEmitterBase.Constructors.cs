@@ -191,6 +191,48 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
+            // Pure-IL emitted $ReadableStream (Task 3 of the tech debt paydown).
+            // PipeTo/PipeThrough/Tee are emitted as synchronous pump loops
+            // (Task.GetAwaiter().GetResult()) — see RuntimeEmitter.ReadableStream.cs.
+            case "ReadableStream":
+                EmitBoxedArgOrNull(arguments, 0);
+                EmitBoxedArgOrNull(arguments, 1);
+                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.ReadableStreamCtor);
+                SetStackUnknown();
+                return true;
+
+            // Pure-IL emitted $WritableStream (Task 3 of the tech debt paydown).
+            case "WritableStream":
+                EmitBoxedArgOrNull(arguments, 0);
+                EmitBoxedArgOrNull(arguments, 1);
+                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.WritableStreamCtor);
+                SetStackUnknown();
+                return true;
+
+            // Pure-IL emitted $TransformStream (Task 3 of the tech debt paydown).
+            case "TransformStream":
+                EmitBoxedArgOrNull(arguments, 0);
+                EmitBoxedArgOrNull(arguments, 1);
+                EmitBoxedArgOrNull(arguments, 2);
+                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TransformStreamCtor);
+                SetStackUnknown();
+                return true;
+
+            // Pure-IL emitted strategies (Task 3 of the tech debt paydown).
+            // The emitted ctor extracts highWaterMark from the options dict
+            // inline and stores it in a typed field.
+            case "ByteLengthQueuingStrategy":
+                EmitBoxedArgOrNull(arguments, 0);
+                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.ByteLengthQueuingStrategyCtor);
+                SetStackUnknown();
+                return true;
+
+            case "CountQueuingStrategy":
+                EmitBoxedArgOrNull(arguments, 0);
+                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.CountQueuingStrategyCtor);
+                SetStackUnknown();
+                return true;
+
             case "URLSearchParams":
                 EmitBoxedArgOrNull(arguments, 0);
                 IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSUrlSearchParamsCtor);
@@ -453,6 +495,11 @@ public abstract partial class ExpressionEmitterBase
             "StringDecoder" => TryEmitBuiltInConstructor("StringDecoder", arguments),
             "PerformanceObserver" => TryEmitBuiltInConstructor("PerformanceObserver", arguments),
             "BroadcastChannel" => TryEmitBuiltInConstructor("BroadcastChannel", arguments),
+            "ReadableStream" => TryEmitBuiltInConstructor("ReadableStream", arguments),
+            "WritableStream" => TryEmitBuiltInConstructor("WritableStream", arguments),
+            "TransformStream" => TryEmitBuiltInConstructor("TransformStream", arguments),
+            "ByteLengthQueuingStrategy" => TryEmitBuiltInConstructor("ByteLengthQueuingStrategy", arguments),
+            "CountQueuingStrategy" => TryEmitBuiltInConstructor("CountQueuingStrategy", arguments),
             "Agent" => TryEmitAgentConstructor(arguments),
             "Resolver" => TryEmitResolverConstructor(),
             _ => false

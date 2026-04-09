@@ -705,6 +705,9 @@ public partial class Interpreter
             SharpTSObject o => o.Fields.Keys,
             SharpTSInstance i => i.GetFieldNames(),
             SharpTSArray a => Enumerable.Range(0, a.Elements.Count).Select(i => i.ToString()),
+            // Plain Dictionary<string, object?> from runtime helpers (e.g.,
+            // Web Streams iterator results) — see SharpTSReadableStream.MakeReadResult.
+            IDictionary<string, object?> d => d.Keys,
             _ => throw new InterpreterException("for...in requires an object.")
         };
 

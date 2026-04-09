@@ -2272,4 +2272,35 @@ public class EmittedRuntime
     public MethodBuilder VmGetScriptConstructor { get; set; } = null!;
     public MethodBuilder VmNewScript { get; set; } = null!;
     public MethodBuilder VmCompileFunction { get; set; } = null!;
+
+    // Pure-IL Web Streams emitted types. The original late-binding helpers
+    // (CreateReadableStream/CreateWritableStream/etc.) were removed when
+    // all five stream classes were migrated to pure IL.
+    public Type CountQueuingStrategyType { get; set; } = null!;
+    public ConstructorBuilder CountQueuingStrategyCtor { get; set; } = null!;
+    public Type ByteLengthQueuingStrategyType { get; set; } = null!;
+    public ConstructorBuilder ByteLengthQueuingStrategyCtor { get; set; } = null!;
+
+    public TypeBuilder WritableStreamType { get; set; } = null!;
+    public ConstructorBuilder WritableStreamCtor { get; set; } = null!;
+    public MethodBuilder WritableStreamWrite { get; set; } = null!;
+    public MethodBuilder WritableStreamClose { get; set; } = null!;
+    public MethodBuilder WritableStreamAbort { get; set; } = null!;
+    public TypeBuilder WritableStreamDefaultControllerType { get; set; } = null!;
+    public TypeBuilder WritableStreamDefaultWriterType { get; set; } = null!;
+    public ConstructorBuilder WritableStreamDefaultWriterCtor { get; set; } = null!;
+
+    public TypeBuilder ReadableStreamType { get; set; } = null!;
+    public ConstructorBuilder ReadableStreamCtor { get; set; } = null!;
+    public MethodBuilder ReadableStreamEnqueue { get; set; } = null!;
+    public MethodBuilder ReadableStreamCloseStream { get; set; } = null!;
+    public MethodBuilder ReadableStreamErrorStream { get; set; } = null!;
+    public MethodBuilder ReadableStreamRead { get; set; } = null!;
+    public TypeBuilder ReadableStreamDefaultControllerType { get; set; } = null!;
+    public TypeBuilder ReadableStreamDefaultReaderType { get; set; } = null!;
+    public ConstructorBuilder ReadableStreamDefaultReaderCtor { get; set; } = null!;
+
+    public TypeBuilder TransformStreamType { get; set; } = null!;
+    public ConstructorBuilder TransformStreamCtor { get; set; } = null!;
+    public MethodBuilder BuildTransformSink { get; set; } = null!;
 }

@@ -101,6 +101,21 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
 
     public RuntimeValue GetPropertyRV(string name) => RuntimeValue.FromBoxed(GetProperty(name));
 
+    /// <summary>
+    /// Reflection-friendly field accessor used by the compiled-mode
+    /// <c>GetFieldsProperty</c> helper. Its <c>GetMember(string)</c> reflection
+    /// fallback (<c>Compilation/RuntimeEmitter.Objects.Properties.cs</c>) calls
+    /// this method by name on any object whose fields it can't otherwise
+    /// resolve. Exposing it lets compiled code read properties off an
+    /// interpreter-constructed <see cref="SharpTSObject"/> (e.g., iterator
+    /// result objects like <c>{value, done}</c>) without a type-specific
+    /// dispatch branch.
+    /// </summary>
+    public object? GetMember(string name)
+    {
+        return _fields.TryGetValue(name, out var value) ? value : SharpTSUndefined.Instance;
+    }
+
     /// <inheritdoc />
     public void SetProperty(string name, object? value)
     {

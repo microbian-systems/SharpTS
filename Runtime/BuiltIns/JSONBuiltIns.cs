@@ -172,6 +172,16 @@ public static class JSONBuiltIns
             case SharpTSInstance inst:
                 StringifyInstance(interp, inst, replacer, allowedKeys, indentStr, depth, sb);
                 return true;
+            // Plain Dictionary<string, object?> — used by runtime helpers like
+            // Web Streams iterator results that produce JS-object-shaped data.
+            // Compiled mode already serializes dicts as JS objects in its
+            // emitted JSON.stringify path; this branch keeps the interpreter
+            // at parity. SharpTSMap uses object keys (Dictionary<object, object?>)
+            // and is handled separately by SharpTSMap-specific paths, so this
+            // branch is unambiguous.
+            case IReadOnlyDictionary<string, object?> dict:
+                StringifyDictionary(interp, dict, replacer, allowedKeys, indentStr, depth, sb);
+                return true;
             default:
                 return false;
         }
@@ -237,6 +247,69 @@ public static class JSONBuiltIns
             sb.Append(GetIndent(indentStr, depth));
         }
         sb.Append(']');
+    }
+
+    /// <summary>
+    /// Serializes a plain <see cref="IReadOnlyDictionary{TKey, TValue}"/> as a
+    /// JSON object. Identical body to <see cref="StringifyObject"/> but for
+    /// the dict shape; kept as a sibling helper rather than a refactor to
+    /// minimize churn on the SharpTSObject path that the rest of the
+    /// interpreter relies on.
+    /// </summary>
+    private static void StringifyDictionary(Interpreter interp, IReadOnlyDictionary<string, object?> dict,
+        ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb)
+    {
+        IEnumerable<KeyValuePair<string, object?>> fields = dict;
+        if (allowedKeys != null)
+        {
+            fields = fields.Where(kv => allowedKeys.Contains(kv.Key));
+        }
+
+        var fieldList = fields.ToList();
+        if (fieldList.Count == 0)
+        {
+            sb.Append("{}");
+            return;
+        }
+
+        sb.Append('{');
+
+        bool pretty = indentStr.Length > 0;
+        string stepIndent = pretty ? "\n" + GetIndent(indentStr, depth + 1) : "";
+
+        if (pretty) sb.Append(stepIndent);
+
+        bool first = true;
+        foreach (var kv in fieldList)
+        {
+            int mark = sb.Length;
+
+            if (!first)
+            {
+                sb.Append(',');
+                if (pretty) sb.Append(stepIndent);
+            }
+
+            sb.Append(JsonSerializer.Serialize(kv.Key));
+            sb.Append(':');
+            if (pretty) sb.Append(' ');
+
+            if (StringifyValue(interp, kv.Value, kv.Key, replacer, allowedKeys, indentStr, depth + 1, sb))
+            {
+                first = false;
+            }
+            else
+            {
+                sb.Length = mark;
+            }
+        }
+
+        if (pretty)
+        {
+            sb.Append('\n');
+            sb.Append(GetIndent(indentStr, depth));
+        }
+        sb.Append('}');
     }
 
     private static void StringifyObject(Interpreter interp, SharpTSObject obj,

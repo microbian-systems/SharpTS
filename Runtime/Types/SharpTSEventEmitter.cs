@@ -424,37 +424,24 @@ public class SharpTSEventEmitter : ITypeCategorized
     /// <summary>
     /// Invokes a listener directly without an interpreter.
     /// </summary>
+    /// <remarks>
+    /// Delegates to <see cref="SharpTS.Runtime.RuntimeCallableDispatcher"/>,
+    /// which handles every callable shape SharpTS produces (including
+    /// <see cref="ISharpTSCallable"/> implementations such as
+    /// <see cref="BuiltInMethod"/>, interpreter <see cref="SharpTSFunction"/>
+    /// instances, the runtime <see cref="TSFunction"/> from compiled code, and
+    /// emitted per-DLL <c>$TSFunction</c> / <c>$BoundTSFunction</c>).
+    ///
+    /// Prior to this delegation, the body silently skipped
+    /// <see cref="ISharpTSCallable"/> listeners (e.g., a
+    /// <see cref="BuiltInMethod"/> registered as an event listener never
+    /// fired). The dispatcher accepts a <c>null</c> interpreter the same way
+    /// the previous <see cref="BuiltInMethod"/> branch did, so all interpreter
+    /// listeners that don't actually use their interpreter argument now work.
+    /// </remarks>
     private static void InvokeListenerDirect(object listener, object?[] args)
     {
-        // TSFunction from compiled code - can invoke directly
-        if (listener is TSFunction tsFunc)
-        {
-            tsFunc.Invoke(args);
-            return;
-        }
-
-        // BuiltInMethod - create minimal args list and invoke with null interpreter
-        // This works for methods that don't actually use the interpreter parameter
-        if (listener is BuiltInMethod builtIn)
-        {
-            builtIn.Call(null!, args.ToList());
-            return;
-        }
-
-        // ISharpTSCallable from interpreted code - cannot invoke without interpreter
-        // This is a limitation: interpreted callbacks won't work in compiled Worker context
-        if (listener is ISharpTSCallable)
-        {
-            // Log or silently skip - these listeners require interpreter
-            return;
-        }
-
-        // Action delegate (for internal use)
-        if (listener is Action<object?[]> action)
-        {
-            action(args);
-            return;
-        }
+        SharpTS.Runtime.RuntimeCallableDispatcher.Invoke(null, listener, args);
     }
 
     /// <summary>

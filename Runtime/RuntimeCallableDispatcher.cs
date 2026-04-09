@@ -1,0 +1,121 @@
+using System.Collections.Concurrent;
+using System.Reflection;
+using SharpTS.Runtime.BuiltIns;
+using SharpTS.Runtime.Types;
+using Interp = SharpTS.Execution.Interpreter;
+
+namespace SharpTS.Runtime;
+
+/// <summary>
+/// Unified dispatcher for invoking any callable runtime value, regardless of
+/// whether it originated from the interpreter or compiled mode.
+/// </summary>
+/// <remarks>
+/// SharpTS has at least seven distinct callable shapes that all implement "a
+/// function the user can call". Before this helper, every dispatch site
+/// (Web Streams, EventEmitter, Proxy, AsyncLocalStorage, etc.) duplicated the
+/// matrix and several silently dropped categories — most notably,
+/// <see cref="SharpTSEventEmitter.InvokeListenerDirect"/> would silently skip
+/// any <see cref="ISharpTSCallable"/> listener (e.g., a
+/// <see cref="BuiltInMethod"/> registered as an event listener), so the
+/// callback never fired.
+///
+/// Recognised shapes, in priority order:
+/// <list type="number">
+///   <item><see cref="ISharpTSCallable"/> — covers
+///     <see cref="SharpTSFunction"/>, <see cref="SharpTSArrowFunction"/>,
+///     <see cref="BuiltInMethod"/>, <see cref="BuiltInAsyncMethod"/>, and any
+///     other interpreter-side callable. Receives a real
+///     <see cref="Interp"/> when one is supplied; otherwise <c>null</c>.</item>
+///   <item><see cref="SharpTS.Compilation.TSFunction"/> — the non-emitted
+///     runtime <c>TSFunction</c> shipped in <c>SharpTS.dll</c>. Direct
+///     <c>Invoke(args)</c> call, no reflection.</item>
+///   <item>Emitted per-DLL <c>$TSFunction</c>/<c>$BoundTSFunction</c>. Detected
+///     by type name; dispatched through cached
+///     <c>InvokeWithThis(thisArg, args)</c> via reflection. Honours the
+///     synthetic <c>__this</c> first parameter pattern that compiled object
+///     literal methods use (see <c>RuntimeEmitter.TSFunction.cs</c>).</item>
+///   <item><see cref="Func{TArray, TResult}"/> bound-method delegates created
+///     by <c>RuntimeTypes.Methods.CreateBoundMethod</c>.</item>
+///   <item><see cref="Action{TArray}"/> for internal listener-style
+///     callbacks.</item>
+///   <item>Generic <see cref="Delegate"/> fallback via
+///     <see cref="Delegate.DynamicInvoke"/>.</item>
+/// </list>
+/// </remarks>
+public static class RuntimeCallableDispatcher
+{
+    // Per-type method-info caches keyed by the runtime type of the callable.
+    // We pay reflection on first encounter only.
+    private static readonly ConcurrentDictionary<Type, MethodInfo?> _invokeWithThisCache = new();
+    private static readonly ConcurrentDictionary<Type, MethodInfo?> _invokeCache = new();
+
+    /// <summary>
+    /// Invokes <paramref name="callable"/> with the supplied arguments. Returns
+    /// the call result, or <c>null</c> if <paramref name="callable"/> is null
+    /// or no recognised shape matches.
+    /// </summary>
+    public static object? Invoke(Interp? interpreter, object? callable, params object?[] args)
+    {
+        if (callable is null) return null;
+
+        switch (callable)
+        {
+            case ISharpTSCallable tsCallable:
+                return tsCallable.Call(interpreter!, args.ToList());
+
+            case SharpTS.Compilation.TSFunction tsFunc:
+                return tsFunc.Invoke(args);
+
+            case Func<object?[], object?> boundMethod:
+                return boundMethod(args);
+
+            case Action<object?[]> actionListener:
+                actionListener(args);
+                return null;
+        }
+
+        // Emitted $TSFunction / $BoundTSFunction live in compiled DLLs and are
+        // not visible to SharpTS.dll at compile time. Detect by type name and
+        // dispatch via reflection on InvokeWithThis (which understands the
+        // synthetic __this first-parameter contract).
+        var type = callable.GetType();
+        if (type.Name is "$TSFunction" or "$BoundTSFunction")
+        {
+            var invokeWithThis = _invokeWithThisCache.GetOrAdd(type, t =>
+                t.GetMethod("InvokeWithThis", [typeof(object), typeof(object[])]));
+            if (invokeWithThis != null)
+            {
+                return invokeWithThis.Invoke(callable, new object?[] { null, args });
+            }
+
+            var invoke = _invokeCache.GetOrAdd(type, t => t.GetMethod("Invoke", [typeof(object[])]));
+            if (invoke != null)
+            {
+                return invoke.Invoke(callable, new object?[] { args });
+            }
+        }
+
+        if (callable is Delegate del)
+        {
+            return del.DynamicInvoke(new object[] { args });
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns whether the given value matches one of the recognised callable
+    /// shapes.
+    /// </summary>
+    public static bool IsCallable(object? value)
+    {
+        if (value is null) return false;
+        if (value is ISharpTSCallable) return true;
+        if (value is SharpTS.Compilation.TSFunction) return true;
+        if (value is Func<object?[], object?>) return true;
+        if (value is Action<object?[]>) return true;
+        if (value is Delegate) return true;
+        return value.GetType().Name is "$TSFunction" or "$BoundTSFunction";
+    }
+}

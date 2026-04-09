@@ -128,6 +128,20 @@ public partial class Interpreter
             return asyncGen;
         }
 
+        // Web Streams ReadableStream: wrap in an async iterator that
+        // delegates next() to a default reader's read(). Matches Node 18+
+        // behaviour where `for await (const chunk of rs)` works natively.
+        if (iterable is SharpTSReadableStream rs)
+        {
+            if (rs.Locked)
+            {
+                throw new InterpreterException("TypeError: ReadableStream is already locked to a reader");
+            }
+            var reader = new SharpTSReadableStreamDefaultReader(rs);
+            rs.Reader = reader;
+            return new SharpTSReadableStreamAsyncIterator(rs, reader);
+        }
+
         if (iterable is SharpTSObject obj)
         {
             var asyncIteratorFn = obj.GetBySymbol(SharpTSSymbol.AsyncIterator);
@@ -184,6 +198,13 @@ public partial class Interpreter
             {
                 done = iterResult.Done;
                 value = iterResult.Value;
+            }
+            // Plain Dictionary<string, object?> — used by runtime helpers like
+            // Web Streams iterator results returned from ReadableStream.read().
+            else if (nextResult is IDictionary<string, object?> dict)
+            {
+                if (dict.TryGetValue("done", out var d)) done = IsTruthy(d);
+                if (dict.TryGetValue("value", out var v)) value = v;
             }
 
             if (done) break;
@@ -262,6 +283,9 @@ public partial class Interpreter
             SharpTSObject o => o.Fields.Keys,
             SharpTSInstance inst => inst.GetFieldNames(),
             SharpTSArray arr => Enumerable.Range(0, arr.Elements.Count).Select(i => i.ToString()),
+            // Plain Dictionary<string, object?> from runtime helpers (e.g.,
+            // Web Streams iterator results) — see SharpTSReadableStream.MakeReadResult.
+            IDictionary<string, object?> d => d.Keys,
             _ => throw new InterpreterException("for...in requires an object.")
         };
 

@@ -30,6 +30,7 @@ public static class BuiltInModuleRegistry
         "perf_hooks",
         "stream",
         "stream/promises",
+        "stream/web",
         "http",
         "worker_threads",
         "dns",

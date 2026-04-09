@@ -503,8 +503,10 @@ public partial class Interpreter : IDisposable
     /// </remarks>
     public void RunEventLoop()
     {
-        // Set up SynchronizationContext so async/await continuations come back to this thread
-        _eventLoopSyncContext = new InterpreterSynchronizationContext(EnqueueCallback);
+        // Set up SynchronizationContext so async/await continuations come back to this thread.
+        // InterpretModules also sets this up earlier so module-init awaits have the correct
+        // context; this assignment is idempotent for the nested case.
+        _eventLoopSyncContext ??= new InterpreterSynchronizationContext(EnqueueCallback);
         var previousSyncContext = SynchronizationContext.Current;
         SynchronizationContext.SetSynchronizationContext(_eventLoopSyncContext);
 

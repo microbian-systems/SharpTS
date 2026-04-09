@@ -53,6 +53,16 @@ public static class ObjectBuiltIns
             var keys = inst.GetFieldNames().Select(k => (object?)k).ToList();
             return RuntimeValue.FromObject(new SharpTSArray(keys));
         }
+        // Plain Dictionary<string, object?> — used by runtime helpers (e.g.,
+        // Web Streams iterator results) that produce JS-object-shaped data
+        // without going through SharpTSObject. Compiled mode already has the
+        // matching dict branch in $Runtime.GetKeys; this branch keeps the
+        // interpreter at parity.
+        if (arg is IDictionary<string, object?> dict)
+        {
+            var keys = dict.Keys.Select(k => (object?)k).ToList();
+            return RuntimeValue.FromObject(new SharpTSArray(keys));
+        }
         throw new Exception("Object.keys() requires an object argument");
     }
 
@@ -68,6 +78,10 @@ public static class ObjectBuiltIns
         {
             var values = inst.GetFieldNames().Select(n => inst.GetRawField(n)).ToList();
             return RuntimeValue.FromObject(new SharpTSArray(values));
+        }
+        if (arg is IDictionary<string, object?> dict)
+        {
+            return RuntimeValue.FromObject(new SharpTSArray(dict.Values.ToList()));
         }
         throw new Exception("Object.values() requires an object argument");
     }
@@ -85,6 +99,12 @@ public static class ObjectBuiltIns
         {
             var entries = inst.GetFieldNames().Select(n =>
                 (object?)new SharpTSArray([(object?)n, inst.GetRawField(n)])).ToList();
+            return RuntimeValue.FromObject(new SharpTSArray(entries));
+        }
+        if (arg is IDictionary<string, object?> dict)
+        {
+            var entries = dict.Select(kv =>
+                (object?)new SharpTSArray([(object?)kv.Key, kv.Value])).ToList();
             return RuntimeValue.FromObject(new SharpTSArray(entries));
         }
         throw new Exception("Object.entries() requires an object argument");
@@ -126,6 +146,7 @@ public static class ObjectBuiltIns
         {
             SharpTSObject tsObj => tsObj.Fields.ContainsKey(key),
             SharpTSInstance inst => inst.HasField(key),
+            IDictionary<string, object?> dict => dict.ContainsKey(key),
             _ => false
         });
     }

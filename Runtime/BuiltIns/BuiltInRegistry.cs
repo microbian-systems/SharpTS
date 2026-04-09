@@ -895,6 +895,28 @@ public sealed class BuiltInRegistry
 
         registry.RegisterInstanceType(typeof(SharpTSStatWatcher), (instance, name) =>
             ((SharpTSStatWatcher)instance).GetMember(name));
+
+        // Register Web Streams types
+        registry.RegisterInstanceType(typeof(SharpTSReadableStream), (instance, name) =>
+            ((SharpTSReadableStream)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSReadableStreamDefaultController), (instance, name) =>
+            ((SharpTSReadableStreamDefaultController)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSReadableStreamDefaultReader), (instance, name) =>
+            ((SharpTSReadableStreamDefaultReader)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSWritableStream), (instance, name) =>
+            ((SharpTSWritableStream)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSWritableStreamDefaultController), (instance, name) =>
+            ((SharpTSWritableStreamDefaultController)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSWritableStreamDefaultWriter), (instance, name) =>
+            ((SharpTSWritableStreamDefaultWriter)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSTransformStream), (instance, name) =>
+            ((SharpTSTransformStream)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSTransformStreamDefaultController), (instance, name) =>
+            ((SharpTSTransformStreamDefaultController)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSByteLengthQueuingStrategy), (instance, name) =>
+            ((SharpTSQueuingStrategy)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSCountQueuingStrategy), (instance, name) =>
+            ((SharpTSQueuingStrategy)instance).GetMember(name));
     }
 
     private static void RegisterWorkerTypes(BuiltInRegistry registry)

@@ -201,6 +201,17 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(await promise.GetValueAsync());
         }
 
+        // Raw Task<object?> — returned by runtime methods (e.g., Web Streams
+        // read()) that need to be awaitable in both interpreter and compiled
+        // modes. Compiled mode's await already recognises Task<object>; adding
+        // the interpreter branch lets a single BuiltInMethod body work in
+        // both without wrapping in SharpTSPromise (which compiled await does
+        // not unwrap).
+        if (value is Task<object?> task)
+        {
+            return RuntimeValue.FromBoxed(await task);
+        }
+
         // Await on non-Promise returns the value (TypeScript behavior)
         return RuntimeValue.FromBoxed(value);
     }
@@ -646,6 +657,16 @@ public partial class Interpreter
             foreach (var key in inst.GetFieldNames())
             {
                 stringFields[key] = inst.GetRawField(key);
+            }
+        }
+        // Plain Dictionary<string, object?> — used by runtime helpers like
+        // Web Streams iterator results. Compiled mode already handles this in
+        // MergeIntoObject; this branch keeps the interpreter at parity.
+        else if (spreadValue is IDictionary<string, object?> dict)
+        {
+            foreach (var kv in dict)
+            {
+                stringFields[kv.Key] = kv.Value;
             }
         }
         else

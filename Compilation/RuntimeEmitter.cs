@@ -304,6 +304,27 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSBroadcastChannel
         EmitBroadcastChannelClass(moduleBuilder, runtime);
 
+        // Emit Web Streams queuing strategies ($CountQueuingStrategy,
+        // $ByteLengthQueuingStrategy). Pure-IL data classes; no dependencies
+        // on $Promise or $EventLoop, so order is loose. They're emitted before
+        // the larger stream classes that may eventually consume them.
+        EmitQueuingStrategyClasses(moduleBuilder, runtime);
+
+        // Emit $WritableStream + controller + writer. Depends on $Promise
+        // (for Task<object> return types) and $Runtime.InvokeMethodValue
+        // (already emitted by EmitRuntimeClass above) for user callback dispatch.
+        EmitWritableStreamClasses(moduleBuilder, runtime);
+
+        // Emit $ReadableStream + controller + reader. Same dependencies as
+        // WritableStream. PipeTo/PipeThrough/Tee are emitted as synchronous
+        // pump loops via Task.GetAwaiter().GetResult().
+        EmitReadableStreamClasses(moduleBuilder, runtime);
+
+        // Emit $TransformStream + $TransformSinkHolder. Depends on
+        // $ReadableStream and $WritableStream being emitted first (uses their
+        // ctors and runtime method handles).
+        EmitTransformStreamClasses(moduleBuilder, runtime);
+
         // Emit $ReflectMetadataDecorator closure class
         // Must come after EmitRuntimeClass (calls ReflectDefineMetadata)
         EmitReflectMetadataDecoratorClass(moduleBuilder, runtime);

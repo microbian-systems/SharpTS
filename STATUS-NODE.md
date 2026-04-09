@@ -2,7 +2,7 @@
 
 This document tracks Node.js module and API implementation status in SharpTS.
 
-**Last Updated:** 2026-04-07 (BroadcastChannel — global + worker_threads export, both interpreter and compiled modes)
+**Last Updated:** 2026-04-07 (Web Streams API — `node:stream/web` and globals: ReadableStream, WritableStream, TransformStream, queuing strategies, both interpreter and compiled modes)
 
 ## Legend
 - ✅ Implemented
@@ -29,6 +29,7 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `readline` | ✅ | questionSync, createInterface (extends EventEmitter), question, close, prompt, pause, resume, write, setPrompt, getPrompt |
 | `events` | ✅ | EventEmitter with on/off/once/emit/removeListener |
 | `stream` | ✅ | Readable, Writable, Duplex, Transform, PassThrough (sync mode) |
+| `stream/web` | ✅ | WHATWG Streams: ReadableStream, WritableStream, TransformStream, ByteLengthQueuingStrategy, CountQueuingStrategy. See Section 19. |
 | `buffer` | ✅ | Full Buffer class with multi-byte LE/BE, float/double, BigInt, search, swap |
 | `timers` | ✅ | setTimeout, setInterval, setImmediate + clear variants (module import) |
 | `timers/promises` | ✅ | Promise-based setTimeout/setImmediate (with AbortSignal), AsyncIterable setInterval |
@@ -681,6 +682,24 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `headers.get('set-cookie')` | ✅ | Returns first cookie value (WHATWG spec). |
 | Cookies persisted to disk | ❌ | Process-only; lost on exit. |
 | `http.Agent` cookies option | ❌ | Cookies are jar-wide; per-Agent jars deferred. |
+| **Web Streams (WHATWG)** | | |
+| `ReadableStream` | ✅ | `new ReadableStream(underlyingSource?, strategy?)`; `start`/`pull`/`cancel` callbacks; `getReader()`, `cancel()`, `pipeTo(dest, opts?)`, `pipeThrough(transform, opts?)`, `tee()`; `locked` property |
+| `ReadableStreamDefaultController` | ✅ | `enqueue()`, `close()`, `error()`, `desiredSize` |
+| `ReadableStreamDefaultReader` | ✅ | `read()` returns `Promise<{value, done}>`, `releaseLock()`, `cancel()`, `closed` promise |
+| `WritableStream` | ✅ | `new WritableStream(underlyingSink?, strategy?)`; `start`/`write`/`close`/`abort` callbacks; `getWriter()`, `close()`, `abort()`; serialized write queue |
+| `WritableStreamDefaultController` | ✅ | `error()`, `signal` (AbortSignal) |
+| `WritableStreamDefaultWriter` | ✅ | `write()`, `close()`, `abort()`, `releaseLock()`, `closed`/`ready` promises, `desiredSize` |
+| `TransformStream` | ✅ | `new TransformStream(transformer?, writableStrategy?, readableStrategy?)`; `transform`/`flush` callbacks; `readable`/`writable` properties |
+| `TransformStreamDefaultController` | ✅ | `enqueue()`, `terminate()`, `error()`, `desiredSize` |
+| `ByteLengthQueuingStrategy` | ✅ | `new ByteLengthQueuingStrategy({ highWaterMark })`; `size(chunk)` measures `byteLength` |
+| `CountQueuingStrategy` | ✅ | `new CountQueuingStrategy({ highWaterMark })`; `size()` returns 1 |
+| `pipeTo` options | ✅ | `preventClose`, `preventAbort`, `preventCancel`, `signal` |
+| `ReadableStream.from(iterable)` | ⚠️ | Eager forms supported (Array, string, Set). Async iterables and lazy iteration deferred. |
+| `Symbol.asyncIterator` on ReadableStream | ❌ | `for await (const chunk of rs)` not yet supported. Use `getReader()` + manual `read()` loop. |
+| BYOB readers / `type: 'bytes'` | ❌ | `ReadableByteStreamController`, BYOB requests deferred. |
+| Transferable streams | ❌ | `postMessage()` of stream objects not supported. |
+| Both globals and `node:stream/web` exports | ✅ | All five constructors are global AND exported from `node:stream/web`. |
+| Available in interpreter and compiled modes | ✅ | Compiled mode uses late-binding reflection to runtime types (in `LateBindingAllowlist`); pure-IL emission deferred. |
 
 ---
 

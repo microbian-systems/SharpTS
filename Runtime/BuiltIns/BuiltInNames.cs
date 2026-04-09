@@ -90,7 +90,9 @@ public static class BuiltInNames
         Promise, ArrayBuffer, SharedArrayBuffer, DataView,
         MessageChannel, EventEmitter, AbortController, Headers,
         TextEncoder, TextDecoder, URL, URLSearchParams,
-        Request, Response
+        Request, Response,
+        ReadableStream, WritableStream, TransformStream,
+        ByteLengthQueuingStrategy, CountQueuingStrategy
     ];
 
     // Individual constructor constants
@@ -126,6 +128,16 @@ public static class BuiltInNames
     public const string Headers = "Headers";
     public const string URL = "URL";
     public const string URLSearchParams = "URLSearchParams";
+    public const string ReadableStream = "ReadableStream";
+    public const string WritableStream = "WritableStream";
+    public const string TransformStream = "TransformStream";
+    public const string ByteLengthQueuingStrategy = "ByteLengthQueuingStrategy";
+    public const string CountQueuingStrategy = "CountQueuingStrategy";
+    public const string ReadableStreamDefaultReader = "ReadableStreamDefaultReader";
+    public const string WritableStreamDefaultWriter = "WritableStreamDefaultWriter";
+    public const string ReadableStreamDefaultController = "ReadableStreamDefaultController";
+    public const string WritableStreamDefaultController = "WritableStreamDefaultController";
+    public const string TransformStreamDefaultController = "TransformStreamDefaultController";
 
     #endregion
 

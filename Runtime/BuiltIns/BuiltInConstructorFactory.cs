@@ -48,6 +48,8 @@ public static class BuiltInConstructorFactory
         },
         [BuiltInNames.Request] = CreateRequest,
         [BuiltInNames.Response] = CreateResponse,
+        [BuiltInNames.ByteLengthQueuingStrategy] = CreateByteLengthQueuingStrategy,
+        [BuiltInNames.CountQueuingStrategy] = CreateCountQueuingStrategy,
     };
 
     /// <summary>
@@ -66,7 +68,10 @@ public static class BuiltInConstructorFactory
         name == BuiltInNames.MessageChannel ||
         name == BuiltInNames.SharedArrayBuffer ||
         name == BuiltInNames.ArrayBuffer ||
-        name == BuiltInNames.BroadcastChannel;
+        name == BuiltInNames.BroadcastChannel ||
+        name == BuiltInNames.ReadableStream ||
+        name == BuiltInNames.WritableStream ||
+        name == BuiltInNames.TransformStream;
 
     /// <summary>
     /// Creates a built-in object using the appropriate constructor.
@@ -119,6 +124,26 @@ public static class BuiltInConstructorFactory
                 throw new Exception("Runtime Error: BroadcastChannel constructor requires a name argument.");
             var channelName = args[0]?.ToString() ?? throw new Exception("Runtime Error: BroadcastChannel name must be a string.");
             return new SharpTSBroadcastChannel(channelName) { OwnerInterpreter = interpreter };
+        }
+
+        if (name == BuiltInNames.ReadableStream)
+        {
+            var src = args.Count > 0 ? args[0] : null;
+            var strat = args.Count > 1 ? args[1] : null;
+            return new SharpTSReadableStream(interpreter, src, strat);
+        }
+        if (name == BuiltInNames.WritableStream)
+        {
+            var sink = args.Count > 0 ? args[0] : null;
+            var strat = args.Count > 1 ? args[1] : null;
+            return new SharpTSWritableStream(interpreter, sink, strat);
+        }
+        if (name == BuiltInNames.TransformStream)
+        {
+            var transformer = args.Count > 0 ? args[0] : null;
+            var ws = args.Count > 1 ? args[1] : null;
+            var rs = args.Count > 2 ? args[2] : null;
+            return new SharpTSTransformStream(interpreter, transformer, ws, rs);
         }
 
         return null;
@@ -238,6 +263,26 @@ public static class BuiltInConstructorFactory
         }
 
         return new SharpTSURLSearchParams(arg0.ToString() ?? "");
+    }
+
+    private static object CreateByteLengthQueuingStrategy(IReadOnlyList<object?> args)
+    {
+        return new SharpTSByteLengthQueuingStrategy(ExtractQueuingStrategyHwm(args));
+    }
+
+    private static object CreateCountQueuingStrategy(IReadOnlyList<object?> args)
+    {
+        return new SharpTSCountQueuingStrategy(ExtractQueuingStrategyHwm(args));
+    }
+
+    private static double ExtractQueuingStrategyHwm(IReadOnlyList<object?> args)
+    {
+        if (args.Count == 0 || args[0] is null) return 0.0;
+        if (StreamFields.TryGet(args[0], "highWaterMark", out var h))
+        {
+            return h switch { double d => d, int i => i, long l => l, _ => 0.0 };
+        }
+        return 0.0;
     }
 
     private static object CreateHeaders(IReadOnlyList<object?> args)

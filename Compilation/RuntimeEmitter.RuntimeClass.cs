@@ -477,6 +477,11 @@ public partial class RuntimeEmitter
         // Vm module support
         EmitVmMethods(typeBuilder, runtime);
 
+        // Web Streams API (stream/web) is now fully pure-IL emitted via
+        // RuntimeEmitter.QueuingStrategy.cs / WritableStream.cs /
+        // ReadableStream.cs / TransformStream.cs. No late-binding helper
+        // methods needed on $Runtime.
+
         // Private member helpers are no longer emitted; async/generator emitters
         // now bind directly to class-private storage and method tokens.
 

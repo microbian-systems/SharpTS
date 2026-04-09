@@ -1206,6 +1206,9 @@ public partial class TypeChecker
         if (name.Lexeme == "Intl") return new TypeInfo.Any(); // Intl namespace
         if (name.Lexeme == "URL") return new TypeInfo.Any(); // URL constructor
         if (name.Lexeme == "URLSearchParams") return new TypeInfo.Any(); // URLSearchParams constructor
+        if (name.Lexeme is "ReadableStream" or "WritableStream" or "TransformStream"
+            or "ByteLengthQueuingStrategy" or "CountQueuingStrategy")
+            return new TypeInfo.Any(); // Web Streams constructors
         // TypedArray constructors
         if (name.Lexeme is "Int8Array" or "Uint8Array" or "Uint8ClampedArray"
             or "Int16Array" or "Uint16Array" or "Int32Array" or "Uint32Array"

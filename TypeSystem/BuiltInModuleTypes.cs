@@ -1406,6 +1406,7 @@ public static class BuiltInModuleTypes
             "perf_hooks" => GetPerfHooksModuleTypes(),
             "stream" => GetStreamModuleTypes(),
             "stream/promises" => GetStreamPromisesModuleTypes(),
+            "stream/web" => GetStreamWebModuleTypes(),
             "http" => GetHttpModuleTypes(),
             "https" => GetHttpModuleTypes(),
             "dns" => GetDnsModuleTypes(),
@@ -2319,6 +2320,31 @@ public static class BuiltInModuleTypes
         {
             ["pipeline"] = new TypeInfo.Function([anyType, anyType], new TypeInfo.Promise(voidType), RequiredParams: 2, HasRestParam: true),
             ["finished"] = new TypeInfo.Function([anyType, anyType], new TypeInfo.Promise(voidType), RequiredParams: 1)
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the <c>stream/web</c> module (WHATWG Web Streams).
+    /// </summary>
+    /// <remarks>
+    /// All constructors are typed as <c>Any</c> — members are resolved
+    /// dynamically at runtime. Matches the Headers/BroadcastChannel pattern.
+    /// </remarks>
+    public static Dictionary<string, TypeInfo> GetStreamWebModuleTypes()
+    {
+        var anyType = new TypeInfo.Any();
+        return new Dictionary<string, TypeInfo>
+        {
+            ["ReadableStream"] = anyType,
+            ["WritableStream"] = anyType,
+            ["TransformStream"] = anyType,
+            ["ByteLengthQueuingStrategy"] = anyType,
+            ["CountQueuingStrategy"] = anyType,
+            ["ReadableStreamDefaultReader"] = anyType,
+            ["ReadableStreamDefaultController"] = anyType,
+            ["WritableStreamDefaultWriter"] = anyType,
+            ["WritableStreamDefaultController"] = anyType,
+            ["TransformStreamDefaultController"] = anyType,
         };
     }
 
