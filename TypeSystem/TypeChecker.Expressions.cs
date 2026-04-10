@@ -1017,7 +1017,7 @@ public partial class TypeChecker
             }
             else
             {
-                returnType = new TypeInfo.Any();
+                returnType = new TypeInfo.Inferred();
             }
         }
 
@@ -1049,14 +1049,24 @@ public partial class TypeChecker
         // Save and set context - function bodies are isolated from outer loop/switch/label context
         TypeEnvironment previousEnv = _environment;
         TypeInfo? previousReturn = _currentFunctionReturnType;
+        var previousInferredArrow = _inferredReturnTypes;
         TypeInfo? previousThisType = _currentFunctionThisType;
         bool previousInAsync = _inAsyncFunction;
         int previousLoopDepth = _loopDepth;
         int previousSwitchDepth = _switchDepth;
         var previousActiveLabels = new Dictionary<string, bool>(_activeLabels);
 
+        bool inferringArrowReturn = returnType is TypeInfo.Inferred;
         _environment = arrowEnv;
-        _currentFunctionReturnType = returnType;
+        if (inferringArrowReturn)
+        {
+            _inferredReturnTypes = new List<TypeInfo>();
+            _currentFunctionReturnType = new TypeInfo.Inferred();
+        }
+        else
+        {
+            _currentFunctionReturnType = returnType;
+        }
         _currentFunctionThisType = thisType;
         _inAsyncFunction = arrow.IsAsync;
         _loopDepth = 0;
@@ -1103,12 +1113,33 @@ public partial class TypeChecker
                 {
                     CheckStmt(stmt);
                 }
+
+                // Resolve inferred return type for block-body arrows
+                if (inferringArrowReturn)
+                {
+                    var collected = _inferredReturnTypes!;
+                    _inferredReturnTypes = null;
+
+                    if (collected.Count == 0)
+                    {
+                        returnType = new TypeInfo.Void();
+                    }
+                    else
+                    {
+                        var distinct = collected.Distinct(TypeInfoEqualityComparer.Instance).ToList();
+                        returnType = CollapseOrCreateUnion(distinct);
+                    }
+
+                    if (arrow.IsAsync && returnType is not TypeInfo.Void)
+                        returnType = new TypeInfo.Promise(returnType);
+                }
             }
         }
         finally
         {
             _environment = previousEnv;
             _currentFunctionReturnType = previousReturn;
+            _inferredReturnTypes = previousInferredArrow;
             _currentFunctionThisType = previousThisType;
             _inAsyncFunction = previousInAsync;
             _loopDepth = previousLoopDepth;

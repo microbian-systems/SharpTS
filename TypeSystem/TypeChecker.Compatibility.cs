@@ -266,7 +266,7 @@ public partial class TypeChecker
     /// </summary>
     private bool IsCompatibleCore(TypeInfo expected, TypeInfo actual)
     {
-        if (expected is TypeInfo.Any || actual is TypeInfo.Any) return true;
+        if (expected is TypeInfo.Any or TypeInfo.Inferred || actual is TypeInfo.Any or TypeInfo.Inferred) return true;
 
         // Expand recursive type aliases lazily
         if (expected is TypeInfo.RecursiveTypeAlias expectedRTA)

@@ -699,6 +699,14 @@ public abstract record TypeInfo
         public override string ToString() => "any";
     }
 
+    /// <summary>
+    /// Sentinel type used during return type inference. Never stored permanently.
+    /// </summary>
+    public record Inferred() : TypeInfo
+    {
+        public override string ToString() => "<inferred>";
+    }
+
     public record Null() : TypeInfo
     {
         public override string ToString() => "null";

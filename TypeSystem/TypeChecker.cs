@@ -64,6 +64,8 @@ public partial class TypeChecker
 
     // We need to track the current function's expected return type to validate 'return' statements
     private TypeInfo? _currentFunctionReturnType = null;
+    // When non-null, VisitReturn collects return expression types here instead of validating (for inference)
+    private List<TypeInfo>? _inferredReturnTypes = null;
     private TypeInfo.Class? _currentClass = null;
     private bool _inStaticMethod = false;
     private bool _inStaticBlock = false;

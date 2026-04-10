@@ -201,7 +201,7 @@ public partial class TypeChecker
 
                 TypeInfo returnType = funcStmt.ReturnType != null
                     ? ToTypeInfo(funcStmt.ReturnType)
-                    : new TypeInfo.Void();
+                    : new TypeInfo.Any(); // Any during hoisting — real type inferred when body is checked
 
                 TypeInfo? thisType = funcStmt.ThisType != null ? ToTypeInfo(funcStmt.ThisType) : null;
 
@@ -296,12 +296,14 @@ public partial class TypeChecker
             contextName: $"function '{funcStmt.Name.Lexeme}'"
         );
 
+        bool inferringReturnType = funcStmt.ReturnType == null;
         TypeInfo returnType = funcStmt.ReturnType != null
             ? ToTypeInfo(funcStmt.ReturnType)
-            : new TypeInfo.Void();
+            : new TypeInfo.Inferred();
 
         // Validate type predicate return types
-        ValidateTypePredicateReturnType(returnType, funcStmt.Parameters, funcStmt.Name.Lexeme);
+        if (!inferringReturnType)
+            ValidateTypePredicateReturnType(returnType, funcStmt.Parameters, funcStmt.Name.Lexeme);
 
         // Parse explicit 'this' type if present
         TypeInfo? thisType = funcStmt.ThisType != null ? ToTypeInfo(funcStmt.ThisType) : null;
@@ -309,8 +311,9 @@ public partial class TypeChecker
         _environment = previousEnvForParsing;
 
         // For generator functions, wrap the return type in Generator<> or AsyncGenerator<> if not already
+        // Skip wrapping when inferring — wrapping is done after inference resolves
         TypeInfo funcReturnType = returnType;
-        if (funcStmt.IsGenerator)
+        if (!inferringReturnType && funcStmt.IsGenerator)
         {
             if (funcStmt.IsAsync && returnType is not TypeInfo.AsyncGenerator)
             {
@@ -429,8 +432,18 @@ public partial class TypeChecker
         int previousSwitchDepth = _switchDepth;
         var previousActiveLabels = new Dictionary<string, bool>(_activeLabels);
 
+        var previousInferredReturnTypes = _inferredReturnTypes;
+
         _environment = funcEnv;
-        _currentFunctionReturnType = returnType;
+        if (inferringReturnType)
+        {
+            _inferredReturnTypes = new List<TypeInfo>();
+            _currentFunctionReturnType = new TypeInfo.Inferred();
+        }
+        else
+        {
+            _currentFunctionReturnType = returnType;
+        }
         _currentFunctionThisType = thisType;
         _inAsyncFunction = funcStmt.IsAsync;
         _inGeneratorFunction = funcStmt.IsGenerator;
@@ -459,10 +472,52 @@ public partial class TypeChecker
                 CheckStmt(bodyStmt);
             }
 
+            // Resolve inferred return type from collected return expressions
+            if (inferringReturnType)
+            {
+                var collected = _inferredReturnTypes!;
+                _inferredReturnTypes = null;
+
+                TypeInfo inferredReturn;
+                if (collected.Count == 0)
+                {
+                    inferredReturn = new TypeInfo.Void();
+                }
+                else
+                {
+                    var distinct = collected.Distinct(TypeInfoEqualityComparer.Instance).ToList();
+                    inferredReturn = CollapseOrCreateUnion(distinct);
+                }
+
+                // Apply async/generator wrapping
+                if (funcStmt.IsAsync && inferredReturn is not TypeInfo.Void)
+                    inferredReturn = new TypeInfo.Promise(inferredReturn);
+                if (funcStmt.IsGenerator)
+                {
+                    if (funcStmt.IsAsync)
+                        inferredReturn = new TypeInfo.AsyncGenerator(inferredReturn);
+                    else
+                        inferredReturn = new TypeInfo.Generator(inferredReturn);
+                }
+
+                returnType = inferredReturn;
+
+                // Update the function type in the enclosing environment
+                var updatedFuncType = typeParams != null && typeParams.Count > 0
+                    ? (TypeInfo)new TypeInfo.GenericFunction(typeParams, paramTypes, inferredReturn, requiredParams, hasRest, thisType, paramNames)
+                    : new TypeInfo.Function(paramTypes, inferredReturn, requiredParams, hasRest, thisType, paramNames);
+                previousEnv.Define(funcName, updatedFuncType);
+                if (updatedFuncType is TypeInfo.Function uf)
+                    _typeMap.SetFunctionType(funcName, uf);
+                else if (updatedFuncType is TypeInfo.GenericFunction gf2)
+                    _typeMap.SetFunctionType(funcName, new TypeInfo.Function(gf2.ParamTypes, gf2.ReturnType, gf2.RequiredParams, gf2.HasRestParam, gf2.ThisType));
+            }
+
             // Validate that non-void functions return a value on all code paths
             // Skip for void, generators (which use yield), async functions (which return Promise),
-            // and assertion predicates (which either throw or complete normally)
-            if (returnType is not TypeInfo.Void &&
+            // assertion predicates, and inferred return types (which may legitimately be void)
+            if (!inferringReturnType &&
+                returnType is not TypeInfo.Void &&
                 returnType is not TypeInfo.Generator &&
                 returnType is not TypeInfo.AsyncGenerator &&
                 returnType is not TypeInfo.TypePredicate { IsAssertion: true } &&
@@ -486,6 +541,7 @@ public partial class TypeChecker
 
             _environment = previousEnv;
             _currentFunctionReturnType = previousReturn;
+            _inferredReturnTypes = previousInferredReturnTypes;
             _currentFunctionThisType = previousThisType;
             _inAsyncFunction = previousInAsync;
             _inGeneratorFunction = previousInGenerator;

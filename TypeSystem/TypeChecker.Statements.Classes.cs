@@ -95,10 +95,10 @@ public partial class TypeChecker
 
             TypeInfo returnType = method.ReturnType != null
                 ? ToTypeInfo(method.ReturnType)
-                : new TypeInfo.Void();
+                : new TypeInfo.Inferred();
 
-            // Wrap return type for generator/async generator methods
-            if (method.IsGenerator)
+            // Wrap return type for generator/async generator methods (skip when inferring)
+            if (method.ReturnType != null && method.IsGenerator)
             {
                 if (method.IsAsync && returnType is not TypeInfo.AsyncGenerator)
                 {
@@ -618,6 +618,7 @@ public partial class TypeChecker
                 // Save and set context - method bodies are isolated from outer loop/switch/label context
                 TypeEnvironment previousEnvFunc = _environment;
                 TypeInfo? previousReturnFunc = _currentFunctionReturnType;
+                var previousInferredFunc = _inferredReturnTypes;
                 bool previousInStatic = _inStaticMethod;
                 bool previousInAsyncFunc = _inAsyncFunction;
                 bool previousInGeneratorFunc = _inGeneratorFunction;
@@ -625,8 +626,17 @@ public partial class TypeChecker
                 int previousSwitchDepthFunc = _switchDepth;
                 var previousActiveLabelsFunc = new Dictionary<string, bool>(_activeLabels);
 
+                bool inferringMethodReturn = methodType.ReturnType is TypeInfo.Inferred;
                 _environment = methodEnv;
-                _currentFunctionReturnType = methodType.ReturnType;
+                if (inferringMethodReturn)
+                {
+                    _inferredReturnTypes = new List<TypeInfo>();
+                    _currentFunctionReturnType = new TypeInfo.Inferred();
+                }
+                else
+                {
+                    _currentFunctionReturnType = methodType.ReturnType;
+                }
                 _inStaticMethod = method.IsStatic;
                 _inAsyncFunction = method.IsAsync;
                 _inGeneratorFunction = method.IsGenerator;
@@ -644,11 +654,54 @@ public partial class TypeChecker
                             CheckStmt(bodyStmt);
                         }
                     }
+
+                    // Resolve inferred method return type
+                    if (inferringMethodReturn && method.Body != null)
+                    {
+                        var collected = _inferredReturnTypes!;
+                        _inferredReturnTypes = null;
+
+                        TypeInfo inferredReturn;
+                        if (collected.Count == 0)
+                        {
+                            inferredReturn = new TypeInfo.Void();
+                        }
+                        else
+                        {
+                            var distinct = collected.Distinct(TypeInfoEqualityComparer.Instance).ToList();
+                            inferredReturn = CollapseOrCreateUnion(distinct);
+                        }
+
+                        if (method.IsAsync && inferredReturn is not TypeInfo.Void)
+                            inferredReturn = new TypeInfo.Promise(inferredReturn);
+                        if (method.IsGenerator)
+                        {
+                            if (method.IsAsync)
+                                inferredReturn = new TypeInfo.AsyncGenerator(inferredReturn);
+                            else
+                                inferredReturn = new TypeInfo.Generator(inferredReturn);
+                        }
+
+                        // Update the method type in the class
+                        var updatedMethodType = new TypeInfo.Function(methodType.ParamTypes, inferredReturn, methodType.RequiredParams, methodType.HasRestParam, methodType.ThisType, methodType.ParamNames);
+                        string mName = method.Name.Lexeme;
+                        if (method.IsPrivate)
+                        {
+                            if (method.IsStatic) mutableClass.StaticPrivateMethods[mName] = updatedMethodType;
+                            else mutableClass.PrivateMethods[mName] = updatedMethodType;
+                        }
+                        else
+                        {
+                            if (method.IsStatic) mutableClass.StaticMethods[mName] = updatedMethodType;
+                            else mutableClass.Methods[mName] = updatedMethodType;
+                        }
+                    }
                 }
                 finally
                 {
                     _environment = previousEnvFunc;
                     _currentFunctionReturnType = previousReturnFunc;
+                    _inferredReturnTypes = previousInferredFunc;
                     _inStaticMethod = previousInStatic;
                     _inAsyncFunction = previousInAsyncFunc;
                     _inGeneratorFunction = previousInGeneratorFunc;
@@ -770,10 +823,10 @@ public partial class TypeChecker
 
             TypeInfo returnType = method.ReturnType != null
                 ? ToTypeInfo(method.ReturnType)
-                : new TypeInfo.Void();
+                : new TypeInfo.Inferred();
 
-            // Wrap return type for generator/async generator methods
-            if (method.IsGenerator)
+            // Wrap return type for generator/async generator methods (skip when inferring)
+            if (method.ReturnType != null && method.IsGenerator)
             {
                 if (method.IsAsync && returnType is not TypeInfo.AsyncGenerator)
                 {

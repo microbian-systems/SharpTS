@@ -290,6 +290,22 @@ public partial class TypeChecker
         {
             throw new TypeCheckException("Return statements are not allowed in static blocks.");
         }
+
+        // When inferring return type, collect the type instead of validating
+        if (_inferredReturnTypes != null && _currentFunctionReturnType is TypeInfo.Inferred)
+        {
+            if (stmt.Value != null)
+            {
+                TypeInfo actualType = CheckExpr(stmt.Value);
+                _inferredReturnTypes.Add(actualType);
+            }
+            else
+            {
+                _inferredReturnTypes.Add(new TypeInfo.Undefined());
+            }
+            return VoidResult.Instance;
+        }
+
         if (_currentFunctionReturnType != null)
         {
             if (_currentFunctionReturnType is TypeInfo.Tuple tupleRetType &&
