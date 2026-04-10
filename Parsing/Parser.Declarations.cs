@@ -75,7 +75,13 @@ public partial class Parser
         if (Match(TokenType.ENUM)) return EnumDeclaration(isConst: false);
         if (Match(TokenType.NAMESPACE)) return NamespaceDeclaration();
         if (Match(TokenType.INTERFACE)) return InterfaceDeclaration();
-        if (Match(TokenType.TYPE)) return TypeAliasDeclaration();
+        // 'type' is a contextual keyword — only treat as type alias when followed by an identifier
+        // (e.g. `type Foo = string`), not when used as a variable name (e.g. `var type = "x"`).
+        if (Check(TokenType.TYPE) && PeekNext().Type == TokenType.IDENTIFIER)
+        {
+            Advance(); // consume TYPE
+            return TypeAliasDeclaration();
+        }
         if (Match(TokenType.ASYNC))
         {
             Consume(TokenType.FUNCTION, "Expect 'function' after 'async'.");
@@ -370,7 +376,7 @@ public partial class Parser
                 // Check for rest parameter
                 bool isRest = Match(TokenType.DOT_DOT_DOT);
 
-                Token paramName = Consume(TokenType.IDENTIFIER, "Expect parameter name.");
+                Token paramName = ConsumeIdentifierName("Expect parameter name.");
 
                 // Check for optional marker
                 bool isOptional = Match(TokenType.QUESTION);
@@ -501,7 +507,7 @@ public partial class Parser
         {
             do
             {
-                Consume(TokenType.IDENTIFIER, "Expect parameter name.");
+                ConsumeIdentifierName("Expect parameter name.");
                 if (Match(TokenType.QUESTION))
                 {
                     // Optional parameter marker
@@ -582,7 +588,7 @@ public partial class Parser
     /// </summary>
     private Stmt ParseSingleDeclarator(bool isConst, bool isVar = false)
     {
-        Token name = Consume(TokenType.IDENTIFIER, "Expect variable name.");
+        Token name = ConsumeIdentifierName("Expect variable name.");
 
         // Check for definite assignment assertion: let x!: number;
         bool hasDefiniteAssignment = Match(TokenType.BANG);
@@ -790,7 +796,7 @@ public partial class Parser
     /// </summary>
     private Stmt AmbientVarDeclaration(bool isConst)
     {
-        Token name = Consume(TokenType.IDENTIFIER, "Expect variable name.");
+        Token name = ConsumeIdentifierName("Expect variable name.");
 
         string? typeAnnotation = null;
         if (Match(TokenType.COLON))
@@ -846,7 +852,7 @@ public partial class Parser
     /// </summary>
     private Stmt.UsingBinding ParseUsingBinding()
     {
-        Token name = Consume(TokenType.IDENTIFIER, "Expect variable name in 'using' declaration.");
+        Token name = ConsumeIdentifierName("Expect variable name in 'using' declaration.");
 
         string? typeAnnotation = null;
         if (Match(TokenType.COLON))

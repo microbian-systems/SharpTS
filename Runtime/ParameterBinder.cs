@@ -54,14 +54,11 @@ internal static class ParameterBinder
                     interpreter.SetEnvironment(previous);
                 }
             }
-            else if (param.IsOptional)
-            {
-                // Optional parameter with no argument and no default - use undefined (JS spec)
-                value = SharpTSUndefined.Instance;
-            }
             else
             {
-                throw new Exception($"Runtime Error: Missing required argument for parameter '{param.Name.Lexeme}'.");
+                // Missing argument with no default — use undefined (JavaScript semantics).
+                // In JS, calling f(a, b) with one arg sets b = undefined.
+                value = SharpTSUndefined.Instance;
             }
             environment.Define(param.Name.Lexeme, value);
         }
@@ -110,14 +107,10 @@ internal static class ParameterBinder
                     interpreter.SetEnvironment(previous);
                 }
             }
-            else if (param.IsOptional)
-            {
-                // Optional parameter with no argument and no default - use undefined (JS spec)
-                value = RuntimeValue.Undefined;
-            }
             else
             {
-                throw new Exception($"Runtime Error: Missing required argument for parameter '{param.Name.Lexeme}'.");
+                // Missing argument with no default — use undefined (JavaScript semantics).
+                value = RuntimeValue.Undefined;
             }
             environment.Define(param.Name.Lexeme, value);
         }
@@ -167,14 +160,10 @@ internal static class ParameterBinder
                     interpreter.SetEnvironment(previous);
                 }
             }
-            else if (param.IsOptional)
-            {
-                // Optional parameter with no argument and no default - use undefined (JS spec)
-                value = SharpTSUndefined.Instance;
-            }
             else
             {
-                throw new Exception($"Runtime Error: Missing required argument for parameter '{param.Name.Lexeme}'.");
+                // Missing argument with no default — use undefined (JavaScript semantics).
+                value = SharpTSUndefined.Instance;
             }
             environment.Define(param.Name.Lexeme, value);
         }

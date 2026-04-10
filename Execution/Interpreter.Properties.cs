@@ -312,8 +312,7 @@ public partial class Interpreter
         if (member != null)
             return RuntimeValue.FromBoxed(BindBuiltInMember(member, obj));
 
-        string typeName = GetRuntimeTypeName(obj);
-        throw new InterpreterException($"Property '{memberName}' does not exist on {typeName}.");
+        return RuntimeValue.Undefined;
     }
 
     /// <summary>
@@ -335,7 +334,7 @@ public partial class Interpreter
         if (member != null)
             return RuntimeValue.FromBoxed(BindBuiltInMember(member, obj));
 
-        throw new InterpreterException($"Property '{memberName}' does not exist on array.");
+        return RuntimeValue.Undefined;
     }
 
     /// <summary>
@@ -500,11 +499,11 @@ public partial class Interpreter
                 return member;
             }
 
-            // If we have a built-in type but didn't find the member, throw a specific error
+            // If we have a built-in type but didn't find the member, return undefined
+            // (JavaScript semantics: accessing a non-existent property returns undefined)
             if (isBuiltInType)
             {
-                string typeName = GetRuntimeTypeName(obj);
-                throw new InterpreterException($"Property '{memberName}' does not exist on {typeName}.");
+                return SharpTSUndefined.Instance;
             }
         }
 

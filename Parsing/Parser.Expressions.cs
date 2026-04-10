@@ -661,12 +661,12 @@ public partial class Parser
         // Symbol and BigInt are special callable constructors
         if (Match(TokenType.SYMBOL, TokenType.BIGINT)) return new Expr.Variable(Previous());
 
-        // Contextual keyword `module` accepted as identifier in expression context
-        // (so `module.exports = X` parses correctly in CommonJS files).
-        if (Match(TokenType.MODULE))
+        // Contextual keywords accepted as identifiers in expression context
+        // (e.g. `module.exports = X` in CommonJS, `var type = typeof val` in npm packages).
+        if (IsContextualKeyword(Peek().Type))
         {
-            var prev = Previous();
-            return new Expr.Variable(new Token(TokenType.IDENTIFIER, prev.Lexeme, null, prev.Line));
+            var token = Advance();
+            return new Expr.Variable(new Token(TokenType.IDENTIFIER, token.Lexeme, null, token.Line));
         }
 
         if (Match(TokenType.LEFT_BRACKET))
@@ -741,7 +741,7 @@ public partial class Parser
                                 {
                                     // Check for rest parameter
                                     bool isRest = Match(TokenType.DOT_DOT_DOT);
-                                    Token paramName = Consume(TokenType.IDENTIFIER, "Expect parameter name.");
+                                    Token paramName = ConsumeIdentifierName("Expect parameter name.");
                                     bool isOptional = Match(TokenType.QUESTION);
                                     string? paramType = null;
                                     if (Match(TokenType.COLON))
@@ -930,7 +930,7 @@ public partial class Parser
                             {
                                 // Check for rest parameter
                                 bool isRest = Match(TokenType.DOT_DOT_DOT);
-                                Token paramName = Consume(TokenType.IDENTIFIER, "Expect parameter name.");
+                                Token paramName = ConsumeIdentifierName("Expect parameter name.");
                                 bool isOptional = Match(TokenType.QUESTION);
                                 string? paramType = null;
                                 if (Match(TokenType.COLON))
@@ -1401,7 +1401,7 @@ public partial class Parser
                     // Check for rest parameter
                     bool isRest = Match(TokenType.DOT_DOT_DOT);
 
-                    Token paramName = Consume(TokenType.IDENTIFIER, "Expect parameter name.");
+                    Token paramName = ConsumeIdentifierName("Expect parameter name.");
 
                     // Check for optional parameter marker (?)
                     bool isOptional = Match(TokenType.QUESTION);

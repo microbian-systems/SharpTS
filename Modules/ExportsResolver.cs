@@ -9,9 +9,11 @@ namespace SharpTS.Modules;
 public static class ExportsResolver
 {
     /// <summary>
-    /// Default conditions for SharpTS resolution: prefer types, then ESM import, then default.
+    /// Default conditions for SharpTS resolution.
+    /// Matches Node.js runtime behavior: "node" and "require" for CJS, "import" for ESM.
+    /// Note: "types" is intentionally excluded — it's for TypeScript tooling, not runtime.
     /// </summary>
-    public static readonly string[] DefaultConditions = ["types", "import", "default"];
+    public static readonly string[] DefaultConditions = ["node", "require", "import", "default"];
 
     /// <summary>
     /// Resolves a subpath against a package's "exports" field.

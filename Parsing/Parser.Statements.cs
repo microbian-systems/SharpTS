@@ -84,7 +84,7 @@ public partial class Parser
                 return ParseDestructuringForOf(isAsync);
             }
 
-            Token varName = Consume(TokenType.IDENTIFIER, "Expect variable name.");
+            Token varName = ConsumeIdentifierName("Expect variable name.");
 
             // Check for optional type annotation
             string? typeAnnotation = null;

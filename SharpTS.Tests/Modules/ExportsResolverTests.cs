@@ -34,19 +34,21 @@ public class ExportsResolverTests
     }
 
     [Fact]
-    public void TypesCondition_BeatsImport()
+    public void NodeCondition_BeatsImport()
     {
         var exports = Parse("""{ "types": "./types.ts", "import": "./index.ts" }""");
         var result = ExportsResolver.ResolvePackageExports(exports, ".", Conditions);
-        Assert.Equal("./types.ts", result);
+        // "types" is not in default conditions (it's for TS tooling, not runtime).
+        Assert.Equal("./index.ts", result);
     }
 
     [Fact]
-    public void DefaultCondition_AsFallback()
+    public void NodeCondition_BeatsDefault()
     {
         var exports = Parse("""{ "node": "./node.ts", "default": "./index.ts" }""");
         var result = ExportsResolver.ResolvePackageExports(exports, ".", Conditions);
-        Assert.Equal("./index.ts", result);
+        // "node" is in default conditions and comes before "default".
+        Assert.Equal("./node.ts", result);
     }
 
     [Fact]
@@ -90,11 +92,12 @@ public class ExportsResolverTests
     }
 
     [Fact]
-    public void NestedConditions_TypesInsideImport()
+    public void NestedConditions_DefaultInsideImport()
     {
         var exports = Parse("""{ ".": { "import": { "types": "./d.ts", "default": "./esm.ts" } } }""");
         var result = ExportsResolver.ResolvePackageExports(exports, ".", Conditions);
-        Assert.Equal("./d.ts", result);
+        // "types" not in runtime conditions, so "default" wins inside "import".
+        Assert.Equal("./esm.ts", result);
     }
 
     [Fact]
@@ -198,7 +201,8 @@ public class ExportsResolverTests
     {
         var exports = Parse("""{ ".": { "types": "./types/index.d.ts", "import": "./esm/index.ts", "default": "./cjs/index.ts" } }""");
         var result = ExportsResolver.ResolvePackageExports(exports, ".", Conditions);
-        Assert.Equal("./types/index.d.ts", result);
+        // "types" not in runtime conditions, "import" matches first.
+        Assert.Equal("./esm/index.ts", result);
     }
 
     [Fact]

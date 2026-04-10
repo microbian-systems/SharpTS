@@ -307,6 +307,7 @@ public class PackageExportsTests
         };
 
         var output = TestHarness.RunModules(files, "./main.ts", mode);
-        Assert.Equal("types\nesm-util\n", output);
+        // "types" condition is not used for runtime — "import" matches first, resolving to esm/index.ts
+        Assert.Equal("esm\nesm-util\n", output);
     }
 }

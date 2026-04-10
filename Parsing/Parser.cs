@@ -229,6 +229,42 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
     }
 
     /// <summary>
+    /// TypeScript-only contextual keywords that are valid identifiers in JavaScript.
+    /// These tokens should be accepted anywhere a variable/parameter name is expected.
+    /// </summary>
+    private static bool IsContextualKeyword(TokenType type) => type switch
+    {
+        // TypeScript-only keywords that are valid identifiers in JavaScript
+        TokenType.TYPE or TokenType.MODULE or TokenType.NAMESPACE or
+        TokenType.DECLARE or TokenType.ABSTRACT or TokenType.READONLY or
+        TokenType.OVERRIDE or TokenType.GLOBAL or TokenType.OF or
+        TokenType.FROM or TokenType.SATISFIES or TokenType.ACCESSOR or
+        TokenType.OUT or TokenType.UNIQUE or TokenType.UNKNOWN or
+        TokenType.NEVER or TokenType.INFER or TokenType.KEYOF or
+        TokenType.ASSERTS or TokenType.IS or
+        // JavaScript globals that are not reserved words (can be shadowed)
+        TokenType.UNDEFINED or TokenType.CONSTRUCTOR => true,
+        _ => false,
+    };
+
+    /// <summary>
+    /// Consumes a token that can be used as a variable or parameter name.
+    /// Accepts identifiers and TypeScript contextual keywords (which are valid JS identifiers).
+    /// </summary>
+    private Token ConsumeIdentifierName(string message)
+    {
+        if (Check(TokenType.IDENTIFIER)) return Advance();
+
+        if (IsContextualKeyword(Peek().Type))
+        {
+            var token = Advance();
+            return new Token(TokenType.IDENTIFIER, token.Lexeme, null, token.Line);
+        }
+
+        throw new Exception(message);
+    }
+
+    /// <summary>
     /// Consumes a token that can be used as a property name after '.'.
     /// This includes identifiers and reserved keywords (JavaScript allows keywords as property names).
     /// </summary>

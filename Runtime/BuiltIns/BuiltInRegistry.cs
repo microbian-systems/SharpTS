@@ -168,6 +168,7 @@ public sealed class BuiltInRegistry
         RegisterPromiseNamespace(registry);
         RegisterNumberNamespace(registry);
         RegisterStringNamespace(registry);
+        RegisterBooleanNamespace(registry);
         RegisterDateNamespace(registry);
         RegisterReflectNamespace(registry);
         RegisterMapNamespace(registry);
@@ -431,8 +432,8 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterNamespace(new BuiltInNamespace(
             Name: "Number",
-            IsSingleton: false,
-            SingletonFactory: null,
+            IsSingleton: true,
+            SingletonFactory: () => Types.SharpTSNumberNamespace.Instance,
             GetMethod: name => NumberBuiltIns.GetStaticMember(name) as BuiltInMethod
         ));
     }
@@ -441,9 +442,19 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterNamespace(new BuiltInNamespace(
             Name: "String",
-            IsSingleton: false,
-            SingletonFactory: null,
+            IsSingleton: true,
+            SingletonFactory: () => Types.SharpTSStringNamespace.Instance,
             GetMethod: name => StringBuiltIns.GetStaticMember(name) as BuiltInMethod
+        ));
+    }
+
+    private static void RegisterBooleanNamespace(BuiltInRegistry registry)
+    {
+        registry.RegisterNamespace(new BuiltInNamespace(
+            Name: "Boolean",
+            IsSingleton: true,
+            SingletonFactory: () => Types.SharpTSBooleanNamespace.Instance,
+            GetMethod: _ => null
         ));
     }
 
