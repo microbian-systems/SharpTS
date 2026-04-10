@@ -1044,9 +1044,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, httpListenerType.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stfld, _httpServerListenerField);
 
-        // Build prefix string: "http://localhost:{port}/"
+        // Build prefix string: "http://127.0.0.1:{port}/"
         var prefixLocal = il.DeclareLocal(_types.String);
-        il.Emit(OpCodes.Ldstr, "http://localhost:");
+        il.Emit(OpCodes.Ldstr, "http://127.0.0.1:");
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Conv_I4);  // Convert double to int (port is always an integer)
         il.Emit(OpCodes.Box, _types.Int32);
