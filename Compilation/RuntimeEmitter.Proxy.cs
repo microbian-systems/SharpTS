@@ -186,7 +186,7 @@ public partial class RuntimeEmitter
     /// Emits a proxy-aware has check: checks if obj is a proxy and calls TrapHas(key, null).
     /// Returns bool result.
     /// </summary>
-    internal void EmitProxyHasCheck(ILGenerator il, Action emitLoadObj, Action emitLoadKey, Label notProxyLabel)
+    internal void EmitProxyHasCheck(ILGenerator il, Action emitLoadObj, Action emitLoadKey, Label notProxyLabel, EmittedRuntime runtime)
     {
         var proxyLabel = il.DefineLabel();
         EmitProxyTypeCheck(il, emitLoadObj, proxyLabel, notProxyLabel);
@@ -213,7 +213,8 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Stelem_Ref);
             // [1] = null (Interpreter) - already null from Newarr
         });
-        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        // TrapHas returns object — apply truthy coercion (JS `in` coerces to boolean)
+        il.Emit(OpCodes.Call, runtime.IsTruthy);
         il.Emit(OpCodes.Ret);
     }
 

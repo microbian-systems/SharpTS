@@ -337,6 +337,8 @@ public partial class TypeChecker
     private TypeInfo InferConstObjectType(Expr.ObjectLiteral obj)
     {
         var fields = new Dictionary<string, TypeInfo>();
+        var getters = new HashSet<string>();
+        var setters = new HashSet<string>();
         foreach (var prop in obj.Properties)
         {
             if (prop.IsSpread)
@@ -357,9 +359,11 @@ public partial class TypeChecker
                 if (prop.Kind == Expr.ObjectPropertyKind.Getter && fnType is TypeInfo.Function fn)
                 {
                     fields[name] = fn.ReturnType;
+                    getters.Add(name);
                 }
                 else if (prop.Kind == Expr.ObjectPropertyKind.Setter && fnType is TypeInfo.Function setterFn && setterFn.ParamTypes.Count > 0)
                 {
+                    setters.Add(name);
                     // Only set if not already defined by a getter
                     if (!fields.ContainsKey(name))
                     {
@@ -377,7 +381,10 @@ public partial class TypeChecker
             }
             // Computed keys are handled dynamically - use the source type
         }
-        return new TypeInfo.Record(fields.ToFrozenDictionary());
+        // Properties with a getter but no setter are getter-only
+        var getterOnly = getters.Except(setters).ToFrozenSet();
+        return new TypeInfo.Record(fields.ToFrozenDictionary(),
+            GetterOnlyFields: getterOnly.Count > 0 ? getterOnly : null);
     }
 
     /// <summary>
@@ -439,6 +446,9 @@ public partial class TypeChecker
         // Track accessor properties for two-pass type inference
         List<Expr.Property> accessorProps = [];
         bool hasAccessors = false;
+        // Track getter/setter names to identify getter-only properties
+        HashSet<string> getterNames = [];
+        HashSet<string> setterNames = [];
 
         // Pass 1: Collect property types without checking accessor bodies
         // For accessors, use type annotations only (don't check bodies yet)
@@ -475,6 +485,7 @@ public partial class TypeChecker
 
                 // Getter - extract return type from annotation only (don't check body yet)
                 string name = GetPropertyKeyNameForTypeCheck(prop.Key!);
+                getterNames.Add(name);
                 if (prop.Value is Expr.ArrowFunction arrow && arrow.ReturnType != null)
                 {
                     fields[name] = ToTypeInfo(arrow.ReturnType);
@@ -492,6 +503,7 @@ public partial class TypeChecker
 
                 // Setter - extract parameter type from annotation only
                 string name = GetPropertyKeyNameForTypeCheck(prop.Key!);
+                setterNames.Add(name);
                 if (prop.Value is Expr.ArrowFunction arrow && arrow.Parameters.Count > 0 && arrow.Parameters[0].Type != null)
                 {
                     // If getter already defined the type, verify compatibility
@@ -615,7 +627,10 @@ public partial class TypeChecker
             }
         }
 
-        return new TypeInfo.Record(fields.ToFrozenDictionary(), stringIndexType, numberIndexType, symbolIndexType);
+        // Properties with a getter but no setter are getter-only
+        var getterOnly = getterNames.Except(setterNames).ToFrozenSet();
+        return new TypeInfo.Record(fields.ToFrozenDictionary(), stringIndexType, numberIndexType, symbolIndexType,
+            GetterOnlyFields: getterOnly.Count > 0 ? getterOnly : null);
     }
 
     /// <summary>

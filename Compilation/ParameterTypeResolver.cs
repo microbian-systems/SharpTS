@@ -112,6 +112,15 @@ public static class ParameterTypeResolver
             {
                 baseType = typeof(object);
             }
+
+            // Discriminated union structs (Union_*) don't work as method return types
+            // because MethodInfo.Invoke boxes them opaquely — IsTruthy, equality comparers,
+            // and property access can't see the underlying value. Fall back to object so
+            // the raw primitives/strings are returned directly.
+            if (baseType.IsValueType && baseType.Name.StartsWith("Union_"))
+            {
+                baseType = typeof(object);
+            }
         }
 
         // Wrap async return types in Task<T>

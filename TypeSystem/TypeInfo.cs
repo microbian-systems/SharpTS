@@ -672,7 +672,8 @@ public abstract record TypeInfo
         TypeInfo? NumberIndexType = null,
         TypeInfo? SymbolIndexType = null,
         FrozenSet<string>? OptionalFields = null,
-        bool IsReadonly = false
+        bool IsReadonly = false,
+        FrozenSet<string>? GetterOnlyFields = null
     ) : TypeInfo
     {
         public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
@@ -681,6 +682,11 @@ public abstract record TypeInfo
         /// Checks if a field is optional.
         /// </summary>
         public bool IsFieldOptional(string name) => OptionalFields?.Contains(name) ?? false;
+
+        /// <summary>
+        /// Checks if a field is defined by a getter with no corresponding setter.
+        /// </summary>
+        public bool IsGetterOnly(string name) => GetterOnlyFields?.Contains(name) ?? false;
 
         public override string ToString()
         {

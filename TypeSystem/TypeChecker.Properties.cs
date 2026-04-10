@@ -446,6 +446,11 @@ public partial class TypeChecker
              if (record.Fields.TryGetValue(set.Name.Lexeme, out var fieldType))
              {
                  TypeInfo valueType = CheckExpr(set.Value);
+                 // Getter-only properties: allow at type-check time, runtime handles sloppy/strict
+                 if (record.IsGetterOnly(set.Name.Lexeme))
+                 {
+                     return valueType;
+                 }
                  if (!IsCompatible(fieldType, valueType))
                  {
                      throw new TypeCheckException($" Cannot assign '{valueType}' to property '{set.Name.Lexeme}' of type '{fieldType}'.");

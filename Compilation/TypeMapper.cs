@@ -149,6 +149,9 @@ public class TypeMapper
     {
         TypeInfo.Primitive p => MapPrimitive(p),
         TypeInfo.String => _types.String, // String type maps to System.String
+        TypeInfo.StringLiteral => _types.String, // "foo" literal widens to string
+        TypeInfo.NumberLiteral => _types.Double, // 42 literal widens to number
+        TypeInfo.BooleanLiteral => _types.Boolean, // true/false literal widens to boolean
         TypeInfo.BigInt => _types.BigInteger,
         TypeInfo.Array arr => MapArrayTypeStrict(arr),
         TypeInfo.Function => _types.Delegate, // Functions map to Delegate for typed interop
@@ -253,6 +256,24 @@ public class TypeMapper
         // Special case: single type after flattening
         if (types.Count == 1)
             return MapTypeInfoStrict(types[0]);
+
+        // Collapse unions where all members resolve to the same .NET type.
+        // e.g., "yes" | "no" → string, 1 | 2 | 3 → double, true | false → bool
+        if (types.Count >= 2)
+        {
+            var firstMapped = MapTypeInfoStrict(types[0]);
+            bool allSame = true;
+            for (int i = 1; i < types.Count; i++)
+            {
+                if (MapTypeInfoStrict(types[i]) != firstMapped)
+                {
+                    allSame = false;
+                    break;
+                }
+            }
+            if (allSame && firstMapped != _types.Object)
+                return firstMapped;
+        }
 
         // Generate discriminated union type
         if (_unionGenerator != null)

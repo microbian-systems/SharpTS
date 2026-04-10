@@ -1968,7 +1968,7 @@ public partial class RuntimeEmitter
         // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
         // Note: HasIn signature is (key, obj) so obj is arg_1
         var notProxyLabel = il.DefineLabel();
-        EmitProxyHasCheck(il, () => il.Emit(OpCodes.Ldarg_1), () => il.Emit(OpCodes.Ldarg_0), notProxyLabel);
+        EmitProxyHasCheck(il, () => il.Emit(OpCodes.Ldarg_1), () => il.Emit(OpCodes.Ldarg_0), notProxyLabel, runtime);
 
         il.MarkLabel(notProxyLabel);
 
