@@ -305,4 +305,154 @@ public class CliVarTests
         Assert.Equal(0, exit);
         Assert.Contains("7", output);
     }
+
+    // ── var redeclaration in same scope (issue #20) ─────────────────
+
+    [Fact]
+    public void Interpreted_VarRedeclarationTopLevel()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("redecl-top.cjs", """
+            var x = 1;
+            var x = 2;
+            console.log(x);
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("2", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Compiled_VarRedeclarationTopLevel()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var entry = tempDir.CreateFile("redecl-top.cjs", """
+            var x = 1;
+            var x = 2;
+            console.log(x);
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        Assert.Contains("2", output);
+    }
+
+    [Fact]
+    public void Interpreted_VarRedeclarationInFunction()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("redecl-func.ts", """
+            function foo(): number {
+              var x = 1;
+              var x = 2;
+              return x;
+            }
+            console.log(foo());
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("2", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Compiled_VarRedeclarationInFunction()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var entry = tempDir.CreateFile("redecl-func.ts", """
+            function foo(): number {
+              var x = 1;
+              var x = 2;
+              return x;
+            }
+            console.log(foo());
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        Assert.Contains("2", output);
+    }
+
+    [Fact]
+    public void Interpreted_VarRedeclarationWithoutInitializer()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("redecl-noinit.cjs", """
+            var y = "hello";
+            console.log(y);
+            var y;
+            console.log(y);
+            var y = "world";
+            console.log(y);
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        var lines = result.StandardOutput.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("hello", lines[0].Trim());
+        Assert.Equal("hello", lines[1].Trim());
+        Assert.Equal("world", lines[2].Trim());
+    }
+
+    [Fact]
+    public void Compiled_VarRedeclarationWithoutInitializer()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var entry = tempDir.CreateFile("redecl-noinit.cjs", """
+            var y = "hello";
+            console.log(y);
+            var y;
+            console.log(y);
+            var y = "world";
+            console.log(y);
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        var lines = output.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("hello", lines[0].Trim());
+        Assert.Equal("hello", lines[1].Trim());
+        Assert.Equal("world", lines[2].Trim());
+    }
+
+    [Fact]
+    public void Interpreted_VarRedeclarationMixedTopAndNested()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("redecl-mixed.ts", """
+            function test(): string {
+              var x = "top";
+              if (true) {
+                var x = "nested";
+              }
+              return x;
+            }
+            console.log(test());
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("nested", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Compiled_VarRedeclarationMixedTopAndNested()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var entry = tempDir.CreateFile("redecl-mixed.ts", """
+            function test(): string {
+              var x = "top";
+              if (true) {
+                var x = "nested";
+              }
+              return x;
+            }
+            console.log(test());
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        Assert.Contains("nested", output);
+    }
 }

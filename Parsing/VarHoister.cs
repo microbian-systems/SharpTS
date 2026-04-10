@@ -32,8 +32,8 @@ namespace SharpTS.Parsing;
 /// <list type="bullet">
 /// <item>Arrow function and function expression bodies are hoisted at their parse sites
 /// in Parser.Expressions.cs.</item>
-/// <item>Does not implement <c>var</c>'s redeclaration permissiveness (declaring the same
-/// name twice is not an error in JS); the existing duplicate-binding behavior applies.</item>
+/// <item>Duplicate <c>var</c> declarations of the same name at the top level are deduplicated:
+/// the first is kept and subsequent ones are rewritten to plain assignments.</item>
 /// <item>Does not currently descend into class bodies, getters, setters, or constructors;
 /// those rely on being separate function scopes already.</item>
 /// </list>
@@ -87,11 +87,21 @@ public static class VarHoister
         {
             case Stmt.Var v when v.IsVar:
             {
-                // Top-level vars (directly in the function/module body) are already hoisted by
-                // virtue of being at the top. Leave them alone — only rewrite nested vars.
+                // Top-level vars: keep the first declaration, rewrite duplicates to assignments.
+                // JavaScript allows `var x = 1; var x = 2;` — duplicates silently merge.
                 if (isTopLevel)
                 {
-                    return v;
+                    if (seen.Add(v.Name.Lexeme))
+                    {
+                        return v; // first occurrence: keep the declaration
+                    }
+                    // Duplicate top-level var: rewrite to assignment
+                    changed = true;
+                    if (v.Initializer == null)
+                    {
+                        return new Stmt.Expression(new Expr.Literal(null));
+                    }
+                    return new Stmt.Expression(new Expr.Assign(v.Name, v.Initializer));
                 }
 
                 if (seen.Add(v.Name.Lexeme))
