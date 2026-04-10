@@ -120,7 +120,7 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         {
             // Try localhost only if wildcard fails (requires admin on Windows)
             _listener = new HttpListener();
-            _listener.Prefixes.Add($"http://localhost:{_port}/");
+            _listener.Prefixes.Add($"http://127.0.0.1:{_port}/");
             _listener.Start();
         }
 

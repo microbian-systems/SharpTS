@@ -47,7 +47,7 @@ public class HttpEventTests
                     server.close();
                 });
                 server.listen({{port}}, () => {
-                    const req = http.get('http://localhost:{{port}}/');
+                    const req = http.get('http://127.0.0.1:{{port}}/');
                 });
                 """
         };
@@ -72,7 +72,7 @@ public class HttpEventTests
                 });
                 server.listen({{port}}, () => {
                     console.log('server started');
-                    const req = http.get('http://localhost:{{port}}/');
+                    const req = http.get('http://127.0.0.1:{{port}}/');
                 });
                 """
         };
@@ -101,7 +101,7 @@ public class HttpEventTests
                     server.close();
                 });
                 server.listen({{port}}, () => {
-                    http.get('http://localhost:{{port}}/');
+                    http.get('http://127.0.0.1:{{port}}/');
                 });
                 """
         };
@@ -129,7 +129,7 @@ public class HttpEventTests
                     server.close();
                 });
                 server.listen({{port}}, () => {
-                    http.get('http://localhost:{{port}}/');
+                    http.get('http://127.0.0.1:{{port}}/');
                 });
                 """
         };
@@ -158,7 +158,7 @@ public class HttpEventTests
                     });
                 });
                 server.listen({{port}}, () => {
-                    http.get('http://localhost:{{port}}/test');
+                    http.get('http://127.0.0.1:{{port}}/test');
                 });
                 """
         };
@@ -185,7 +185,7 @@ public class HttpEventTests
                     server.close();
                 });
                 server.listen({{port}}, () => {
-                    http.get('http://localhost:{{port}}/');
+                    http.get('http://127.0.0.1:{{port}}/');
                 });
                 """
         };
@@ -237,7 +237,7 @@ public class HttpEventTests
                     server.close();
                 });
                 server.listen({{port}}, () => {
-                    http.get('http://localhost:{{port}}/test-path');
+                    http.get('http://127.0.0.1:{{port}}/test-path');
                 });
                 """
         };
@@ -263,7 +263,7 @@ public class HttpEventTests
                     server.close();
                 });
                 server.listen({{port}}, () => {
-                    http.get('http://localhost:{{port}}/');
+                    http.get('http://127.0.0.1:{{port}}/');
                 });
                 """
         };
@@ -288,7 +288,7 @@ public class HttpEventTests
                     server.close();
                 });
                 server.listen({{port}}, () => {
-                    http.get('http://localhost:{{port}}/');
+                    http.get('http://127.0.0.1:{{port}}/');
                 });
                 """
         };
@@ -312,7 +312,7 @@ public class HttpEventTests
                     server.close();
                 });
                 server.listen({{port}}, () => {
-                    http.get('http://localhost:{{port}}/missing');
+                    http.get('http://127.0.0.1:{{port}}/missing');
                 });
                 """
         };
