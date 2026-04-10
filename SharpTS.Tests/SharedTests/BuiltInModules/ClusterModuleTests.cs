@@ -563,7 +563,7 @@ public class ClusterModuleTests : IDisposable
                         readyCount++;
                         if (readyCount === 2) {
                             // Both workers listening on same port — send an HTTP request
-                            fetch('http://127.0.0.1:{{port}}/').then(async (res) => {
+                            fetch('http://localhost:{{port}}/').then(async (res) => {
                                 const text = await res.text();
                                 console.log('http response: ' + text);
                                 w1.kill();
