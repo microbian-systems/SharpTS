@@ -208,7 +208,7 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
         }
         else
         {
-            _il.Emit(OpCodes.Ldnull);
+            _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
             StoreVariable(v.Name.Lexeme);
         }
     }

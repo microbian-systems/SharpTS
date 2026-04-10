@@ -68,7 +68,7 @@ public partial class ILEmitter
                 }
                 else
                 {
-                    IL.Emit(OpCodes.Ldnull);
+                    IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
                 }
                 IL.Emit(OpCodes.Stfld, displayField);
                 return;
@@ -94,7 +94,7 @@ public partial class ILEmitter
                 }
                 else
                 {
-                    IL.Emit(OpCodes.Ldnull);
+                    IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
                     IL.Emit(OpCodes.Stsfld, staticField);
                 }
                 return;
@@ -122,7 +122,7 @@ public partial class ILEmitter
             }
             else
             {
-                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
             }
             IL.Emit(OpCodes.Stfld, funcDisplayField);
             return;
@@ -149,7 +149,7 @@ public partial class ILEmitter
             }
             else
             {
-                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
             }
             IL.Emit(OpCodes.Stfld, arrowDisplayField);
             return;
@@ -184,7 +184,7 @@ public partial class ILEmitter
             }
             else
             {
-                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
             }
             IL.Emit(OpCodes.Stloc, local);
         }

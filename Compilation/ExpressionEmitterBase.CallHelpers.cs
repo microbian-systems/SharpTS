@@ -187,10 +187,19 @@ public abstract partial class ExpressionEmitterBase
 
                     for (int i = c.Arguments.Count; i < paramCount; i++)
                     {
-                        EmitDefaultForType(targetParams[i].ParameterType);
-                        var temp = IL.DeclareLocal(targetParams[i].ParameterType);
+                        var pType = targetParams[i].ParameterType;
+                        if (pType == Types.Object)
+                        {
+                            // Missing optional args default to undefined (JS spec)
+                            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
+                        }
+                        else
+                        {
+                            EmitDefaultForType(pType);
+                        }
+                        var temp = IL.DeclareLocal(pType);
                         IL.Emit(OpCodes.Stloc, temp);
-                        callArgTemps.Add((temp, targetParams[i].ParameterType));
+                        callArgTemps.Add((temp, pType));
                     }
 
                     // Load all args back onto stack for the call

@@ -79,7 +79,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
             else
             {
                 IL.Emit(OpCodes.Ldarg_0);
-                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
                 IL.Emit(OpCodes.Stfld, field);
             }
         }
@@ -97,7 +97,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
             }
             else
             {
-                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
                 IL.Emit(OpCodes.Stloc, local);
             }
         }

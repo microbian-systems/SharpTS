@@ -18,7 +18,7 @@ public class OverloadTests
             function greet(name: string): string;
             function greet(name: string, age: number): string;
             function greet(name: string, age?: number): string {
-                if (age !== null) {
+                if (age !== undefined) {
                     return name + " is " + age;
                 }
                 return "Hello " + name;
@@ -65,7 +65,7 @@ public class OverloadTests
                 add(a: number): number;
                 add(a: number, b: number): number;
                 add(a: number, b?: number): number {
-                    if (b !== null) {
+                    if (b != null) {
                         return a + b;
                     }
                     return a + 1;
@@ -91,10 +91,10 @@ public class OverloadTests
                 max(a: number, b: number, c: number): number;
                 max(a: number, b?: number, c?: number): number {
                     let result: number = a;
-                    if (b !== null && b > result) {
+                    if (b != null && b > result) {
                         result = b;
                     }
-                    if (c !== null && c > result) {
+                    if (c != null && c > result) {
                         result = c;
                     }
                     return result;
@@ -125,7 +125,7 @@ public class OverloadTests
                 constructor(x: number, y: number);
                 constructor(value: number);
                 constructor(xOrValue: number, y?: number) {
-                    if (y !== null) {
+                    if (y != null) {
                         this.x = xOrValue;
                         this.y = y;
                     } else {

@@ -199,7 +199,7 @@ public class OverrideKeywordTests
                 speak(times: number): string;
                 speak(): string;
                 speak(times?: number): string {
-                    if (times !== null) {
+                    if (times != null) {
                         return "sound " + times;
                     }
                     return "sound";
@@ -209,7 +209,7 @@ public class OverrideKeywordTests
                 override speak(times: number): string;
                 override speak(): string;
                 override speak(times?: number): string {
-                    if (times !== null) {
+                    if (times != null) {
                         return "woof " + times;
                     }
                     return "woof";

@@ -44,16 +44,13 @@ public static class ParameterTypeResolver
                     return typeof(object);
                 }
 
-                // If parameter is optional (no explicit default) and would be a value type,
-                // use object instead so null can be passed
+                // If parameter is optional (no explicit default), use object so undefined
+                // can be passed as the missing-argument sentinel (JS spec)
                 if (i < parameters.Count &&
                     parameters[i].DefaultValue == null &&
                     parameters[i].IsOptional)
                 {
-                    if (mappedType.IsValueType)
-                    {
-                        return typeof(object);
-                    }
+                    return typeof(object);
                 }
 
                 return mappedType;
@@ -184,16 +181,13 @@ public static class ParameterTypeResolver
                     return typeof(object);
                 }
 
-                // If parameter is optional (no explicit default) and would be a value type,
-                // use object instead so null can be passed
+                // If parameter is optional (no explicit default), use object so undefined
+                // can be passed as the missing-argument sentinel (JS spec)
                 if (i < parameters.Count &&
                     parameters[i].DefaultValue == null &&
                     parameters[i].IsOptional)
                 {
-                    if (mappedType.IsValueType)
-                    {
-                        return typeof(object);
-                    }
+                    return typeof(object);
                 }
 
                 return mappedType;

@@ -56,8 +56,8 @@ internal static class ParameterBinder
             }
             else if (param.IsOptional)
             {
-                // Optional parameter with no argument and no default - use null
-                value = null;
+                // Optional parameter with no argument and no default - use undefined (JS spec)
+                value = SharpTSUndefined.Instance;
             }
             else
             {
@@ -112,8 +112,8 @@ internal static class ParameterBinder
             }
             else if (param.IsOptional)
             {
-                // Match legacy Bind behavior: optional params default to null (not undefined)
-                value = RuntimeValue.Null;
+                // Optional parameter with no argument and no default - use undefined (JS spec)
+                value = RuntimeValue.Undefined;
             }
             else
             {
@@ -169,8 +169,8 @@ internal static class ParameterBinder
             }
             else if (param.IsOptional)
             {
-                // Optional parameter with no argument and no default - use null
-                value = null;
+                // Optional parameter with no argument and no default - use undefined (JS spec)
+                value = SharpTSUndefined.Instance;
             }
             else
             {

@@ -1672,7 +1672,7 @@ public partial class Interpreter : IDisposable
 
     internal ExecutionResult VisitVar(Stmt.Var varStmt)
     {
-        object? value = null;
+        object? value = SharpTSUndefined.Instance;
         if (varStmt.Initializer != null)
         {
             value = Evaluate(varStmt.Initializer);

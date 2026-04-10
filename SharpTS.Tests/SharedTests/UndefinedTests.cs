@@ -219,4 +219,51 @@ public class UndefinedTests
     }
 
     #endregion
+
+    #region Uninitialized Variable Tests (Issue #17)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UninitializedLet_IsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            let x;
+            console.log(typeof x);
+            console.log(x === undefined);
+            console.log(x === null);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined\ntrue\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UninitializedVar_IsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            var y;
+            console.log(typeof y);
+            console.log(y === undefined);
+            console.log(y === null);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined\ntrue\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OptionalParam_NoDefault_IsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            function f(a?: string) {
+                console.log(typeof a);
+                console.log(a === undefined);
+            }
+            f();
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined\ntrue\n", output);
+    }
+
+    #endregion
 }

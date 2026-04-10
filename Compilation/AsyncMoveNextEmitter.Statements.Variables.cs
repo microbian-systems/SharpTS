@@ -52,7 +52,7 @@ public partial class AsyncMoveNextEmitter
             }
             else
             {
-                _il.Emit(OpCodes.Ldnull);
+                _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
             }
 
             // Store to function DC
