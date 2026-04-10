@@ -38,6 +38,7 @@ public partial class Parser
             if (Match(TokenType.LEFT_BRACE))
             {
                 body = Block();
+                body = VarHoister.Hoist(body);
             }
             else
             {
@@ -771,6 +772,7 @@ public partial class Parser
 
                             Consume(TokenType.LEFT_BRACE, "Expect '{' before method body.");
                             List<Stmt> body = Block();
+                            body = VarHoister.Hoist(body);
 
                             var methodExpr = new Expr.ArrowFunction(
                                 Name: null,
@@ -831,6 +833,7 @@ public partial class Parser
 
                         Consume(TokenType.LEFT_BRACE, "Expect '{' before getter body.");
                         List<Stmt> body = Block();
+                        body = VarHoister.Hoist(body);
 
                         var getterExpr = new Expr.ArrowFunction(
                             Name: null,
@@ -878,6 +881,7 @@ public partial class Parser
 
                         Consume(TokenType.LEFT_BRACE, "Expect '{' before setter body.");
                         List<Stmt> body = Block();
+                        body = VarHoister.Hoist(body);
 
                         var setterExpr = new Expr.ArrowFunction(
                             Name: null,
@@ -957,6 +961,7 @@ public partial class Parser
 
                         Consume(TokenType.LEFT_BRACE, "Expect '{' before method body.");
                         List<Stmt> body = Block();
+                        body = VarHoister.Hoist(body);
                         value = new Expr.ArrowFunction(Name: null, TypeParams: null, ThisType: thisType, Parameters: parameters, ExpressionBody: null, BlockBody: body, ReturnType: returnType, HasOwnThis: true);
                     }
                     else if (Match(TokenType.COLON))
@@ -1276,6 +1281,9 @@ public partial class Parser
             ValidateNoDuplicateParameters(parameters);
         }
 
+        if (body != null)
+            body = VarHoister.Hoist(body);
+
         return new Expr.ArrowFunction(Name: null, TypeParams: null, ThisType: null, Parameters: parameters, ExpressionBody: exprBody, BlockBody: body, ReturnType: returnType, IsAsync: isAsync);
     }
 
@@ -1446,6 +1454,8 @@ public partial class Parser
             }
             body = prologue.Concat(body).ToList();
         }
+
+        body = VarHoister.Hoist(body);
 
         // Return as ArrowFunction with block body (HasOwnThis=true for function expressions)
         return new Expr.ArrowFunction(

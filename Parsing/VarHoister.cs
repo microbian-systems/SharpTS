@@ -30,8 +30,8 @@ namespace SharpTS.Parsing;
 ///
 /// <para>Limitations:</para>
 /// <list type="bullet">
-/// <item>Does not handle var inside arrow function bodies that are method/property values
-/// (those go through their own collection paths).</item>
+/// <item>Arrow function and function expression bodies are hoisted at their parse sites
+/// in Parser.Expressions.cs.</item>
 /// <item>Does not implement <c>var</c>'s redeclaration permissiveness (declaring the same
 /// name twice is not an error in JS); the existing duplicate-binding behavior applies.</item>
 /// <item>Does not currently descend into class bodies, getters, setters, or constructors;

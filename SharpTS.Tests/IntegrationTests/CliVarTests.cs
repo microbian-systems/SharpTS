@@ -189,4 +189,120 @@ public class CliVarTests
         Assert.Equal(0, exit);
         Assert.Contains("1 2 3", output);
     }
+
+    // ── Arrow function var hoisting (issue #19) ──────────────────────
+
+    [Fact]
+    public void Interpreted_VarHoistInArrowFunction()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("arrow-hoist.cjs", """
+            const fn = () => {
+              if (true) {
+                var inner = 42;
+              }
+              return inner;
+            };
+            console.log(fn());
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("42", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Compiled_VarHoistInArrowFunction()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var entry = tempDir.CreateFile("arrow-hoist.cjs", """
+            const fn = () => {
+              if (true) {
+                var inner = 42;
+              }
+              return inner;
+            };
+            console.log(fn());
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        Assert.Contains("42", output);
+    }
+
+    [Fact]
+    public void Interpreted_VarHoistInFunctionExpression()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("funcexpr-hoist.cjs", """
+            const fn = function() {
+              if (true) {
+                var inner = 99;
+              }
+              return inner;
+            };
+            console.log(fn());
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("99", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Compiled_VarHoistInFunctionExpression()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var entry = tempDir.CreateFile("funcexpr-hoist.cjs", """
+            const fn = function() {
+              if (true) {
+                var inner = 99;
+              }
+              return inner;
+            };
+            console.log(fn());
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        Assert.Contains("99", output);
+    }
+
+    [Fact]
+    public void Interpreted_VarHoistInObjectMethod()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("method-hoist.cjs", """
+            const obj = {
+              test() {
+                if (true) { var x = 7; }
+                return x;
+              }
+            };
+            console.log(obj.test());
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("7", result.StandardOutput);
+    }
+
+    [Fact]
+    public void Compiled_VarHoistInObjectMethod()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var entry = tempDir.CreateFile("method-hoist.cjs", """
+            const obj = {
+              test() {
+                if (true) { var x = 7; }
+                return x;
+              }
+            };
+            console.log(obj.test());
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        Assert.Contains("7", output);
+    }
 }

@@ -104,8 +104,7 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         }
 
         // Apply var hoisting to the top-level (module/script) statement list. Function bodies
-        // are hoisted at parse time inside FunctionDeclaration. Arrow function bodies are
-        // not hoisted (they're rarely used as `var` containers in real code).
+        // and arrow function bodies are hoisted at their respective parse sites.
         statements = VarHoister.Hoist(statements);
 
         return new ParseDiagnosticResult(statements, _diagnostics.Diagnostics);
