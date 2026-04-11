@@ -116,7 +116,7 @@ public partial class Parser
 
         Consume(TokenType.EQUAL, "Expect '=' after destructuring pattern.");
         Expr initializer = Expression();
-        Consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.");
+        ConsumeSemicolon("Expect ';' after variable declaration.");
 
         return DesugarArrayPattern(pattern, initializer);
     }
@@ -132,7 +132,7 @@ public partial class Parser
 
         Consume(TokenType.EQUAL, "Expect '=' after destructuring pattern.");
         Expr initializer = Expression();
-        Consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.");
+        ConsumeSemicolon("Expect ';' after variable declaration.");
 
         return DesugarObjectPattern(pattern, initializer);
     }

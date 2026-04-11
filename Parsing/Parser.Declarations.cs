@@ -134,7 +134,7 @@ public partial class Parser
         // The disambiguation is done in ParsePrimaryType
         string typeDef = ParseTypeAnnotation();
 
-        Consume(TokenType.SEMICOLON, "Expect ';' after type alias.");
+        ConsumeSemicolon("Expect ';' after type alias.");
         return new Stmt.TypeAlias(name, typeDef, typeParams);
     }
 
@@ -242,7 +242,7 @@ public partial class Parser
                 type = ParseTypeAnnotation();
             }
 
-            Consume(TokenType.SEMICOLON, "Expect ';' after member declaration.");
+            ConsumeInterfaceMemberSeparator();
             members.Add(new Stmt.InterfaceMember(memberName, type, isOptional, isReadonly));
         }
 
@@ -313,7 +313,7 @@ public partial class Parser
             Consume(TokenType.RIGHT_PAREN, "Expect ')' after call signature parameters.");
             Consume(TokenType.COLON, "Expect ':' before return type in call signature.");
             string returnType = ParseTypeAnnotation();
-            Consume(TokenType.SEMICOLON, "Expect ';' after call signature.");
+            ConsumeInterfaceMemberSeparator();
 
             return new Stmt.CallSignature(sigTypeParams, parameters, returnType);
         }
@@ -351,7 +351,7 @@ public partial class Parser
             Consume(TokenType.RIGHT_PAREN, "Expect ')' after constructor signature parameters.");
             Consume(TokenType.COLON, "Expect ':' before return type in constructor signature.");
             string returnType = ParseTypeAnnotation();
-            Consume(TokenType.SEMICOLON, "Expect ';' after constructor signature.");
+            ConsumeInterfaceMemberSeparator();
 
             return new Stmt.ConstructorSignature(sigTypeParams, parameters, returnType);
         }
@@ -457,7 +457,7 @@ public partial class Parser
         }
 
         string valueType = ParseTypeAnnotation();
-        Consume(TokenType.SEMICOLON, "Expect ';' after index signature.");
+        ConsumeInterfaceMemberSeparator();
 
         return new Stmt.IndexSignature(keyName, keyType, valueType);
     }
@@ -574,11 +574,11 @@ public partial class Parser
             {
                 statements.Add(ParseSingleDeclarator(isConst, isVar));
             }
-            Consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.");
+            ConsumeSemicolon("Expect ';' after variable declaration.");
             return new Stmt.Sequence(statements);
         }
 
-        Consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.");
+        ConsumeSemicolon("Expect ';' after variable declaration.");
         return first;
     }
 
@@ -804,7 +804,7 @@ public partial class Parser
             typeAnnotation = ParseTypeAnnotation();
         }
 
-        Consume(TokenType.SEMICOLON, "Expect ';' after ambient variable declaration.");
+        ConsumeSemicolon("Expect ';' after ambient variable declaration.");
 
         // Ambient declarations have no initializer
         if (isConst)
@@ -842,7 +842,7 @@ public partial class Parser
             bindings.Add(ParseUsingBinding());
         } while (Match(TokenType.COMMA));
 
-        Consume(TokenType.SEMICOLON, "Expect ';' after 'using' declaration.");
+        ConsumeSemicolon("Expect ';' after 'using' declaration.");
         return new Stmt.Using(usingKeyword, bindings, isAwait);
     }
 

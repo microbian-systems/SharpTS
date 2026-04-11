@@ -41,13 +41,13 @@ public partial class Parser
         Token keyword = Previous();
         Token? label = null;
 
-        // Check for optional label: break labelName;
-        if (Check(TokenType.IDENTIFIER))
+        // Restricted production: break [no LineTerminator here] Label
+        if (Check(TokenType.IDENTIFIER) && !HasLineTerminatorBeforeCurrent())
         {
             label = Advance();
         }
 
-        Consume(TokenType.SEMICOLON, "Expect ';' after 'break'.");
+        ConsumeSemicolon("Expect ';' after 'break'.");
         return new Stmt.Break(keyword, label);
     }
 
@@ -56,13 +56,13 @@ public partial class Parser
         Token keyword = Previous();
         Token? label = null;
 
-        // Check for optional label: continue labelName;
-        if (Check(TokenType.IDENTIFIER))
+        // Restricted production: continue [no LineTerminator here] Label
+        if (Check(TokenType.IDENTIFIER) && !HasLineTerminatorBeforeCurrent())
         {
             label = Advance();
         }
 
-        Consume(TokenType.SEMICOLON, "Expect ';' after 'continue'.");
+        ConsumeSemicolon("Expect ';' after 'continue'.");
         return new Stmt.Continue(keyword, label);
     }
 
@@ -138,7 +138,7 @@ public partial class Parser
         }
         else
         {
-            init = ExpressionStatement();
+            init = ExpressionStatement(allowASI: false);
         }
 
         return FinishTraditionalFor(init);
@@ -247,7 +247,7 @@ public partial class Parser
         Consume(TokenType.LEFT_PAREN, "Expect '(' after 'while'.");
         Expr condition = Expression();
         Consume(TokenType.RIGHT_PAREN, "Expect ')' after condition.");
-        Consume(TokenType.SEMICOLON, "Expect ';' after do-while condition.");
+        ConsumeSemicolon("Expect ';' after do-while condition.");
 
         return new Stmt.DoWhile(body, condition);
     }
@@ -256,12 +256,16 @@ public partial class Parser
     {
         Token keyword = Previous();
         Expr? value = null;
-        if (!Check(TokenType.SEMICOLON))
+
+        // Restricted production: return [no LineTerminator here] Expression
+        // If there's a newline after 'return', or we see ';'/'}'/EOF, return undefined.
+        if (!Check(TokenType.SEMICOLON) && !Check(TokenType.RIGHT_BRACE)
+            && !IsAtEnd() && !HasLineTerminatorBeforeCurrent())
         {
             value = Expression();
         }
 
-        Consume(TokenType.SEMICOLON, "Expect ';' after return value.");
+        ConsumeSemicolon("Expect ';' after return value.");
         return new Stmt.Return(keyword, value);
     }
 
@@ -367,8 +371,16 @@ public partial class Parser
     private Stmt ThrowStatement()
     {
         Token keyword = Previous();
+
+        // Restricted production: throw [no LineTerminator here] Expression
+        // A newline after 'throw' is a syntax error (throw must have an expression).
+        if (HasLineTerminatorBeforeCurrent())
+        {
+            throw new Exception("Illegal newline after 'throw'.");
+        }
+
         Expr value = Expression();
-        Consume(TokenType.SEMICOLON, "Expect ';' after throw value.");
+        ConsumeSemicolon("Expect ';' after throw value.");
         return new Stmt.Throw(keyword, value);
     }
 
@@ -461,7 +473,7 @@ public partial class Parser
         }
     }
 
-    private Stmt ExpressionStatement()
+    private Stmt ExpressionStatement(bool allowASI = true)
     {
         Expr expr = CommaExpression();
         // Handle console.log specially for MVP
@@ -470,7 +482,10 @@ public partial class Parser
              // Simplified for MVP
         }
 
-        Consume(TokenType.SEMICOLON, "Expect ';' after expression.");
+        if (allowASI)
+            ConsumeSemicolon("Expect ';' after expression.");
+        else
+            Consume(TokenType.SEMICOLON, "Expect ';' after expression.");
         return new Stmt.Expression(expr);
     }
 }

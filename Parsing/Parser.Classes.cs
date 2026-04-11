@@ -168,7 +168,7 @@ public partial class Parser
                     initializer = Expression();
                 }
 
-                Consume(TokenType.SEMICOLON, "Expect ';' after auto-accessor declaration.");
+                ConsumeSemicolon("Expect ';' after auto-accessor declaration.");
 
                 autoAccessors.Add(new Stmt.AutoAccessor(
                     accessorName,
@@ -221,7 +221,7 @@ public partial class Parser
                 if (isMemberAbstract)
                 {
                     // Abstract accessor: no body, just semicolon
-                    Consume(TokenType.SEMICOLON, "Expect ';' after abstract accessor declaration.");
+                    ConsumeSemicolon("Expect ';' after abstract accessor declaration.");
                     body = [];
                 }
                 else
@@ -290,7 +290,7 @@ public partial class Parser
                         initializer = Expression();
                     }
 
-                    Consume(TokenType.SEMICOLON, "Expect ';' after private field declaration.");
+                    ConsumeSemicolon("Expect ';' after private field declaration.");
                     var privateField = new Stmt.Field(fieldName, typeAnnotation, initializer, isStatic, AccessModifier.Public, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, Decorators: null, IsPrivate: true);
                     fields.Add(privateField);
                     if (isStatic)
@@ -326,7 +326,7 @@ public partial class Parser
                     initializer = Expression();
                 }
 
-                Consume(TokenType.SEMICOLON, "Expect ';' after computed property field declaration.");
+                ConsumeSemicolon("Expect ';' after computed property field declaration.");
                 var field = new Stmt.Field(syntheticName, typeAnnotation, initializer, isStatic, access, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, memberDecorators, IsPrivate: false, IsDeclare: false, ComputedKey: computedKey);
                 fields.Add(field);
                 if (isStatic)
@@ -366,7 +366,7 @@ public partial class Parser
                     throw new Exception($"Parse Error at line {fieldName.Line}: Definite assignment assertion '!' cannot be used with an initializer.");
                 }
 
-                Consume(TokenType.SEMICOLON, "Expect ';' after field declaration.");
+                ConsumeSemicolon("Expect ';' after field declaration.");
                 var field = new Stmt.Field(fieldName, typeAnnotation, initializer, isStatic, access, isReadonly, isOptional, hasDefiniteAssignment, memberDecorators, IsPrivate: false, IsDeclare: isMemberDeclare);
                 fields.Add(field);
                 if (isStatic)
@@ -423,7 +423,7 @@ public partial class Parser
                         returnType = ParseTypeAnnotation();
                     }
 
-                    Consume(TokenType.SEMICOLON, "Expect ';' after abstract method declaration.");
+                    ConsumeSemicolon("Expect ';' after abstract method declaration.");
 
                     var func = new Stmt.Function(methodName, typeParams2, thisType, parameters, null, returnType, isStatic, access, IsAbstract: true, IsOverride: isOverride, IsAsync: isMemberAsync, IsGenerator: isMemberGenerator, Decorators: memberDecorators);
                     methods.Add(func);
@@ -643,7 +643,7 @@ public partial class Parser
                     initializer = Expression();
                 }
 
-                Consume(TokenType.SEMICOLON, "Expect ';' after auto-accessor declaration.");
+                ConsumeSemicolon("Expect ';' after auto-accessor declaration.");
 
                 autoAccessors.Add(new Stmt.AutoAccessor(
                     accessorName,
@@ -754,7 +754,7 @@ public partial class Parser
                         initializer = Expression();
                     }
 
-                    Consume(TokenType.SEMICOLON, "Expect ';' after private field declaration.");
+                    ConsumeSemicolon("Expect ';' after private field declaration.");
                     var privateField = new Stmt.Field(fieldName, typeAnnotation, initializer, isStatic, AccessModifier.Public, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, Decorators: null, IsPrivate: true);
                     fields.Add(privateField);
                     if (isStatic)
@@ -795,7 +795,7 @@ public partial class Parser
                     throw new Exception($"Parse Error at line {fieldName.Line}: Definite assignment assertion '!' cannot be used with an initializer.");
                 }
 
-                Consume(TokenType.SEMICOLON, "Expect ';' after field declaration.");
+                ConsumeSemicolon("Expect ';' after field declaration.");
                 var field = new Stmt.Field(fieldName, typeAnnotation, initializer, isStatic, access, isReadonly, isOptional, hasDefiniteAssignment, Decorators: null, IsPrivate: false, IsDeclare: isMemberDeclare);
                 fields.Add(field);
                 if (isStatic)

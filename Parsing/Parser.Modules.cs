@@ -26,7 +26,7 @@ public partial class Parser
         if (Check(TokenType.STRING))
         {
             string path = (string)Consume(TokenType.STRING, "Expect module path.").Literal!;
-            Consume(TokenType.SEMICOLON, "Expect ';' after import.");
+            ConsumeSemicolon("Expect ';' after import.");
             return new Stmt.Import(keyword, null, null, null, path, isTypeOnlyImport);
         }
 
@@ -74,7 +74,7 @@ public partial class Parser
 
         Consume(TokenType.FROM, "Expect 'from' after import specifiers.");
         string modulePath = (string)Consume(TokenType.STRING, "Expect module path string.").Literal!;
-        Consume(TokenType.SEMICOLON, "Expect ';' after import declaration.");
+        ConsumeSemicolon("Expect ';' after import declaration.");
 
         return new Stmt.Import(keyword, namedImports, defaultImport, namespaceImport, modulePath, isTypeOnlyImport);
     }
@@ -133,7 +133,7 @@ public partial class Parser
             Consume(TokenType.LEFT_PAREN, "Expect '(' after 'require'.");
             string modulePath = (string)Consume(TokenType.STRING, "Expect module path string in require().").Literal!;
             Consume(TokenType.RIGHT_PAREN, "Expect ')' after module path.");
-            Consume(TokenType.SEMICOLON, "Expect ';' after import require.");
+            ConsumeSemicolon("Expect ';' after import require.");
             return new Stmt.ImportRequire(keyword, aliasName, modulePath, isExported);
         }
 
@@ -163,7 +163,7 @@ public partial class Parser
             throw new Exception($"Parse Error at line {keyword.Line}: Import alias path must have at least two parts (e.g., Namespace.Member).");
         }
 
-        Consume(TokenType.SEMICOLON, "Expect ';' after import alias.");
+        ConsumeSemicolon("Expect ';' after import alias.");
 
         return new Stmt.ImportAlias(keyword, aliasName, path, isExported);
     }
@@ -199,7 +199,7 @@ public partial class Parser
         if (Match(TokenType.EQUAL))
         {
             Expr exportValue = Expression();
-            Consume(TokenType.SEMICOLON, "Expect ';' after export assignment.");
+            ConsumeSemicolon("Expect ';' after export assignment.");
             return new Stmt.Export(keyword, null, null, null, null, false, exportValue);
         }
 
@@ -222,7 +222,7 @@ public partial class Parser
             {
                 // export default <expression>;
                 defaultExpr = Expression();
-                Consume(TokenType.SEMICOLON, "Expect ';' after export default expression.");
+                ConsumeSemicolon("Expect ';' after export default expression.");
             }
 
             return new Stmt.Export(keyword, declaration, null, defaultExpr, null, IsDefaultExport: true);
@@ -240,7 +240,7 @@ public partial class Parser
                 fromPath = (string)Consume(TokenType.STRING, "Expect module path.").Literal!;
             }
 
-            Consume(TokenType.SEMICOLON, "Expect ';' after export.");
+            ConsumeSemicolon("Expect ';' after export.");
             return new Stmt.Export(keyword, null, namedExports, null, fromPath, IsDefaultExport: false);
         }
 
@@ -249,7 +249,7 @@ public partial class Parser
         {
             Consume(TokenType.FROM, "Expect 'from' after '*'.");
             string fromPath = (string)Consume(TokenType.STRING, "Expect module path.").Literal!;
-            Consume(TokenType.SEMICOLON, "Expect ';' after export.");
+            ConsumeSemicolon("Expect ';' after export.");
 
             // Represent as export with null named exports and a fromPath (meaning all)
             return new Stmt.Export(keyword, null, null, null, fromPath, IsDefaultExport: false);

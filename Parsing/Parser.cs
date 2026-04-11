@@ -336,6 +336,49 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
 
     private Token Previous() => _tokens[_current - 1];
 
+    // ============== AUTOMATIC SEMICOLON INSERTION (ASI) ==============
+
+    /// <summary>
+    /// Consumes a semicolon with Automatic Semicolon Insertion (ASI) support.
+    /// Succeeds if:
+    ///   1. The current token IS a semicolon (consumed and advanced), OR
+    ///   2. There is a line terminator between the previous and current token, OR
+    ///   3. The current token is '}', OR
+    ///   4. The current token is EOF.
+    /// In cases 2-4, no token is consumed — the semicolon is "virtually inserted."
+    /// </summary>
+    private void ConsumeSemicolon(string message)
+    {
+        if (Match(TokenType.SEMICOLON)) return;
+        if (Previous().Line < Peek().Line) return;
+        if (Check(TokenType.RIGHT_BRACE)) return;
+        if (IsAtEnd()) return;
+        throw new Exception(message);
+    }
+
+    /// <summary>
+    /// Returns true if there is a line terminator between the previous token
+    /// and the current token. Used to enforce "no LineTerminator here" restrictions.
+    /// </summary>
+    private bool HasLineTerminatorBeforeCurrent()
+    {
+        return Previous().Line < Peek().Line;
+    }
+
+    /// <summary>
+    /// Consumes an interface member separator: semicolon, comma, or ASI (newline/}/EOF).
+    /// TypeScript interface members accept both ';' and ',' as explicit separators.
+    /// </summary>
+    private void ConsumeInterfaceMemberSeparator()
+    {
+        if (Match(TokenType.SEMICOLON)) return;
+        if (Match(TokenType.COMMA)) return;
+        if (Previous().Line < Peek().Line) return;
+        if (Check(TokenType.RIGHT_BRACE)) return;
+        if (IsAtEnd()) return;
+        throw new Exception("Expect ';' or ',' after interface member.");
+    }
+
     private Expr? TryParseAngleBracketAssertion()
     {
         int saved = _current;

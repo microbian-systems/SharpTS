@@ -359,8 +359,10 @@ public partial class Parser
             bool isDelegating = Match(TokenType.STAR);  // yield* delegates to another iterable
 
             // yield can be bare (yields undefined) or have an expression
+            // Restricted production: yield [no LineTerminator here] Expression
             Expr? value = null;
-            if (!Check(TokenType.SEMICOLON) && !Check(TokenType.RIGHT_BRACE) &&
+            if (!HasLineTerminatorBeforeCurrent() &&
+                !Check(TokenType.SEMICOLON) && !Check(TokenType.RIGHT_BRACE) &&
                 !Check(TokenType.RIGHT_PAREN) && !Check(TokenType.COMMA) && !IsAtEnd())
             {
                 value = Assignment();  // Use Assignment to handle full expressions
@@ -483,9 +485,9 @@ public partial class Parser
                 Consume(TokenType.RIGHT_BRACKET, "Expect ']' after index.");
                 expr = new Expr.GetIndex(expr, index);
             }
-            else if (Match(TokenType.PLUS_PLUS, TokenType.MINUS_MINUS))
+            else if (!HasLineTerminatorBeforeCurrent() && Match(TokenType.PLUS_PLUS, TokenType.MINUS_MINUS))
             {
-                // Postfix increment/decrement
+                // Postfix increment/decrement (restricted: no LineTerminator before ++/--)
                 Token op = Previous();
                 if (expr is not (Expr.Variable or Expr.Get or Expr.GetIndex))
                 {

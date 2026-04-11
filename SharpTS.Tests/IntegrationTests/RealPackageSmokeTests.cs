@@ -282,7 +282,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // semver — semantic version parsing
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "Needs ASI (automatic semicolon insertion): semver source has no semicolons")]
+    [SkippableFact(Skip = "ASI resolved; now blocked on other parse errors in semver source")]
     public void Semver_Interpreter()
     {
         SkipIfNoNpm();
@@ -320,7 +320,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // minimatch — glob pattern matcher
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "Needs ASI (automatic semicolon insertion)")]
+    [SkippableFact(Skip = "ASI resolved; now blocked on other parse errors in minimatch source")]
     public void Minimatch_Interpreter()
     {
         SkipIfNoNpm();
@@ -398,7 +398,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // lodash — utility kitchen sink
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "Needs ASI (automatic semicolon insertion)")]
+    [SkippableFact(Skip = "ASI resolved; now blocked on other parse errors in lodash source")]
     public void Lodash_Interpreter()
     {
         SkipIfNoNpm();
