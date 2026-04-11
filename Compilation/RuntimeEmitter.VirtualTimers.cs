@@ -23,7 +23,7 @@ public partial class RuntimeEmitter
         runtime.VirtualTimerType = typeBuilder;
 
         // Fields
-        var callbackField = typeBuilder.DefineField("Callback", runtime.TSFunctionType, FieldAttributes.Public);
+        var callbackField = typeBuilder.DefineField("Callback", _types.Object, FieldAttributes.Public);
         var argsField = typeBuilder.DefineField("Args", _types.ObjectArray, FieldAttributes.Public);
         var scheduledTimeField = typeBuilder.DefineField("ScheduledTime", _types.Int64, FieldAttributes.Public);
         var isCancelledField = typeBuilder.DefineField("IsCancelled", _types.Boolean, FieldAttributes.Public);
@@ -309,7 +309,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, runtime.VirtualTimerCallback);
         il.Emit(OpCodes.Ldloc, timerLocal);
         il.Emit(OpCodes.Ldfld, runtime.VirtualTimerArgs);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Call, runtime.InvokeValue);
         il.Emit(OpCodes.Pop); // Discard result
 
         il.BeginCatchBlock(typeof(Exception));

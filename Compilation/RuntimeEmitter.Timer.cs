@@ -351,7 +351,7 @@ public partial class RuntimeEmitter
             "SetTimeout",
             MethodAttributes.Public | MethodAttributes.Static,
             runtime.TSTimeoutType,
-            [runtime.TSFunctionType, _types.Double, _types.ObjectArray]
+            [_types.Object, _types.Double, _types.ObjectArray]
         );
         runtime.SetTimeout = method;
 
@@ -568,7 +568,7 @@ public partial class RuntimeEmitter
             "SetInterval",
             MethodAttributes.Public | MethodAttributes.Static,
             runtime.TSTimeoutType,
-            [runtime.TSFunctionType, _types.Double, _types.ObjectArray]
+            [_types.Object, _types.Double, _types.ObjectArray]
         );
         runtime.SetInterval = method;
 
@@ -818,7 +818,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        var callbackLocal = il.DeclareLocal(runtime.TSFunctionType);
+        var callbackLocal = il.DeclareLocal(_types.Object);
         var delayLocal = il.DeclareLocal(_types.Double);
         var extraArgsLocal = il.DeclareLocal(_types.ObjectArray);
 
@@ -827,7 +827,7 @@ public partial class RuntimeEmitter
         var callLabel = il.DefineLabel();
 
         // Extract callback from args[0]
-        // if (args == null || args.Length == 0) callback = null; else callback = args[0] as $TSFunction;
+        // if (args == null || args.Length == 0) callback = null; else callback = args[0];
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse_S, hasCallbackLabel);
         il.Emit(OpCodes.Ldarg_0);
@@ -839,7 +839,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Stloc, callbackLocal);
         il.Emit(OpCodes.Br_S, hasDelayLabel);
 
@@ -984,7 +983,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        var callbackLocal = il.DeclareLocal(runtime.TSFunctionType);
+        var callbackLocal = il.DeclareLocal(_types.Object);
         var delayLocal = il.DeclareLocal(_types.Double);
         var extraArgsLocal = il.DeclareLocal(_types.ObjectArray);
 
@@ -1006,7 +1005,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Stloc, callbackLocal);
         il.Emit(OpCodes.Br_S, hasDelayLabel);
 

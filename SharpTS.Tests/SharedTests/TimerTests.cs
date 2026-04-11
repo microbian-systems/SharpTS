@@ -664,4 +664,46 @@ public class TimerTests
     }
 
     #endregion
+
+    #region Promise + setTimeout Integration Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Await_Promise_SetTimeout_ResolvesCallback(ExecutionMode mode)
+    {
+        // await new Promise(r => setTimeout(r, N)) — the canonical delay-async pattern
+        var source = @"
+            async function run() {
+                console.log('before');
+                await new Promise<void>(r => { setTimeout(r, 10); });
+                console.log('after');
+            }
+            run();
+            console.log('top-end');
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Contains("before", output);
+        Assert.Contains("after", output);
+        Assert.Contains("top-end", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Await_Promise_SetTimeout_ZeroDelay(ExecutionMode mode)
+    {
+        // await new Promise(r => setTimeout(r, 0)) — zero-delay variant
+        var source = @"
+            async function run() {
+                console.log('start');
+                await new Promise<void>(r => { setTimeout(r, 0); });
+                console.log('end');
+            }
+            run();
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Contains("start", output);
+        Assert.Contains("end", output);
+    }
+
+    #endregion
 }

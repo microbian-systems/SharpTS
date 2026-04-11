@@ -492,6 +492,23 @@ public partial class Interpreter : IDisposable
     }
 
     /// <summary>
+    /// Waits for a promise to complete while processing timers and callbacks.
+    /// Avoids a deadlock where GetResult() blocks the main thread but timers
+    /// (which resolve the promise) only fire during event loop processing.
+    /// </summary>
+    private void WaitForPromise(SharpTSPromise promise)
+    {
+        while (!promise.Task.IsCompleted)
+        {
+            TickEventLoop();
+            if (!promise.Task.IsCompleted)
+                Thread.Sleep(1);
+        }
+        // Rethrow if the promise was rejected
+        promise.Task.GetAwaiter().GetResult();
+    }
+
+    /// <summary>
     /// Runs the event loop, processing callbacks until there are no more active handles.
     /// This is the main loop that keeps the program alive for servers, timers, etc.
     /// </summary>
@@ -812,7 +829,7 @@ public partial class Interpreter : IDisposable
                     // Wait for top-level Promises to complete before continuing
                     if (result is SharpTSPromise promise)
                     {
-                        promise.Task.GetAwaiter().GetResult();
+                        WaitForPromise(promise);
                     }
                 }
                 else
@@ -870,9 +887,8 @@ public partial class Interpreter : IDisposable
                 lastExprValue = Evaluate(exprStmt.Expr);
                 if (lastExprValue is SharpTSPromise promise)
                 {
-                    // Use Task.Run to avoid deadlocks when the promise's continuation
-                    // needs the current synchronization context
-                    lastExprValue = Task.Run(() => promise.Task).GetAwaiter().GetResult();
+                    WaitForPromise(promise);
+                    lastExprValue = promise.Task.Result;
                 }
             }
             else
@@ -994,7 +1010,7 @@ public partial class Interpreter : IDisposable
                     object? result = Evaluate(exprStmt.Expr);
                     if (result is SharpTSPromise promise)
                     {
-                        promise.Task.GetAwaiter().GetResult();
+                        WaitForPromise(promise);
                     }
                 }
                 else
@@ -1145,7 +1161,7 @@ public partial class Interpreter : IDisposable
                     // Wait for top-level Promises to complete before continuing
                     if (result is SharpTSPromise promise)
                     {
-                        promise.Task.GetAwaiter().GetResult();
+                        WaitForPromise(promise);
                     }
                 }
                 else
