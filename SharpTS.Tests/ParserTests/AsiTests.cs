@@ -75,7 +75,7 @@ public class AsiTests
         var stmts = Parse("function f() { return 1 }");
         Assert.Single(stmts);
         var func = Assert.IsType<Stmt.Function>(stmts[0]);
-        Assert.Single(func.Body);
+        Assert.Single(func.Body!);
     }
 
     [Fact]
@@ -91,7 +91,7 @@ public class AsiTests
         var stmts = Parse("function f() { let x = 1\nlet y = 2 }");
         Assert.Single(stmts);
         var func = Assert.IsType<Stmt.Function>(stmts[0]);
-        Assert.Equal(2, func.Body.Count);
+        Assert.Equal(2, func.Body!.Count);
     }
 
     #endregion
@@ -123,10 +123,11 @@ public class AsiTests
         // return\n1 → return; 1;  (returns undefined, 1 is separate expression statement)
         var stmts = Parse("function f() { return\n1 }");
         var func = Assert.IsType<Stmt.Function>(stmts[0]);
-        Assert.Equal(2, func.Body.Count);
-        var ret = Assert.IsType<Stmt.Return>(func.Body[0]);
+        var body = func.Body!;
+        Assert.Equal(2, body.Count);
+        var ret = Assert.IsType<Stmt.Return>(body[0]);
         Assert.Null(ret.Value); // returns undefined
-        Assert.IsType<Stmt.Expression>(func.Body[1]); // 1 is a separate statement
+        Assert.IsType<Stmt.Expression>(body[1]); // 1 is a separate statement
     }
 
     [Fact]
@@ -134,8 +135,9 @@ public class AsiTests
     {
         var stmts = Parse("function f() { return 42 }");
         var func = Assert.IsType<Stmt.Function>(stmts[0]);
-        Assert.Single(func.Body);
-        var ret = Assert.IsType<Stmt.Return>(func.Body[0]);
+        var body = func.Body!;
+        Assert.Single(body);
+        var ret = Assert.IsType<Stmt.Return>(body[0]);
         Assert.NotNull(ret.Value);
     }
 
@@ -144,8 +146,9 @@ public class AsiTests
     {
         var stmts = Parse("function f() { return }");
         var func = Assert.IsType<Stmt.Function>(stmts[0]);
-        Assert.Single(func.Body);
-        var ret = Assert.IsType<Stmt.Return>(func.Body[0]);
+        var body = func.Body!;
+        Assert.Single(body);
+        var ret = Assert.IsType<Stmt.Return>(body[0]);
         Assert.Null(ret.Value);
     }
 
@@ -166,8 +169,9 @@ public class AsiTests
     {
         var stmts = Parse("function f() { throw new Error('x') }");
         var func = Assert.IsType<Stmt.Function>(stmts[0]);
-        Assert.Single(func.Body);
-        Assert.IsType<Stmt.Throw>(func.Body[0]);
+        var body = func.Body!;
+        Assert.Single(body);
+        Assert.IsType<Stmt.Throw>(body[0]);
     }
 
     #endregion
@@ -233,8 +237,9 @@ public class AsiTests
         // yield\n1 → yield; 1;
         var stmts = Parse("function* gen() { yield\n1 }");
         var func = Assert.IsType<Stmt.Function>(stmts[0]);
-        Assert.Equal(2, func.Body.Count);
-        var yieldExpr = Assert.IsType<Expr.Yield>(((Stmt.Expression)func.Body[0]).Expr);
+        var body = func.Body!;
+        Assert.Equal(2, body.Count);
+        var yieldExpr = Assert.IsType<Expr.Yield>(((Stmt.Expression)body[0]).Expr);
         Assert.Null(yieldExpr.Value); // yields undefined
     }
 
@@ -243,8 +248,9 @@ public class AsiTests
     {
         var stmts = Parse("function* gen() { yield 42 }");
         var func = Assert.IsType<Stmt.Function>(stmts[0]);
-        Assert.Single(func.Body);
-        var yieldExpr = Assert.IsType<Expr.Yield>(((Stmt.Expression)func.Body[0]).Expr);
+        var body = func.Body!;
+        Assert.Single(body);
+        var yieldExpr = Assert.IsType<Expr.Yield>(((Stmt.Expression)body[0]).Expr);
         Assert.NotNull(yieldExpr.Value);
     }
 
