@@ -221,7 +221,7 @@ public class Lexer(string source)
                 AddToken(TokenType.AT);
                 break;
             case '#':
-                if (char.IsLetter(Peek()) || Peek() == '_')
+                if (char.IsLetter(Peek()) || Peek() == '_' || Peek() == '$')
                 {
                     PrivateIdentifier();
                 }
@@ -315,7 +315,7 @@ public class Lexer(string source)
                 {
                     NumberLiteral();
                 }
-                else if (char.IsLetter(c) || c == '_')
+                else if (char.IsLetter(c) || c == '_' || c == '$')
                 {
                     Identifier();
                 }
@@ -329,7 +329,7 @@ public class Lexer(string source)
 
     private void Identifier()
     {
-        while (char.IsLetterOrDigit(Peek()) || Peek() == '_') Advance();
+        while (char.IsLetterOrDigit(Peek()) || Peek() == '_' || Peek() == '$') Advance();
 
         string text = _source[_start.._current];
         if (!Keywords.TryGetValue(text, out TokenType type))
@@ -345,7 +345,7 @@ public class Lexer(string source)
     private void PrivateIdentifier()
     {
         // _start already points to '#', consume identifier chars
-        while (char.IsLetterOrDigit(Peek()) || Peek() == '_') Advance();
+        while (char.IsLetterOrDigit(Peek()) || Peek() == '_' || Peek() == '$') Advance();
         AddToken(TokenType.PRIVATE_IDENTIFIER);
     }
 
@@ -428,6 +428,16 @@ public class Lexer(string source)
                 }
                 Advance();
             }
+        }
+
+        // Scientific notation: e/E followed by optional +/- and digits
+        if (Peek() == 'e' || Peek() == 'E')
+        {
+            Advance(); // consume e/E
+            if (Peek() == '+' || Peek() == '-') Advance(); // optional sign
+            if (!char.IsDigit(Peek()))
+                throw new Exception($"Invalid number: expected digit after exponent at line {_line}");
+            while (char.IsDigit(Peek())) Advance();
         }
 
         string numberStr = _source[_start.._current].Replace("_", "");

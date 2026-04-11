@@ -307,6 +307,7 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
             TokenType.PRIVATE or TokenType.PROTECTED or TokenType.PUBLIC or TokenType.READONLY or
             TokenType.RETURN or TokenType.SET or TokenType.STATIC or TokenType.SUPER or
             TokenType.SWITCH or TokenType.THIS or TokenType.THROW or TokenType.TRUE or
+            TokenType.SATISFIES or
             TokenType.TRY or TokenType.TYPE or TokenType.TYPEOF or TokenType.UNDEFINED or
             TokenType.UNKNOWN or TokenType.USING or TokenType.VAR or TokenType.VOID or
             TokenType.WHILE or TokenType.YIELD => true,
