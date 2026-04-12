@@ -1418,6 +1418,7 @@ public static class BuiltInModuleTypes
             "vm" => GetVmModuleTypes(),
             "async_hooks" => GetAsyncHooksModuleTypes(),
             "worker_threads" => GetWorkerThreadsModuleTypes(),
+            "tty" => GetTtyModuleTypes(),
             _ => null
         };
     }
@@ -2519,6 +2520,19 @@ public static class BuiltInModuleTypes
             ["isContext"] = new TypeInfo.Function([anyType], boolType),
             ["compileFunction"] = new TypeInfo.Function([stringType, stringArrayType, anyType], anyType, RequiredParams: 1),
             ["Script"] = new TypeInfo.Function([stringType, anyType], scriptType, RequiredParams: 1),
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for the tty module.
+    /// </summary>
+    public static Dictionary<string, TypeInfo> GetTtyModuleTypes()
+    {
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+
+        return new Dictionary<string, TypeInfo>
+        {
+            ["isatty"] = new TypeInfo.Function([numberType], BooleanType),
         };
     }
 }

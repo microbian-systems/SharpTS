@@ -41,7 +41,8 @@ public static class BuiltInModuleRegistry
         "dgram",
         "cluster",
         "vm",
-        "async_hooks"
+        "async_hooks",
+        "tty"
     ];
 
     /// <summary>

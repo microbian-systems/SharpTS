@@ -409,6 +409,8 @@ public partial class RuntimeEmitter
         EmitQuerystringMethods(typeBuilder, runtime);
         // Assert module methods
         EmitAssertMethods(typeBuilder, runtime);
+        // TTY module methods
+        EmitTtyModuleMethods(typeBuilder, runtime);
         // URL module methods
         EmitUrlMethods(typeBuilder, runtime);
         // HTTP module methods (fetch, http.createServer, etc.) - must be before globalThis

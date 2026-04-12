@@ -1,5 +1,6 @@
 using System.Reflection.Emit;
 using SharpTS.Parsing;
+using SharpTS.Runtime.BuiltIns.Modules;
 
 namespace SharpTS.Compilation;
 
@@ -130,6 +131,14 @@ public abstract partial class ExpressionEmitterBase
             return true;
         }
 
+        // Handle built-in modules (e.g., builtin:tty, builtin:path)
+        var builtInName = BuiltInModuleRegistry.GetModuleName(resolvedPath);
+        if (builtInName != null)
+        {
+            EmitCjsBuiltInModuleObject(builtInName);
+            return true;
+        }
+
         if (!Ctx.CommonJsGetExportsMethods.TryGetValue(resolvedPath, out var getExportsMethod))
         {
             EmitRuntimeModuleNotFound(specifier,
@@ -140,6 +149,59 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Call, getExportsMethod);
         SetStackUnknown();
         return true;
+    }
+
+    /// <summary>
+    /// Emits a built-in module namespace object for CJS require() calls.
+    /// Creates a Dictionary&lt;string, object?&gt; wrapped in a SharpTSObject with all exported members.
+    /// </summary>
+    private void EmitCjsBuiltInModuleObject(string moduleName)
+    {
+        var emitter = Ctx.BuiltInModuleEmitterRegistry?.GetEmitter(moduleName);
+        if (emitter == null)
+        {
+            IL.Emit(OpCodes.Ldnull);
+            SetStackUnknown();
+            return;
+        }
+
+        var dictType = Ctx.Types.DictionaryStringObject;
+        var dictCtor = Ctx.Types.GetDefaultConstructor(dictType);
+        var addMethod = Ctx.Types.GetMethod(dictType, "Add", Ctx.Types.String, Ctx.Types.Object);
+
+        IL.Emit(OpCodes.Newobj, dictCtor);
+
+        foreach (var memberName in emitter.GetExportedMembers())
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldstr, memberName);
+
+            if (!emitter.TryEmitPropertyGet(this, memberName))
+            {
+                // For methods, create a TSFunction wrapper
+                var helperMethod = Ctx.Runtime?.GetBuiltInModuleMethod(moduleName, memberName);
+                if (helperMethod != null)
+                {
+                    IL.Emit(OpCodes.Ldnull);
+                    IL.Emit(OpCodes.Ldtoken, helperMethod);
+                    var runtimeMethodHandle = Ctx.Types.Resolve("System.RuntimeMethodHandle");
+                    var methodBase = Ctx.Types.Resolve("System.Reflection.MethodBase");
+                    IL.Emit(OpCodes.Call, Ctx.Types.GetMethod(methodBase, "GetMethodFromHandle", runtimeMethodHandle));
+                    IL.Emit(OpCodes.Castclass, Ctx.Types.MethodInfo);
+                    IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSFunctionCtor);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldnull);
+                }
+            }
+
+            EnsureBoxed();
+            IL.Emit(OpCodes.Callvirt, addMethod);
+        }
+
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateObject);
+        SetStackUnknown();
     }
 
     /// <summary>

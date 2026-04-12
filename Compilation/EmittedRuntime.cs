@@ -1714,6 +1714,9 @@ public class EmittedRuntime
     public MethodBuilder AssertEqual { get; set; } = null!;
     public MethodBuilder AssertNotEqual { get; set; } = null!;
 
+    // TTY module methods
+    public MethodBuilder TtyIsatty { get; set; } = null!;
+
     // URL module methods
     public MethodBuilder UrlCreateUrlObject { get; set; } = null!;
     public MethodBuilder UrlParse { get; set; } = null!;

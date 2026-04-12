@@ -246,7 +246,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // debug — logging utility (depends on ms)
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "Missing built-in module: tty")]
+    [SkippableFact(Skip = "debug package source uses unsupported syntax (parse error at line 168)")]
     public void Debug_Interpreter()
     {
         SkipIfNoNpm();
