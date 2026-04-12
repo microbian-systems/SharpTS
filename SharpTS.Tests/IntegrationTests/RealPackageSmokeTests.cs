@@ -356,7 +356,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // yaml — YAML parser
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "Error class not available as global variable (needed for 'extends Error')")]
+    [SkippableFact(Skip = "Type checker rejects index access with 'any' on parsed object (#31)")]
     public void Yaml_Interpreter()
     {
         SkipIfNoNpm();
