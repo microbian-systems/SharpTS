@@ -843,9 +843,10 @@ public partial class TypeChecker
         // Function type compatibility
         if (expected is TypeInfo.Function f1 && actual is TypeInfo.Function f2)
         {
-            // For callbacks, actual can have fewer params than expected (unused params)
-            if (f2.ParamTypes.Count > f1.ParamTypes.Count) return false;
-            for (int i = 0; i < f2.ParamTypes.Count; i++)
+            // Actual can have fewer params (unused callback params) or more optional params
+            if (f2.MinArity > f1.ParamTypes.Count) return false;
+            int paramCount = Math.Min(f1.ParamTypes.Count, f2.ParamTypes.Count);
+            for (int i = 0; i < paramCount; i++)
             {
                 if (!IsCompatible(f1.ParamTypes[i], f2.ParamTypes[i])) return false;
             }

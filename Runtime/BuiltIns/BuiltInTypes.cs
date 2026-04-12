@@ -95,25 +95,25 @@ public static class BuiltInTypes
             "unshift" => new TypeInfo.Function([elementType], NumberType),
             "slice" => new TypeInfo.Function([NumberType, NumberType], new TypeInfo.Array(elementType), RequiredParams: 0), // start/end are optional
             "map" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType], AnyType)], // callback with just element param
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 1)],
                 new TypeInfo.Array(AnyType)),
             "filter" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType], BooleanType)],
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1)],
                 new TypeInfo.Array(elementType)),
             "forEach" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType], VoidType)],
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], VoidType, RequiredParams: 1)],
                 VoidType),
             "find" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType], BooleanType)],
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1)],
                 elementType),
             "findIndex" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType], BooleanType)],
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1)],
                 NumberType),
             "some" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType], BooleanType)],
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1)],
                 BooleanType),
             "every" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType], BooleanType)],
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1)],
                 BooleanType),
             "reduce" => new TypeInfo.Function(
                 [new TypeInfo.Function([AnyType, elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 2), AnyType],
@@ -130,7 +130,7 @@ public static class BuiltInTypes
             "reverse" => new TypeInfo.Function([], new TypeInfo.Array(elementType)),
             "flat" => new TypeInfo.Function([NumberType], new TypeInfo.Array(AnyType), RequiredParams: 0), // depth is optional, defaults to 1
             "flatMap" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], AnyType)],
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 1)],
                 new TypeInfo.Array(AnyType)),
             "sort" => new TypeInfo.Function(
                 [new TypeInfo.Function([elementType, elementType], NumberType)],

@@ -356,7 +356,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // yaml — YAML parser
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "Type checker rejects index access with 'any' on parsed object (#31)")]
+    [SkippableFact(Skip = "Blocked on missing global 'Map' built-in")]
     public void Yaml_Interpreter()
     {
         SkipIfNoNpm();

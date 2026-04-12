@@ -111,6 +111,12 @@ public partial class TypeChecker
             }
         }
 
+        // Allow indexing with 'any' type key (returns 'any')
+        if (indexType is TypeInfo.Any)
+        {
+            return new TypeInfo.Any();
+        }
+
         // Handle string index on objects/interfaces
         if (IsString(indexType) || indexType is TypeInfo.StringLiteral)
         {
@@ -262,6 +268,12 @@ public partial class TypeChecker
             return valueType;
         }
 
+        // Allow setting with 'any' type key
+        if (indexType is TypeInfo.Any)
+        {
+            return valueType;
+        }
+
         // Handle string index on objects/interfaces
         if (IsString(indexType) || indexType is TypeInfo.StringLiteral)
         {
@@ -399,6 +411,9 @@ public partial class TypeChecker
             return CheckGetIndexOnType(tp.Constraint, indexType, getIndex);
         }
 
+        if (indexType is TypeInfo.Any)
+            return new TypeInfo.Any();
+
         // Handle string index
         if (IsString(indexType) || indexType is TypeInfo.StringLiteral)
         {
@@ -448,6 +463,9 @@ public partial class TypeChecker
         {
             return CheckSetIndexOnType(tp.Constraint, indexType, valueType, setIndex);
         }
+
+        if (indexType is TypeInfo.Any)
+            return valueType;
 
         // Handle string index
         if (IsString(indexType) || indexType is TypeInfo.StringLiteral)

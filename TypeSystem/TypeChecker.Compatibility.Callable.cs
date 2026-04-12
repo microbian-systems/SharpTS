@@ -28,10 +28,10 @@ public partial class TypeChecker
         }
 
         // Check parameter count compatibility
-        if (func.ParamTypes.Count < sig.MinArity)
+        if (func.MinArity > sig.ParamTypes.Count)
             return false;
 
-        if (!sig.HasRestParam && func.ParamTypes.Count > sig.ParamTypes.Count)
+        if (func.ParamTypes.Count < sig.MinArity)
             return false;
 
         // Check parameter type compatibility (contravariant - signature params must be assignable FROM function params)
@@ -95,10 +95,10 @@ public partial class TypeChecker
     private bool ConstructorSignatureMatches(TypeInfo.Function ctorFunc, TypeInfo.ConstructorSignature sig)
     {
         // Check parameter count compatibility
-        if (ctorFunc.ParamTypes.Count < sig.MinArity)
+        if (ctorFunc.MinArity > sig.ParamTypes.Count)
             return false;
 
-        if (!sig.HasRestParam && ctorFunc.ParamTypes.Count > sig.ParamTypes.Count)
+        if (ctorFunc.ParamTypes.Count < sig.MinArity)
             return false;
 
         // Check parameter type compatibility (contravariant)
