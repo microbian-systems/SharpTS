@@ -105,8 +105,8 @@ public class ClassDeclarationTests
         var statements = Parse(source);
         Assert.Equal(2, statements.Count);
         var fooClass = Assert.IsType<Stmt.Class>(statements[1]);
-        Assert.NotNull(fooClass.Superclass);
-        Assert.Equal("Bar", fooClass.Superclass!.Lexeme);
+        Assert.NotNull(fooClass.SuperclassExpr);
+        Assert.Equal("Bar", Expr.GetSuperclassLeafName(fooClass.SuperclassExpr));
     }
 
     [Fact]
@@ -134,7 +134,7 @@ public class ClassDeclarationTests
             """;
         var statements = Parse(source);
         var fooClass = Assert.IsType<Stmt.Class>(statements[2]);
-        Assert.NotNull(fooClass.Superclass);
+        Assert.NotNull(fooClass.SuperclassExpr);
         Assert.NotNull(fooClass.Interfaces);
         Assert.Single(fooClass.Interfaces);
     }

@@ -938,9 +938,9 @@ public partial class Interpreter
 
         // Resolve superclass if present
         object? superclass = null;
-        if (classExpr.Superclass != null)
+        if (classExpr.SuperclassExpr != null)
         {
-            superclass = _environment.Get(classExpr.Superclass).ToObject();
+            superclass = Evaluate(classExpr.SuperclassExpr);
             if (superclass is not SharpTSClass)
             {
                 throw new InterpreterException("Superclass must be a class.");
@@ -957,7 +957,7 @@ public partial class Interpreter
             classEnv.Define(classExpr.Name.Lexeme, null); // Placeholder for self-reference
         }
 
-        if (classExpr.Superclass != null)
+        if (classExpr.SuperclassExpr != null)
         {
             classEnv = new RuntimeEnvironment(classEnv);
             classEnv.Define("super", superclass);

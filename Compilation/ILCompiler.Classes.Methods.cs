@@ -310,10 +310,10 @@ public partial class ILCompiler
                 ctorParamTypes = ParameterTypeResolver.ResolveConstructorParameters(
                     classStmt.Name.Lexeme, constructor.Parameters, _typeMapper, _typeMap);
             }
-            else if (classStmt.Superclass != null)
+            else if (classStmt.SuperclassExpr != null)
             {
                 // No explicit constructor - inherit parent's parameter types
-                string qualifiedSuperclass = ctx.ResolveClassName(classStmt.Superclass.Lexeme);
+                string qualifiedSuperclass = ctx.ResolveClassName(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
                 if (_classes.Constructors.TryGetValue(qualifiedSuperclass, out var parentCtor))
                 {
                     ctorParamTypes = parentCtor.GetParameters().Select(p => p.ParameterType).ToArray();

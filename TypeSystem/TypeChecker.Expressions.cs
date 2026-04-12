@@ -1313,9 +1313,9 @@ public partial class TypeChecker
 
         // Resolve superclass if present
         TypeInfo.Class? superclass = null;
-        if (classExpr.Superclass != null)
+        if (classExpr.SuperclassExpr != null)
         {
-            TypeInfo superType = LookupVariable(classExpr.Superclass);
+            TypeInfo superType = CheckExpr(classExpr.SuperclassExpr);
             if (superType is TypeInfo.Instance si && si.ClassType is TypeInfo.Class sic)
                 superclass = sic;
             else if (superType is TypeInfo.Class sc)

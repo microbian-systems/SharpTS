@@ -164,14 +164,14 @@ public class VariableResolver : AstVisitorBase
     protected override void VisitClass(Stmt.Class stmt)
     {
         var enclosingClass = _currentClass;
-        _currentClass = stmt.Superclass != null ? ClassType.Subclass : ClassType.Class;
+        _currentClass = stmt.SuperclassExpr != null ? ClassType.Subclass : ClassType.Class;
 
         // Declare class name in current scope
         Declare(stmt.Name.Lexeme);
         Define(stmt.Name.Lexeme);
 
         // If there's a superclass, create a scope for 'super'
-        if (stmt.Superclass != null)
+        if (stmt.SuperclassExpr != null)
         {
             BeginScope();
             _scopes.Peek()["super"] = true;
@@ -231,7 +231,7 @@ public class VariableResolver : AstVisitorBase
 
         EndScope(); // 'this' scope
 
-        if (stmt.Superclass != null)
+        if (stmt.SuperclassExpr != null)
             EndScope(); // 'super' scope
 
         _currentClass = enclosingClass;
@@ -475,10 +475,10 @@ public class VariableResolver : AstVisitorBase
     protected override void VisitClassExpr(Expr.ClassExpr expr)
     {
         var enclosingClass = _currentClass;
-        _currentClass = expr.Superclass != null ? ClassType.Subclass : ClassType.Class;
+        _currentClass = expr.SuperclassExpr != null ? ClassType.Subclass : ClassType.Class;
 
         // If there's a superclass, create a scope for 'super'
-        if (expr.Superclass != null)
+        if (expr.SuperclassExpr != null)
         {
             BeginScope();
             _scopes.Peek()["super"] = true;
@@ -520,7 +520,7 @@ public class VariableResolver : AstVisitorBase
 
         EndScope(); // 'this' scope
 
-        if (expr.Superclass != null)
+        if (expr.SuperclassExpr != null)
             EndScope(); // 'super' scope
 
         _currentClass = enclosingClass;

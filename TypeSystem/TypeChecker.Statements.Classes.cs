@@ -23,9 +23,9 @@ public partial class TypeChecker
         }
 
         TypeInfo? superclass = null;
-        if (classStmt.Superclass != null)
+        if (classStmt.SuperclassExpr != null)
         {
-            TypeInfo superType = LookupVariable(classStmt.Superclass);
+            TypeInfo superType = CheckExpr(classStmt.SuperclassExpr);
 
             // Handle generic class with type arguments: extends Box<number>
             if (classStmt.SuperclassTypeArgs != null && classStmt.SuperclassTypeArgs.Count > 0)
@@ -39,7 +39,7 @@ public partial class TypeChecker
                 }
                 else
                 {
-                    throw new TypeCheckException($"Cannot use type arguments with non-generic class '{classStmt.Superclass.Lexeme}'");
+                    throw new TypeCheckException($"Cannot use type arguments with non-generic class '{Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)}'");
                 }
             }
             else if (superType is TypeInfo.Instance si && si.ClassType is TypeInfo.Class sic)
@@ -56,7 +56,7 @@ public partial class TypeChecker
                 // Allow extending Any-typed globals (e.g. Error, TypeError).
                 // Create a placeholder class so super() calls and constructor
                 // validation type-check correctly (accept any number of args).
-                var placeholder = new TypeInfo.MutableClass(classStmt.Superclass.Lexeme);
+                var placeholder = new TypeInfo.MutableClass(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
                 placeholder.Methods["constructor"] = new TypeInfo.Function(
                     [new TypeInfo.Any()], new TypeInfo.Void(), RequiredParams: 0, HasRestParam: true);
                 superclass = placeholder;

@@ -1780,21 +1780,9 @@ public partial class Interpreter : IDisposable
     internal ExecutionResult VisitClass(Stmt.Class classStmt)
     {
         object? superclass = null;
-        if (classStmt.Superclass != null)
+        if (classStmt.SuperclassExpr != null)
         {
-            // Check environment first, then global constants (for built-in classes like Error)
-            if (_environment.TryGet(classStmt.Superclass.Lexeme, out var superRV))
-            {
-                superclass = superRV.ToObject();
-            }
-            else if (_globalConstants.TryGetValue(classStmt.Superclass.Lexeme, out var globalSuper))
-            {
-                superclass = globalSuper;
-            }
-            else
-            {
-                throw new InterpreterException($"Undefined variable '{classStmt.Superclass.Lexeme}'.");
-            }
+            superclass = Evaluate(classStmt.SuperclassExpr);
 
             if (superclass is not SharpTSClass)
             {
@@ -1804,7 +1792,7 @@ public partial class Interpreter : IDisposable
 
         _environment.Define(classStmt.Name.Lexeme, null);
 
-        if (classStmt.Superclass != null)
+        if (classStmt.SuperclassExpr != null)
         {
             _environment = new RuntimeEnvironment(_environment);
             _environment.Define("super", superclass);
@@ -2048,7 +2036,7 @@ public partial class Interpreter : IDisposable
         // Apply decorators in the correct order
         klass = ApplyAllDecorators(classStmt, klass, methods, staticMethods, getters, setters);
 
-        if (classStmt.Superclass != null)
+        if (classStmt.SuperclassExpr != null)
         {
             _environment = _environment.Enclosing!;
         }

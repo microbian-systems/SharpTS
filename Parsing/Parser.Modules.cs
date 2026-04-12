@@ -95,7 +95,7 @@ public partial class Parser
                 // Check for inline type specifier: { type Foo }
                 bool isTypeOnly = Match(TokenType.TYPE);
 
-                Token imported = Consume(TokenType.IDENTIFIER, "Expect import name.");
+                Token imported = ConsumeSpecifierName("Expect import name.");
                 Token? localName = null;
 
                 if (Match(TokenType.AS))
@@ -332,7 +332,7 @@ public partial class Parser
         {
             do
             {
-                Token localName = Consume(TokenType.IDENTIFIER, "Expect export name.");
+                Token localName = ConsumeSpecifierName("Expect export name.");
                 Token? exportedName = null;
 
                 if (Match(TokenType.AS))
@@ -346,5 +346,17 @@ public partial class Parser
 
         Consume(TokenType.RIGHT_BRACE, "Expect '}' after export specifiers.");
         return specifiers;
+    }
+
+    /// <summary>
+    /// Consumes a specifier name in import/export braces. Accepts identifiers and the
+    /// <c>default</c> keyword, which is valid as a specifier name per the ECMAScript spec
+    /// (e.g., <c>export { default as foo }</c>, <c>import { default as bar }</c>).
+    /// </summary>
+    private Token ConsumeSpecifierName(string errorMessage)
+    {
+        if (Check(TokenType.IDENTIFIER) || Check(TokenType.DEFAULT))
+            return Advance();
+        throw new Exception($"Parse Error at line {Peek().Line}: {errorMessage}");
     }
 }

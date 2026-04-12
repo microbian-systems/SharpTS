@@ -9,11 +9,11 @@ public partial class Parser
         Token name = Consume(TokenType.IDENTIFIER, "Expect class name.");
         List<TypeParam>? typeParams = ParseTypeParameters();
 
-        Token? superclass = null;
+        Expr? superclassExpr = null;
         List<string>? superclassTypeArgs = null;
         if (Match(TokenType.EXTENDS))
         {
-            superclass = Consume(TokenType.IDENTIFIER, "Expect superclass name.");
+            superclassExpr = Call();  // Parse LHS expression (identifiers, member access, calls)
             superclassTypeArgs = TryParseTypeArguments();
         }
 
@@ -91,7 +91,7 @@ public partial class Parser
             }
 
             // Validate: override requires the class to have a superclass
-            if (isOverride && superclass == null)
+            if (isOverride && superclassExpr == null)
             {
                 throw new Exception($"Parse Error: Cannot use 'override' modifier in a class that does not extend another class.");
             }
@@ -480,7 +480,7 @@ public partial class Parser
         }
 
         Consume(TokenType.RIGHT_BRACE, "Expect '}' after class body.");
-        return new Stmt.Class(name, typeParams, superclass, superclassTypeArgs, methods, fields, accessors.Count > 0 ? accessors : null, autoAccessors.Count > 0 ? autoAccessors : null, interfaces, interfaceTypeArgs, isAbstract, classDecorators, isDeclare, staticInitializers.Count > 0 ? staticInitializers : null);
+        return new Stmt.Class(name, typeParams, superclassExpr, superclassTypeArgs, methods, fields, accessors.Count > 0 ? accessors : null, autoAccessors.Count > 0 ? autoAccessors : null, interfaces, interfaceTypeArgs, isAbstract, classDecorators, isDeclare, staticInitializers.Count > 0 ? staticInitializers : null);
     }
 
     /// <summary>
@@ -538,11 +538,11 @@ public partial class Parser
 
         List<TypeParam>? typeParams = ParseTypeParameters();
 
-        Token? superclass = null;
+        Expr? superclassExpr = null;
         List<string>? superclassTypeArgs = null;
         if (Match(TokenType.EXTENDS))
         {
-            superclass = Consume(TokenType.IDENTIFIER, "Expect superclass name.");
+            superclassExpr = Call();  // Parse LHS expression (identifiers, member access, calls)
             superclassTypeArgs = TryParseTypeArguments();
         }
 
@@ -861,7 +861,7 @@ public partial class Parser
         return new Expr.ClassExpr(
             name,
             typeParams,
-            superclass,
+            superclassExpr,
             superclassTypeArgs,
             methods,
             fields,

@@ -848,11 +848,11 @@ public partial class TypeChecker
         var mutableClass = new TypeInfo.MutableClass(classStmt.Name.Lexeme);
 
         // Try to resolve superclass if present (may fail if superclass not yet defined)
-        if (classStmt.Superclass != null)
+        if (classStmt.SuperclassExpr != null)
         {
             try
             {
-                var superType = _environment.Get(classStmt.Superclass.Lexeme);
+                var superType = _environment.Get(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
                 if (superType is TypeInfo.Class c)
                 {
                     mutableClass.Superclass = c;

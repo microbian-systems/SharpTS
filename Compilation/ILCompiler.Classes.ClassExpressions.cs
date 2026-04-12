@@ -41,7 +41,7 @@ public partial class ILCompiler
         );
 
         // Track superclass name for inheritance resolution
-        string? superclassName = classExpr.Superclass?.Lexeme;
+        string? superclassName = Expr.GetSuperclassLeafName(classExpr.SuperclassExpr);
         _classExprs.Superclass[classExpr] = superclassName;
 
         // Handle generic type parameters FIRST (before resolving superclass type args)

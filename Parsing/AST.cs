@@ -216,7 +216,7 @@ public abstract record Expr
     public record ClassExpr(
         Token? Name,
         List<TypeParam>? TypeParams,
-        Token? Superclass,
+        Expr? SuperclassExpr,
         List<string>? SuperclassTypeArgs,
         List<Stmt.Function> Methods,
         List<Stmt.Field> Fields,
@@ -227,6 +227,36 @@ public abstract record Expr
         bool IsAbstract = false,
         List<Stmt>? StaticInitializers = null
     ) : Expr;
+
+    /// <summary>
+    /// Extracts the full dotted name from a superclass expression (e.g., "ns.Base" from ns.Base).
+    /// </summary>
+    public static string? GetSuperclassName(Expr? superclassExpr) => superclassExpr switch
+    {
+        Variable v => v.Name.Lexeme,
+        Get g => GetSuperclassName(g.Object) + "." + g.Name.Lexeme,
+        _ => null
+    };
+
+    /// <summary>
+    /// Extracts just the leaf (final identifier) from a superclass expression (e.g., "Base" from ns.Base).
+    /// </summary>
+    public static string? GetSuperclassLeafName(Expr? superclassExpr) => superclassExpr switch
+    {
+        Variable v => v.Name.Lexeme,
+        Get g => g.Name.Lexeme,
+        _ => null
+    };
+
+    /// <summary>
+    /// Extracts the Token from a superclass expression for line number reporting.
+    /// </summary>
+    public static Token? GetSuperclassToken(Expr? superclassExpr) => superclassExpr switch
+    {
+        Variable v => v.Name,
+        Get g => g.Name,
+        _ => null
+    };
 }
 
 /// <summary>
@@ -348,7 +378,7 @@ public abstract record Stmt
     /// Class declaration. IsDeclare indicates an ambient declaration (declare class) which has no implementation.
     /// StaticInitializers contains static fields and static blocks in declaration order for proper initialization sequencing.
     /// </summary>
-    public record Class(Token Name, List<TypeParam>? TypeParams, Token? Superclass, List<string>? SuperclassTypeArgs, List<Stmt.Function> Methods, List<Stmt.Field> Fields, List<Stmt.Accessor>? Accessors = null, List<Stmt.AutoAccessor>? AutoAccessors = null, List<Token>? Interfaces = null, List<List<string>>? InterfaceTypeArgs = null, bool IsAbstract = false, List<Decorator>? Decorators = null, bool IsDeclare = false, List<Stmt>? StaticInitializers = null) : Stmt;
+    public record Class(Token Name, List<TypeParam>? TypeParams, Expr? SuperclassExpr, List<string>? SuperclassTypeArgs, List<Stmt.Function> Methods, List<Stmt.Field> Fields, List<Stmt.Accessor>? Accessors = null, List<Stmt.AutoAccessor>? AutoAccessors = null, List<Token>? Interfaces = null, List<List<string>>? InterfaceTypeArgs = null, bool IsAbstract = false, List<Decorator>? Decorators = null, bool IsDeclare = false, List<Stmt>? StaticInitializers = null) : Stmt;
     /// <summary>
     /// Static block: static { statements }
     /// Executes once when the class is initialized, in declaration order with static fields.

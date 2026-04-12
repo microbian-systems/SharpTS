@@ -72,9 +72,9 @@ public partial class ILCompiler
 
         // Resolve superclass name for tracking (before creating TypeBuilder)
         string? qualifiedSuperclassName = null;
-        if (classStmt.Superclass != null)
+        if (classStmt.SuperclassExpr != null)
         {
-            qualifiedSuperclassName = ctx.ResolveClassName(classStmt.Superclass.Lexeme);
+            qualifiedSuperclassName = ctx.ResolveClassName(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
         }
 
         // Create TypeBuilder initially without parent - we'll set it after defining generic params
@@ -129,15 +129,15 @@ public partial class ILCompiler
                 baseType = superBuilder;
             }
         }
-        else if (qualifiedSuperclassName != null && classStmt.Superclass != null
-            && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(classStmt.Superclass.Lexeme))
+        else if (qualifiedSuperclassName != null && classStmt.SuperclassExpr != null
+            && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!))
         {
             // Built-in error types: extend the emitted $Error/$TypeError/etc.
-            baseType = GetEmittedErrorType(classStmt.Superclass.Lexeme);
+            baseType = GetEmittedErrorType(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
         }
 
         // Track Error subclass status (direct or transitive)
-        if (classStmt.Superclass != null && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(classStmt.Superclass.Lexeme))
+        if (classStmt.SuperclassExpr != null && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!))
         {
             _classes.ErrorSubclasses.Add(qualifiedClassName);
         }
