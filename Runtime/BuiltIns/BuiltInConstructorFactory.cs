@@ -75,6 +75,12 @@ public static class BuiltInConstructorFactory
         // registered in Interpreter.CreateGlobalsLookup()
 
     /// <summary>
+    /// Exposes the simple constructor registry for global variable registration.
+    /// </summary>
+    public static IReadOnlyDictionary<string, ConstructorHandler> GetConstructors()
+        => _simpleConstructors;
+
+    /// <summary>
     /// Creates a built-in object using the appropriate constructor.
     /// </summary>
     /// <param name="name">The constructor name (e.g., "Date", "Map").</param>

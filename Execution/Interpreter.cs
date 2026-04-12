@@ -105,6 +105,14 @@ public partial class Interpreter : IDisposable
             }
         }
 
+        // Add built-in constructors as global variables (Map, Set, Date, RegExp, etc.)
+        // Enables typeof Map, val instanceof Map, passing Map as value, Map.groupBy(), etc.
+        foreach (var (name, factory) in BuiltInConstructorFactory.GetConstructors())
+        {
+            if (!globals.ContainsKey(name))
+                globals[name] = new SharpTSBuiltInConstructor(name, factory);
+        }
+
         return globals.ToFrozenDictionary();
     }
 

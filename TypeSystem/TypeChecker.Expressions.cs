@@ -1265,6 +1265,10 @@ public partial class TypeChecker
         // Error constructors (Error, TypeError, RangeError, etc.)
         if (BuiltInNames.IsErrorTypeName(name.Lexeme))
             return new TypeInfo.Any();
+        // Built-in constructors that can be referenced as variables
+        if (name.Lexeme is "Map" or "Set" or "WeakMap" or "WeakSet" or "WeakRef"
+            or "Date" or "RegExp")
+            return new TypeInfo.Any();
 
         var type = _environment.Get(name.Lexeme);
         if (type == null)

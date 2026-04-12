@@ -356,7 +356,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // yaml — YAML parser
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "Blocked on missing global 'Map' built-in")]
+    [SkippableFact(Skip = "Blocked on CJS cross-module class resolution (yaml internal 'Pair' class)")]
     public void Yaml_Interpreter()
     {
         SkipIfNoNpm();

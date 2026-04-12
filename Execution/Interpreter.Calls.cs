@@ -609,6 +609,21 @@ public partial class Interpreter
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/narrowing.html#instanceof-narrowing">TypeScript instanceof Narrowing</seealso>
     private object EvaluateInstanceof(object? left, object? right)
     {
+        // Built-in constructor instanceof: val instanceof Map, val instanceof Set, etc.
+        if (right is SharpTSBuiltInConstructor ctor)
+        {
+            return ctor.Name switch
+            {
+                "Map" => left is SharpTSMap,
+                "Set" => left is SharpTSSet,
+                "WeakMap" => left is SharpTSWeakMap,
+                "WeakSet" => left is SharpTSWeakSet,
+                "Date" => left is SharpTSDate,
+                "RegExp" => left is SharpTSRegExp,
+                _ => false
+            };
+        }
+
         if (right is not SharpTSClass targetClass)
             return false;
 
