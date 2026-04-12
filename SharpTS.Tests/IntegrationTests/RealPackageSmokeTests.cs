@@ -186,7 +186,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
         Assert.Contains("1m", result.StandardOutput);
     }
 
-    [SkippableFact(Skip = "Compiled mode: String() not callable in emitted IL")]
+    [SkippableFact]
     public void Ms_Compiled()
     {
         SkipIfNoNpm();
