@@ -391,6 +391,11 @@ public partial class TypeChecker
 
     // Error recovery support
     private readonly DiagnosticCollector _diagnostics = new();
+
+    /// <summary>
+    /// Gets any diagnostics collected during module type checking.
+    /// </summary>
+    public IReadOnlyList<Diagnostic> GetDiagnostics() => _diagnostics.Diagnostics;
     private string? _filePath = null;
 
     /// <summary>
@@ -660,6 +665,9 @@ public partial class TypeChecker
         // Pre-register type declarations
         PreRegisterTypeDeclarations(statements);
 
+        // Hoist class declarations (as Any for forward references in function bodies)
+        HoistClassDeclarations(statements);
+
         // Hoist function declarations
         HoistFunctionDeclarations(statements);
 
@@ -918,16 +926,26 @@ public partial class TypeChecker
                     // Pre-register type declarations (may have been done in first pass, but safe to repeat)
                     PreRegisterTypeDeclarations(module.Statements);
 
+                    // Hoist class declarations (as Any for forward references)
+                    HoistClassDeclarations(module.Statements);
+
                     // Hoist function declarations
                     HoistFunctionDeclarations(module.Statements);
 
                     // Hoist var declarations (pre-define as any for forward reference support)
                     HoistVarDeclarations(module.Statements);
 
-                    // Check all statements
+                    // Check all statements with error recovery
                     foreach (var stmt in module.Statements)
                     {
-                        CheckStmt(stmt);
+                        try
+                        {
+                            CheckStmt(stmt);
+                        }
+                        catch (TypeCheckException ex)
+                        {
+                            RecordTypeError(ex);
+                        }
                     }
                 }
             }
@@ -936,14 +954,25 @@ public partial class TypeChecker
                 // Module files get isolated scope
                 var moduleEnv = new TypeEnvironment(_environment);
 
+                // CJS modules have module, exports, and global in scope
+                if (module.IsCommonJs)
+                {
+                    moduleEnv.Define("exports", new TypeInfo.Any());
+                    moduleEnv.Define("module", new TypeInfo.Any());
+                    moduleEnv.Define("global", new TypeInfo.Any());
+                }
+
                 // Bind imports from dependencies
                 BindModuleImports(module, moduleEnv);
 
-                // Type-check module body
+                // Type-check module body with error recovery
                 using (new EnvironmentScope(this, moduleEnv))
                 {
                     // First pass: pre-register type declarations
                     PreRegisterTypeDeclarations(module.Statements);
+
+                    // Hoist class declarations (as Any for forward references)
+                    HoistClassDeclarations(module.Statements);
 
                     // Second pass: hoist function declarations (now types are available)
                     HoistFunctionDeclarations(module.Statements);
@@ -951,10 +980,17 @@ public partial class TypeChecker
                     // Hoist var declarations (pre-define as any for forward reference support)
                     HoistVarDeclarations(module.Statements);
 
-                    // Third pass: check all statements
+                    // Third pass: check all statements with error recovery
                     foreach (var stmt in module.Statements)
                     {
-                        CheckStmt(stmt);
+                        try
+                        {
+                            CheckStmt(stmt);
+                        }
+                        catch (TypeCheckException ex)
+                        {
+                            RecordTypeError(ex);
+                        }
                     }
                 }
             }
@@ -1015,6 +1051,14 @@ public partial class TypeChecker
     {
         var moduleEnv = new TypeEnvironment(_environment);
 
+        // CJS modules have module, exports, and global in scope
+        if (module.IsCommonJs)
+        {
+            moduleEnv.Define("exports", new TypeInfo.Any());
+            moduleEnv.Define("module", new TypeInfo.Any());
+            moduleEnv.Define("global", new TypeInfo.Any());
+        }
+
         using (new EnvironmentScope(this, moduleEnv))
         {
             // First, bind imports so we can reference imported types in our declarations
@@ -1022,6 +1066,9 @@ public partial class TypeChecker
 
             // Pre-register type declarations first
             PreRegisterTypeDeclarations(module.Statements);
+
+            // Hoist class declarations (as Any for forward references)
+            HoistClassDeclarations(module.Statements);
 
             // Hoist function declarations (now types are available)
             HoistFunctionDeclarations(module.Statements);
@@ -1032,43 +1079,50 @@ public partial class TypeChecker
             // Then, process all declarations to populate the environment
             foreach (var stmt in module.Statements)
             {
-            // Skip imports - already bound above
-            if (stmt is Stmt.Import)
-            {
-                continue;
-            }
+                try
+                {
+                    // Skip imports - already bound above
+                    if (stmt is Stmt.Import)
+                    {
+                        continue;
+                    }
 
-            // For exports, process the underlying declaration
-            if (stmt is Stmt.Export export)
-            {
-                if (export.ExportAssignment != null)
-                {
-                    // CommonJS-style export = value
-                    var type = CheckExpr(export.ExportAssignment);
-                    module.HasExportAssignment = true;
-                    module.ExportAssignmentType = type;
+                    // For exports, process the underlying declaration
+                    if (stmt is Stmt.Export export)
+                    {
+                        if (export.ExportAssignment != null)
+                        {
+                            // CommonJS-style export = value
+                            var type = CheckExpr(export.ExportAssignment);
+                            module.HasExportAssignment = true;
+                            module.ExportAssignmentType = type;
+                        }
+                        else if (export.Declaration != null)
+                        {
+                            CheckStmt(export.Declaration);
+                        }
+                        else if (export.DefaultExpr != null)
+                        {
+                            var type = CheckExpr(export.DefaultExpr);
+                            module.DefaultExportType = type;
+                        }
+                        else if (export.NamedExports != null && export.FromModulePath == null)
+                        {
+                            // Named exports like `export { x, y }` need the declarations to be processed first
+                            // They'll be resolved in the second pass
+                        }
+                    }
+                    else
+                    {
+                        // Regular declarations
+                        CheckStmt(stmt);
+                    }
                 }
-                else if (export.Declaration != null)
+                catch (TypeCheckException ex)
                 {
-                    CheckStmt(export.Declaration);
-                }
-                else if (export.DefaultExpr != null)
-                {
-                    var type = CheckExpr(export.DefaultExpr);
-                    module.DefaultExportType = type;
-                }
-                else if (export.NamedExports != null && export.FromModulePath == null)
-                {
-                    // Named exports like `export { x, y }` need the declarations to be processed first
-                    // They'll be resolved in the second pass
+                    RecordTypeError(ex);
                 }
             }
-            else
-            {
-                // Regular declarations
-                CheckStmt(stmt);
-            }
-        }
 
         // Now collect exports
         foreach (var stmt in module.Statements)

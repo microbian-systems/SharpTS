@@ -174,6 +174,15 @@ static void RunModuleFile(string absolutePath, DecoratorMode decoratorMode, bool
         checker.SetDecoratorMode(decoratorMode);
         var typeMap = checker.CheckModules(allModules, resolver);
 
+        // Report type errors but continue to interpretation (CJS libraries may have benign type issues)
+        var diagnostics = checker.GetDiagnostics();
+        if (diagnostics.Count > 0)
+        {
+            foreach (var diagnostic in diagnostics)
+                Console.WriteLine($"Error: {diagnostic}");
+            return;
+        }
+
         // Interpretation
         var interpreter = new Interpreter();
         interpreter.SetDecoratorMode(decoratorMode);
@@ -187,6 +196,10 @@ static void RunModuleFile(string absolutePath, DecoratorMode decoratorMode, bool
         }
 
         interpreter.InterpretModules(allModules, resolver, typeMap);
+    }
+    catch (SharpTS.Runtime.Exceptions.ThrowException tex)
+    {
+        Console.WriteLine($"Error: {tex.Value}");
     }
     catch (Exception ex)
     {
@@ -255,6 +268,10 @@ static void Run(string source, DecoratorMode decoratorMode, bool emitDecoratorMe
     catch (SharpTSException ex)
     {
         Console.WriteLine($"Error: {ex.Diagnostic}");
+    }
+    catch (SharpTS.Runtime.Exceptions.ThrowException tex)
+    {
+        Console.WriteLine($"Error: {tex.Value}");
     }
     catch (Exception ex)
     {

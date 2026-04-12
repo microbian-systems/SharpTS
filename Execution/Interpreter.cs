@@ -854,11 +854,19 @@ public partial class Interpreter : IDisposable
                 // This provides "top-level await" behavior for the interpreter
                 if (statement is Stmt.Expression exprStmt)
                 {
-                    object? result = Evaluate(exprStmt.Expr);
-                    // Wait for top-level Promises to complete before continuing
-                    if (result is SharpTSPromise promise)
+                    try
                     {
-                        WaitForPromise(promise);
+                        object? result = Evaluate(exprStmt.Expr);
+                        // Wait for top-level Promises to complete before continuing
+                        if (result is SharpTSPromise promise)
+                        {
+                            WaitForPromise(promise);
+                        }
+                    }
+                    catch (ThrowException tex)
+                    {
+                        Out.WriteLine($"Runtime Error: {Stringify(tex.Value)}");
+                        return;
                     }
                 }
                 else
@@ -999,6 +1007,11 @@ public partial class Interpreter : IDisposable
             // Always run the event loop at the end - servers/timers may have been
             // registered during module execution (even without a main function)
             RunEventLoop();
+        }
+        catch (ThrowException tex)
+        {
+            Out.WriteLine($"Runtime Error: {Stringify(tex.Value)}");
+            throw;
         }
         catch (Exception error)
         {

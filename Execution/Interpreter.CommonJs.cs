@@ -133,10 +133,17 @@ public partial class Interpreter
             {
                 if (stmt is Stmt.Expression exprStmt)
                 {
-                    object? result = Evaluate(exprStmt.Expr);
-                    if (result is SharpTSPromise promise)
+                    try
                     {
-                        promise.Task.GetAwaiter().GetResult();
+                        object? result = Evaluate(exprStmt.Expr);
+                        if (result is SharpTSPromise promise)
+                        {
+                            promise.Task.GetAwaiter().GetResult();
+                        }
+                    }
+                    catch (ThrowException tex)
+                    {
+                        throw new InterpreterException(Stringify(tex.Value));
                     }
                 }
                 else

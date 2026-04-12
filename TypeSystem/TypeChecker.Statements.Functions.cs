@@ -57,6 +57,31 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Pre-registers top-level class declarations by defining their names as 'any' in the type
+    /// environment. This enables forward references to classes from within function bodies that
+    /// appear before the class declaration — a common pattern in CJS libraries where functions
+    /// reference classes defined later in the same file. The real class type is defined when
+    /// CheckClassDeclaration runs during the sequential pass, overwriting the Any placeholder.
+    /// </summary>
+    private void HoistClassDeclarations(IEnumerable<Stmt> statements)
+    {
+        foreach (var stmt in statements)
+        {
+            switch (stmt)
+            {
+                case Stmt.Class cls:
+                    if (!_environment.IsDefinedLocally(cls.Name.Lexeme))
+                        _environment.Define(cls.Name.Lexeme, new TypeInfo.Any());
+                    break;
+                case Stmt.Export { Declaration: Stmt.Class exportCls }:
+                    if (!_environment.IsDefinedLocally(exportCls.Name.Lexeme))
+                        _environment.Define(exportCls.Name.Lexeme, new TypeInfo.Any());
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
     /// Hoists const/var declarations with function expression initializers.
     /// This enables mutual recursion between function expressions declared with const/var.
     /// Only registers the function type, does not check the function body.
