@@ -1542,6 +1542,13 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     _helpers.IL.Emit(OpCodes.Ldstr, "undefined");
                     _helpers.SetStackUnknown();
                 }
+                // Error constructors are functions
+                else if (u.Right is Expr.Variable ev
+                    && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(ev.Name.Lexeme))
+                {
+                    _helpers.IL.Emit(OpCodes.Ldstr, "function");
+                    _helpers.SetStackUnknown();
+                }
                 // process.stdin/stdout/stderr are marker strings in compiled mode but should return "object"
                 else if (u.Right is Expr.Get tg && tg.Object is Expr.Variable tgv
                     && tgv.Name.Lexeme == "process" && tg.Name.Lexeme is "stdin" or "stdout" or "stderr")
@@ -1580,6 +1587,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         if (Ctx.Functions.ContainsKey(Ctx.ResolveFunctionName(name))) return true;
         if (Ctx.InnerFunctionMethodsByName?.ContainsKey(name) == true) return true;
         if (Ctx.NamespaceFields?.ContainsKey(name) == true) return true;
+        if (Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(name)) return true;
         return false;
     }
 

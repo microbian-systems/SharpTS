@@ -125,6 +125,9 @@ internal static class ValueFormatter
         if (value is SharpTSError error)
             return $"{Magenta}{error.Name}: {error.Message}{Reset}";
 
+        if (value is SharpTSInstance inst && inst.GetClass() is SharpTSErrorClass)
+            return $"{Magenta}{SharpTSErrorClass.ErrorToString(inst)}{Reset}";
+
         if (value is SharpTSMap map)
             return FormatMap(map, depth, maxDepth, seen);
 

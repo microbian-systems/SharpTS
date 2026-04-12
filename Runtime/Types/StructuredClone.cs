@@ -98,8 +98,9 @@ public static class StructuredClone
             // RegExp - clone pattern and flags
             SharpTSRegExp regexp => new SharpTSRegExp(regexp.Source, regexp.Flags),
 
-            // Error - clone message and name
+            // Error - clone message and name (both legacy SharpTSError and SharpTSInstance from SharpTSErrorClass)
             SharpTSError error => CloneError(error),
+            SharpTSInstance inst when inst.GetClass() is SharpTSErrorClass => CloneErrorInstance(inst),
 
             // Map - deep clone entries (interpreter SharpTSMap)
             SharpTSMap map => CloneMap(map, cloned, transferred),
@@ -360,6 +361,16 @@ public static class StructuredClone
         return cloned;
     }
 
+    private static SharpTSInstance CloneErrorInstance(SharpTSInstance source)
+    {
+        var klass = (SharpTSErrorClass)source.GetClass();
+        var clone = new SharpTSInstance(klass);
+        // Copy all error fields
+        foreach (var fieldName in source.GetFieldNames())
+            clone.SetRawField(fieldName, source.GetRawField(fieldName));
+        return clone;
+    }
+
     private static SharpTSMap CloneMap(SharpTSMap source, Dictionary<object, object> cloned, HashSet<object> transferred)
     {
         var result = new SharpTSMap();
@@ -477,6 +488,7 @@ public static class StructuredClone
             case SharpTSRegExp:
             case SharpTSError:
             case SharpTSBuffer:
+            case SharpTSInstance inst when inst.GetClass() is SharpTSErrorClass:
                 return;
 
             case SharpTSTypedArray:

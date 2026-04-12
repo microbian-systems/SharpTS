@@ -151,6 +151,8 @@ public class SharpTSPromiseRejectedException : Exception
     {
         if (reason is SharpTSError error)
             return $"{error.Name}: {error.Message}";
+        if (reason is SharpTSInstance inst && inst.GetClass() is SharpTSErrorClass)
+            return SharpTSErrorClass.ErrorToString(inst);
         return reason?.ToString() ?? "Promise rejected";
     }
 
@@ -159,6 +161,8 @@ public class SharpTSPromiseRejectedException : Exception
         // If reason is already a SharpTSError, use its stack
         if (reason is SharpTSError error)
             return error.Stack;
+        if (reason is SharpTSInstance inst && inst.GetClass() is SharpTSErrorClass)
+            return inst.GetRawField("stack")?.ToString();
 
         // Otherwise capture .NET stack at rejection point
         var stackTrace = new System.Diagnostics.StackTrace(skipFrames: 2, fNeedFileInfo: true);

@@ -129,6 +129,22 @@ public partial class ILCompiler
                 baseType = superBuilder;
             }
         }
+        else if (qualifiedSuperclassName != null && classStmt.Superclass != null
+            && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(classStmt.Superclass.Lexeme))
+        {
+            // Built-in error types: extend the emitted $Error/$TypeError/etc.
+            baseType = GetEmittedErrorType(classStmt.Superclass.Lexeme);
+        }
+
+        // Track Error subclass status (direct or transitive)
+        if (classStmt.Superclass != null && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(classStmt.Superclass.Lexeme))
+        {
+            _classes.ErrorSubclasses.Add(qualifiedClassName);
+        }
+        else if (qualifiedSuperclassName != null && _classes.ErrorSubclasses.Contains(qualifiedSuperclassName))
+        {
+            _classes.ErrorSubclasses.Add(qualifiedClassName);
+        }
 
         // Set the parent type (defaults to Object if baseType is null)
         if (baseType != null)
@@ -466,6 +482,38 @@ public partial class ILCompiler
             return Type.GetType(clrTypeName, throwOnError: false);
         }
     }
+
+    /// <summary>
+    /// Returns the emitted Type for a built-in Error type name (Error, TypeError, etc.).
+    /// </summary>
+    private Type GetEmittedErrorType(string errorTypeName) => errorTypeName switch
+    {
+        "Error" => _runtime.TSErrorType,
+        "TypeError" => _runtime.TSTypeErrorType,
+        "RangeError" => _runtime.TSRangeErrorType,
+        "ReferenceError" => _runtime.TSReferenceErrorType,
+        "SyntaxError" => _runtime.TSSyntaxErrorType,
+        "URIError" => _runtime.TSURIErrorType,
+        "EvalError" => _runtime.TSEvalErrorType,
+        "AggregateError" => _runtime.TSAggregateErrorType,
+        _ => _runtime.TSErrorType
+    };
+
+    /// <summary>
+    /// Returns the emitted ConstructorBuilder for a built-in Error type (takes a single string? message param).
+    /// </summary>
+    private ConstructorBuilder GetEmittedErrorConstructor(string errorTypeName) => errorTypeName switch
+    {
+        "Error" => _runtime.TSErrorCtorMessage,
+        "TypeError" => _runtime.TSTypeErrorCtor,
+        "RangeError" => _runtime.TSRangeErrorCtor,
+        "ReferenceError" => _runtime.TSReferenceErrorCtor,
+        "SyntaxError" => _runtime.TSSyntaxErrorCtor,
+        "URIError" => _runtime.TSURIErrorCtor,
+        "EvalError" => _runtime.TSEvalErrorCtor,
+        "AggregateError" => _runtime.TSAggregateErrorCtor,
+        _ => _runtime.TSErrorCtorMessage
+    };
 
     /// <summary>
     /// Resolves superclass type arguments to .NET Types.

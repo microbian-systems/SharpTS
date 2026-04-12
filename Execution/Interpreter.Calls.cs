@@ -609,14 +609,34 @@ public partial class Interpreter
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/narrowing.html#instanceof-narrowing">TypeScript instanceof Narrowing</seealso>
     private object EvaluateInstanceof(object? left, object? right)
     {
-        if (left is not SharpTSInstance instance || right is not SharpTSClass targetClass)
+        if (right is not SharpTSClass targetClass)
             return false;
-        SharpTSClass? current = instance.GetClass();
-        while (current != null)
+
+        // Standard path: SharpTSInstance — walk the class chain
+        if (left is SharpTSInstance instance)
         {
-            if (current.Name == targetClass.Name) return true;
-            current = current.Superclass;
+            SharpTSClass? current = instance.GetClass();
+            while (current != null)
+            {
+                if (current.Name == targetClass.Name) return true;
+                current = current.Superclass;
+            }
+            return false;
         }
+
+        // Legacy path: SharpTSError instances created via BuiltInConstructorFactory
+        // (not SharpTSInstance, but should still pass instanceof Error/TypeError/etc.)
+        if (left is SharpTSError error && targetClass is SharpTSErrorClass)
+        {
+            // Walk the error type hierarchy: TypeError extends Error, etc.
+            var errorName = error.Name; // e.g. "TypeError"
+            var targetName = targetClass.Name; // e.g. "Error"
+            if (errorName == targetName) return true;
+            // All built-in error subtypes extend Error
+            if (targetName == "Error") return true;
+            return false;
+        }
+
         return false;
     }
 

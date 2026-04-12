@@ -1,6 +1,7 @@
 using System.Reflection.Emit;
 using SharpTS.Compilation.Emitters;
 using SharpTS.Parsing;
+using SharpTS.Runtime.BuiltIns;
 
 namespace SharpTS.Compilation.CallHandlers;
 
@@ -32,6 +33,13 @@ public class SuperConstructorHandler : ICallHandler
             return true;
         }
 
+        // Try built-in Error type constructors
+        if (ctx.CurrentSuperclassName != null && BuiltInNames.IsErrorTypeName(ctx.CurrentSuperclassName))
+        {
+            EmitSuperErrorCtorCall(emitter, call.Arguments, ctx.CurrentSuperclassName);
+            return true;
+        }
+
         // Try class expression constructors
         if (ctx.CurrentClassExpr != null &&
             ctx.ClassExprSuperclass?.TryGetValue(ctx.CurrentClassExpr, out var superclassName) == true &&
@@ -59,6 +67,78 @@ public class SuperConstructorHandler : ICallHandler
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Emits a super() call that chains to a built-in Error constructor.
+    /// The emitted $Error/$TypeError etc. constructors take (string? message).
+    /// </summary>
+    private static void EmitSuperErrorCtorCall(IEmitterContext emitter, List<Expr> arguments, string errorTypeName)
+    {
+        var il = emitter.IL;
+        var ctx = emitter.Context;
+
+        // Resolve the parent constructor from the emitted error types
+        var baseType = ctx.CurrentClassBuilder?.BaseType;
+        if (baseType == null)
+        {
+            il.Emit(OpCodes.Ldnull);
+            emitter.SetStackUnknown();
+            return;
+        }
+
+        // Find the single-param (string? message) constructor on the error base type
+        var ctorParams = new[] { typeof(string) };
+        var baseCtor = baseType.GetConstructor(ctorParams);
+
+        if (baseCtor == null)
+        {
+            // Fallback: try the (string name, string? message) constructor on $Error
+            ctorParams = [typeof(string), typeof(string)];
+            baseCtor = baseType.GetConstructor(ctorParams);
+        }
+
+        if (baseCtor == null)
+        {
+            il.Emit(OpCodes.Ldnull);
+            emitter.SetStackUnknown();
+            return;
+        }
+
+        il.Emit(OpCodes.Ldarg_0); // this
+
+        if (baseCtor.GetParameters().Length == 1)
+        {
+            // (string? message) constructor
+            if (arguments.Count > 0)
+            {
+                emitter.EmitExpression(arguments[0]);
+                emitter.EmitConversionForParameter(arguments[0], typeof(string));
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldnull);
+            }
+        }
+        else
+        {
+            // (string name, string? message) constructor
+            il.Emit(OpCodes.Ldstr, errorTypeName);
+            if (arguments.Count > 0)
+            {
+                emitter.EmitExpression(arguments[0]);
+                emitter.EmitConversionForParameter(arguments[0], typeof(string));
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldnull);
+            }
+        }
+
+        il.Emit(OpCodes.Call, baseCtor);
+
+        il.Emit(OpCodes.Ldnull); // super() returns undefined
+        emitter.SetStackUnknown();
     }
 
     private static void EmitSuperCtorCall(IEmitterContext emitter, ConstructorBuilder parentCtor, List<Expr> arguments)

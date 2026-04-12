@@ -64,7 +64,6 @@ public static class BuiltInConstructorFactory
     public static bool IsBuiltIn(string name) =>
         _simpleConstructors.ContainsKey(name) ||
         BuiltInNames.IsTypedArrayName(name) ||
-        BuiltInNames.IsErrorTypeName(name) ||
         name == BuiltInNames.MessageChannel ||
         name == BuiltInNames.SharedArrayBuffer ||
         name == BuiltInNames.ArrayBuffer ||
@@ -72,6 +71,8 @@ public static class BuiltInConstructorFactory
         name == BuiltInNames.ReadableStream ||
         name == BuiltInNames.WritableStream ||
         name == BuiltInNames.TransformStream;
+        // Note: Error types are NOT handled here — they go through SharpTSErrorClass
+        // registered in Interpreter.CreateGlobalsLookup()
 
     /// <summary>
     /// Creates a built-in object using the appropriate constructor.
@@ -94,11 +95,7 @@ public static class BuiltInConstructorFactory
             return WorkerBuiltIns.GetTypedArrayConstructor(name).Call(interpreter!, args.ToList());
         }
 
-        // Check Error constructors
-        if (BuiltInNames.IsErrorTypeName(name))
-        {
-            return ErrorBuiltIns.CreateError(name, args.ToList());
-        }
+        // Note: Error constructors are handled by SharpTSErrorClass (registered as globals)
 
         // Check MessageChannel and SharedArrayBuffer (need interpreter)
         if (name == BuiltInNames.MessageChannel)

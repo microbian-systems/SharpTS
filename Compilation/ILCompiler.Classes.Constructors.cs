@@ -26,10 +26,14 @@ public partial class ILCompiler
         }
         else
         {
-            // Fallback: resolve typed parameters
+            // Fallback: resolve typed parameters.
+            // For Error subclasses without a constructor, accept a string? message param
+            // so `new SimpleError("msg")` works.
             var paramTypes = constructor != null
                 ? ParameterTypeResolver.ResolveConstructorParameters(className, constructor.Parameters, _typeMapper, _typeMap)
-                : [];
+                : _classes.ErrorSubclasses.Contains(className)
+                    ? [typeof(object)]  // Accept any value; converted to string by base Error constructor
+                    : [];
             ctorBuilder = typeBuilder.DefineConstructor(
                 MethodAttributes.Public,
                 CallingConventions.Standard,
@@ -135,7 +139,18 @@ public partial class ILCompiler
         // If the class has no explicit constructor but has a superclass, we must call the parent constructor.
         // If the class has no superclass, we call Object constructor.
         string? qualifiedSuperclass = classStmt.Superclass != null ? defCtx.ResolveClassName(classStmt.Superclass.Lexeme) : null;
-        if (constructor == null && qualifiedSuperclass != null && _classes.Constructors.TryGetValue(qualifiedSuperclass, out var parentCtor))
+        bool isErrorSubclass = classStmt.Superclass != null
+            && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(classStmt.Superclass.Lexeme);
+        if (constructor == null && qualifiedSuperclass != null && isErrorSubclass)
+        {
+            // No explicit constructor, extends Error — forward message arg to base Error constructor
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1); // message parameter (object?)
+            il.Emit(OpCodes.Castclass, _types.String); // Cast object? → string? (null-safe)
+            var baseCtor = GetEmittedErrorConstructor(classStmt.Superclass!.Lexeme);
+            il.Emit(OpCodes.Call, (System.Reflection.ConstructorInfo)baseCtor);
+        }
+        else if (constructor == null && qualifiedSuperclass != null && _classes.Constructors.TryGetValue(qualifiedSuperclass, out var parentCtor))
         {
             // No explicit constructor but has superclass - forward all arguments to parent constructor
             il.Emit(OpCodes.Ldarg_0);
@@ -157,9 +172,11 @@ public partial class ILCompiler
 
             il.Emit(OpCodes.Call, ctorToCall);
         }
-        else
+        else if (!isErrorSubclass)
         {
-            // Has explicit constructor (which should have super() call) or no superclass
+            // Has explicit constructor (which should have super() call) or no superclass.
+            // For Error subclasses with an explicit constructor, skip this — super() in the
+            // constructor body calls the Error base constructor via SuperConstructorHandler.
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Call, _types.ObjectDefaultCtor);
         }

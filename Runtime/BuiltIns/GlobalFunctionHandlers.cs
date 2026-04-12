@@ -46,11 +46,9 @@ internal static class GlobalFunctionHandlers
         // Internal helper
         registry.RegisterV2(BuiltInNames.ObjectRest, HandleObjectRest);
 
-        // Error constructors (called without 'new')
-        foreach (var errorType in BuiltInNames.ErrorTypeNames)
-        {
-            registry.RegisterV2(errorType, CreateErrorHandler(errorType));
-        }
+        // Note: Error constructors are handled by SharpTSErrorClass (registered as globals).
+        // Error() without 'new' resolves to SharpTSErrorClass.Call() via the general
+        // ISharpTSCallable dispatch path.
     }
 
     private static async ValueTask<RuntimeValue> HandleSymbol(
@@ -332,26 +330,4 @@ internal static class GlobalFunctionHandlers
         return RuntimeValue.FromBoxed(result);
     }
 
-    /// <summary>
-    /// Creates an error handler for a specific error type.
-    /// </summary>
-    public static GlobalFunctionRegistry.GlobalFunctionHandlerV2 CreateErrorHandler(string errorTypeName)
-    {
-        return async (evaluateArg, arguments, interpreter) =>
-        {
-            var pooledArgs = ArgumentListPool.Rent();
-            try
-            {
-                foreach (var arg in arguments)
-                {
-                    pooledArgs.Add((await evaluateArg(arg)).ToObject());
-                }
-                return RuntimeValue.FromBoxed(ErrorBuiltIns.CreateError(errorTypeName, pooledArgs));
-            }
-            finally
-            {
-                ArgumentListPool.Return(pooledArgs);
-            }
-        };
-    }
 }

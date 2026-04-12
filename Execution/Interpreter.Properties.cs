@@ -523,6 +523,7 @@ public partial class Interpreter
         SharpTSDate => "Date",
         SharpTSRegExp => "RegExp",
         SharpTSError => "Error",
+        SharpTSInstance inst when inst.GetClass() is SharpTSErrorClass => inst.GetRawField("name")?.ToString() ?? "Error",
         SharpTSPromise => "Promise",
         _ => obj.GetType().Name
     };

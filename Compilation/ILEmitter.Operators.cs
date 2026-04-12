@@ -294,6 +294,12 @@ public partial class ILEmitter
                     // Built-in module methods and static type methods are functions
                     IL.Emit(OpCodes.Ldstr, "function");
                 }
+                else if (u.Right is Expr.Variable ev
+                    && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(ev.Name.Lexeme))
+                {
+                    // Error constructors are functions
+                    IL.Emit(OpCodes.Ldstr, "function");
+                }
                 else if (IsTypeofOnProcessStream(u.Right))
                 {
                     // process.stdin/stdout/stderr are stream objects

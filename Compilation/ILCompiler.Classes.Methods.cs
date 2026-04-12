@@ -318,6 +318,11 @@ public partial class ILCompiler
                 {
                     ctorParamTypes = parentCtor.GetParameters().Select(p => p.ParameterType).ToArray();
                 }
+                else if (_classes.ErrorSubclasses.Contains(qualifiedClassName))
+                {
+                    // Error subclass with no constructor — accept a single message arg
+                    ctorParamTypes = [typeof(object)];
+                }
                 else
                 {
                     ctorParamTypes = [];

@@ -23,6 +23,10 @@ public partial class TypeChecker
         TypeInfo? current = classType;
         while (current != null)
         {
+            // Handle MutableClass placeholders (e.g. Any-typed superclasses like Error)
+            if (current is TypeInfo.MutableClass mc && mc.Methods.TryGetValue("constructor", out var mcCtor))
+                return (mcCtor, current);
+
             var methods = GetMethods(current);
             if (methods?.TryGetValue("constructor", out var ctor) == true)
                 return (ctor, current);

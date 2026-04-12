@@ -77,6 +77,16 @@ public partial class Interpreter : IDisposable
             globals[typedArrayName] = WorkerBuiltIns.GetTypedArrayConstructor(typedArrayName);
         }
 
+        // Add Error constructors as global class variables
+        // This enables typeof Error, class MyError extends Error, const E = Error, etc.
+        var errorClass = new Runtime.Types.SharpTSErrorClass("Error", null);
+        globals[BuiltInNames.Error] = errorClass;
+        foreach (var errorTypeName in BuiltInNames.ErrorTypeNames)
+        {
+            if (errorTypeName != "Error")
+                globals[errorTypeName] = new Runtime.Types.SharpTSErrorClass(errorTypeName, errorClass);
+        }
+
         // Add built-in singletons (Math, JSON, Object, etc.)
         // These are namespaces that resolve to singleton instances when accessed as variables
         string[] singletonNames =
@@ -131,6 +141,17 @@ public partial class Interpreter : IDisposable
     /// Gets the async evaluation context for use in unified core methods.
     /// </summary>
     internal AsyncEvaluationContext AsyncContext => _asyncContext;
+
+    /// <summary>
+    /// Returns the current <c>this</c> binding from the environment, or <c>null</c> if none is in scope.
+    /// Used by built-in callables (e.g. Error constructor) that need access to the bound instance.
+    /// </summary>
+    internal object? GetCurrentThis()
+    {
+        if (_environment.TryGet("this", out var value))
+            return value.ToObject();
+        return null;
+    }
 
     /// <summary>
     /// Initializes a new instance of the Interpreter with default Console output.
@@ -1740,7 +1761,20 @@ public partial class Interpreter : IDisposable
         object? superclass = null;
         if (classStmt.Superclass != null)
         {
-            superclass = _environment.Get(classStmt.Superclass).ToObject();
+            // Check environment first, then global constants (for built-in classes like Error)
+            if (_environment.TryGet(classStmt.Superclass.Lexeme, out var superRV))
+            {
+                superclass = superRV.ToObject();
+            }
+            else if (_globalConstants.TryGetValue(classStmt.Superclass.Lexeme, out var globalSuper))
+            {
+                superclass = globalSuper;
+            }
+            else
+            {
+                throw new InterpreterException($"Undefined variable '{classStmt.Superclass.Lexeme}'.");
+            }
+
             if (superclass is not SharpTSClass)
             {
                 throw new InterpreterException("Superclass must be a class.");
@@ -1902,22 +1936,41 @@ public partial class Interpreter : IDisposable
             }
         }
 
-        SharpTSClass klass = new(
-            classStmt.Name.Lexeme,
-            (SharpTSClass?)superclass,
-            methods,
-            staticMethods,
-            staticProperties,
-            getters,
-            setters,
-            classStmt.IsAbstract,
-            instanceFields,
-            instancePrivateFields,
-            privateMethods,
-            staticPrivateFields,
-            staticPrivateMethods,
-            instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
-            staticAutoAccessors.Count > 0 ? staticAutoAccessors : null);
+        // If the superclass is an Error type, create a SharpTSErrorClass so that
+        // instances carry error fields (name, message, stack) and instanceof works.
+        SharpTSClass klass = superclass is SharpTSErrorClass errorSuper
+            ? new SharpTSErrorClass(
+                classStmt.Name.Lexeme,
+                errorSuper,
+                methods,
+                staticMethods,
+                staticProperties,
+                getters,
+                setters,
+                classStmt.IsAbstract,
+                instanceFields,
+                instancePrivateFields,
+                privateMethods,
+                staticPrivateFields,
+                staticPrivateMethods,
+                instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                staticAutoAccessors.Count > 0 ? staticAutoAccessors : null)
+            : new SharpTSClass(
+                classStmt.Name.Lexeme,
+                (SharpTSClass?)superclass,
+                methods,
+                staticMethods,
+                staticProperties,
+                getters,
+                setters,
+                classStmt.IsAbstract,
+                instanceFields,
+                instancePrivateFields,
+                privateMethods,
+                staticPrivateFields,
+                staticPrivateMethods,
+                instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                staticAutoAccessors.Count > 0 ? staticAutoAccessors : null);
 
         // Execute static initializers in declaration order (if present)
         if (hasStaticInitializers)

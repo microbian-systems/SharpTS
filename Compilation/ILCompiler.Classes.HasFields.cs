@@ -193,6 +193,33 @@ public partial class ILCompiler
     /// Emits the GetProperty method body with compile-time dispatch.
     /// No runtime reflection - directly checks property/method names and calls getters or wraps methods.
     /// </summary>
+    /// <summary>
+    /// Checks whether a class (directly or transitively) extends a built-in Error type.
+    /// Uses the flag set during DefineClass — no string matching needed.
+    /// </summary>
+    private bool IsErrorSubclass(string qualifiedClassName)
+    {
+        return _classes.ErrorSubclasses.Contains(qualifiedClassName);
+    }
+
+    /// <summary>
+    /// Emits a fallback check for an Error base-class property in the GetProperty method body.
+    /// Uses the runtime helper (e.g. ErrorGetName) which safely handles the isinst check.
+    /// </summary>
+    private void EmitErrorPropertyFallback(ILGenerator il, string propName, MethodBuilder runtimeGetter)
+    {
+        var skipLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, propName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, skipLabel);
+        // Call the runtime helper: ErrorGetName(object obj) -> string
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtimeGetter);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(skipLabel);
+    }
+
     private void EmitGetPropertyBody(MethodBuilder method, string className, Stmt.Class classStmt, FieldInfo fieldsField)
     {
         var il = method.GetILGenerator();
@@ -239,8 +266,17 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Ret);
 
-        // 3. Check instance methods (compile-time dispatch)
+        // 2b. If this class extends Error, fall back to Error base class properties
         il.MarkLabel(tryMethodsLabel);
+        if (IsErrorSubclass(className))
+        {
+            EmitErrorPropertyFallback(il, "name", _runtime.ErrorGetName);
+            EmitErrorPropertyFallback(il, "message", _runtime.ErrorGetMessage);
+            EmitErrorPropertyFallback(il, "stack", _runtime.ErrorGetStack);
+        }
+
+        // 3. Check instance methods (compile-time dispatch)
+        // (redefine label after error property fallback — previous tryMethodsLabel was already marked)
         if (_classes.InstanceMethods.TryGetValue(className, out var instanceMethods))
         {
             // Check if this is a generic type - generic types require runtime reflection

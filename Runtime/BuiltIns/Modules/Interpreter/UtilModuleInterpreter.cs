@@ -891,7 +891,8 @@ public static class UtilModuleInterpreter
         => args.Count > 0 && args[0] is SharpTSBuffer;
 
     private static object? IsNativeError(Interp interpreter, object? receiver, List<object?> args)
-        => args.Count > 0 && args[0] is SharpTSError;
+        => args.Count > 0 && (args[0] is SharpTSError
+            || (args[0] is SharpTSInstance inst && inst.GetClass() is SharpTSErrorClass));
 
     private static object? IsBoxedPrimitive(Interp interpreter, object? receiver, List<object?> args)
     {

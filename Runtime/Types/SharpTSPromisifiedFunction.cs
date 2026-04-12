@@ -92,7 +92,10 @@ internal class SharpTSPromisifyCallback : ISharpTSCallable
         if (hasError)
         {
             // Reject with the error
-            var error = err is SharpTSError e ? e : new SharpTSError(err?.ToString() ?? "Unknown error");
+            // Use the error object directly if it's an Error type, otherwise wrap
+            object error = err is SharpTSError ? err
+                : (err is SharpTSInstance inst && inst.GetClass() is SharpTSErrorClass ? err
+                : new SharpTSError(err?.ToString() ?? "Unknown error"));
             _tcs.TrySetException(new SharpTSPromiseRejectedException(error));
         }
         else

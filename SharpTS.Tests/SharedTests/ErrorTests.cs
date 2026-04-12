@@ -459,4 +459,126 @@ public class ErrorTests
     }
 
     #endregion
+
+    #region Error as Global Variable (Issue #24)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypeofError_ReturnsFunction(ExecutionMode mode)
+    {
+        var source = @"
+            console.log(typeof Error);
+            console.log(typeof TypeError);
+            console.log(typeof RangeError);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function\nfunction\nfunction\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExtendsError_Basic(ExecutionMode mode)
+    {
+        var source = @"
+            class MyError extends Error {
+                constructor(msg) {
+                    super(msg);
+                    this.name = 'MyError';
+                }
+            }
+            const e = new MyError('test');
+            console.log(e.name);
+            console.log(e.message);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("MyError\ntest\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExtendsError_InstanceofMyError(ExecutionMode mode)
+    {
+        var source = @"
+            class MyError extends Error {
+                constructor(msg) {
+                    super(msg);
+                    this.name = 'MyError';
+                }
+            }
+            const e = new MyError('test');
+            console.log(e instanceof MyError);
+            console.log(e instanceof Error);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExtendsTypeError(ExecutionMode mode)
+    {
+        var source = @"
+            class CustomTypeError extends TypeError {
+                constructor(msg) {
+                    super(msg);
+                    this.name = 'CustomTypeError';
+                }
+            }
+            const e = new CustomTypeError('bad type');
+            console.log(e.name);
+            console.log(e.message);
+            console.log(e instanceof CustomTypeError);
+            console.log(e instanceof TypeError);
+            console.log(e instanceof Error);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("CustomTypeError\nbad type\ntrue\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExtendsError_MultiLevel(ExecutionMode mode)
+    {
+        var source = @"
+            class AppError extends Error {
+                code: number;
+                constructor(msg, code) {
+                    super(msg);
+                    this.name = 'AppError';
+                    this.code = code;
+                }
+            }
+            class HttpError extends AppError {
+                constructor(msg) {
+                    super(msg, 500);
+                }
+            }
+            const e = new HttpError('server error');
+            console.log(e.name);
+            console.log(e.message);
+            console.log(e.code);
+            console.log(e instanceof HttpError);
+            console.log(e instanceof AppError);
+            console.log(e instanceof Error);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("AppError\nserver error\n500\ntrue\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExtendsError_NoExplicitConstructor(ExecutionMode mode)
+    {
+        var source = @"
+            class SimpleError extends Error {}
+            const e = new SimpleError('hello');
+            console.log(e.message);
+            console.log(e instanceof SimpleError);
+            console.log(e instanceof Error);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("hello\ntrue\ntrue\n", output);
+    }
+
+    #endregion
 }

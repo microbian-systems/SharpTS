@@ -77,7 +77,7 @@ public class SharpTSClass(
         return Superclass?.Arity() ?? 0;
     }
 
-    public object? Call(Interpreter interpreter, List<object?> arguments)
+    public virtual object? Call(Interpreter interpreter, List<object?> arguments)
     {
         SharpTSInstance instance = new(this);
 
@@ -116,11 +116,12 @@ public class SharpTSClass(
             SharpTSAsyncFunction asyncFunc => asyncFunc.Bind(instance),
             SharpTSGeneratorFunction genFunc => genFunc.Bind(instance),
             SharpTSAsyncGeneratorFunction asyncGenFunc => asyncGenFunc.Bind(instance),
+            IInstanceBindable bindable => bindable.BindTo(instance),
             _ => method // For other callables that don't need binding
         };
     }
 
-    private void InitializeInstanceFields(Interpreter interpreter, SharpTSInstance instance)
+    protected void InitializeInstanceFields(Interpreter interpreter, SharpTSInstance instance)
     {
         // First initialize superclass fields
         Superclass?.InitializeInstanceFields(interpreter, instance);
@@ -274,7 +275,7 @@ public class SharpTSClass(
     /// Initializes private fields for an instance. Each class in the hierarchy
     /// has its own private field storage - private fields are NOT inherited.
     /// </summary>
-    private void InitializePrivateFields(Interpreter interpreter, SharpTSInstance instance)
+    protected void InitializePrivateFields(Interpreter interpreter, SharpTSInstance instance)
     {
         // Note: Private fields are NOT inherited, so we don't call superclass here
         // Each class's private fields are completely independent
@@ -401,7 +402,7 @@ public class SharpTSClass(
     /// Initializes auto-accessor backing storage for an instance.
     /// Auto-accessors are inherited through the superclass chain.
     /// </summary>
-    private void InitializeAutoAccessors(Interpreter interpreter, SharpTSInstance instance)
+    protected void InitializeAutoAccessors(Interpreter interpreter, SharpTSInstance instance)
     {
         // First initialize superclass auto-accessors
         Superclass?.InitializeAutoAccessors(interpreter, instance);

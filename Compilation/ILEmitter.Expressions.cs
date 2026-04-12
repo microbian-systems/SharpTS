@@ -221,6 +221,27 @@ public partial class ILEmitter
             return;
         }
 
+        // Check if it's a built-in Error constructor — push the emitted Type object
+        if (Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(name))
+        {
+            var errorType = name switch
+            {
+                "Error" => _ctx.Runtime!.TSErrorType,
+                "TypeError" => _ctx.Runtime!.TSTypeErrorType,
+                "RangeError" => _ctx.Runtime!.TSRangeErrorType,
+                "ReferenceError" => _ctx.Runtime!.TSReferenceErrorType,
+                "SyntaxError" => _ctx.Runtime!.TSSyntaxErrorType,
+                "URIError" => _ctx.Runtime!.TSURIErrorType,
+                "EvalError" => _ctx.Runtime!.TSEvalErrorType,
+                "AggregateError" => _ctx.Runtime!.TSAggregateErrorType,
+                _ => _ctx.Runtime!.TSErrorType
+            };
+            IL.Emit(OpCodes.Ldtoken, errorType);
+            IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Type, "GetTypeFromHandle", _ctx.Types.RuntimeTypeHandle));
+            SetStackUnknown();
+            return;
+        }
+
         // Unknown variable - throw ReferenceError at runtime
         IL.Emit(OpCodes.Ldstr, name);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.ThrowUndefinedVariable);

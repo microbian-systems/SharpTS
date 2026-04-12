@@ -51,6 +51,16 @@ public partial class TypeChecker
                 // Generic class without type arguments - error
                 throw new TypeCheckException($"Generic class '{gc.Name}' requires type arguments");
             }
+            else if (superType is TypeInfo.Any)
+            {
+                // Allow extending Any-typed globals (e.g. Error, TypeError).
+                // Create a placeholder class so super() calls and constructor
+                // validation type-check correctly (accept any number of args).
+                var placeholder = new TypeInfo.MutableClass(classStmt.Superclass.Lexeme);
+                placeholder.Methods["constructor"] = new TypeInfo.Function(
+                    [new TypeInfo.Any()], new TypeInfo.Void(), RequiredParams: 0, HasRestParam: true);
+                superclass = placeholder;
+            }
             else
                 throw new TypeCheckException("Superclass must be a class");
         }

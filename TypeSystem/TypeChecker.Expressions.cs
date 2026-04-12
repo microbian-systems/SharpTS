@@ -2,6 +2,7 @@ using SharpTS.TypeSystem.Exceptions;
 using System.Collections.Frozen;
 using SharpTS.Parsing;
 using SharpTS.Parsing.Visitors;
+using SharpTS.Runtime.BuiltIns;
 
 namespace SharpTS.TypeSystem;
 
@@ -1260,6 +1261,9 @@ public partial class TypeChecker
             or "Int16Array" or "Uint16Array" or "Int32Array" or "Uint32Array"
             or "Float32Array" or "Float64Array" or "BigInt64Array" or "BigUint64Array")
             return new TypeInfo.Any(); // TypedArray constructor
+        // Error constructors (Error, TypeError, RangeError, etc.)
+        if (BuiltInNames.IsErrorTypeName(name.Lexeme))
+            return new TypeInfo.Any();
 
         var type = _environment.Get(name.Lexeme);
         if (type == null)
@@ -1311,6 +1315,10 @@ public partial class TypeChecker
                 superclass = sic;
             else if (superType is TypeInfo.Class sc)
                 superclass = sc;
+            else if (superType is TypeInfo.Any)
+            {
+                // Allow extending Any-typed globals (e.g. Error, TypeError)
+            }
             else
                 throw new TypeCheckException("Superclass must be a class");
         }

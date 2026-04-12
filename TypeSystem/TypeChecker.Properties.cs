@@ -31,6 +31,13 @@ public partial class TypeChecker
         var superMethods = GetMethods(_currentClass.Superclass);
         var superName = GetClassName(_currentClass.Superclass) ?? "unknown";
 
+        // If the superclass is a placeholder MutableClass (from Any-typed globals like Error),
+        // treat all super access as Any — we can't statically know the exact signatures.
+        if (_currentClass.Superclass is TypeInfo.MutableClass)
+        {
+            return new TypeInfo.Any();
+        }
+
         // super() constructor call - Method is null
         if (expr.Method == null)
         {

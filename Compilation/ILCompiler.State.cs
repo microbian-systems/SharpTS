@@ -22,6 +22,11 @@ public partial class ILCompiler
         public Dictionary<string, TypeBuilder> Builders { get; } = [];
         public Dictionary<string, Type> ExternalTypes { get; } = [];
         public Dictionary<string, string?> Superclass { get; } = [];
+        /// <summary>
+        /// Qualified names of classes that (directly or transitively) extend a built-in Error type.
+        /// Set during DefineClass and used by HasFields to emit Error property fallback.
+        /// </summary>
+        public HashSet<string> ErrorSubclasses { get; } = [];
         public Dictionary<string, ConstructorBuilder> Constructors { get; } = [];
         public Dictionary<string, List<ConstructorBuilder>> ConstructorOverloads { get; } = [];
         public Dictionary<string, Dictionary<string, FieldBuilder>> StaticFields { get; } = [];
