@@ -87,6 +87,7 @@ public class EmittedRuntime
     // Type coercion methods
     public MethodBuilder Stringify { get; set; } = null!;
     public MethodBuilder ToNumber { get; set; } = null!;
+    public MethodBuilder ConvertToNumber { get; set; } = null!;
     public MethodBuilder IsTruthy { get; set; } = null!;
     public MethodBuilder TypeOf { get; set; } = null!;
     public MethodBuilder InstanceOf { get; set; } = null!;

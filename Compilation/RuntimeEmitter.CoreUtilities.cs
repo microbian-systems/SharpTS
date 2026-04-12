@@ -1648,6 +1648,119 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits ConvertToNumber — matches JS Number(value) semantics.
+    /// Differs from ToNumber in that empty/whitespace strings return 0 (not NaN).
+    /// </summary>
+    private void EmitConvertToNumber(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ConvertToNumber",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.Object]
+        );
+        runtime.ConvertToNumber = method;
+
+        var il = method.GetILGenerator();
+
+        var nullLabel = il.DefineLabel();
+        var undefinedLabel = il.DefineLabel();
+        var doubleLabel = il.DefineLabel();
+        var boolLabel = il.DefineLabel();
+        var stringLabel = il.DefineLabel();
+        var nanLabel = il.DefineLabel();
+
+        // null => 0.0
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // undefined => NaN
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, undefinedLabel);
+
+        // double => return as-is
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, doubleLabel);
+
+        // bool => true:1.0, false:0.0
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, boolLabel);
+
+        // string => trim, empty→0, tryparse, else NaN
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, stringLabel);
+
+        // everything else => NaN
+        il.Emit(OpCodes.Br, nanLabel);
+
+        // null case: return 0.0
+        il.MarkLabel(nullLabel);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Ret);
+
+        // undefined case: return NaN
+        il.MarkLabel(undefinedLabel);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Ret);
+
+        // double case: unbox and return
+        il.MarkLabel(doubleLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Ret);
+
+        // bool case: unbox, convert to float
+        il.MarkLabel(boolLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+
+        // string case: trim, check empty, try parse
+        il.MarkLabel(stringLabel);
+        var trimmedLocal = il.DeclareLocal(_types.String);
+        var resultLocal = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.String, "Trim"));
+        il.Emit(OpCodes.Stloc, trimmedLocal);
+
+        // if (trimmed.Length == 0) return 0.0
+        var nonEmptyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Callvirt, _types.String.GetProperty("Length")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, nonEmptyLabel);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Ret);
+
+        // double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out result)
+        il.MarkLabel(nonEmptyLabel);
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Globalization.NumberStyles.Float);
+        il.Emit(OpCodes.Call, typeof(System.Globalization.CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloca, resultLocal);
+        il.Emit(OpCodes.Call, typeof(double).GetMethod("TryParse", [typeof(string), typeof(System.Globalization.NumberStyles), typeof(IFormatProvider), typeof(double).MakeByRefType()])!);
+        var parseSuccessLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, parseSuccessLabel);
+        // parse failed => NaN
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Ret);
+        // parse succeeded => return result
+        il.MarkLabel(parseSuccessLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        // NaN fallback
+        il.MarkLabel(nanLabel);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitIsTruthy(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(

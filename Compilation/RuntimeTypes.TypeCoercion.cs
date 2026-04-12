@@ -56,6 +56,35 @@ public static partial class RuntimeTypes
         };
     }
 
+    /// <summary>
+    /// Matches JS Number(value) semantics — empty/whitespace strings return 0 (not NaN).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static double ConvertToNumber(object? value)
+    {
+        if (value == null) return 0.0;
+        if (IsUndefined(value)) return double.NaN;
+        return value switch
+        {
+            double d => d,
+            int i => i,
+            long l => l,
+            bool b => b ? 1.0 : 0.0,
+            string s => ConvertStringToNumber(s),
+            _ => double.NaN
+        };
+    }
+
+    private static double ConvertStringToNumber(string s)
+    {
+        s = s.Trim();
+        if (s.Length == 0) return 0.0;
+        if (double.TryParse(s, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out double result))
+            return result;
+        return double.NaN;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool IsTruthy(object? value)
     {

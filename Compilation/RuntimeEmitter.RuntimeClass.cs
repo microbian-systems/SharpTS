@@ -175,6 +175,7 @@ public partial class RuntimeEmitter
         EmitJoinWithStringify(typeBuilder, runtime);
         EmitConsoleLogMultiple(typeBuilder, runtime);
         EmitToNumber(typeBuilder, runtime);
+        EmitConvertToNumber(typeBuilder, runtime);
         EmitIsTruthy(typeBuilder, runtime);
         EmitTypeOf(typeBuilder, runtime);
         EmitInstanceOf(typeBuilder, runtime);
