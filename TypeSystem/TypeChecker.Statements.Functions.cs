@@ -34,6 +34,29 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Pre-registers top-level var declarations by defining them as 'any' in the type environment.
+    /// This enables forward references to var-declared variables from within function bodies,
+    /// matching JavaScript's var hoisting semantics. Does NOT apply to let/const (TDZ).
+    /// </summary>
+    private void HoistVarDeclarations(IEnumerable<Stmt> statements)
+    {
+        foreach (var stmt in statements)
+        {
+            switch (stmt)
+            {
+                case Stmt.Var v when v.IsVar:
+                    if (!_environment.IsDefinedLocally(v.Name.Lexeme))
+                        _environment.Define(v.Name.Lexeme, new TypeInfo.Any());
+                    break;
+                case Stmt.Export { Declaration: Stmt.Var v } when v.IsVar:
+                    if (!_environment.IsDefinedLocally(v.Name.Lexeme))
+                        _environment.Define(v.Name.Lexeme, new TypeInfo.Any());
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
     /// Hoists const/var declarations with function expression initializers.
     /// This enables mutual recursion between function expressions declared with const/var.
     /// Only registers the function type, does not check the function body.

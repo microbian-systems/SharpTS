@@ -626,6 +626,9 @@ public partial class TypeChecker
         // Hoist function declarations (now type references will resolve correctly)
         HoistFunctionDeclarations(statements);
 
+        // Hoist var declarations (pre-define as any for forward reference support)
+        HoistVarDeclarations(statements);
+
         foreach (Stmt statement in statements)
         {
             CheckStmt(statement);
@@ -659,6 +662,9 @@ public partial class TypeChecker
 
         // Hoist function declarations
         HoistFunctionDeclarations(statements);
+
+        // Hoist var declarations (pre-define as any for forward reference support)
+        HoistVarDeclarations(statements);
 
         foreach (Stmt statement in statements)
         {
@@ -915,6 +921,9 @@ public partial class TypeChecker
                     // Hoist function declarations
                     HoistFunctionDeclarations(module.Statements);
 
+                    // Hoist var declarations (pre-define as any for forward reference support)
+                    HoistVarDeclarations(module.Statements);
+
                     // Check all statements
                     foreach (var stmt in module.Statements)
                     {
@@ -938,6 +947,9 @@ public partial class TypeChecker
 
                     // Second pass: hoist function declarations (now types are available)
                     HoistFunctionDeclarations(module.Statements);
+
+                    // Hoist var declarations (pre-define as any for forward reference support)
+                    HoistVarDeclarations(module.Statements);
 
                     // Third pass: check all statements
                     foreach (var stmt in module.Statements)
@@ -967,6 +979,9 @@ public partial class TypeChecker
 
             // Hoist function declarations
             HoistFunctionDeclarations(script.Statements);
+
+            // Hoist var declarations (pre-define as any for forward reference support)
+            HoistVarDeclarations(script.Statements);
 
             // Process all declarations to populate the environment
             foreach (var stmt in script.Statements)
@@ -1010,6 +1025,9 @@ public partial class TypeChecker
 
             // Hoist function declarations (now types are available)
             HoistFunctionDeclarations(module.Statements);
+
+            // Hoist var declarations (pre-define as any for forward reference support)
+            HoistVarDeclarations(module.Statements);
 
             // Then, process all declarations to populate the environment
             foreach (var stmt in module.Statements)

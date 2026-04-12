@@ -208,7 +208,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // uuid — UUID generation, tests crypto interop
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "Type checker rejects forward var references in Object.defineProperty getters")]
+    [SkippableFact(Skip = "Runtime ThrowException in uuid package (type checker forward var refs fixed)")]
     public void Uuid_Interpreter()
     {
         SkipIfNoNpm();
