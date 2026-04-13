@@ -171,7 +171,10 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 EmitDelete(del);
                 break;
             case Expr.Call c:
-                EmitCall(c);
+                if (c.Optional)
+                    EmitOptionalCall(c);
+                else
+                    EmitCall(c);
                 break;
             case Expr.Get g:
                 EmitGet(g);
@@ -347,10 +350,41 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
         EmitExpression(gi.Object);
         EnsureBoxed();
-        EmitExpression(gi.Index);
-        EnsureBoxed();
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.GetIndex);
-        SetStackUnknown();
+
+        if (gi.Optional)
+        {
+            var nullishLabel = IL.DefineLabel();
+            var endLabel = IL.DefineLabel();
+
+            // Check for null
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Brfalse, nullishLabel);
+
+            // Check for undefined
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+            IL.Emit(OpCodes.Brtrue, nullishLabel);
+
+            // Not nullish — proceed with index access
+            EmitExpression(gi.Index);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GetIndex);
+            IL.Emit(OpCodes.Br, endLabel);
+
+            IL.MarkLabel(nullishLabel);
+            IL.Emit(OpCodes.Pop);
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
+
+            IL.MarkLabel(endLabel);
+            SetStackUnknown();
+        }
+        else
+        {
+            EmitExpression(gi.Index);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GetIndex);
+            SetStackUnknown();
+        }
     }
 
     /// <summary>

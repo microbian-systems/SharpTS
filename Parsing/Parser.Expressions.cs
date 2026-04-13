@@ -476,8 +476,24 @@ public partial class Parser
             }
             else if (Match(TokenType.QUESTION_DOT))
             {
-                Token name = ConsumePropertyName("Expect property name after '?.'.");
-                expr = new Expr.Get(expr, name, Optional: true);
+                if (Match(TokenType.LEFT_PAREN))
+                {
+                    // ?.() — optional call
+                    expr = FinishCall(expr, optional: true);
+                }
+                else if (Match(TokenType.LEFT_BRACKET))
+                {
+                    // ?.[] — optional bracket access
+                    Expr index = Expression();
+                    Consume(TokenType.RIGHT_BRACKET, "Expect ']' after index.");
+                    expr = new Expr.GetIndex(expr, index, Optional: true);
+                }
+                else
+                {
+                    // ?.prop — optional property access (existing behavior)
+                    Token name = ConsumePropertyName("Expect property name after '?.'.");
+                    expr = new Expr.Get(expr, name, Optional: true);
+                }
             }
             else if (Match(TokenType.LEFT_BRACKET))
             {
@@ -537,7 +553,7 @@ public partial class Parser
         return expr;
     }
 
-    private Expr FinishCall(Expr callee, List<string>? typeArgs = null)
+    private Expr FinishCall(Expr callee, List<string>? typeArgs = null, bool optional = false)
     {
         List<Expr> arguments = [];
         if (!Check(TokenType.RIGHT_PAREN))
@@ -556,7 +572,7 @@ public partial class Parser
         }
 
         Token paren = Consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments.");
-        return new Expr.Call(callee, paren, typeArgs, arguments);
+        return new Expr.Call(callee, paren, typeArgs, arguments, optional);
     }
 
     /// <summary>

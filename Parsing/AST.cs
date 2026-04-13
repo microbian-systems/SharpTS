@@ -108,7 +108,7 @@ public abstract record Expr
     public record Delete(Token Keyword, Expr Operand) : Expr;
     public record Variable(Token Name) : Expr;
     public record Assign(Token Name, Expr Value) : Expr;
-    public record Call(Expr Callee, Token Paren, List<string>? TypeArgs, List<Expr> Arguments) : Expr;
+    public record Call(Expr Callee, Token Paren, List<string>? TypeArgs, List<Expr> Arguments, bool Optional = false) : Expr;
     public record Get(Expr Object, Token Name, bool Optional = false) : Expr;
     public record Set(Expr Object, Token Name, Expr Value) : Expr;
     /// <summary>Private field access: obj.#field</summary>
@@ -157,7 +157,7 @@ public abstract record Expr
         bool IsSpread = false,
         ObjectPropertyKind Kind = ObjectPropertyKind.Value,
         Stmt.Parameter? SetterParam = null);
-    public record GetIndex(Expr Object, Expr Index) : Expr;
+    public record GetIndex(Expr Object, Expr Index, bool Optional = false) : Expr;
     public record SetIndex(Expr Object, Expr Index, Expr Value) : Expr;
     public record Super(Token Keyword, Token? Method) : Expr;  // Method is null for super() constructor calls
     // Compound assignment

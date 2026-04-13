@@ -459,6 +459,38 @@ public partial class ILEmitter
 
     protected override void EmitGetIndex(Expr.GetIndex gi)
     {
+        // Optional bracket access: emit nullish check around the entire index operation
+        if (gi.Optional)
+        {
+            EmitExpression(gi.Object);
+            EmitBoxIfNeeded(gi.Object);
+
+            var builder = _ctx.ILBuilder;
+            var nullishLabel = builder.DefineLabel("optional_idx_nullish");
+            var endLabel = builder.DefineLabel("optional_idx_end");
+
+            IL.Emit(OpCodes.Dup);
+            builder.Emit_Brfalse(nullishLabel);
+
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Isinst, _ctx.Runtime!.UndefinedType);
+            builder.Emit_Brtrue(nullishLabel);
+
+            // Not nullish — proceed with index access
+            EmitExpression(gi.Index);
+            EmitBoxIfNeeded(gi.Index);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GetIndex);
+            builder.Emit_Br(endLabel);
+
+            builder.MarkLabel(nullishLabel);
+            IL.Emit(OpCodes.Pop);
+            IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
+
+            builder.MarkLabel(endLabel);
+            SetStackUnknown();
+            return;
+        }
+
         // globalThis[key] → GlobalThisGetProperty(key)
         if (gi.Object is Expr.Variable gtGetIdx && gtGetIdx.Name.Lexeme == "globalThis")
         {

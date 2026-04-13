@@ -607,6 +607,13 @@ public partial class Interpreter
     private async Task<RuntimeValue> EvaluateGetIndexAsync(Expr.GetIndex getIndex)
     {
         object? obj = (await EvaluateAsync(getIndex.Object)).ToObject();
+
+        // Optional bracket access: return undefined if object is nullish
+        if (getIndex.Optional && (obj == null || obj is Runtime.Types.SharpTSUndefined))
+        {
+            return RuntimeValue.Undefined;
+        }
+
         object? index = (await EvaluateAsync(getIndex.Index)).ToObject();
         return RuntimeValue.FromBoxed(EvaluateIndexGet(obj, index));
     }

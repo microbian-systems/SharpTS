@@ -749,6 +749,13 @@ public partial class Interpreter
     private RuntimeValue EvaluateGetIndex(Expr.GetIndex getIndex)
     {
         object? obj = Evaluate(getIndex.Object);
+
+        // Optional bracket access: return undefined if object is nullish
+        if (getIndex.Optional && (obj == null || obj is Runtime.Types.SharpTSUndefined))
+        {
+            return RuntimeValue.Undefined;
+        }
+
         object? index = Evaluate(getIndex.Index);
 
         // Proxy: intercept index access via get trap

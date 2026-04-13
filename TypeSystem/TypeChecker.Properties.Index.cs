@@ -23,6 +23,19 @@ public partial class TypeChecker
             return new TypeInfo.Any();
         }
 
+        // Optional bracket access: strip null/undefined from object type
+        if (getIndex.Optional && objType is TypeInfo.Union optUnion)
+        {
+            var nonNullish = optUnion.FlattenedTypes
+                .Where(t => t is not (TypeInfo.Null or TypeInfo.Undefined))
+                .ToList();
+            if (nonNullish.Count == 0)
+            {
+                return new TypeInfo.Undefined();
+            }
+            objType = nonNullish.Count == 1 ? nonNullish[0] : new TypeInfo.Union(nonNullish);
+        }
+
         // Handle Union types - distribute index access across all union members
         if (objType is TypeInfo.Union union)
         {

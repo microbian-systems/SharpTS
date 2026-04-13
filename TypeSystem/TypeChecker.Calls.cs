@@ -414,6 +414,22 @@ public partial class TypeChecker
 
         TypeInfo calleeType = CheckExpr(call.Callee);
 
+        // Optional call: if callee could be nullish, strip null/undefined and check the rest.
+        // The result type will be unioned with undefined at the end.
+        if (call.Optional && calleeType is TypeInfo.Union optUnion)
+        {
+            var nonNullish = optUnion.FlattenedTypes
+                .Where(t => t is not (TypeInfo.Null or TypeInfo.Undefined))
+                .ToList();
+            if (nonNullish.Count == 0)
+            {
+                // All members are nullish — result is always undefined
+                foreach (var arg in call.Arguments) CheckExpr(arg);
+                return new TypeInfo.Undefined();
+            }
+            calleeType = nonNullish.Count == 1 ? nonNullish[0] : new TypeInfo.Union(nonNullish);
+        }
+
         if (calleeType is TypeInfo.Class classType)
         {
              return new TypeInfo.Instance(classType);

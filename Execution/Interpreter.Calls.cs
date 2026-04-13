@@ -141,6 +141,12 @@ public partial class Interpreter
 
         object? callee = (await ctx.EvaluateExprAsync(call.Callee)).ToObject();
 
+        // Optional call: return undefined if callee is nullish
+        if (call.Optional && (callee == null || callee is Runtime.Types.SharpTSUndefined))
+        {
+            return SharpTSUndefined.Instance;
+        }
+
         var argumentsList = ArgumentListPool.Rent();
         try
         {
@@ -302,6 +308,12 @@ public partial class Interpreter
         }
 
         object? callee = Evaluate(call.Callee);
+
+        // Optional call: return undefined if callee is nullish
+        if (call.Optional && (callee == null || callee is Runtime.Types.SharpTSUndefined))
+        {
+            return RuntimeValue.Undefined;
+        }
 
         // V2 fast path: no spread args and callee supports V2 — zero boxing
         if (callee is ISharpTSCallableV2 v2Callee && !HasSpreadArgs(call.Arguments))
