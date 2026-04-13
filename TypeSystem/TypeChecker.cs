@@ -732,7 +732,10 @@ public partial class TypeChecker
             ? new SourceLocation(_filePath, ex.Line.Value, ex.Column ?? 1)
             : null;
 
-        _diagnostics.AddError(code, message, location);
+        if (IsLenientModule())
+            _diagnostics.AddWarning(code, message, location);
+        else
+            _diagnostics.AddError(code, message, location);
     }
 
     /// <summary>
@@ -743,7 +746,22 @@ public partial class TypeChecker
         SourceLocation? location = line.HasValue
             ? new SourceLocation(_filePath, line.Value)
             : null;
-        _diagnostics.AddError(DiagnosticCode.TypeError, message, location);
+        if (IsLenientModule())
+            _diagnostics.AddWarning(DiagnosticCode.TypeError, message, location);
+        else
+            _diagnostics.AddError(DiagnosticCode.TypeError, message, location);
+    }
+
+    /// <summary>
+    /// Determines if the current module should use lenient type checking.
+    /// CJS dependency modules are always lenient — type errors become warnings
+    /// that don't block execution, matching TypeScript's default behavior for
+    /// JavaScript files (checkJs: false).
+    /// </summary>
+    private bool IsLenientModule()
+    {
+        if (_currentModule == null) return false;
+        return _currentModule.IsCommonJs;
     }
 
     /// <summary>

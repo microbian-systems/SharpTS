@@ -174,12 +174,13 @@ static void RunModuleFile(string absolutePath, DecoratorMode decoratorMode, bool
         checker.SetDecoratorMode(decoratorMode);
         var typeMap = checker.CheckModules(allModules, resolver);
 
-        // Report type errors but continue to interpretation (CJS libraries may have benign type issues)
+        // Check for type errors — warnings (from lenient CJS modules) don't block execution
         var diagnostics = checker.GetDiagnostics();
-        if (diagnostics.Count > 0)
+        bool hasErrors = diagnostics.Any(d => d.Severity == SharpTS.Diagnostics.DiagnosticSeverity.Error);
+        if (hasErrors)
         {
-            foreach (var diagnostic in diagnostics)
-                Console.WriteLine($"Error: {diagnostic}");
+            foreach (var d in diagnostics.Where(d => d.Severity == SharpTS.Diagnostics.DiagnosticSeverity.Error))
+                Console.WriteLine($"Error: {d}");
             return;
         }
 
