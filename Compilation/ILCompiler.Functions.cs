@@ -323,6 +323,22 @@ public partial class ILCompiler
             throw new CompileException($"Cannot compile function '{funcStmt.Name.Lexeme}' without a body.");
         }
 
+        // Emit default parameter null-checks at the top of the body. OverloadGenerator
+        // already emits separate lower-arity methods that forward with defaults, but the
+        // $TSFunction.Invoke path (module imports, callback dispatch) always targets the
+        // full-arity method with nulls padded in via AdjustArgs. Without this, callers
+        // through that path see null for every missing defaulted argument.
+        // paramTypes is passed so value-type params (double, bool) are skipped — the
+        // null-check pattern only works for reference types.
+        var resolvedParamTypes = methodBuilder.GetParameters()
+            .Select(p => p.ParameterType)
+            .ToArray();
+        emitter.EmitDefaultParameters(
+            funcStmt.Parameters,
+            isInstanceMethod: false,
+            hasOwnThis: false,
+            paramTypes: resolvedParamTypes);
+
         // Hoist inner function declarations (create TSFunction locals before other statements)
         EmitInnerFunctionHoisting(il, ctx, funcStmt.Body);
 

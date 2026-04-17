@@ -75,7 +75,16 @@ public partial class ILEmitter
     /// <param name="parameters">The parameter list</param>
     /// <param name="isInstanceMethod">True if this is an instance method (has implicit this at arg 0)</param>
     /// <param name="hasOwnThis">True if function has __this as first explicit parameter</param>
-    public void EmitDefaultParameters(List<Stmt.Parameter> parameters, bool isInstanceMethod, bool hasOwnThis = false)
+    /// <param name="paramTypes">Optional resolved parameter types. When provided, value-type
+    /// parameters are skipped — the null-check pattern (<c>ldarg; brtrue</c>) does not apply
+    /// to value types since they cannot be null. Value-type defaults are still handled by
+    /// <see cref="OverloadGenerator"/> for direct calls; the $TSFunction.Invoke path does
+    /// not support user-specified value-type defaults.</param>
+    public void EmitDefaultParameters(
+        List<Stmt.Parameter> parameters,
+        bool isInstanceMethod,
+        bool hasOwnThis = false,
+        Type[]? paramTypes = null)
     {
         int argOffset = (isInstanceMethod ? 1 : 0) + (hasOwnThis ? 1 : 0);
         var builder = _ctx.ILBuilder;
@@ -84,6 +93,11 @@ public partial class ILEmitter
         {
             var param = parameters[i];
             if (param.DefaultValue == null) continue;
+
+            // Skip value-type parameters when we know the resolved types: `ldarg; brtrue`
+            // is meaningless on a double/bool. OverloadGenerator covers these for direct
+            // calls. Known limitation for $TSFunction.Invoke callers.
+            if (paramTypes != null && paramTypes[i].IsValueType) continue;
 
             int argIndex = i + argOffset;
 

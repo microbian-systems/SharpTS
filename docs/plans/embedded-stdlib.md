@@ -232,33 +232,13 @@ Phase 2 is the first *real* migration and is where the downstream dispatch chang
 
 - **Default parameters do not work through `$TSFunction.Invoke`.** Discovered during Phase 2 migration, documented below. Workaround applied in `querystring.ts`; proper fix deferred.
 
-## Known compiler gap: default parameters via `$TSFunction.Invoke`
+## Compiler gap: default parameters via `$TSFunction.Invoke` — FIXED for reference types
 
-Functions with default parameters compile into multiple overload methods (see `OverloadGenerator`): a full-arity method plus forwarding wrappers for each shorter arity. Direct compiled call sites select the correct overload by arg count.
+**Original issue.** Functions with default parameters compile into multiple overload methods (see `OverloadGenerator`): a full-arity method plus forwarding wrappers for each shorter arity. Direct compiled call sites select the correct overload by arg count. But the `$TSFunction.Invoke(object[])` runtime wrapper — used for every module import — pads args with null via `AdjustArgs` and always dispatches to the full-arity method. The full-arity method had no default-value handling, so callers through that path saw null for every missing defaulted argument.
 
-**However**, when a function is called through the `$TSFunction.Invoke(object[])` runtime wrapper — which is what happens for **every module import**, including stdlib imports — the `AdjustArgs` helper pads or trims the args array and always dispatches to the **full-arity method**. The lower-arity overloads are never reached. Their default-value expressions never run. The full-arity method receives nulls for missing parameters and crashes at first use.
+**Fix.** The full-arity method now also emits the inline null-check pattern (`if (arg == null) arg = <default>`) at the top of its body. Direct callers still go through the overloads; module-imported callers now get the defaults applied correctly. Regression tests in `SharpTS.Tests/SharedTests/DefaultParameterTests.cs`.
 
-**Impact.** Any function declared with `default` parameters that is then called via a module import will see nulls instead of defaults. Not just stdlib code — any user TS function imported across module boundaries.
-
-**Workaround.** Use optional parameters with `??` fallback instead:
-
-```ts
-// Broken for module-imported callers:
-export function parse(str: string, sep: string = '&', eq: string = '='): any { ... }
-
-// Works:
-export function parse(str: string, sep?: string, eq?: string): any {
-    const actualSep = sep ?? '&';
-    const actualEq = eq ?? '=';
-    ...
-}
-```
-
-**Proper fix (deferred).** Two equivalent options:
-1. Have `AdjustArgs` dispatch to the lowest-arity overload that can accept the given arg count (or the highest ≤ the provided count). More runtime work but matches overload semantics exactly.
-2. Always emit the inline null-check pattern (`if (arg == null) arg = <default>`) inside the full-arity method too, in addition to generating overloads. More IL, but correct under any call path.
-
-Option 2 is likely simpler and additive. Tracked as deferred compiler work, not blocking any stdlib migration as long as the authoring contract flags the `??` pattern.
+**Limitation: value-type defaults.** The null-check pattern (`ldarg; brtrue`) doesn't work for value-type parameters (a `double` or `bool` can't be null). The fix's helper is type-aware and skips value-type params. Stdlib authors using numeric or boolean defaults in module-exported functions should use `param?: T` + `??` instead — documented in `stdlib/CONTRIBUTING.md`. Proper handling would require either (a) boxing all parameters, defeating the boxing-elimination optimization, or (b) changing `AdjustArgs` to dispatch by arity to the correct overload. Deferred.
 
 ### Phase 3 — Primitive layer + first I/O-bearing migration
 

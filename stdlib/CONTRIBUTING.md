@@ -66,26 +66,30 @@ Target Node.js 24.15.0. Match observable behavior including error codes
 (`ENOENT`, `EACCES`, etc.). Any deliberate divergence needs an explicit
 comment explaining why — no silent differences.
 
-### 6. Avoid default parameter values
+### 6. Default parameter values: reference types only
 
-Do not use the `= default` syntax on function parameters:
+Reference-type default values (strings, objects, arrays) work correctly
+through module imports:
 
 ```ts
-// Broken for module-imported callers — do NOT use:
-export function parse(str: string, sep: string = '&'): any { ... }
-
-// Use optional params with `??` fallback instead:
-export function parse(str: string, sep?: string): any {
-    const actualSep = sep ?? '&';
-    ...
-}
+// Fine — string default, works through module imports
+export function parse(str: string, sep: string = '&', eq: string = '='): any { ... }
 ```
 
-Why: module imports dispatch through `$TSFunction.Invoke`, which pads
-missing args with null and calls the full-arity method directly,
-bypassing the generated lower-arity overloads that would run the default
-initializers. Tracked as a compiler gap in
-[docs/plans/embedded-stdlib.md](../docs/plans/embedded-stdlib.md).
+**Value-type defaults (numbers, booleans) are a known limitation through
+module imports.** The compiler's `$TSFunction.Invoke` path dispatches to
+the full-arity method with null-padded args; the inline null-check
+pattern used for reference types doesn't apply to value types (a `double`
+can't be null). If you need a numeric default in a module-exported
+function, use `param?: number` + `??` as a workaround:
+
+```ts
+// Module-exported numeric defaults — use the ?? pattern:
+export function pad(width?: number): number {
+    const actualWidth = width ?? 4;
+    return actualWidth * 2;
+}
+```
 
 ### 7. No SharpTS-specific APIs
 

@@ -4,32 +4,24 @@
 // Note: the 'querystring' module is deprecated in Node but still widely used.
 // This file provides the observable subset exercised by real-world code.
 
-// NOTE: default parameter syntax (sep = '&') cannot be used here. Module imports
-// dispatch through $TSFunction.Invoke, which pads missing args with null and calls
-// the full-arity method — bypassing the generated lower-arity overloads. So the
-// default initializer never runs. Fall back to `??` at the top of each function.
-// Tracked: docs/plans/embedded-stdlib.md (Risks).
-
 /**
  * Parses a URL query string into an object. Repeated keys produce an array value.
  */
-export function parse(str: string, sep?: string, eq?: string): any {
-    const actualSep = sep ?? '&';
-    const actualEq = eq ?? '=';
+export function parse(str: string, sep: string = '&', eq: string = '='): any {
     const result: any = {};
     if (!str) return result;
 
-    const pairs = str.split(actualSep);
+    const pairs = str.split(sep);
     for (const pair of pairs) {
         if (!pair) continue;
 
-        const eqIndex = pair.indexOf(actualEq);
+        const eqIndex = pair.indexOf(eq);
         let key: string;
         let value: string;
 
         if (eqIndex >= 0) {
             key = decodeURIComponent(pair.substring(0, eqIndex).replaceAll('+', ' '));
-            value = decodeURIComponent(pair.substring(eqIndex + actualEq.length).replaceAll('+', ' '));
+            value = decodeURIComponent(pair.substring(eqIndex + eq.length).replaceAll('+', ' '));
         } else {
             key = decodeURIComponent(pair.replaceAll('+', ' '));
             value = '';
@@ -53,9 +45,7 @@ export function parse(str: string, sep?: string, eq?: string): any {
 /**
  * Serializes an object into a URL query string.
  */
-export function stringify(obj: any, sep?: string, eq?: string): string {
-    const actualSep = sep ?? '&';
-    const actualEq = eq ?? '=';
+export function stringify(obj: any, sep: string = '&', eq: string = '='): string {
     if (!obj) return '';
 
     const pairs: string[] = [];
@@ -65,13 +55,13 @@ export function stringify(obj: any, sep?: string, eq?: string): string {
         const value = obj[key];
         if (Array.isArray(value)) {
             for (const item of value) {
-                pairs.push(encodedKey + actualEq + encodeURIComponent(String(item)));
+                pairs.push(encodedKey + eq + encodeURIComponent(String(item)));
             }
         } else {
-            pairs.push(encodedKey + actualEq + encodeURIComponent(String(value)));
+            pairs.push(encodedKey + eq + encodeURIComponent(String(value)));
         }
     }
-    return pairs.join(actualSep);
+    return pairs.join(sep);
 }
 
 /** Percent-encodes a string — thin wrapper over encodeURIComponent. */
