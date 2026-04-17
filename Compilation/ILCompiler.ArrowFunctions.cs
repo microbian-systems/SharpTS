@@ -760,7 +760,7 @@ public partial class ILCompiler
             AsyncMethods = null,
             AsyncArrowBuilders = _async.ArrowBuilders.Count > 0 ? _async.ArrowBuilders : null,
             // Top-level variables for module-level access
-            TopLevelStaticVars = _topLevelStaticVars,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             // Module support for multi-module compilation
             CurrentModulePath = _modules.CurrentPath,
             ClassToModule = _modules.ClassToModule,

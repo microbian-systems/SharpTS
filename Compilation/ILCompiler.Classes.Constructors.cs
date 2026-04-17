@@ -88,7 +88,7 @@ public partial class ILCompiler
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Module-level variable access
-            TopLevelStaticVars = _topLevelStaticVars,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
             EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,

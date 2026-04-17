@@ -205,7 +205,7 @@ public partial class ILCompiler
                 IsGenericFunction = _functions.IsGeneric,
                 TypeMap = _typeMap,
                 DeadCode = _deadCodeInfo,
-                TopLevelStaticVars = _topLevelStaticVars,
+                TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
                 CurrentModulePath = _modules.CurrentPath,
                 ClassToModule = _modules.ClassToModule,
                 FunctionToModule = _modules.FunctionToModule,

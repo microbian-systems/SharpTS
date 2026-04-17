@@ -81,8 +81,17 @@ public partial class ILCompiler
     // Shared context for definition phase (module name resolution)
     private CompilationContext? _definitionContext;
 
-    // Top-level variables captured by async functions (need to be static fields)
+    // Top-level variables captured by async functions (need to be static fields).
+    // Union across all modules; kept for closure analysis and as a lookup source
+    // when building module-scoped snapshots. Emission contexts do NOT use this
+    // dict directly — see _moduleTopLevelStaticVars.
     private readonly Dictionary<string, FieldBuilder> _topLevelStaticVars = [];
+
+    // Per-module top-level var/const fields (non-captured only). Captured vars
+    // live on the shared entry-point display class. This split scopes plain
+    // top-level bindings correctly — a `const foo` in main.ts no longer leaks
+    // into lib.ts's resolver.
+    private readonly Dictionary<string, Dictionary<string, FieldBuilder>> _moduleTopLevelStaticVars = [];
 
     // Entry point
     private MethodBuilder? _entryPoint;
@@ -700,7 +709,14 @@ public partial class ILCompiler
         Phase3_CreateProgramType();
         PreScanBuiltInModuleImports(allStatements);
         ModulePhase4_DefineModuleTypes(modules);
-        DefineTopLevelCapturedVariables(allStatements);
+        // Captured top-level vars continue to share the entry-point display class
+        // (script-compatible closure semantics). Non-captured vars are per-module
+        // so ordinary import/export name collisions no longer leak scope.
+        AnalyzeCapturedTopLevelVars(allStatements);
+        foreach (var m in modules)
+        {
+            DefineModuleScopedTopLevelStaticFields(m.Statements, m.Path);
+        }
         ModulePhase5_DefineDeclarations(modules);
         InitializeTypedInterop();
         InitializeTypeEmitterRegistries();
@@ -1034,9 +1050,22 @@ public partial class ILCompiler
     /// </remarks>
     private void DefineTopLevelCapturedVariables(List<Stmt> statements)
     {
-        // First, identify all top-level variable names
+        // Single-file compile path — treat the statements as one "module" with no path.
+        AnalyzeCapturedTopLevelVars(statements);
+        DefineModuleScopedTopLevelStaticFields(statements, modulePath: null);
+    }
+
+    /// <summary>
+    /// Cross-module pass: populates <see cref="_ClosureState.CapturedTopLevelVars"/>
+    /// and defines the shared entry-point display class. Captured top-level vars
+    /// are kept in a single cross-module set by design — closures in one module
+    /// may capture vars from another during script-style scope merging; two
+    /// modules are not expected to capture identically-named locals.
+    /// </summary>
+    private void AnalyzeCapturedTopLevelVars(List<Stmt> allStatements)
+    {
         var allTopLevelVars = new HashSet<string>();
-        foreach (var stmt in statements)
+        foreach (var stmt in allStatements)
         {
             string? varName = stmt switch
             {
@@ -1044,13 +1073,12 @@ public partial class ILCompiler
                 Stmt.Const c => c.Name.Lexeme,
                 _ => null
             };
-            if (varName != null && !_topLevelStaticVars.ContainsKey(varName))
+            if (varName != null)
             {
                 allTopLevelVars.Add(varName);
             }
         }
 
-        // Use ClosureAnalyzer to identify which variables are captured
         foreach (var varName in allTopLevelVars)
         {
             if (_closures.Analyzer.IsVariableCaptured(varName))
@@ -1059,15 +1087,13 @@ public partial class ILCompiler
             }
         }
 
-        // Create entry-point display class if there are captured variables
-        if (_closures.CapturedTopLevelVars.Count > 0)
+        if (_closures.CapturedTopLevelVars.Count > 0 && _closures.EntryPointDisplayClass == null)
         {
             var displayClass = _moduleBuilder.DefineType(
                 "<>c__EntryPointDisplayClass",
                 TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
                 _types.Object);
 
-            // Define fields for each captured variable
             foreach (var varName in _closures.CapturedTopLevelVars)
             {
                 var field = displayClass.DefineField(
@@ -1077,7 +1103,6 @@ public partial class ILCompiler
                 _closures.EntryPointDisplayClassFields[varName] = field;
             }
 
-            // Define default constructor
             var ctor = displayClass.DefineConstructor(
                 MethodAttributes.Public,
                 CallingConventions.Standard,
@@ -1090,25 +1115,124 @@ public partial class ILCompiler
             _closures.EntryPointDisplayClass = displayClass;
             _closures.EntryPointDisplayClassCtor = ctor;
 
-            // Define a static field to hold the display class instance
-            // This allows module init methods to access the same display class
             _closures.EntryPointDisplayClassStaticField = _programType.DefineField(
                 "$entryPointDC",
                 displayClass,
                 FieldAttributes.Public | FieldAttributes.Static);
         }
+    }
 
-        // Define static fields for non-captured variables only
-        foreach (var varName in allTopLevelVars)
+    /// <summary>
+    /// Per-module pass: defines static fields for non-captured top-level
+    /// var/const declarations and records them in
+    /// <see cref="_moduleTopLevelStaticVars"/>. Captured vars are handled by
+    /// <see cref="AnalyzeCapturedTopLevelVars"/> and live on the shared
+    /// entry-point display class.
+    /// </summary>
+    /// <param name="modulePath">The module this statement set belongs to, or
+    /// <c>null</c> for single-file compilation (which shares a global scope).</param>
+    private void DefineModuleScopedTopLevelStaticFields(List<Stmt> statements, string? modulePath)
+    {
+        Dictionary<string, FieldBuilder>? moduleDict = null;
+        if (modulePath != null)
         {
-            if (!_closures.CapturedTopLevelVars.Contains(varName))
+            if (!_moduleTopLevelStaticVars.TryGetValue(modulePath, out moduleDict))
             {
-                var field = _programType.DefineField(
-                    $"$topLevel_{varName}",
-                    _types.Object,
-                    FieldAttributes.Public | FieldAttributes.Static);
-                _topLevelStaticVars[varName] = field;
+                moduleDict = new Dictionary<string, FieldBuilder>();
+                _moduleTopLevelStaticVars[modulePath] = moduleDict;
             }
         }
+
+        foreach (var stmt in statements)
+        {
+            string? varName = stmt switch
+            {
+                Stmt.Var v => v.Name.Lexeme,
+                Stmt.Const c => c.Name.Lexeme,
+                _ => null
+            };
+            if (varName == null || _closures.CapturedTopLevelVars.Contains(varName)) continue;
+
+            // Each module gets its own field, so two modules that both declare
+            // `const foo` have independent storage. Field names are qualified
+            // by module when a path is present; script mode keeps unqualified
+            // names since scripts intentionally share global scope.
+            string fieldName = modulePath == null
+                ? $"$topLevel_{varName}"
+                : $"$topLevel_{SanitizeModuleForField(modulePath)}_{varName}";
+
+            var field = _programType.DefineField(
+                fieldName,
+                _types.Object,
+                FieldAttributes.Public | FieldAttributes.Static);
+
+            // The global dict (_topLevelStaticVars) is last-write-wins by name. That's
+            // only consulted for captured-var dispatch via name, which this path skips
+            // (we `continue` above when the var is captured). For non-captured vars,
+            // resolution goes through ctx.TopLevelStaticVars which is module-scoped.
+            _topLevelStaticVars[varName] = field;
+            if (moduleDict != null)
+            {
+                moduleDict[varName] = field;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Produces a field-name-safe fragment from a module path. Used to
+    /// disambiguate per-module static fields (e.g. two modules both declaring
+    /// <c>const foo</c>).
+    /// </summary>
+    private static string SanitizeModuleForField(string modulePath)
+    {
+        var chars = new char[modulePath.Length];
+        for (int i = 0; i < modulePath.Length; i++)
+        {
+            char c = modulePath[i];
+            chars[i] = char.IsLetterOrDigit(c) ? c : '_';
+        }
+        return new string(chars);
+    }
+
+    /// <summary>
+    /// Builds a fresh dict of top-level static vars visible to code emitted
+    /// for <paramref name="modulePath"/>. Merges this module's var/const fields
+    /// with its import fields. Returns <c>null</c> when there's nothing to expose.
+    /// </summary>
+    /// <remarks>
+    /// Always return a new dict — never share a reference across emission
+    /// contexts. Mutation by emitters (e.g. <see cref="EmitModuleInit"/> adding
+    /// import fields after the fact) must not leak into other modules.
+    /// </remarks>
+    private Dictionary<string, FieldBuilder>? BuildTopLevelStaticVarsForModule(string? modulePath)
+    {
+        Dictionary<string, FieldBuilder>? result = null;
+
+        if (modulePath != null)
+        {
+            if (_moduleTopLevelStaticVars.TryGetValue(modulePath, out var moduleVars))
+            {
+                foreach (var (name, field) in moduleVars)
+                {
+                    result ??= new Dictionary<string, FieldBuilder>();
+                    result[name] = field;
+                }
+            }
+            if (_modules.ImportFields.TryGetValue(modulePath, out var imports))
+            {
+                foreach (var (name, field) in imports)
+                {
+                    result ??= new Dictionary<string, FieldBuilder>();
+                    result[name] = field;
+                }
+            }
+        }
+        else if (_topLevelStaticVars.Count > 0)
+        {
+            // Single-file / script-style: no per-module scoping — expose the global union.
+            result = new Dictionary<string, FieldBuilder>(_topLevelStaticVars);
+        }
+
+        return result;
     }
 }

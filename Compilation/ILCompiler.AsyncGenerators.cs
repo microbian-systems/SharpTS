@@ -142,7 +142,7 @@ public partial class ILCompiler
             EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
             CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
-            TopLevelStaticVars = _topLevelStaticVars
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath)
         };
 
         // Use the new emitter for full async generator body emission
@@ -213,7 +213,7 @@ public partial class ILCompiler
             EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
             CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
-            TopLevelStaticVars = _topLevelStaticVars
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath)
         };
 
         // Emit MoveNextAsync body

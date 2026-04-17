@@ -196,20 +196,9 @@ public partial class ILCompiler
         var hasFunctionDC = _closures.FunctionDisplayClasses.TryGetValue(qualifiedFunctionName, out var functionDCType);
         var capturedLocals = hasFunctionDC ? _closures.Analyzer.GetCapturedLocals(funcStmt) : null;
 
-        // Merge module import fields with top-level static vars
-        Dictionary<string, FieldBuilder>? topLevelVars = null;
-        if (_topLevelStaticVars.Count > 0 ||
-            (_modules.CurrentPath != null && _modules.ImportFields.TryGetValue(_modules.CurrentPath, out var moduleImportFields) && moduleImportFields.Count > 0))
-        {
-            topLevelVars = new Dictionary<string, FieldBuilder>(_topLevelStaticVars);
-            if (_modules.CurrentPath != null && _modules.ImportFields.TryGetValue(_modules.CurrentPath, out var importFields))
-            {
-                foreach (var (name, field) in importFields)
-                {
-                    topLevelVars[name] = field;
-                }
-            }
-        }
+        // Build module-scoped top-level vars so this function only sees its own
+        // module's bindings plus global imports.
+        Dictionary<string, FieldBuilder>? topLevelVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath);
 
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
         {
@@ -492,7 +481,7 @@ public partial class ILCompiler
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
             NamespaceFields = _namespaceFields,
-            TopLevelStaticVars = _topLevelStaticVars,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             Runtime = _runtime,
             FunctionGenericParams = _functions.GenericParams,
             IsGenericFunction = _functions.IsGeneric,
@@ -716,7 +705,7 @@ public partial class ILCompiler
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
             NamespaceFields = _namespaceFields,
-            TopLevelStaticVars = _topLevelStaticVars,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             Runtime = _runtime,
             FunctionGenericParams = _functions.GenericParams,
             IsGenericFunction = _functions.IsGeneric,
