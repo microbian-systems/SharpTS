@@ -1,4 +1,5 @@
 using SharpTS.Modules;
+using SharpTS.Modules.Stdlib;
 using SharpTS.Parsing;
 using SharpTS.Parsing.Visitors;
 using SharpTS.Runtime;
@@ -1166,6 +1167,21 @@ public partial class Interpreter : IDisposable
         // Handle built-in modules specially - populate exports from interpreter implementations
         if (module.IsBuiltIn)
         {
+            // Primitive modules (primitive:os, etc.) share dispatch with the C# built-ins
+            // but live in a separate registry that user code cannot import.
+            var primitiveName = PrimitiveRegistry.GetPrimitiveName(module.Path);
+            if (primitiveName != null && PrimitiveModuleValues.HasInterpreterSupport(primitiveName))
+            {
+                var primitiveExports = PrimitiveModuleValues.GetPrimitiveExports(primitiveName);
+                foreach (var (name, value) in primitiveExports)
+                {
+                    moduleInstance.SetExport(name, value);
+                }
+                moduleInstance.DefaultExport = moduleInstance.ExportsAsObject();
+                moduleInstance.IsExecuted = true;
+                return;
+            }
+
             var moduleName = BuiltInModuleRegistry.GetModuleName(module.Path);
             if (moduleName != null && BuiltInModuleValues.HasInterpreterSupport(moduleName))
             {

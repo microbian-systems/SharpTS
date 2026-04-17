@@ -35,6 +35,7 @@ public class ModuleResolver
         _basePath = Path.GetDirectoryName(Path.GetFullPath(basePath)) ?? ".";
         _stdlibChain = new StdlibProviderChain(
         [
+            new PrimitiveProvider(),
             new EmbeddedStdlibProvider(),
             new BuiltInCSharpProvider(),
         ]);
@@ -81,6 +82,18 @@ public class ModuleResolver
         {
             // Strip 'node:' prefix (e.g., 'node:fs' -> 'fs')
             var bareSpecifier = specifier.StartsWith("node:") ? specifier[5..] : specifier;
+
+            // Origin-gate primitive:* specifiers. The narrow C# interop surface that
+            // stdlib TS modules rely on is intentionally hidden from user code —
+            // only modules already loaded from stdlib: virtual paths may reach it.
+            // Leaking it would couple user programs to an unstable internal API.
+            if (PrimitiveRegistry.IsPrimitive(bareSpecifier) &&
+                !currentModulePath.StartsWith(EmbeddedStdlibProvider.VirtualPathPrefix, StringComparison.Ordinal))
+            {
+                throw new Exception(
+                    $"Module Error: Cannot import '{specifier}'. The primitive: namespace " +
+                    "is reserved for SharpTS stdlib modules and is not available to user code.");
+            }
 
             // Consult the stdlib provider chain. In the current phase, only the
             // BuiltInCSharpProvider claims anything, so this is behaviorally identical
@@ -505,6 +518,30 @@ public class ModuleResolver
             return LoadStdlibModule(absolutePath, decoratorMode);
         }
 
+        // Primitive C# module — materialize a placeholder ParsedModule with types.
+        // Origin-gating in ResolveModulePath has already ensured only stdlib-origin
+        // modules resolve here, so no per-caller check is needed.
+        if (absolutePath.StartsWith(PrimitiveRegistry.Prefix, StringComparison.Ordinal))
+        {
+            if (!_moduleCache.TryGetValue(absolutePath, out var primitiveModule))
+            {
+                var primitiveName = PrimitiveRegistry.GetPrimitiveName(absolutePath)!;
+                primitiveModule = new ParsedModule(absolutePath, []) { IsBuiltIn = true, IsTypeChecked = true };
+                var primitiveTypes = BuiltInModuleTypes.GetPrimitiveTypes(primitiveName);
+                if (primitiveTypes != null)
+                {
+                    foreach (var (name, type) in primitiveTypes)
+                    {
+                        primitiveModule.ExportedTypes[name] = type;
+                    }
+                    primitiveModule.DefaultExportType = new TypeInfo.Record(
+                        primitiveModule.ExportedTypes.ToFrozenDictionary());
+                }
+                _moduleCache[absolutePath] = primitiveModule;
+            }
+            return primitiveModule;
+        }
+
         // Skip built-in modules - they don't need to be loaded from files
         if (absolutePath.StartsWith(BuiltInModuleRegistry.BuiltInPrefix))
         {
@@ -865,9 +902,11 @@ public class ModuleResolver
     /// </summary>
     public ParsedModule? GetCachedModule(string absolutePath)
     {
-        // Don't normalize virtual paths (builtin: sentinels and stdlib: TypeScript sources).
+        // Don't normalize virtual paths (builtin: sentinels, stdlib: TS sources,
+        // primitive: C# interop modules — none resolve to a real filesystem path).
         if (!absolutePath.StartsWith(BuiltInModuleRegistry.BuiltInPrefix)
-            && !absolutePath.StartsWith(EmbeddedStdlibProvider.VirtualPathPrefix, StringComparison.Ordinal))
+            && !absolutePath.StartsWith(EmbeddedStdlibProvider.VirtualPathPrefix, StringComparison.Ordinal)
+            && !absolutePath.StartsWith(PrimitiveRegistry.Prefix, StringComparison.Ordinal))
         {
             absolutePath = Path.GetFullPath(absolutePath);
         }

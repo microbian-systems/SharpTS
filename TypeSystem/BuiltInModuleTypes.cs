@@ -1386,6 +1386,21 @@ public static class BuiltInModuleTypes
     }
 
     /// <summary>
+    /// Gets the exported types for a primitive module (name without the
+    /// <c>primitive:</c> prefix). Primitives share type shape with their
+    /// matching user-facing module — stdlib TS code targets the same surface
+    /// Node's docs describe, just reached through the stdlib-internal specifier.
+    /// </summary>
+    public static Dictionary<string, TypeInfo>? GetPrimitiveTypes(string primitiveName)
+    {
+        return primitiveName switch
+        {
+            "os" => GetOsModuleTypes(),
+            _ => null
+        };
+    }
+
+    /// <summary>
     /// Gets the exported types for the worker_threads module.
     /// </summary>
     public static Dictionary<string, TypeInfo> GetWorkerThreadsModuleTypes()

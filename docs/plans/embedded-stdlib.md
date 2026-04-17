@@ -240,14 +240,33 @@ Phase 2 is the first *real* migration and is where the downstream dispatch chang
 
 **Limitation: value-type defaults.** The null-check pattern (`ldarg; brtrue`) doesn't work for value-type parameters (a `double` or `bool` can't be null). The fix's helper is type-aware and skips value-type params. Stdlib authors using numeric or boolean defaults in module-exported functions should use `param?: T` + `??` instead — documented in `stdlib/CONTRIBUTING.md`. Proper handling would require either (a) boxing all parameters, defeating the boxing-elimination optimization, or (b) changing `AdjustArgs` to dispatch by arity to the correct overload. Deferred.
 
-### Phase 3 — Primitive layer + first I/O-bearing migration
+### Phase 3a — Primitive infrastructure + origin-gating ✅ COMPLETE
 
-- Extract `primitive:io`, `primitive:process`, `primitive:os` from existing interop code into `Runtime/Primitives/*`.
-- Implement origin-gating for `primitive:*` specifiers (user code import → compile error).
-- Migrate `path` (exercises `primitive:process` for `cwd`/`sep`; no real I/O) — a good second pathfinder.
-- Primitive unit tests (C#) and stdlib behavior tests (TS fixtures) are introduced as **separate test categories** so future bugs localize fast: stdlib bug vs compiler bug vs primitive bug.
+Infrastructure-only commit. No user-visible module migrations; proves the
+primitive layer resolves end-to-end and that user code cannot reach it.
 
-**Test gate:** `path` tests pass in both modes. `primitive:*` imports from non-stdlib code fail with a clear diagnostic. Primitive API has independent test coverage.
+- `Modules/Stdlib/PrimitiveRegistry.cs` — narrow, explicit set of primitive specifiers (`primitive:os` to start). Deliberately additive; growing it is a conscious architectural choice. ✅
+- `Modules/Stdlib/Providers/PrimitiveProvider.cs` — claims `primitive:*` specifiers as `CSharpBuiltInSource` with a `primitive:<name>` virtual path. Added to the chain ahead of `EmbeddedStdlibProvider`. ✅
+- `ModuleResolver.ResolveModulePath` — origin-gates `primitive:*` specifiers: imports from any non-`stdlib:` origin throw a clear diagnostic naming the specifier and explaining the namespace is reserved. ✅
+- `ModuleResolver.LoadModule` — treats `primitive:` virtual paths analogously to `builtin:`: builds a placeholder `ParsedModule` with `IsBuiltIn = true` whose `ExportedTypes` come from `BuiltInModuleTypes.GetPrimitiveTypes`. ✅
+- `Execution/Interpreter.cs` — dispatches `primitive:` module paths through a new `PrimitiveModuleValues.GetPrimitiveExports`, which currently delegates to the existing C# module implementations (reusing code without duplicating it). ✅
+- `TypeSystem/BuiltInModuleTypes.cs:GetPrimitiveTypes` — types for `primitive:os` reuse `GetOsModuleTypes` for now (same shape as user-facing `os`). ✅
+- `SharpTS.Tests/SharedTests/PrimitiveModuleGatingTests.cs` — registry unit tests, provider unit tests, and an integration test asserting that user code importing `primitive:os` fails with the gating diagnostic. ✅
+
+**Test gate:** 9896 tests pass (+5 new), 14 pre-existing skips. Zero regressions.
+
+**Scope note.** The plan's Phase 3 called for migrating `path` alongside the infrastructure. That conflated two independent decisions — "do primitives work?" and "is the existing `path` implementation replaceable in TS?" — so we split them. 3a proves the primitive mechanism without touching any user-facing module; 3b (next) does the first real migration through primitives.
+
+**Compiled-mode coverage.** No stdlib TS module currently imports from a primitive, so compiled-mode stdlib→primitive dispatch is not yet exercised. The existing compiled-mode `querystring` path is primitive-free, so 3a doesn't need new compiler work. The compiler changes for `primitive:*` imports land in 3b when the first consumer arrives.
+
+### Phase 3b — First primitive consumer (planned)
+
+- Pick a migration target that exercises the primitive layer through compiled mode. Candidates, easiest first: `os` (thin wrapper, few semantics, already mostly platform queries), then `path` (pure-string semantics on top of `primitive:os` for `sep`/`delimiter` and `primitive:process` for `cwd`).
+- Add `primitive:process` with `cwd()` (extracted from existing `ProcessModuleInterpreter`).
+- Wire compiled-mode dispatch for `primitive:*` imports — the existing `BuiltInModuleEmitterRegistry` is keyed by name, so reusing the `OsModuleEmitter` under the `primitive:os` specifier should be a matter of registration, not new IL.
+- Separate test categories: primitive unit tests (C#) vs stdlib behavior tests (TS fixtures) so failures localize — shim bug vs compiler bug vs primitive bug.
+
+**Test gate:** the migrated module's existing tests pass identically in both modes. `primitive:*` imports from non-stdlib code continue to fail with a clear diagnostic (regression-guarded). Compiled-mode stdlib→primitive dispatch has its own coverage.
 
 ### Beyond v1 (not scheduled here)
 
