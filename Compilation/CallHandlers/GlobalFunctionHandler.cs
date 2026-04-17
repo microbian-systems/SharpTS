@@ -4,7 +4,8 @@ using SharpTS.Parsing;
 namespace SharpTS.Compilation.CallHandlers;
 
 /// <summary>
-/// Handles global built-in functions: parseInt, parseFloat, isNaN, isFinite, String, Number, Boolean.
+/// Handles global built-in functions: parseInt, parseFloat, isNaN, isFinite, String, Number, Boolean,
+/// encodeURIComponent, decodeURIComponent.
 /// </summary>
 public class GlobalFunctionHandler : ICallHandler
 {
@@ -27,6 +28,8 @@ public class GlobalFunctionHandler : ICallHandler
             "String" => EmitStringConversion(emitter, il, ctx, call),
             "Number" => EmitNumberConversion(emitter, il, ctx, call),
             "Boolean" => EmitBooleanConversion(emitter, il, ctx, call),
+            "encodeURIComponent" => EmitEncodeURIComponent(emitter, il, ctx, call),
+            "decodeURIComponent" => EmitDecodeURIComponent(emitter, il, ctx, call),
             _ => false
         };
     }
@@ -112,6 +115,42 @@ public class GlobalFunctionHandler : ICallHandler
             il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.IsTruthy);
         }
         emitter.SetStackType(StackType.Boolean);
+        return true;
+    }
+
+    private static bool EmitEncodeURIComponent(IEmitterContext emitter, System.Reflection.Emit.ILGenerator il, CompilationContext ctx, Expr.Call call)
+    {
+        // JS: encodeURIComponent() throws; encodeURIComponent(undefined) returns "undefined".
+        // We match the "undefined" coercion and let the runtime throw if truly missing.
+        if (call.Arguments.Count == 0)
+        {
+            il.Emit(System.Reflection.Emit.OpCodes.Ldstr, "undefined");
+        }
+        else
+        {
+            emitter.EmitExpression(call.Arguments[0]);
+            emitter.EmitBoxIfNeeded(call.Arguments[0]);
+            il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.Stringify);
+        }
+        il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Types.UriEscapeDataString);
+        emitter.SetStackType(StackType.String);
+        return true;
+    }
+
+    private static bool EmitDecodeURIComponent(IEmitterContext emitter, System.Reflection.Emit.ILGenerator il, CompilationContext ctx, Expr.Call call)
+    {
+        if (call.Arguments.Count == 0)
+        {
+            il.Emit(System.Reflection.Emit.OpCodes.Ldstr, "undefined");
+        }
+        else
+        {
+            emitter.EmitExpression(call.Arguments[0]);
+            emitter.EmitBoxIfNeeded(call.Arguments[0]);
+            il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.Stringify);
+        }
+        il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Types.UriUnescapeDataString);
+        emitter.SetStackType(StackType.String);
         return true;
     }
 }
