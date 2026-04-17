@@ -1,4 +1,6 @@
 using System.Collections.Frozen;
+using SharpTS.Modules.Stdlib;
+using SharpTS.Modules.Stdlib.Providers;
 using SharpTS.Parsing;
 using SharpTS.Parsing.Visitors;
 using SharpTS.Runtime.BuiltIns.Modules;
@@ -22,6 +24,7 @@ public class ModuleResolver
     private readonly HashSet<string> _loadingModules = [];  // For circular detection
     private readonly HashSet<string> _loadingScriptRefs = [];  // For circular script reference detection
     private readonly Dictionary<string, ModulePackageJson?> _packageJsonCache = [];
+    private readonly StdlibProviderChain _stdlibChain;
 
     /// <summary>
     /// Creates a new module resolver rooted at the given path.
@@ -30,7 +33,17 @@ public class ModuleResolver
     public ModuleResolver(string basePath)
     {
         _basePath = Path.GetDirectoryName(Path.GetFullPath(basePath)) ?? ".";
+        _stdlibChain = new StdlibProviderChain(
+        [
+            new EmbeddedStdlibProvider(),
+            new BuiltInCSharpProvider(),
+        ]);
     }
+
+    /// <summary>
+    /// The stdlib provider chain. Exposed for diagnostics; not intended for mutation.
+    /// </summary>
+    internal StdlibProviderChain StdlibChain => _stdlibChain;
 
     /// <summary>
     /// Resolves a module specifier to an absolute file path.
@@ -69,10 +82,15 @@ public class ModuleResolver
             // Strip 'node:' prefix (e.g., 'node:fs' -> 'fs')
             var bareSpecifier = specifier.StartsWith("node:") ? specifier[5..] : specifier;
 
-            // Check for built-in modules first (fs, path, os, etc.)
-            if (BuiltInModuleRegistry.IsBuiltIn(bareSpecifier))
+            // Consult the stdlib provider chain. In the current phase, only the
+            // BuiltInCSharpProvider claims anything, so this is behaviorally identical
+            // to the legacy IsBuiltIn check. Once TypeScript stdlib modules ship as
+            // embedded resources, the EmbeddedStdlibProvider answers first and returns
+            // a "stdlib:node/<name>.ts" virtual path, causing LoadModule to compile
+            // the TS source in place of the C# built-in dispatch.
+            if (_stdlibChain.TryResolve(bareSpecifier, out var stdlibModule) && stdlibModule is not null)
             {
-                return BuiltInModuleRegistry.GetBuiltInPath(bareSpecifier);
+                return stdlibModule.VirtualPath;
             }
 
             // Try self-referencing: if nearest package.json has "name" matching the specifier
