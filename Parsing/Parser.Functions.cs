@@ -11,7 +11,7 @@ public partial class Parser
         }
         else
         {
-            name = Consume(TokenType.IDENTIFIER, $"Expect {kind} name.");
+            name = ConsumeIdentifierName($"Expect {kind} name.");
         }
 
         // Parse type parameters (e.g., <T, U extends Base>)

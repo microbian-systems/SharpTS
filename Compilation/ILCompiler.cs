@@ -392,10 +392,14 @@ public partial class ILCompiler
         {
             if (stmt is Stmt.Import import && !import.IsTypeOnly)
             {
-                // Check if the import path is a built-in module
+                // Check if the import path is a built-in module or an stdlib-internal
+                // primitive. Both dispatch through BuiltInModuleEmitterRegistry — the
+                // primitive case's key is the full specifier (e.g. "primitive:os").
                 string? builtInModuleName = Runtime.BuiltIns.Modules.BuiltInModuleRegistry.IsBuiltIn(import.ModulePath)
                     ? import.ModulePath  // Use the module path directly as the module name
-                    : Runtime.BuiltIns.Modules.BuiltInModuleRegistry.GetModuleName(import.ModulePath);  // Try sentinel path
+                    : Modules.Stdlib.PrimitiveRegistry.IsPrimitive(import.ModulePath)
+                        ? import.ModulePath  // "primitive:os" is its own emitter key
+                        : Runtime.BuiltIns.Modules.BuiltInModuleRegistry.GetModuleName(import.ModulePath);  // Try sentinel path
                 if (builtInModuleName != null)
                 {
                     // Default import: import os from 'os' -> os maps to "os"

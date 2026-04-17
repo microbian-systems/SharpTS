@@ -1349,7 +1349,8 @@ public static class BuiltInModuleTypes
         return moduleName switch
         {
             "path" => GetPathModuleTypes(),
-            "os" => GetOsModuleTypes(),
+            // "os" — migrated to stdlib/node/os.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:os reuse GetOsModuleTypes via GetPrimitiveTypes.
             "fs" => GetFsModuleTypes(),
             "fs/promises" => GetFsPromisesModuleTypes(),
             "assert" => GetAssertModuleTypes(),

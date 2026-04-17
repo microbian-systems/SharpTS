@@ -259,14 +259,21 @@ primitive layer resolves end-to-end and that user code cannot reach it.
 
 **Compiled-mode coverage.** No stdlib TS module currently imports from a primitive, so compiled-mode stdlib→primitive dispatch is not yet exercised. The existing compiled-mode `querystring` path is primitive-free, so 3a doesn't need new compiler work. The compiler changes for `primitive:*` imports land in 3b when the first consumer arrives.
 
-### Phase 3b — First primitive consumer (planned)
+### Phase 3b — First primitive consumer: `os` ✅ COMPLETE
 
-- Pick a migration target that exercises the primitive layer through compiled mode. Candidates, easiest first: `os` (thin wrapper, few semantics, already mostly platform queries), then `path` (pure-string semantics on top of `primitive:os` for `sep`/`delimiter` and `primitive:process` for `cwd`).
-- Add `primitive:process` with `cwd()` (extracted from existing `ProcessModuleInterpreter`).
-- Wire compiled-mode dispatch for `primitive:*` imports — the existing `BuiltInModuleEmitterRegistry` is keyed by name, so reusing the `OsModuleEmitter` under the `primitive:os` specifier should be a matter of registration, not new IL.
-- Separate test categories: primitive unit tests (C#) vs stdlib behavior tests (TS fixtures) so failures localize — shim bug vs compiler bug vs primitive bug.
+Migrated `os` to `stdlib/node/os.ts` as the first module that imports from a `primitive:*` specifier. Proved the end-to-end stdlib→primitive dispatch in both interpreter and compiled modes.
 
-**Test gate:** the migrated module's existing tests pass identically in both modes. `primitive:*` imports from non-stdlib code continue to fail with a clear diagnostic (regression-guarded). Compiled-mode stdlib→primitive dispatch has its own coverage.
+- `stdlib/node/os.ts` — thin Node-shape facade (~80 lines) forwarding every function/constant to `primitive:os`. Existing OS-specific C# code (`OsModuleInterpreter`, `OsModuleEmitter`) stays — it's now reached through the primitive, not directly. ✅
+- `Compilation/Emitters/Modules/OsModuleEmitter.cs` re-registered under `ModuleName = "primitive:os"`. The existing IL dispatch works unchanged; only the registry key moved. ✅
+- `Compilation/ILCompiler.cs:PreScanBuiltInModuleImports` and `Compilation/ILEmitter.Modules.cs:EmitImport` recognize `primitive:*` specifiers and route them through the same built-in emitter dispatch used for the legacy C# modules. ✅
+- Removed `"os"` from `BuiltInModuleRegistry`, `BuiltInModuleValues` dispatch, and `BuiltInModuleTypes.GetModuleTypes` — the stdlib provider now answers user-facing `import 'os'` through the EmbeddedStdlibProvider chain. ✅
+- Parser gap-fills landed alongside (general compiler improvements, not os-specific): function declarations accept TypeScript contextual keywords (`function type()` et al.), export specifiers accept them after `as`, the `type` modifier in `{ type as X }` imports is now disambiguated via lookahead, and trailing commas in specifier lists are allowed. ✅
+
+**Test gate:** 9900 pass, 15 skipped (1 new documented limitation), zero regressions. All 48 `OsModuleTests` exercise the full migrated path in both modes.
+
+**Prerequisite bug surfaced.** The migration work exposed a pre-existing compiler bug: cross-module top-level name collisions shared a single `_topLevelStaticVars` dict, so a `const foo` in one module would shadow an exported `function foo()` in another. The common import/export case (the one stdlib migrations routinely hit — `os.platform`, `querystring.parse`, etc.) is fixed in a prior commit with per-module static-field scoping; one rarer capture-collision case (two modules both declaring a same-named captured const) is documented as a known limitation via `[Theory(Skip=...)]` on `TwoModulesDeclaringSameConstName`.
+
+**Compiled-mode dispatch proof.** `import * as os from 'os'` now resolves to stdlib `os.ts`, which imports named members from `primitive:os`. The compiler's PreScan recognizes the primitive specifier and routes calls through the same `BuiltInModuleEmitterRegistry` that used to handle `import 'os'`. End result: no new IL code paths, just re-routing — a minor commit-size testament that the primitive layer's design works with existing compiler infrastructure.
 
 ### Beyond v1 (not scheduled here)
 

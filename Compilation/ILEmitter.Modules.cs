@@ -21,12 +21,13 @@ public partial class ILEmitter
         if (import.IsTypeOnly)
             return;
 
-        // Check for built-in module imports (fs, path, os, etc.)
-        string? builtInModuleName = BuiltInModuleRegistry.GetModuleName(import.ModulePath);
+        // Check for built-in module imports (fs, path, etc.) and stdlib-internal
+        // primitive:* imports. Both route through the same emitter-registry dispatch.
+        string? builtInModuleName = ResolveBuiltInOrPrimitiveKey(import.ModulePath);
         if (builtInModuleName == null && _ctx.ModuleResolver != null && _ctx.CurrentModulePath != null)
         {
             string resolvedPath = _ctx.ModuleResolver.ResolveModulePath(import.ModulePath, _ctx.CurrentModulePath);
-            builtInModuleName = BuiltInModuleRegistry.GetModuleName(resolvedPath);
+            builtInModuleName = ResolveBuiltInOrPrimitiveKey(resolvedPath);
         }
 
         if (builtInModuleName != null)
@@ -852,6 +853,18 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateObject);
             IL.Emit(OpCodes.Stloc, local);
         }
+    }
+
+    /// <summary>
+    /// Resolves a module specifier or virtual path to the key used in
+    /// <see cref="BuiltInModuleEmitterRegistry"/>. Returns the specifier itself
+    /// for <c>primitive:*</c> entries, the name stripped from <c>builtin:</c>
+    /// sentinels, or <c>null</c> when the input is neither.
+    /// </summary>
+    private static string? ResolveBuiltInOrPrimitiveKey(string path)
+    {
+        if (Modules.Stdlib.PrimitiveRegistry.IsPrimitive(path)) return path;
+        return BuiltInModuleRegistry.GetModuleName(path);
     }
 
     /// <summary>

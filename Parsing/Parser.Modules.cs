@@ -92,8 +92,20 @@ public partial class Parser
         {
             do
             {
-                // Check for inline type specifier: { type Foo }
-                bool isTypeOnly = Match(TokenType.TYPE);
+                // Check for inline type specifier: { type Foo }.
+                // But `type` is also a valid identifier (e.g. `{ type as myType }`),
+                // so only consume it as the modifier when the following token would
+                // begin a new specifier — not `as`, `,`, or `}`.
+                bool isTypeOnly = false;
+                if (Check(TokenType.TYPE))
+                {
+                    var nextType = PeekNext().Type;
+                    if (nextType != TokenType.AS && nextType != TokenType.COMMA && nextType != TokenType.RIGHT_BRACE)
+                    {
+                        Advance();
+                        isTypeOnly = true;
+                    }
+                }
 
                 Token imported = ConsumeSpecifierName("Expect import name.");
                 Token? localName = null;
@@ -104,7 +116,9 @@ public partial class Parser
                 }
 
                 specifiers.Add(new Stmt.ImportSpecifier(imported, localName, isTypeOnly));
-            } while (Match(TokenType.COMMA));
+                // Trailing comma before '}' is allowed: { a, b, }
+                if (!Match(TokenType.COMMA)) break;
+            } while (!Check(TokenType.RIGHT_BRACE));
         }
 
         Consume(TokenType.RIGHT_BRACE, "Expect '}' after import specifiers.");
@@ -337,11 +351,12 @@ public partial class Parser
 
                 if (Match(TokenType.AS))
                 {
-                    exportedName = Consume(TokenType.IDENTIFIER, "Expect exported name after 'as'.");
+                    exportedName = ConsumeIdentifierName("Expect exported name after 'as'.");
                 }
 
                 specifiers.Add(new Stmt.ExportSpecifier(localName, exportedName));
-            } while (Match(TokenType.COMMA));
+                if (!Match(TokenType.COMMA)) break;
+            } while (!Check(TokenType.RIGHT_BRACE));
         }
 
         Consume(TokenType.RIGHT_BRACE, "Expect '}' after export specifiers.");
@@ -349,14 +364,20 @@ public partial class Parser
     }
 
     /// <summary>
-    /// Consumes a specifier name in import/export braces. Accepts identifiers and the
-    /// <c>default</c> keyword, which is valid as a specifier name per the ECMAScript spec
-    /// (e.g., <c>export { default as foo }</c>, <c>import { default as bar }</c>).
+    /// Consumes a specifier name in import/export braces. Accepts identifiers, the
+    /// <c>default</c> keyword (per ECMAScript spec), and TypeScript contextual
+    /// keywords like <c>type</c>, <c>from</c>, <c>of</c> — any of which may appear
+    /// as a real export name (e.g., <c>export { type }</c>, <c>import { type as t }</c>).
     /// </summary>
     private Token ConsumeSpecifierName(string errorMessage)
     {
         if (Check(TokenType.IDENTIFIER) || Check(TokenType.DEFAULT))
             return Advance();
+        if (IsContextualKeyword(Peek().Type))
+        {
+            var token = Advance();
+            return new Token(TokenType.IDENTIFIER, token.Lexeme, null, token.Line);
+        }
         throw new Exception($"Parse Error at line {Peek().Line}: {errorMessage}");
     }
 }
