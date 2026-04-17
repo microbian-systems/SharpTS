@@ -641,7 +641,7 @@ public partial class ILCompiler
         _builtInModuleEmitterRegistry.Register(new PathModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new OsModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new FsModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new QuerystringModuleEmitter());
+        // querystring migrated to stdlib/node/querystring.ts (embedded stdlib).
         _builtInModuleEmitterRegistry.Register(new AssertModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new UrlModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new ProcessModuleEmitter());

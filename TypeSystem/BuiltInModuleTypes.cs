@@ -563,46 +563,9 @@ public static class BuiltInModuleTypes
         return fsPromises.Fields.ToDictionary(kv => kv.Key, kv => kv.Value);
     }
 
-    /// <summary>
-    /// Gets the exported types for the querystring module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetQuerystringModuleTypes()
-    {
-        var stringType = new TypeInfo.String();
-        var anyType = new TypeInfo.Any();
-
-        return new Dictionary<string, TypeInfo>
-        {
-            // parse(str, sep?, eq?, options?) -> object
-            ["parse"] = new TypeInfo.Function(
-                [stringType, stringType, stringType, anyType],
-                anyType,
-                RequiredParams: 1
-            ),
-            // stringify(obj, sep?, eq?, options?) -> string
-            ["stringify"] = new TypeInfo.Function(
-                [anyType, stringType, stringType, anyType],
-                stringType,
-                RequiredParams: 1
-            ),
-            // escape(str) -> string
-            ["escape"] = new TypeInfo.Function([stringType], stringType),
-            // unescape(str) -> string
-            ["unescape"] = new TypeInfo.Function([stringType], stringType),
-            // decode is alias for parse
-            ["decode"] = new TypeInfo.Function(
-                [stringType, stringType, stringType, anyType],
-                anyType,
-                RequiredParams: 1
-            ),
-            // encode is alias for stringify
-            ["encode"] = new TypeInfo.Function(
-                [anyType, stringType, stringType, anyType],
-                stringType,
-                RequiredParams: 1
-            )
-        };
-    }
+    // GetQuerystringModuleTypes removed: the 'querystring' module now lives in
+    // stdlib/node/querystring.ts. Its export types are derived from the TS source
+    // via normal type inference.
 
     /// <summary>
     /// Gets the exported types for the assert module.
@@ -1389,7 +1352,6 @@ public static class BuiltInModuleTypes
             "os" => GetOsModuleTypes(),
             "fs" => GetFsModuleTypes(),
             "fs/promises" => GetFsPromisesModuleTypes(),
-            "querystring" => GetQuerystringModuleTypes(),
             "assert" => GetAssertModuleTypes(),
             "url" => GetUrlModuleTypes(),
             "process" => GetProcessModuleTypes(),

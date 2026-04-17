@@ -23,8 +23,32 @@ namespace SharpTS.Modules.Stdlib.Providers;
 /// </remarks>
 public sealed class EmbeddedStdlibProvider : IModuleProvider
 {
+    /// <summary>
+    /// Prefix used by this provider for the <see cref="StdlibModule.VirtualPath"/>
+    /// it produces (e.g. <c>stdlib:node/querystring.ts</c>). Callers elsewhere —
+    /// notably <see cref="ModuleResolver.LoadModule"/> — match on this prefix to
+    /// dispatch to stdlib handling instead of filesystem loading.
+    /// </summary>
+    public const string VirtualPathPrefix = "stdlib:";
+
     private const string ResourcePrefix = "SharpTS.stdlib.";
     private const string NodeNamespace = "node";
+    private const string NodeVirtualPathPrefix = VirtualPathPrefix + NodeNamespace + "/";
+    private const string TypeScriptExtension = ".ts";
+
+    /// <summary>
+    /// Extracts the original specifier from a stdlib virtual path. Returns null
+    /// if the path does not match the stdlib format.
+    /// </summary>
+    public static string? TryExtractSpecifier(string virtualPath)
+    {
+        if (!virtualPath.StartsWith(NodeVirtualPathPrefix, StringComparison.Ordinal)) return null;
+        if (!virtualPath.EndsWith(TypeScriptExtension, StringComparison.Ordinal)) return null;
+        var middle = virtualPath.Substring(
+            NodeVirtualPathPrefix.Length,
+            virtualPath.Length - NodeVirtualPathPrefix.Length - TypeScriptExtension.Length);
+        return middle.Length == 0 ? null : middle;
+    }
 
     private readonly Assembly _assembly;
     private readonly Dictionary<string, string> _specifierToResource;
@@ -64,7 +88,7 @@ public sealed class EmbeddedStdlibProvider : IModuleProvider
                 Specifier: specifier,
                 Source: new TypeScriptSource(text),
                 Origin: "stdlib",
-                VirtualPath: $"stdlib:{NodeNamespace}/{specifier}.ts");
+                VirtualPath: NodeVirtualPathPrefix + specifier + TypeScriptExtension);
             return true;
         }
 

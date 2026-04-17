@@ -32,6 +32,13 @@
     <None Include="README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 
+  <!-- Embed TypeScript standard library sources. Loaded by EmbeddedStdlibProvider
+       at user-compile time; see docs/plans/embedded-stdlib.md. -->
+  <ItemGroup>
+    <EmbeddedResource Include="stdlib\**\*.ts" />
+    <None Remove="stdlib\**\*.ts" />
+  </ItemGroup>
+
   <!-- Exclude test, example, benchmark, and SDK projects from this compilation -->
   <ItemGroup>
     <Compile Remove="SharpTS.Tests/**" />

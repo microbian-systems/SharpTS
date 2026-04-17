@@ -499,6 +499,12 @@ public class ModuleResolver
     /// <exception cref="Exception">If a circular dependency is detected</exception>
     public ParsedModule LoadModule(string absolutePath, DecoratorMode decoratorMode = DecoratorMode.None)
     {
+        // Embedded stdlib TypeScript module — compile from resource instead of filesystem.
+        if (absolutePath.StartsWith(EmbeddedStdlibProvider.VirtualPathPrefix, StringComparison.Ordinal))
+        {
+            return LoadStdlibModule(absolutePath, decoratorMode);
+        }
+
         // Skip built-in modules - they don't need to be loaded from files
         if (absolutePath.StartsWith(BuiltInModuleRegistry.BuiltInPrefix))
         {
@@ -670,6 +676,78 @@ public class ModuleResolver
     }
 
     /// <summary>
+    /// Loads a stdlib TypeScript module from its embedded resource. The virtual
+    /// path (e.g. "stdlib:node/querystring.ts") is used as both the module ID
+    /// and cache key — there is no real filesystem location.
+    /// </summary>
+    private ParsedModule LoadStdlibModule(string virtualPath, DecoratorMode decoratorMode)
+    {
+        if (_moduleCache.TryGetValue(virtualPath, out var cached))
+            return cached;
+
+        if (_loadingModules.Contains(virtualPath))
+            throw new Exception($"Module Error: Circular dependency detected involving '{virtualPath}'.");
+
+        var specifier = EmbeddedStdlibProvider.TryExtractSpecifier(virtualPath);
+        if (specifier is null)
+            throw new Exception($"Module Error: Malformed stdlib virtual path '{virtualPath}'.");
+
+        if (!_stdlibChain.TryResolve(specifier, out var stdlibModule) || stdlibModule is null)
+            throw new Exception($"Module Error: No stdlib provider resolved '{specifier}'.");
+
+        if (stdlibModule.Source is not TypeScriptSource tsSource)
+            throw new Exception($"Module Error: Stdlib module '{specifier}' is not TypeScript source.");
+
+        _loadingModules.Add(virtualPath);
+        try
+        {
+            var lexer = new Lexer(tsSource.Text);
+            var tokens = lexer.ScanTokens();
+            var parser = new Parser(tokens, decoratorMode);
+            var parseResult = parser.Parse();
+            if (!parseResult.IsSuccess)
+                throw new Exception(parseResult.Diagnostics.First().ToString());
+
+            var module = new ParsedModule(virtualPath, parseResult.Statements)
+            {
+                IsScript = false,
+                IsCommonJs = false,
+            };
+
+            _moduleCache[virtualPath] = module;
+
+            // Recursively resolve imports. Stdlib modules should only import from
+            // other stdlib specifiers or C# built-ins; the resolver chain handles
+            // both transparently.
+            foreach (var stmt in parseResult.Statements)
+            {
+                if (stmt is Stmt.Import import)
+                {
+                    var importedPath = ResolveModulePath(import.ModulePath, virtualPath);
+                    var importedModule = LoadModule(importedPath, decoratorMode);
+                    importedModule.IsScript = false;
+                    if (!module.Dependencies.Contains(importedModule))
+                        module.Dependencies.Add(importedModule);
+                }
+                else if (stmt is Stmt.Export export && export.FromModulePath != null)
+                {
+                    var reexportPath = ResolveModulePath(export.FromModulePath, virtualPath);
+                    var reexportedModule = LoadModule(reexportPath, decoratorMode);
+                    reexportedModule.IsScript = false;
+                    if (!module.Dependencies.Contains(reexportedModule))
+                        module.Dependencies.Add(reexportedModule);
+                }
+            }
+
+            return module;
+        }
+        finally
+        {
+            _loadingModules.Remove(virtualPath);
+        }
+    }
+
+    /// <summary>
     /// Walks a CommonJS module's body for literal `require('./literal')` calls and recursively
     /// loads each target. Adds resolved targets to <see cref="ParsedModule.Dependencies"/>.
     /// Non-literal specifiers are ignored here — the IL compiler will reject them later.
@@ -787,8 +865,9 @@ public class ModuleResolver
     /// </summary>
     public ParsedModule? GetCachedModule(string absolutePath)
     {
-        // Don't normalize built-in module paths
-        if (!absolutePath.StartsWith(BuiltInModuleRegistry.BuiltInPrefix))
+        // Don't normalize virtual paths (builtin: sentinels and stdlib: TypeScript sources).
+        if (!absolutePath.StartsWith(BuiltInModuleRegistry.BuiltInPrefix)
+            && !absolutePath.StartsWith(EmbeddedStdlibProvider.VirtualPathPrefix, StringComparison.Ordinal))
         {
             absolutePath = Path.GetFullPath(absolutePath);
         }

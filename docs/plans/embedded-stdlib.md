@@ -205,7 +205,7 @@ Strictly additive. Three phases, each independently shippable.
 
 **Phase 1 drift from plan — interpreter and ILCompiler dispatch code untouched.** The plan aspirationally said "interpreter import paths" would also consult the chain. In practice, the chain is the single chokepoint at `ModuleResolver.ResolveModulePath`: when `BuiltInCSharpProvider` claims a module it returns the exact same `builtin:<name>` sentinel as before, so downstream consumers (`Interpreter.cs:1169`, `Interpreter.CommonJs.cs:55`, `Interpreter.cs:1424`, `ILCompiler.cs` emitter registration) see identical inputs and don't need changes. The interpreter/compiler dispatch surgery only becomes necessary when the chain actually returns a `TypeScriptSource` — that's Phase 2.
 
-### Phase 2 — Pathfinder migration: `querystring`
+### Phase 2 — Pathfinder migration: `querystring` ✅ COMPLETE
 
 Phase 2 is the first *real* migration and is where the downstream dispatch changes Phase 1 deferred actually land. Work items, in order:
 
@@ -223,6 +223,42 @@ Phase 2 is the first *real* migration and is where the downstream dispatch chang
 **Test gate:** all `querystring` tests pass identically in both modes. Standalone-DLL test asserts no regressions.
 
 **Conflict diagnostic (deferred).** The plan originally called for a loud diagnostic when both a stdlib entry and a C# emitter claim the same module. We're deferring that to when it becomes reachable — for now, removing a specifier from `BuiltInModuleRegistry` as part of migration makes dual claims impossible by construction. `StdlibProviderChain.FindAllClaimants` already exists to support the diagnostic later.
+
+**Phase 2 drift from plan:**
+
+- **Pre-requisite gap-fill landed as its own commit.** Writing `querystring.ts` needed `encodeURIComponent`/`decodeURIComponent`. These were declared in `BuiltInNames.cs` but had no runtime or compiler handler — a latent gap surfaced by the stdlib work. Gap-filled separately (commit `ee83fb2`) before the migration itself. This kind of "migrating a shim uncovers a missing JS primitive" outcome is expected (see Risks: *"stdlib authoring becomes a forcing function for compiler completeness"*) and will likely happen again on future migrations.
+
+- **`ModuleResolver.GetCachedModule` normalized virtual paths.** The method ran `Path.GetFullPath` on everything not starting with `builtin:`, which mangled `stdlib:` paths into filesystem-rooted strings and caused cache misses during type checking. Fixed: both `builtin:` and `stdlib:` prefixes now bypass normalization. Surfaced by the first querystring test run.
+
+- **Default parameters do not work through `$TSFunction.Invoke`.** Discovered during Phase 2 migration, documented below. Workaround applied in `querystring.ts`; proper fix deferred.
+
+## Known compiler gap: default parameters via `$TSFunction.Invoke`
+
+Functions with default parameters compile into multiple overload methods (see `OverloadGenerator`): a full-arity method plus forwarding wrappers for each shorter arity. Direct compiled call sites select the correct overload by arg count.
+
+**However**, when a function is called through the `$TSFunction.Invoke(object[])` runtime wrapper — which is what happens for **every module import**, including stdlib imports — the `AdjustArgs` helper pads or trims the args array and always dispatches to the **full-arity method**. The lower-arity overloads are never reached. Their default-value expressions never run. The full-arity method receives nulls for missing parameters and crashes at first use.
+
+**Impact.** Any function declared with `default` parameters that is then called via a module import will see nulls instead of defaults. Not just stdlib code — any user TS function imported across module boundaries.
+
+**Workaround.** Use optional parameters with `??` fallback instead:
+
+```ts
+// Broken for module-imported callers:
+export function parse(str: string, sep: string = '&', eq: string = '='): any { ... }
+
+// Works:
+export function parse(str: string, sep?: string, eq?: string): any {
+    const actualSep = sep ?? '&';
+    const actualEq = eq ?? '=';
+    ...
+}
+```
+
+**Proper fix (deferred).** Two equivalent options:
+1. Have `AdjustArgs` dispatch to the lowest-arity overload that can accept the given arg count (or the highest ≤ the provided count). More runtime work but matches overload semantics exactly.
+2. Always emit the inline null-check pattern (`if (arg == null) arg = <default>`) inside the full-arity method too, in addition to generating overloads. More IL, but correct under any call path.
+
+Option 2 is likely simpler and additive. Tracked as deferred compiler work, not blocking any stdlib migration as long as the authoring contract flags the `??` pattern.
 
 ### Phase 3 — Primitive layer + first I/O-bearing migration
 
