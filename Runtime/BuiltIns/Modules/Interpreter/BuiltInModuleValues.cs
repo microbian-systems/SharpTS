@@ -25,7 +25,7 @@ public static class BuiltInModuleValues
             // "path" — migrated to stdlib/node/path.ts (pure-TS, uses primitive:process for cwd).
             // "os" — migrated to stdlib/node/os.ts which imports from primitive:os.
             //   OsModuleInterpreter is reused by PrimitiveModuleValues; not routed here.
-            "assert" => AssertModuleInterpreter.GetExports(),
+            // "assert" — migrated to stdlib/node/assert.ts (pure-logic leaf).
             "url" => UrlModuleInterpreter.GetExports(),
             "process" => ProcessModuleInterpreter.GetExports(),
             "crypto" => CryptoModuleInterpreter.GetExports(),
@@ -63,7 +63,7 @@ public static class BuiltInModuleValues
     /// </summary>
     public static bool HasInterpreterSupport(string moduleName)
     {
-        return moduleName is "fs" or "fs/promises" or "assert" or "url"
+        return moduleName is "fs" or "fs/promises" or "url"
             or "process" or "crypto" or "util" or "readline" or "child_process" or "buffer"
             or "zlib" or "events" or "timers" or "timers/promises" or "string_decoder" or "perf_hooks" or "stream" or "stream/promises" or "stream/web"
             or "http" or "worker_threads" or "dns" or "dns/promises" or "net" or "https" or "tls"

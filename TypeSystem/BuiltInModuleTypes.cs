@@ -484,80 +484,6 @@ public static class BuiltInModuleTypes
     // via normal type inference.
 
     /// <summary>
-    /// Gets the exported types for the assert module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetAssertModuleTypes()
-    {
-        var anyType = new TypeInfo.Any();
-        var stringType = new TypeInfo.String();
-        var voidType = new TypeInfo.Void();
-
-        return new Dictionary<string, TypeInfo>
-        {
-            // ok(value, message?) -> void
-            ["ok"] = new TypeInfo.Function(
-                [anyType, stringType],
-                voidType,
-                RequiredParams: 1
-            ),
-            // strictEqual(actual, expected, message?) -> void
-            ["strictEqual"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            ),
-            // notStrictEqual(actual, expected, message?) -> void
-            ["notStrictEqual"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            ),
-            // deepStrictEqual(actual, expected, message?) -> void
-            ["deepStrictEqual"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            ),
-            // notDeepStrictEqual(actual, expected, message?) -> void
-            ["notDeepStrictEqual"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            ),
-            // throws(fn, message?) -> void
-            ["throws"] = new TypeInfo.Function(
-                [anyType, stringType],
-                voidType,
-                RequiredParams: 1
-            ),
-            // doesNotThrow(fn, message?) -> void
-            ["doesNotThrow"] = new TypeInfo.Function(
-                [anyType, stringType],
-                voidType,
-                RequiredParams: 1
-            ),
-            // fail(message?) -> void
-            ["fail"] = new TypeInfo.Function(
-                [stringType],
-                voidType,
-                RequiredParams: 0
-            ),
-            // equal(actual, expected, message?) -> void (loose equality)
-            ["equal"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            ),
-            // notEqual(actual, expected, message?) -> void (loose equality)
-            ["notEqual"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            )
-        };
-    }
-
-    /// <summary>
     /// Gets the exported types for the url module.
     /// </summary>
     public static Dictionary<string, TypeInfo> GetUrlModuleTypes()
@@ -1269,7 +1195,7 @@ public static class BuiltInModuleTypes
             //   Primitive-layer types for primitive:os reuse GetOsModuleTypes via GetPrimitiveTypes.
             "fs" => GetFsModuleTypes(),
             "fs/promises" => GetFsPromisesModuleTypes(),
-            "assert" => GetAssertModuleTypes(),
+            // "assert" — migrated to stdlib/node/assert.ts; types flow from the TS source.
             "url" => GetUrlModuleTypes(),
             "process" => GetProcessModuleTypes(),
             "crypto" => GetCryptoModuleTypes(),

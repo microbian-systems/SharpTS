@@ -14,8 +14,8 @@ public static class BuiltInModuleRegistry
         // "path" — migrated to stdlib/node/path.ts (embedded stdlib, uses primitive:process for cwd).
         // "os" — migrated to stdlib/node/os.ts (embedded stdlib, wraps primitive:os).
         // "querystring" — migrated to stdlib/node/querystring.ts (embedded stdlib).
+        // "assert" — migrated to stdlib/node/assert.ts (embedded stdlib, pure-logic leaf).
         // The EmbeddedStdlibProvider claims these specifiers via the chain.
-        "assert",
         "url",
         "process",
         "crypto",

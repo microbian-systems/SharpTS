@@ -406,8 +406,7 @@ public partial class RuntimeEmitter
         EmitFsModuleMethodWrappers(typeBuilder, runtime);
         // Querystring module methods migrated to stdlib/node/querystring.ts.
         // Path module methods migrated to stdlib/node/path.ts.
-        // Assert module methods
-        EmitAssertMethods(typeBuilder, runtime);
+        // Assert module methods migrated to stdlib/node/assert.ts.
         // TTY module methods
         EmitTtyModuleMethods(typeBuilder, runtime);
         // URL module methods

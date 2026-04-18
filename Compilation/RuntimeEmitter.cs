@@ -74,10 +74,7 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSRegExp
         EmitTSRegExpClass(moduleBuilder, runtime);
 
-        // Emit $AssertionError class for standalone assert module support
-        // NOTE: Must stay in sync with AssertionError in AssertModuleInterpreter.cs
-        EmitTSAssertionErrorClass(moduleBuilder, runtime);
-
+        // AssertionError now lives in stdlib/node/assert.ts (embedded stdlib migration).
         // Emit $NodeError class for standalone fs module support
         // NOTE: Must stay in sync with NodeError in Runtime/BuiltIns/Modules/NodeError.cs
         EmitNodeErrorClass(moduleBuilder, runtime);

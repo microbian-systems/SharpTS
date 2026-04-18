@@ -655,7 +655,7 @@ public partial class ILCompiler
         _builtInModuleEmitterRegistry.Register(new FsModuleEmitter());
         // "path"         — migrated to stdlib/node/path.ts (pure-TS, uses primitive:process for cwd).
         // "querystring"  — migrated to stdlib/node/querystring.ts.
-        _builtInModuleEmitterRegistry.Register(new AssertModuleEmitter());
+        // "assert"       — migrated to stdlib/node/assert.ts (pure-logic leaf).
         _builtInModuleEmitterRegistry.Register(new UrlModuleEmitter());
         var processEmitter = new ProcessModuleEmitter();
         _builtInModuleEmitterRegistry.Register(processEmitter);

@@ -1653,14 +1653,6 @@ public class EmittedRuntime
     public MethodBuilder IntlSegmenterSegment { get; set; } = null!;
     public MethodBuilder IntlSegmenterResolvedOptions { get; set; } = null!;
 
-    // Assert module - emitted $AssertionError type for standalone assemblies
-    // NOTE: Must stay in sync with AssertionError in AssertModuleInterpreter.cs
-    public TypeBuilder TSAssertionErrorType { get; set; } = null!;
-    public ConstructorBuilder TSAssertionErrorCtor { get; set; } = null!;
-    public MethodBuilder TSAssertionErrorActualGetter { get; set; } = null!;
-    public MethodBuilder TSAssertionErrorExpectedGetter { get; set; } = null!;
-    public MethodBuilder TSAssertionErrorOperatorGetter { get; set; } = null!;
-
     // FS module - emitted $NodeError type for standalone assemblies
     // NOTE: Must stay in sync with NodeError in Runtime/BuiltIns/Modules/NodeError.cs
     public Type NodeErrorType { get; set; } = null!;
@@ -1669,24 +1661,6 @@ public class EmittedRuntime
     public MethodBuilder NodeErrorSyscallGetter { get; set; } = null!;
     public MethodBuilder NodeErrorPathGetter { get; set; } = null!;
     public MethodBuilder NodeErrorErrnoGetter { get; set; } = null!;
-
-    // Assert module - helper methods
-    public MethodBuilder AssertIsTruthy { get; set; } = null!;
-    public MethodBuilder AssertStrictEquals { get; set; } = null!;
-    public MethodBuilder AssertLooseEquals { get; set; } = null!;
-    public MethodBuilder AssertDeepEquals { get; set; } = null!;
-
-    // Assert module methods
-    public MethodBuilder AssertOk { get; set; } = null!;
-    public MethodBuilder AssertStrictEqual { get; set; } = null!;
-    public MethodBuilder AssertNotStrictEqual { get; set; } = null!;
-    public MethodBuilder AssertDeepStrictEqual { get; set; } = null!;
-    public MethodBuilder AssertNotDeepStrictEqual { get; set; } = null!;
-    public MethodBuilder AssertThrows { get; set; } = null!;
-    public MethodBuilder AssertDoesNotThrow { get; set; } = null!;
-    public MethodBuilder AssertFail { get; set; } = null!;
-    public MethodBuilder AssertEqual { get; set; } = null!;
-    public MethodBuilder AssertNotEqual { get; set; } = null!;
 
     // TTY module methods
     public MethodBuilder TtyIsatty { get; set; } = null!;
