@@ -4,12 +4,13 @@ using SharpTS.Parsing;
 namespace SharpTS.Compilation.Emitters.Modules;
 
 /// <summary>
-/// Emits IL code for the Node.js 'tty' module.
-/// Currently supports: isatty(fd)
+/// Emits IL for the <c>primitive:tty</c> primitive module. Dispatches
+/// <c>isatty(fd)</c> to <c>$Runtime.Tty_isatty</c>. The user-facing <c>tty</c>
+/// module lives in <c>stdlib/node/tty.ts</c> and imports this primitive.
 /// </summary>
-public sealed class TtyModuleEmitter : IBuiltInModuleEmitter
+public sealed class TtyPrimitiveEmitter : IBuiltInModuleEmitter
 {
-    public string ModuleName => "tty";
+    public string ModuleName => "primitive:tty";
 
     private static readonly string[] _exportedMembers = ["isatty"];
 
@@ -17,20 +18,8 @@ public sealed class TtyModuleEmitter : IBuiltInModuleEmitter
 
     public bool TryEmitMethodCall(IEmitterContext emitter, string methodName, List<Expr> arguments)
     {
-        return methodName switch
-        {
-            "isatty" => EmitIsatty(emitter, arguments),
-            _ => false
-        };
-    }
+        if (methodName != "isatty") return false;
 
-    public bool TryEmitPropertyGet(IEmitterContext emitter, string propertyName)
-    {
-        return false;
-    }
-
-    private static bool EmitIsatty(IEmitterContext emitter, List<Expr> arguments)
-    {
         var ctx = emitter.Context;
         var il = ctx.IL;
 
@@ -47,4 +36,8 @@ public sealed class TtyModuleEmitter : IBuiltInModuleEmitter
         il.Emit(OpCodes.Call, ctx.Runtime!.TtyIsatty);
         return true;
     }
+
+    public bool TryEmitPropertyGet(IEmitterContext emitter, string propertyName) => false;
+
+    public bool IsExportedProperty(string memberName) => false;
 }

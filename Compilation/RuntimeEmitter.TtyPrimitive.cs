@@ -4,14 +4,16 @@ using System.Reflection.Emit;
 namespace SharpTS.Compilation;
 
 /// <summary>
-/// Emits tty module helper methods for the runtime class.
+/// <c>primitive:tty</c> runtime support. Emits a single <c>Tty_isatty</c> method
+/// that checks whether a file descriptor is a TTY. The user-facing <c>tty</c>
+/// module lives in <c>stdlib/node/tty.ts</c> and calls this primitive.
 /// </summary>
 public partial class RuntimeEmitter
 {
     /// <summary>
-    /// Emits tty module helper methods and registers them for TSFunction wrapping.
+    /// Emits the <c>Tty_isatty</c> runtime method backing <c>primitive:tty.isatty</c>.
     /// </summary>
-    internal void EmitTtyModuleMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    internal void EmitTtyPrimitiveMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // Emit: public static object Tty_isatty(object? fd)
         var method = typeBuilder.DefineMethod(
@@ -74,6 +76,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         runtime.TtyIsatty = method;
-        runtime.RegisterBuiltInModuleMethod("tty", "isatty", method);
+        // No RegisterBuiltInModuleMethod — the `tty` module is now a TS stdlib
+        // file (stdlib/node/tty.ts) that calls primitive:tty. CJS require('tty')
+        // flows through the standard ESM→CJS namespace-object path.
     }
 }

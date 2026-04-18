@@ -688,7 +688,8 @@ public partial class ILCompiler
         _builtInModuleEmitterRegistry.Register(new ClusterModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new VmModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new AsyncHooksModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new TtyModuleEmitter());
+        // "tty" migrated to stdlib/node/tty.ts (pure-TS over primitive:tty).
+        _builtInModuleEmitterRegistry.Register(new TtyPrimitiveEmitter());
 
         // https delegates to http emitter
         var httpsEmitter = new HttpModuleEmitter();

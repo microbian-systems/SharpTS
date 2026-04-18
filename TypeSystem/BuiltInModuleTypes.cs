@@ -1155,7 +1155,8 @@ public static class BuiltInModuleTypes
             "vm" => GetVmModuleTypes(),
             "async_hooks" => GetAsyncHooksModuleTypes(),
             "worker_threads" => GetWorkerThreadsModuleTypes(),
-            "tty" => GetTtyModuleTypes(),
+            // "tty" — migrated to stdlib/node/tty.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:tty are in GetTtyPrimitiveTypes.
             _ => null
         };
     }
@@ -1173,7 +1174,21 @@ public static class BuiltInModuleTypes
             "os" => GetOsModuleTypes(),
             "process" => GetProcessModuleTypes(),
             "perf" => GetPerfPrimitiveTypes(),
+            "tty" => GetTtyPrimitiveTypes(),
             _ => null
+        };
+    }
+
+    /// <summary>
+    /// Types for <c>primitive:tty</c> — just <c>isatty(fd)</c> returning a boolean.
+    /// </summary>
+    private static Dictionary<string, TypeInfo> GetTtyPrimitiveTypes()
+    {
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        var booleanType = new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
+        return new Dictionary<string, TypeInfo>
+        {
+            ["isatty"] = new TypeInfo.Function([numberType], booleanType),
         };
     }
 
@@ -2190,16 +2205,6 @@ public static class BuiltInModuleTypes
         };
     }
 
-    /// <summary>
-    /// Gets the exported types for the tty module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetTtyModuleTypes()
-    {
-        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["isatty"] = new TypeInfo.Function([numberType], BooleanType),
-        };
-    }
+    // GetTtyModuleTypes removed — "tty" is now implemented in stdlib/node/tty.ts;
+    // types flow from the TS source. See GetTtyPrimitiveTypes for primitive:tty.
 }

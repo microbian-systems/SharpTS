@@ -319,7 +319,7 @@ This is the pre-existing general ESM-from-CJS gap finally getting paid down — 
 
 Migrate modules opportunistically, leaves first. Dependency-ordered candidates:
 
-1. **Leaves** (no stdlib-to-stdlib imports): ~~`url`~~ ✅ (done as Phase 3h — full WHATWG Living Standard port; see below), ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS), ~~`util`~~ ✅ (done as Phase 3i — ~1700 lines of C# → 687-line TS; three compiler gaps fixed along the way), ~~`process`~~ ✅ (done as Phase 3j — thin facade over `primitive:process`; one compiler gap documented), ~~`perf_hooks`~~ ✅ (done as Phase 3k — pure-TS performance + PerformanceObserver over new `primitive:perf`; ~2000-line C# / IL collapse → ~170-line TS)
+1. **Leaves** (no stdlib-to-stdlib imports): ~~`url`~~ ✅ (done as Phase 3h — full WHATWG Living Standard port; see below), ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS), ~~`util`~~ ✅ (done as Phase 3i — ~1700 lines of C# → 687-line TS; three compiler gaps fixed along the way), ~~`process`~~ ✅ (done as Phase 3j — thin facade over `primitive:process`; one compiler gap documented), ~~`perf_hooks`~~ ✅ (done as Phase 3k — pure-TS performance + PerformanceObserver over new `primitive:perf`; ~2000-line C# / IL collapse → ~170-line TS), ~~`tty`~~ ✅ (done as Phase 3l — single-method facade over new `primitive:tty`; trivial migration, ~14-line TS)
 
 ### Phase 3h — URL migration ✅ COMPLETE
 
@@ -383,6 +383,17 @@ Migrated `perf_hooks` to `stdlib/node/perf_hooks.ts` with a new `primitive:perf`
 **Architectural change**: removed the global-`PerformanceObserver` escape hatch. Previously `new PerformanceObserver(cb)` without an import was pattern-matched at compile time to a `$Runtime.PerfHooksCreateObserver` call, so a user's global `PerformanceObserver` saw different semantics from `import { PerformanceObserver } from 'perf_hooks'`. The compile-time `case "PerformanceObserver"` in `ExpressionEmitterBase.Constructors.cs` is deleted. Matches the URL migration's ESM-strict stance — users must import.
 
 **Test gate:** 10041 pass, 15 skipped, 0 failed. All 55 `PerfHooksModuleTests` pass in both modes, including PerformanceObserver callback dispatch. No regressions.
+
+### Phase 3l — `tty` migration ✅ COMPLETE
+
+Migrated `tty` to `stdlib/node/tty.ts` — a 14-line facade exporting `isatty(fd)` via a new `primitive:tty`. The rest of Node's tty surface (ReadStream/WriteStream classes) was never implemented in SharpTS and stays out of scope; this migration matches existing functionality exactly.
+
+- `primitive:tty` added to `PrimitiveRegistry`, `PrimitiveModuleValues`, `BuiltInModuleTypes.GetTtyPrimitiveTypes`. Surface: a single `isatty(fd): boolean`. ✅
+- `Compilation/RuntimeEmitter.TtyHelpers.cs` → renamed `RuntimeEmitter.TtyPrimitive.cs`, method renamed `EmitTtyModuleMethods` → `EmitTtyPrimitiveMethods`. The emitted `$Runtime.Tty_isatty` IL method keeps its name (internal only). Dropped the `RegisterBuiltInModuleMethod("tty", ...)` call — CJS `require('tty')` flows through the standard ESM→CJS namespace-object path now. ✅
+- `TtyPrimitiveEmitter` (~40 lines) replaces `TtyModuleEmitter`; registered under `primitive:tty` only. `TtyPrimitiveInterpreter` (~25 lines) replaces `TtyModuleInterpreter`. ✅
+- Removed `"tty"` from `BuiltInModuleRegistry`, `BuiltInModuleValues.GetModuleExports` + `HasInterpreterSupport`, and `BuiltInModuleTypes.GetModuleTypes` + `GetTtyModuleTypes`. ✅
+
+**Test gate:** 10041 pass, 15 skipped, 0 failed. No regressions.
 
 2. **Composite after leaves**: `stream`, `fs`, `fs/promises`, `readline`, `http`, `https`, `net`, `tls`
 3. **Hybrid: thin TS module over `primitive:buffer`** — `Buffer` gets a TS stdlib module for API symmetry, but heavy lifting (byte-array alloc, slice, copy, encode/decode) stays native in `primitive:buffer`. This keeps every module on equal footing (every module has a `.ts` file) without a perf cliff on hot paths. The primitive surface is stable — Node's Buffer API is locked down, so `primitive:buffer` can be designed once and held.

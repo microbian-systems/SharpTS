@@ -410,7 +410,8 @@ public partial class RuntimeEmitter
         // Path module methods migrated to stdlib/node/path.ts.
         // Assert module methods migrated to stdlib/node/assert.ts.
         // TTY module methods
-        EmitTtyModuleMethods(typeBuilder, runtime);
+        // primitive:tty — just isatty; user-facing tty is stdlib/node/tty.ts.
+        EmitTtyPrimitiveMethods(typeBuilder, runtime);
         // URL module — migrated to stdlib/node/url.ts; no runtime helpers emitted.
         // HTTP module methods (fetch, http.createServer, etc.) - must be before globalThis
         EmitHttpModuleMethods(typeBuilder, runtime);

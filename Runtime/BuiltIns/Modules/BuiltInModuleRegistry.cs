@@ -46,7 +46,7 @@ public static class BuiltInModuleRegistry
         "cluster",
         "vm",
         "async_hooks",
-        "tty"
+        // "tty" — migrated to stdlib/node/tty.ts (pure-TS over primitive:tty).
     ];
 
     /// <summary>

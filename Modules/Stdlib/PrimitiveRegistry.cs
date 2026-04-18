@@ -24,6 +24,7 @@ public static class PrimitiveRegistry
         Prefix + "os",
         Prefix + "process",
         Prefix + "perf",
+        Prefix + "tty",
     };
 
     /// <summary>
