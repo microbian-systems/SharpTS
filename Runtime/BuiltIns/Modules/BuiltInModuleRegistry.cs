@@ -11,10 +11,10 @@ public static class BuiltInModuleRegistry
     [
         "fs",
         "fs/promises",
-        "path",
+        // "path" — migrated to stdlib/node/path.ts (embedded stdlib, uses primitive:process for cwd).
         // "os" — migrated to stdlib/node/os.ts (embedded stdlib, wraps primitive:os).
         // "querystring" — migrated to stdlib/node/querystring.ts (embedded stdlib).
-        // The EmbeddedStdlibProvider claims this specifier via the chain.
+        // The EmbeddedStdlibProvider claims these specifiers via the chain.
         "assert",
         "url",
         "process",

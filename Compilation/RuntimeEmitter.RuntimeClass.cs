@@ -397,16 +397,15 @@ public partial class RuntimeEmitter
         EmitAsyncGeneratorAwaitContinueMethods(typeBuilder, moduleBuilder, runtime);
         // NodeError conversion helpers (must be before fs methods which use them)
         EmitNodeErrorHelpers(typeBuilder, runtime);
-        // Built-in module methods (path, fs, os, dns)
-        EmitPathModuleMethods(typeBuilder, runtime);
+        // Built-in module methods (fs, os, dns) — path migrated to stdlib/node/path.ts.
         EmitFsModuleMethods(typeBuilder, runtime);
         EmitOsModuleMethods(typeBuilder, runtime);
         EmitDnsModuleMethods(typeBuilder, runtime);
         EmitDnsPromisesMethods(typeBuilder, runtime);
         // Emit wrapper methods for named imports
         EmitFsModuleMethodWrappers(typeBuilder, runtime);
-        EmitPathModulePropertyWrappers(typeBuilder, runtime);
         // Querystring module methods migrated to stdlib/node/querystring.ts.
+        // Path module methods migrated to stdlib/node/path.ts.
         // Assert module methods
         EmitAssertMethods(typeBuilder, runtime);
         // TTY module methods
@@ -429,9 +428,6 @@ public partial class RuntimeEmitter
         EmitConsoleExtensions(typeBuilder, runtime);
         // Crypto module methods
         EmitCryptoMethods(typeBuilder, runtime);
-        // Path module methods (standalone - no SharpTS.dll dependency)
-        EmitComputeRelative(typeBuilder, runtime);
-        EmitPathHelpers(typeBuilder, runtime);
         // Util module methods
         EmitUtilMethods(typeBuilder, runtime);
         // Readline module methods

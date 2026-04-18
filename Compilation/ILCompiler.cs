@@ -651,10 +651,10 @@ public partial class ILCompiler
         _typeEmitterRegistry.RegisterStatic("Iterator", new IteratorStaticEmitter());
 
         // Built-in module emitters
-        _builtInModuleEmitterRegistry.Register(new PathModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new OsModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new FsModuleEmitter());
-        // querystring migrated to stdlib/node/querystring.ts (embedded stdlib).
+        // "path"         — migrated to stdlib/node/path.ts (pure-TS, uses primitive:process for cwd).
+        // "querystring"  — migrated to stdlib/node/querystring.ts.
         _builtInModuleEmitterRegistry.Register(new AssertModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new UrlModuleEmitter());
         var processEmitter = new ProcessModuleEmitter();

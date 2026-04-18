@@ -11,90 +11,6 @@ public static class BuiltInModuleTypes
     private static TypeInfo BooleanType => new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
 
     /// <summary>
-    /// Builds the common path method/property signatures shared by the module and its posix/win32 sub-objects.
-    /// </summary>
-    private static Dictionary<string, TypeInfo> BuildPathMembers()
-    {
-        var parsedPathType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["root"] = new TypeInfo.String(),
-            ["dir"] = new TypeInfo.String(),
-            ["base"] = new TypeInfo.String(),
-            ["name"] = new TypeInfo.String(),
-            ["ext"] = new TypeInfo.String()
-        }.ToFrozenDictionary());
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["join"] = new TypeInfo.Function(
-                [new TypeInfo.Any()],
-                new TypeInfo.String(),
-                HasRestParam: true
-            ),
-            ["resolve"] = new TypeInfo.Function(
-                [new TypeInfo.Any()],
-                new TypeInfo.String(),
-                HasRestParam: true
-            ),
-            ["basename"] = new TypeInfo.Function(
-                [new TypeInfo.String(), new TypeInfo.String()],
-                new TypeInfo.String(),
-                RequiredParams: 1
-            ),
-            ["dirname"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["extname"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["normalize"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["isAbsolute"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                BooleanType
-            ),
-            ["relative"] = new TypeInfo.Function(
-                [new TypeInfo.String(), new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["parse"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                parsedPathType
-            ),
-            ["format"] = new TypeInfo.Function(
-                [parsedPathType],
-                new TypeInfo.String()
-            ),
-            ["sep"] = new TypeInfo.String(),
-            ["delimiter"] = new TypeInfo.String()
-        };
-    }
-
-    /// <summary>
-    /// Gets the exported types for the path module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetPathModuleTypes()
-    {
-        var pathObjectType = GetPathObjectType();
-        var members = BuildPathMembers();
-        members["posix"] = pathObjectType;
-        members["win32"] = pathObjectType;
-        return members;
-    }
-
-    /// <summary>
-    /// Gets the type for the path.posix and path.win32 objects.
-    /// </summary>
-    private static TypeInfo.Record GetPathObjectType()
-    {
-        return new TypeInfo.Record(BuildPathMembers().ToFrozenDictionary());
-    }
-
-    /// <summary>
     /// Gets the exported types for the os module.
     /// </summary>
     public static Dictionary<string, TypeInfo> GetOsModuleTypes()
@@ -1348,7 +1264,7 @@ public static class BuiltInModuleTypes
     {
         return moduleName switch
         {
-            "path" => GetPathModuleTypes(),
+            // "path" — migrated to stdlib/node/path.ts; types flow from the TS source.
             // "os" — migrated to stdlib/node/os.ts; types flow from the TS source.
             //   Primitive-layer types for primitive:os reuse GetOsModuleTypes via GetPrimitiveTypes.
             "fs" => GetFsModuleTypes(),

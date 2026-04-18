@@ -131,7 +131,7 @@ public abstract partial class ExpressionEmitterBase
             return true;
         }
 
-        // Handle built-in modules (e.g., builtin:tty, builtin:path)
+        // Handle built-in modules (e.g., builtin:tty)
         var builtInName = BuiltInModuleRegistry.GetModuleName(resolvedPath);
         if (builtInName != null)
         {
@@ -139,15 +139,44 @@ public abstract partial class ExpressionEmitterBase
             return true;
         }
 
-        if (!Ctx.CommonJsGetExportsMethods.TryGetValue(resolvedPath, out var getExportsMethod))
+        if (Ctx.CommonJsGetExportsMethods.TryGetValue(resolvedPath, out var getExportsMethod))
         {
-            EmitRuntimeModuleNotFound(specifier,
-                $"resolved to '{resolvedPath}' which is not a CJS module in this assembly");
+            IL.Emit(OpCodes.Call, getExportsMethod);
+            SetStackUnknown();
             return true;
         }
 
-        IL.Emit(OpCodes.Call, getExportsMethod);
-        SetStackUnknown();
+        // Stdlib ESM module (e.g., stdlib:node/path.ts) required from CJS: initialize and
+        // materialize a namespace object from the module's export static fields. Mirrors
+        // what Node does for ESM→CJS interop — the caller gets an object of named exports.
+        if (Ctx.ModuleExportFields != null &&
+            Ctx.ModuleExportFields.TryGetValue(resolvedPath, out var exportFields))
+        {
+            if (Ctx.ModuleInitMethods?.TryGetValue(resolvedPath, out var initMethod) == true)
+            {
+                IL.Emit(OpCodes.Call, initMethod);
+            }
+
+            var dictType = Ctx.Types.DictionaryStringObject;
+            var dictCtor = Ctx.Types.GetDefaultConstructor(dictType);
+            var addMethod = Ctx.Types.GetMethod(dictType, "Add", Ctx.Types.String, Ctx.Types.Object);
+
+            IL.Emit(OpCodes.Newobj, dictCtor);
+            foreach (var (exportName, field) in exportFields)
+            {
+                if (exportName == "$default" || exportName == "$exportAssignment") continue;
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldstr, exportName);
+                IL.Emit(OpCodes.Ldsfld, field);
+                IL.Emit(OpCodes.Callvirt, addMethod);
+            }
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateObject);
+            SetStackUnknown();
+            return true;
+        }
+
+        EmitRuntimeModuleNotFound(specifier,
+            $"resolved to '{resolvedPath}' which is not a CJS module in this assembly");
         return true;
     }
 

@@ -827,9 +827,6 @@ public class EmittedRuntime
     public MethodBuilder OsLoadavg { get; set; } = null!;
     public MethodBuilder OsNetworkInterfaces { get; set; } = null!;
 
-    // Path module methods
-    public MethodBuilder PathFormat { get; set; } = null!;
-
     // Fs module methods
     public MethodBuilder FsExistsSync { get; set; } = null!;
     public MethodBuilder FsReadFileSync { get; set; } = null!;
@@ -1224,30 +1221,6 @@ public class EmittedRuntime
     public MethodBuilder GetOptionString { get; set; } = null!;
     public MethodBuilder GenerateRsaKeyPairRaw { get; set; } = null!;
     public MethodBuilder GenerateEcKeyPairRaw { get; set; } = null!;
-
-    // Path helpers (standalone - no SharpTS.dll dependency)
-    // POSIX path methods
-    public MethodBuilder PosixJoin { get; set; } = null!;
-    public MethodBuilder PosixResolve { get; set; } = null!;
-    public MethodBuilder PosixBasename { get; set; } = null!;
-    public MethodBuilder PosixDirname { get; set; } = null!;
-    public MethodBuilder PosixNormalize { get; set; } = null!;
-    public MethodBuilder PosixIsAbsolute { get; set; } = null!;
-    public MethodBuilder PosixRelative { get; set; } = null!;
-    public MethodBuilder PosixParse { get; set; } = null!;
-    public MethodBuilder PosixFormat { get; set; } = null!;
-    // Win32 path methods
-    public MethodBuilder Win32Join { get; set; } = null!;
-    public MethodBuilder Win32Resolve { get; set; } = null!;
-    public MethodBuilder Win32Basename { get; set; } = null!;
-    public MethodBuilder Win32Dirname { get; set; } = null!;
-    public MethodBuilder Win32Normalize { get; set; } = null!;
-    public MethodBuilder Win32IsAbsolute { get; set; } = null!;
-    public MethodBuilder Win32Relative { get; set; } = null!;
-    public MethodBuilder Win32Parse { get; set; } = null!;
-    public MethodBuilder Win32Format { get; set; } = null!;
-    // Shared path helper
-    public MethodBuilder ComputeRelative { get; set; } = null!;
 
     // HKDF key derivation
     public MethodBuilder CryptoHkdfSync { get; set; } = null!;

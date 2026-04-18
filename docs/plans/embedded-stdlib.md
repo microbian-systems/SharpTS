@@ -293,9 +293,27 @@ Attempted the `path` migration and discovered two pre-existing compiler bugs tha
 
 **Why defer rather than push through:** both bugs are generic compiler fixes touching cross-module call emission; bundling them with a 400-line TS migration would mix concerns and make review harder. Same pattern as the scoping fix that landed before Phase 3b — isolate the compiler change, then the migration becomes small and auditable.
 
-### Phase 3d — Path migration (planned, after compiler fixes)
+### Phase 3d — Path migration ✅ COMPLETE
 
-Once the rest-param and object-literal bugs above are fixed, the existing `stdlib/node/path.ts` draft (not checked in) can be revived. `primitive:process` is already wired for `path.resolve`'s `cwd()` need.
+Migrated `path` to a pure-TS implementation in `stdlib/node/path.ts` (~840 lines). Unlike the `os` facade pattern (where a thin TS shim forwards to `primitive:os`), path gets real logic in TypeScript — string manipulation is portable, and keeping it in TS means Node-compatible semantics live with the rest of the stdlib rather than scattered across C# emitters.
+
+- `stdlib/node/path.ts` — full POSIX + Win32 implementation covering `join`, `resolve`, `basename`, `dirname`, `extname`, `normalize`, `isAbsolute`, `relative`, `parse`, `format`, plus `sep`/`delimiter` constants and `posix`/`win32` sub-objects. Imports `cwd` and `platform` from `primitive:process` — the only host dependency. ✅
+- Removed `"path"` from `BuiltInModuleRegistry`, `BuiltInModuleValues` (dispatch + `HasInterpreterSupport`), and `BuiltInModuleTypes.GetModuleTypes`. Deleted `GetPathModuleTypes`/`GetPathObjectType`/`BuildPathMembers`. ✅
+- Deleted `Runtime/BuiltIns/Modules/Interpreter/PathModuleInterpreter.cs`, `Compilation/Emitters/Modules/PathModuleEmitter.cs`, `Compilation/PathHelpers.cs`, `Compilation/RuntimeEmitter.PathModule.cs`, `Compilation/RuntimeEmitter.PathHelpers.cs`. Removed `PathFormat`/`Posix*`/`Win32*`/`ComputeRelative` runtime slots from `EmittedRuntime.cs` and their emission from `RuntimeEmitter.RuntimeClass.cs`. ✅
+
+**ESM→CJS interop gap surfaced.** `require('path')` worked when `path` was a C# builtin (direct dispatch in `BuiltInModuleRegistry`). Once path became a TS ESM module, both modes broke because CJS require had no path for ESM-in-the-assembly: interpreter returned `DefaultExport` (null for named-exports-only modules), compiled mode only checked `CommonJsGetExportsMethods` (CJS-classified files). Fixed both:
+
+- Interpreter: `GetCurrentExports` now falls back to `ExportsAsObject()` when `DefaultExport` is null — mirrors Node's ESM→CJS convention of returning a namespace object of named exports.
+- Compiled: `TryEmitCjsRequireCall` now handles ESM modules present in `ModuleExportFields` by calling the module's `$Initialize` and materializing a namespace `Dictionary → SharpTSObject` from the export static fields.
+
+This is the pre-existing general ESM-from-CJS gap finally getting paid down — would have bitten any future stdlib migration with CJS consumers. `os` migration didn't expose it because no `require('os')` test existed.
+
+**Path.ts authoring notes.**
+
+- **`ext != null` instead of `ext !== undefined` for optional parameters.** Compiled-mode passes unset optional reference-type args as C# null. `null !== undefined` evaluates true in JS semantics, so the narrow check falls through; `.length` on null then NREs. Loose equality with null catches both cases. Documented as a stdlib authoring rule going forward.
+- **`win32.isAbsolute('/foo')` returns false** (matches pre-existing C# behavior). Node returns true because Node treats any leading separator as absolute on win32; SharpTS historically required a drive letter OR double-separator UNC prefix. Tests pin the SharpTS behavior, so the TS port preserves it with an explicit comment.
+
+**Test gate:** 9904 pass, 15 skipped (pre-existing), 0 regressions. Standalone-DLL test passes — no new reflection back to SharpTS.
 
 ### Beyond v1 (not scheduled here)
 
