@@ -671,7 +671,7 @@ public partial class ILCompiler
         // "events" — migrated to stdlib/node/events.ts (pure-TS EventEmitter).
         _builtInModuleEmitterRegistry.Register(new TimersModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new TimersPromisesModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new StringDecoderModuleEmitter());
+        // "string_decoder" — migrated to stdlib/node/string_decoder.ts.
         _builtInModuleEmitterRegistry.Register(new PerfHooksModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new StreamModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new StreamPromisesModuleEmitter());

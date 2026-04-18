@@ -281,64 +281,9 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notErrorLabel);
 
-        // Check $StringDecoder - handle write, end, encoding
-        // Uses two-token ldtoken pattern for dynamically emitted types
-        var notStringDecoderLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSStringDecoderType);
-        il.Emit(OpCodes.Brfalse, notStringDecoderLabel);
-
-        // Get the two-argument GetMethodFromHandle for generic type resolution
-        var getMethodFromHandleWithType = _types.GetMethod(
-            _types.MethodBase, "GetMethodFromHandle",
-            _types.RuntimeMethodHandle, _types.RuntimeTypeHandle);
-
-        // Check "write"
-        var notSdWriteLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "write");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brfalse, notSdWriteLabel);
-        // Return $TSFunction wrapping the write method
-        il.Emit(OpCodes.Ldarg_0); // instance (target)
-        il.Emit(OpCodes.Ldtoken, runtime.TSStringDecoderWrite);
-        il.Emit(OpCodes.Ldtoken, runtime.TSStringDecoderType);
-        il.Emit(OpCodes.Call, getMethodFromHandleWithType);
-        il.Emit(OpCodes.Castclass, typeof(MethodInfo));
-        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notSdWriteLabel);
-
-        // Check "end"
-        var notSdEndLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "end");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brfalse, notSdEndLabel);
-        // Return $TSFunction wrapping the end method
-        il.Emit(OpCodes.Ldarg_0); // instance (target)
-        il.Emit(OpCodes.Ldtoken, runtime.TSStringDecoderEnd);
-        il.Emit(OpCodes.Ldtoken, runtime.TSStringDecoderType);
-        il.Emit(OpCodes.Call, getMethodFromHandleWithType);
-        il.Emit(OpCodes.Castclass, typeof(MethodInfo));
-        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notSdEndLabel);
-
-        // Check "encoding" property
-        var notSdEncodingLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "encoding");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brfalse, notSdEncodingLabel);
-        // Call the encoding getter directly
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TSStringDecoderType);
-        il.Emit(OpCodes.Callvirt, runtime.TSStringDecoderEncodingGetter);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notSdEncodingLabel);
-
-        il.MarkLabel(notStringDecoderLabel);
+        // $StringDecoder dispatch removed — StringDecoder migrated to
+        // stdlib/node/string_decoder.ts. Its instances now go through the
+        // standard user-class property dispatch path like any other TS class.
 
         // Try to find a method with this name and wrap as TSFunction
         il.MarkLabel(tryMethodLabel);

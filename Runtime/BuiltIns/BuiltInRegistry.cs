@@ -216,7 +216,7 @@ public sealed class BuiltInRegistry
         RegisterBufferNamespace(registry);
         RegisterBufferType(registry);
         RegisterEventEmitterType(registry);
-        RegisterStringDecoderType(registry);
+        // StringDecoder migrated to stdlib/node/string_decoder.ts — TS class uses standard dispatch.
         RegisterStreamTypes(registry);
         RegisterChildProcessType(registry);
         RegisterHttpTypes(registry);
@@ -782,13 +782,6 @@ public sealed class BuiltInRegistry
         // Register EventEmitter constructor member lookup (defaultMaxListeners)
         registry.RegisterInstanceType(typeof(SharpTSEventEmitterConstructor), (instance, name) =>
             ((SharpTSEventEmitterConstructor)instance).GetProperty(name));
-    }
-
-    private static void RegisterStringDecoderType(BuiltInRegistry registry)
-    {
-        // StringDecoder members accessed via property access (decoder.write, decoder.end, etc.)
-        registry.RegisterInstanceType(typeof(SharpTSStringDecoder), (instance, name) =>
-            SharpTSStringDecoder.GetMember((SharpTSStringDecoder)instance, name));
     }
 
     private static void RegisterDiffieHellmanType(BuiltInRegistry registry)

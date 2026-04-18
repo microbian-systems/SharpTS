@@ -27,7 +27,7 @@ public static class BuiltInModuleRegistry
         // "events" — migrated to stdlib/node/events.ts (pure-TS EventEmitter).
         "timers",
         "timers/promises",
-        "string_decoder",
+        // "string_decoder" — migrated to stdlib/node/string_decoder.ts (uses Buffer JS API).
         "perf_hooks",
         "stream",
         "stream/promises",

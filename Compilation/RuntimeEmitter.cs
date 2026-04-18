@@ -235,9 +235,8 @@ public partial class RuntimeEmitter
         EmitTSTextDecoderClass(moduleBuilder, runtime);
         EmitTSTextDecoderDecodeMethodClass(moduleBuilder, runtime);
 
-        // Emit $StringDecoder class for string_decoder module
-        // Must come after $Buffer (StringDecoder works with Buffer)
-        EmitTSStringDecoderClass(moduleBuilder, runtime);
+        // $StringDecoder class removed — StringDecoder migrated to
+        // stdlib/node/string_decoder.ts (pure-TS over the Buffer JS API).
 
         // Emit $Stats class for fs.stat() and related methods
         // Must come before fs module methods which use it

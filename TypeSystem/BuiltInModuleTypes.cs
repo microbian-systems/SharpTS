@@ -1173,7 +1173,7 @@ public static class BuiltInModuleTypes
             // "events" — migrated to stdlib/node/events.ts; types flow from the TS source.
             "timers" => GetTimersModuleTypes(),
             "timers/promises" => GetTimersPromisesModuleTypes(),
-            "string_decoder" => GetStringDecoderModuleTypes(),
+            // "string_decoder" — migrated to stdlib/node/string_decoder.ts; types flow from the TS source.
             "perf_hooks" => GetPerfHooksModuleTypes(),
             "stream" => GetStreamModuleTypes(),
             "stream/promises" => GetStreamPromisesModuleTypes(),
@@ -1786,41 +1786,6 @@ public static class BuiltInModuleTypes
                 new TypeInfo.AsyncIterable(anyType),
                 RequiredParams: 0
             )
-        };
-    }
-
-    /// <summary>
-    /// Gets the exported types for the string_decoder module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetStringDecoderModuleTypes()
-    {
-        // StringDecoder instance type (what new StringDecoder() returns)
-        var stringDecoderInstanceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["encoding"] = new TypeInfo.String(),
-            ["write"] = new TypeInfo.Function([new TypeInfo.Any()], new TypeInfo.String()),
-            ["end"] = new TypeInfo.Function([new TypeInfo.Any()], new TypeInfo.String(), RequiredParams: 0)
-        }.ToFrozenDictionary());
-
-        // StringDecoder is an interface with a constructor signature
-        // This allows `new StringDecoder()` to type check
-        var stringDecoderConstructorType = new TypeInfo.Interface(
-            Name: "StringDecoder",
-            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
-            OptionalMembers: FrozenSet<string>.Empty,
-            ConstructorSignatures:
-            [
-                new TypeInfo.ConstructorSignature(
-                    TypeParams: null,
-                    ParamTypes: [new TypeInfo.String()],
-                    ReturnType: stringDecoderInstanceType,
-                    RequiredParams: 0) // Encoding is optional
-            ]
-        );
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["StringDecoder"] = stringDecoderConstructorType
         };
     }
 

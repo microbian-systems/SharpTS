@@ -1671,14 +1671,6 @@ public class EmittedRuntime
     public MethodBuilder UrlFormat { get; set; } = null!;
     public MethodBuilder UrlResolve { get; set; } = null!;
 
-    // string_decoder module - $StringDecoder type
-    public Type TSStringDecoderType { get; set; } = null!;
-    public ConstructorBuilder TSStringDecoderCtor { get; set; } = null!;
-    public MethodBuilder TSStringDecoderEncodingGetter { get; set; } = null!;
-    public MethodBuilder TSStringDecoderWrite { get; set; } = null!;
-    public MethodBuilder TSStringDecoderEnd { get; set; } = null!;
-    public MethodBuilder StringDecoderGetConstructor { get; set; } = null!;
-
     // perf_hooks module methods
     public MethodBuilder PerfHooksGetPerformance { get; set; } = null!;
     public MethodBuilder PerfHooksPerformanceNow { get; set; } = null!;

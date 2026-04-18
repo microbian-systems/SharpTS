@@ -456,8 +456,7 @@ public partial class RuntimeEmitter
         EmitDnsModuleMethods(typeBuilder, runtime);
         // perf_hooks module methods
         EmitPerfHooksMethods(typeBuilder, runtime);
-        // string_decoder module constructor helper
-        EmitStringDecoderGetConstructor(typeBuilder, runtime);
+        // string_decoder module migrated to stdlib/node/string_decoder.ts.
 
         // Intl support (Intl.NumberFormat)
         EmitIntlMethods(typeBuilder, runtime);

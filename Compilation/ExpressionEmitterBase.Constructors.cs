@@ -319,21 +319,8 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
-            // --- StringDecoder ---
-            case "StringDecoder":
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                    IL.Emit(OpCodes.Call, Ctx.Runtime!.Stringify);
-                }
-                else
-                {
-                    IL.Emit(OpCodes.Ldstr, "utf8");
-                }
-                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSStringDecoderCtor);
-                SetStackUnknown();
-                return true;
+            // StringDecoder migrated to stdlib/node/string_decoder.ts — user's `new StringDecoder()`
+            // now resolves to the TS class via the standard user-class constructor path.
 
             // --- PerformanceObserver ---
             case "PerformanceObserver":
@@ -492,7 +479,7 @@ public abstract partial class ExpressionEmitterBase
         {
             "TextEncoder" => TryEmitBuiltInConstructor("TextEncoder", arguments),
             "TextDecoder" => TryEmitBuiltInConstructor("TextDecoder", arguments),
-            "StringDecoder" => TryEmitBuiltInConstructor("StringDecoder", arguments),
+            // "StringDecoder" — migrated to stdlib/node/string_decoder.ts.
             "PerformanceObserver" => TryEmitBuiltInConstructor("PerformanceObserver", arguments),
             "BroadcastChannel" => TryEmitBuiltInConstructor("BroadcastChannel", arguments),
             "ReadableStream" => TryEmitBuiltInConstructor("ReadableStream", arguments),

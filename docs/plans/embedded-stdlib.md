@@ -319,7 +319,7 @@ This is the pre-existing general ESM-from-CJS gap finally getting paid down — 
 
 Migrate modules opportunistically, leaves first. Dependency-ordered candidates:
 
-1. **Leaves** (no stdlib-to-stdlib imports): `url`, ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), `string_decoder`
+1. **Leaves** (no stdlib-to-stdlib imports): `url`, ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS)
 2. **Composite after leaves**: `util`, `stream`, `fs`, `fs/promises`, `readline`, `http`, `https`, `net`, `tls`
 3. **Hybrid: thin TS module over `primitive:buffer`** — `Buffer` gets a TS stdlib module for API symmetry, but heavy lifting (byte-array alloc, slice, copy, encode/decode) stays native in `primitive:buffer`. This keeps every module on equal footing (every module has a `.ts` file) without a perf cliff on hot paths. The primitive surface is stable — Node's Buffer API is locked down, so `primitive:buffer` can be designed once and held.
 
