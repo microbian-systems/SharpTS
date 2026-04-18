@@ -400,6 +400,19 @@ public partial class ILCompiler
                 foreach (var binding in u.Bindings)
                     CollectArrowsFromExpr(binding.Initializer);
                 break;
+            case Stmt.Export exp:
+                // Recurse into the wrapped declaration so arrows inside
+                // `export const X = () => …` or `export function …` get
+                // collected. Without this the arrow's method never gets
+                // registered in _collectedArrows and EmitArrowFunction
+                // silently emits `ldnull`, leaving the export field null.
+                if (exp.Declaration != null)
+                    CollectArrowsFromStmt(exp.Declaration);
+                if (exp.DefaultExpr != null)
+                    CollectArrowsFromExpr(exp.DefaultExpr);
+                if (exp.ExportAssignment != null)
+                    CollectArrowsFromExpr(exp.ExportAssignment);
+                break;
         }
     }
 

@@ -17,9 +17,7 @@ namespace SharpTS.Tests.SharedTests;
 /// </remarks>
 public class CrossModuleRestParamTests
 {
-    [Theory(Skip = "Known compiler bug: a function with `...rest` parameters dispatched " +
-        "across a module boundary receives no args packaged into the rest array. " +
-        "Same-module calls work. Blocks path migration (path.join/resolve use rest).")]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void RestParam_AcrossModuleImport(ExecutionMode mode)
     {
@@ -40,9 +38,7 @@ public class CrossModuleRestParamTests
         Assert.Equal("a,b,c\n", output);
     }
 
-    [Theory(Skip = "Known compiler bug: calling a method stored in an object literal " +
-        "exported from a module throws NullReferenceException in compiled mode " +
-        "(the wrapper loses its invocation target). Blocks path.posix/path.win32 sub-object APIs.")]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ObjectLiteralMethod_AcrossModuleImport(ExecutionMode mode)
     {
