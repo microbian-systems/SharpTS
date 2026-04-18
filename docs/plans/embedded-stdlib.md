@@ -319,7 +319,7 @@ This is the pre-existing general ESM-from-CJS gap finally getting paid down — 
 
 Migrate modules opportunistically, leaves first. Dependency-ordered candidates:
 
-1. **Leaves** (no stdlib-to-stdlib imports): ~~`url`~~ ✅ (done as Phase 3h — full WHATWG Living Standard port; see below), ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS), ~~`util`~~ ✅ (done as Phase 3i — ~1700 lines of C# → 687-line TS; three compiler gaps fixed along the way), ~~`process`~~ ✅ (done as Phase 3j — thin facade over `primitive:process`; one compiler gap documented), ~~`perf_hooks`~~ ✅ (done as Phase 3k — pure-TS performance + PerformanceObserver over new `primitive:perf`; ~2000-line C# / IL collapse → ~170-line TS), ~~`tty`~~ ✅ (done as Phase 3l — single-method facade over new `primitive:tty`; trivial migration, ~14-line TS)
+1. **Leaves** (no stdlib-to-stdlib imports): ~~`url`~~ ✅ (done as Phase 3h — full WHATWG Living Standard port; see below), ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS), ~~`util`~~ ✅ (done as Phase 3i — ~1700 lines of C# → 687-line TS; three compiler gaps fixed along the way), ~~`process`~~ ✅ (done as Phase 3j — thin facade over `primitive:process`; one compiler gap documented), ~~`perf_hooks`~~ ✅ (done as Phase 3k — pure-TS performance + PerformanceObserver over new `primitive:perf`; ~2000-line C# / IL collapse → ~170-line TS), ~~`tty`~~ ✅ (done as Phase 3l — single-method facade over new `primitive:tty`; trivial migration, ~14-line TS), ~~`async_hooks`~~ ✅ (done as Phase 3m — TS class wraps C#-backed handle via new `primitive:async_hooks.create()`; first class-instance-via-primitive pattern)
 
 ### Phase 3h — URL migration ✅ COMPLETE
 
@@ -394,6 +394,23 @@ Migrated `tty` to `stdlib/node/tty.ts` — a 14-line facade exporting `isatty(fd
 - Removed `"tty"` from `BuiltInModuleRegistry`, `BuiltInModuleValues.GetModuleExports` + `HasInterpreterSupport`, and `BuiltInModuleTypes.GetModuleTypes` + `GetTtyModuleTypes`. ✅
 
 **Test gate:** 10041 pass, 15 skipped, 0 failed. No regressions.
+
+### Phase 3m — `async_hooks` migration ✅ COMPLETE
+
+Migrated `async_hooks` to `stdlib/node/async_hooks.ts` — the first migration using the **class-instance-via-primitive** pattern. `AsyncLocalStorage` must use .NET's `AsyncLocal<T>` for context propagation across `await`, so the backing object stays in C# (`SharpTSAsyncLocalStorage` for interpreter, emitted `$AsyncLocalStorage` class for compiled). The TS class wraps an opaque handle produced by `primitive:async_hooks.create()` and forwards method calls dynamically.
+
+- `primitive:async_hooks` added to `PrimitiveRegistry`, `PrimitiveModuleValues`, `BuiltInModuleTypes.GetAsyncHooksPrimitiveTypes`. Surface: a single `create(): any` factory returning a fresh backing instance. ✅
+- `AsyncHooksPrimitiveInterpreter` (~25 lines) returns `new SharpTSAsyncLocalStorage()`. `AsyncHooksPrimitiveEmitter` (~30 lines) emits `newobj $AsyncLocalStorage.ctor`. The existing backing classes are kept intact. ✅
+- `stdlib/node/async_hooks.ts` — ~70-line TS class wrapping the handle. `run` / `getStore` / `enterWith` / `exit` / `disable` all forward via `this._inner.method(...)`. Dynamic dispatch (inner is typed `any`) routes through the standard compiler method-call path, so context propagation through `AsyncLocal<T>` flows correctly across awaits. ✅
+- Removed `"async_hooks"` from `BuiltInModuleRegistry`, `BuiltInModuleValues`, `BuiltInModuleTypes.GetModuleTypes` + `GetAsyncHooksModuleTypes`. Deleted `AsyncHooksModuleInterpreter.cs` and `AsyncHooksModuleEmitter.cs`. ✅
+
+**Architectural change**: removed the global-`AsyncLocalStorage` escape hatch. The `case "AsyncLocalStorage"` compile-time pattern match in `ExpressionEmitterBase.Constructors.cs` is gone. Users must `import { AsyncLocalStorage } from 'async_hooks'` (matches the URL / PerformanceObserver ESM-strict stance).
+
+**Deviation from Node**: the TS wrapper drops the `...args` parameter from `run(store, callback, ...args)` and `exit(callback, ...args)`. No tests exercised it and the existing C# backing supports it; re-adding requires the arity-dispatch workaround from `process.nextTick`. Flagged inline in the TS source.
+
+**Test gate:** 10041 pass, 15 skipped, 0 failed. All 52 `AsyncHooksTests` pass in both modes, including nested `run` / `enterWith` / context-across-timers. No regressions.
+
+**Class-instance-via-primitive pattern**: this migration establishes the third primitive shape in the stdlib toolbox, alongside *"primitive exposes data + functions"* (os, process, perf, tty) and *"primitive is absent, pure TS"* (events, util). Future host-tied classes (e.g. `dgram.Socket`, `net.Socket`, `vm.Script`) can follow the same template: primitive exposes a factory, TS class wraps the handle and forwards calls dynamically.
 
 2. **Composite after leaves**: `stream`, `fs`, `fs/promises`, `readline`, `http`, `https`, `net`, `tls`
 3. **Hybrid: thin TS module over `primitive:buffer`** — `Buffer` gets a TS stdlib module for API symmetry, but heavy lifting (byte-array alloc, slice, copy, encode/decode) stays native in `primitive:buffer`. This keeps every module on equal footing (every module has a `.ts` file) without a perf cliff on hot paths. The primitive surface is stable — Node's Buffer API is locked down, so `primitive:buffer` can be designed once and held.

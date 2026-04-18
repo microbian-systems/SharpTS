@@ -26,6 +26,7 @@ public static class PrimitiveModuleValues
             "process" => ProcessModuleInterpreter.GetExports(),
             "perf" => PerfPrimitiveInterpreter.GetExports(),
             "tty" => TtyPrimitiveInterpreter.GetExports(),
+            "async_hooks" => AsyncHooksPrimitiveInterpreter.GetExports(),
             _ => throw new Exception($"Unknown primitive module: primitive:{primitiveName}")
         };
     }
@@ -35,6 +36,6 @@ public static class PrimitiveModuleValues
     /// </summary>
     public static bool HasInterpreterSupport(string primitiveName)
     {
-        return primitiveName is "os" or "process" or "perf" or "tty";
+        return primitiveName is "os" or "process" or "perf" or "tty" or "async_hooks";
     }
 }

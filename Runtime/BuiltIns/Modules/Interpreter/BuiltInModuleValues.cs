@@ -53,7 +53,7 @@ public static class BuiltInModuleValues
             "dgram" => DgramModuleInterpreter.GetExports(),
             "cluster" => ClusterModuleInterpreter.GetExports(),
             "vm" => VmModuleInterpreter.GetExports(),
-            "async_hooks" => AsyncHooksModuleInterpreter.GetExports(),
+            // "async_hooks" — migrated to stdlib/node/async_hooks.ts (TS class over primitive:async_hooks).
             // "tty" — migrated to stdlib/node/tty.ts (pure-TS over primitive:tty).
             _ => throw new Exception($"Unknown built-in module: {moduleName}")
         };
@@ -68,6 +68,6 @@ public static class BuiltInModuleValues
             or "crypto" or "readline" or "child_process" or "buffer"
             or "zlib" or "timers" or "timers/promises" or "stream" or "stream/promises" or "stream/web"
             or "http" or "worker_threads" or "dns" or "dns/promises" or "net" or "https" or "tls"
-            or "dgram" or "cluster" or "vm" or "async_hooks";
+            or "dgram" or "cluster" or "vm";
     }
 }

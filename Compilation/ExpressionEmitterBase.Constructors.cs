@@ -129,11 +129,10 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
-            case "AsyncLocalStorage":
-                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSAsyncLocalStorageCtor);
-                SetStackUnknown();
-                return true;
-
+            // AsyncLocalStorage — no longer pattern-matched globally. Users must
+            // `import { AsyncLocalStorage } from 'async_hooks'` (ESM-strict);
+            // the class is a pure-TS class in stdlib/node/async_hooks.ts that
+            // wraps the underlying $AsyncLocalStorage instance via primitive:async_hooks.
             case "Resolver":
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.DnsResolverFactory);
                 SetStackUnknown();

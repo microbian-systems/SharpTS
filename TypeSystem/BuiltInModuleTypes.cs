@@ -1153,7 +1153,8 @@ public static class BuiltInModuleTypes
             "dgram" => GetDgramModuleTypes(),
             "cluster" => GetClusterModuleTypes(),
             "vm" => GetVmModuleTypes(),
-            "async_hooks" => GetAsyncHooksModuleTypes(),
+            // "async_hooks" — migrated to stdlib/node/async_hooks.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:async_hooks are in GetAsyncHooksPrimitiveTypes.
             "worker_threads" => GetWorkerThreadsModuleTypes(),
             // "tty" — migrated to stdlib/node/tty.ts; types flow from the TS source.
             //   Primitive-layer types for primitive:tty are in GetTtyPrimitiveTypes.
@@ -1175,6 +1176,7 @@ public static class BuiltInModuleTypes
             "process" => GetProcessModuleTypes(),
             "perf" => GetPerfPrimitiveTypes(),
             "tty" => GetTtyPrimitiveTypes(),
+            "async_hooks" => GetAsyncHooksPrimitiveTypes(),
             _ => null
         };
     }
@@ -1189,6 +1191,19 @@ public static class BuiltInModuleTypes
         return new Dictionary<string, TypeInfo>
         {
             ["isatty"] = new TypeInfo.Function([numberType], booleanType),
+        };
+    }
+
+    /// <summary>
+    /// Types for <c>primitive:async_hooks</c> — just <c>create()</c> returning an
+    /// opaque AsyncLocalStorage backing instance (typed <c>any</c>; TS wraps it).
+    /// </summary>
+    private static Dictionary<string, TypeInfo> GetAsyncHooksPrimitiveTypes()
+    {
+        var anyType = new TypeInfo.Any();
+        return new Dictionary<string, TypeInfo>
+        {
+            ["create"] = new TypeInfo.Function([], anyType),
         };
     }
 
@@ -2141,42 +2156,9 @@ public static class BuiltInModuleTypes
         };
     }
 
-    /// <summary>
-    /// Gets the exported types for the vm module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetAsyncHooksModuleTypes()
-    {
-        var anyType = new TypeInfo.Any();
-
-        // AsyncLocalStorage instance type with methods
-        var asyncLocalStorageInstanceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["run"] = new TypeInfo.Function([anyType, anyType, anyType], anyType, RequiredParams: 2, HasRestParam: true),
-            ["getStore"] = new TypeInfo.Function([], anyType),
-            ["enterWith"] = new TypeInfo.Function([anyType], new TypeInfo.Void()),
-            ["exit"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1, HasRestParam: true),
-            ["disable"] = new TypeInfo.Function([], new TypeInfo.Void()),
-        }.ToFrozenDictionary());
-
-        // AsyncLocalStorage constructor type
-        var asyncLocalStorageConstructorType = new TypeInfo.Interface(
-            Name: "AsyncLocalStorage",
-            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
-            OptionalMembers: FrozenSet<string>.Empty,
-            ConstructorSignatures:
-            [
-                new TypeInfo.ConstructorSignature(
-                    TypeParams: null,
-                    ParamTypes: [],
-                    ReturnType: asyncLocalStorageInstanceType)
-            ]
-        );
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["AsyncLocalStorage"] = asyncLocalStorageConstructorType
-        };
-    }
+    // GetAsyncHooksModuleTypes removed — "async_hooks" is now implemented in
+    // stdlib/node/async_hooks.ts; types flow from the TS source. See
+    // GetAsyncHooksPrimitiveTypes for primitive:async_hooks.
 
     public static Dictionary<string, TypeInfo> GetVmModuleTypes()
     {

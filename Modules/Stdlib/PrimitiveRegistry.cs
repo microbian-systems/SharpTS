@@ -25,6 +25,7 @@ public static class PrimitiveRegistry
         Prefix + "process",
         Prefix + "perf",
         Prefix + "tty",
+        Prefix + "async_hooks",
     };
 
     /// <summary>
