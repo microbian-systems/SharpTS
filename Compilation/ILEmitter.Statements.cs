@@ -984,7 +984,11 @@ public partial class ILEmitter
         else
         {
             // Return undefined (null) or appropriate default
-            if (returnType == _ctx.Types.Object || !returnType.IsValueType)
+            if (returnType == typeof(void))
+            {
+                // Void functions: no value on stack; ret takes nothing.
+            }
+            else if (returnType == _ctx.Types.Object || !returnType.IsValueType)
             {
                 IL.Emit(OpCodes.Ldnull);
             }

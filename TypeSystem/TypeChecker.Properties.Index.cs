@@ -179,6 +179,12 @@ public partial class TypeChecker
                 return arrayType.ElementType;
             }
 
+            // String indexed by number returns a string (single character, or undefined at runtime).
+            if (objType is TypeInfo.String or TypeInfo.StringLiteral)
+            {
+                return new TypeInfo.String();
+            }
+
             // TypedArray index access returns number
             if (objType is TypeInfo.TypedArray)
             {

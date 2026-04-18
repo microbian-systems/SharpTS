@@ -325,18 +325,13 @@ Migrate modules opportunistically, leaves first. Dependency-ordered candidates:
 
 Attempted a full WHATWG URL Living Standard port (parser state machine, URL class, URLSearchParams, legacy parse/format/resolve, fileURLToPath/pathToFileURL). Wrote a complete ~1600-line TS implementation covering all 20 parser states, IPv4/IPv6/opaque host parsing, percent-encode sets, and WHATWG-compliant serialization. Implementation archived at `docs/plans/stdlib-url-whatwg-wip.ts` for future continuation.
 
-Reverted before landing because the migration surfaced three distinct compiled-mode code-gen bugs in large functions with record-field array access:
+Reverted before landing because the migration surfaced three distinct code-gen bugs. **All three root causes are now diagnosed and fixed** (see the compiler-bugs commit that supersedes this retrospective):
 
-1. **Push on record field wraps argument in an array.** `url.path.push(buffer)` where `buffer` is a string stores `System.Object[]` (an array) rather than the string itself. Isolated reproductions (small function with the same record type) work correctly — the bug only manifests inside large functions with many switch states. Workaround: route through a `(string[], string) => void` helper function, which fixes the store but the root cause is unknown.
-2. **`shortenPath` helper throws `InvalidProgramException` in compiled mode.** A small `URLRecord → void` function with 3 conditional branches over `url.path.length`/`url.scheme`/`isNormalizedWindowsDriveLetter` emits invalid IL. Compiled program cannot start. Reduced repro not yet isolated.
-3. **Interpreter "Index access not supported on this type"** when calling url module functions with certain URL inputs. Stack trace points to `SharpTSFunction.CallV2`; the actual failing indexing operation wasn't pinned down.
+1. **Push on record field wraps argument in an array** — caused by `CheckSet` not handling `TypeInfo.Interface`, which threw "Only instances and objects have properties." The type check aborted mid-body, TypeMap entries for subsequent expressions were never populated, and the IL emitter fell through to generic `InvokeMethodValue` dispatch that wrapped the single-arg push call in an `object[]`. Fix: add Interface case to `CheckSet` that mirrors the Record handler.
+2. **`shortenPath` throws `InvalidProgramException`** — caused by `EmitReturn` treating `typeof(void)` as a generic value type (because `typeof(void).IsValueType` is true), emitting `ldloca/initobj/ldloc/ret` which pushes garbage then returns for a void signature. Fix: explicitly skip value emission when `returnType == typeof(void)`.
+3. **Interpreter "Index access not supported on this type"** — the type checker didn't accept `string[number]` indexing (even though it's valid JS), and the interpreter's `ResolveIndexTarget` correspondingly lacked a `(string, double)` case. Fix: add both.
 
-Combined, these three bugs required open-ended compiler investigation beyond the scope of a leaf migration. Other stdlib migrations (path, assert, events) all hit one or two isolated compiler gaps that were fixable in ~20 lines; URL surfaced three systemic issues the leaf-migration scope wasn't built to absorb.
-
-**Deferred until compiler work.** Good next steps when resuming:
-- Isolate a minimal repro for bug #1 (push-on-field-in-large-function) to support a targeted fix
-- Examine IL emission for `shortenPath`-shaped functions to find bug #2
-- Separately, decide whether the URL class should remain a compile-time-emitted runtime type (current behavior) or migrate to a pure stdlib TS class (architecturally cleaner but needs global-dispatch plumbing)
+Combined, these three bugs had stayed hidden because smaller test surfaces never combined all the ingredients: interface parameter + primitive field assignment + array field push + void early-return + string char indexing. URL hit all of them. Migration itself is unblocked — leave it on the queue after the three-bug fix commit lands.
 2. **Composite after leaves**: `util`, `stream`, `fs`, `fs/promises`, `readline`, `http`, `https`, `net`, `tls`
 3. **Hybrid: thin TS module over `primitive:buffer`** — `Buffer` gets a TS stdlib module for API symmetry, but heavy lifting (byte-array alloc, slice, copy, encode/decode) stays native in `primitive:buffer`. This keeps every module on equal footing (every module has a `.ts` file) without a perf cliff on hot paths. The primitive surface is stable — Node's Buffer API is locked down, so `primitive:buffer` can be designed once and held.
 

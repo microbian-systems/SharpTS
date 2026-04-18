@@ -24,6 +24,7 @@ public abstract record IndexTarget
     // Get-only targets
     public sealed record EnumReverse(SharpTSEnum Target, double Index) : IndexTarget;
     public sealed record ConstEnumError(ConstEnumValues Target) : IndexTarget;
+    public sealed record StringChar(string Target, int Index) : IndexTarget;
 
     // Fallback
     public sealed record Unsupported(object? Obj, object? Index) : IndexTarget;
