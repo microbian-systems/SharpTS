@@ -1148,40 +1148,6 @@ public static class BuiltInModuleTypes
     }
 
     /// <summary>
-    /// Gets the exported types for the events module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetEventsModuleTypes()
-    {
-        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
-        var eventEmitterType = new TypeInfo.EventEmitter();
-
-        // EventEmitter is an interface with a constructor signature
-        // This allows both `new EventEmitter()` and `new events.EventEmitter()` to type check
-        var eventEmitterConstructorType = new TypeInfo.Interface(
-            Name: "EventEmitter",
-            Members: new Dictionary<string, TypeInfo>
-            {
-                // Static property on the constructor
-                ["defaultMaxListeners"] = numberType
-            }.ToFrozenDictionary(),
-            OptionalMembers: FrozenSet<string>.Empty,
-            // Constructor signature: new () => EventEmitter
-            ConstructorSignatures:
-            [
-                new TypeInfo.ConstructorSignature(
-                    TypeParams: null,
-                    ParamTypes: [],
-                    ReturnType: eventEmitterType)
-            ]
-        );
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["EventEmitter"] = eventEmitterConstructorType
-        };
-    }
-
-    /// <summary>
     /// Gets the exported types for a built-in module by name.
     /// </summary>
     /// <param name="moduleName">The module name (e.g., "path", "fs", "os").</param>
@@ -1204,7 +1170,7 @@ public static class BuiltInModuleTypes
             "child_process" => GetChildProcessModuleTypes(),
             "buffer" => GetBufferModuleTypes(),
             "zlib" => GetZlibModuleTypes(),
-            "events" => GetEventsModuleTypes(),
+            // "events" — migrated to stdlib/node/events.ts; types flow from the TS source.
             "timers" => GetTimersModuleTypes(),
             "timers/promises" => GetTimersPromisesModuleTypes(),
             "string_decoder" => GetStringDecoderModuleTypes(),

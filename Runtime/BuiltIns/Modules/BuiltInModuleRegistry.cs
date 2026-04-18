@@ -24,7 +24,7 @@ public static class BuiltInModuleRegistry
         "child_process",
         "buffer",
         "zlib",
-        "events",
+        // "events" — migrated to stdlib/node/events.ts (pure-TS EventEmitter).
         "timers",
         "timers/promises",
         "string_decoder",

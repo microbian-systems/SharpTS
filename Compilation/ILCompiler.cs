@@ -668,7 +668,7 @@ public partial class ILCompiler
         _builtInModuleEmitterRegistry.Register(new ChildProcessModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new BufferModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new ZlibModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new EventsModuleEmitter());
+        // "events" — migrated to stdlib/node/events.ts (pure-TS EventEmitter).
         _builtInModuleEmitterRegistry.Register(new TimersModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new TimersPromisesModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new StringDecoderModuleEmitter());

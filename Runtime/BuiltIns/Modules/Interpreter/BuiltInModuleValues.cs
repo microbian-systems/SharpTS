@@ -34,7 +34,7 @@ public static class BuiltInModuleValues
             "child_process" => ChildProcessModuleInterpreter.GetExports(),
             "buffer" => BufferModuleInterpreter.GetExports(),
             "zlib" => ZlibModuleInterpreter.GetExports(),
-            "events" => EventsModuleInterpreter.GetExports(),
+            // "events" — migrated to stdlib/node/events.ts (pure-TS EventEmitter).
             "timers" => TimersModuleInterpreter.GetExports(),
             "timers/promises" => TimersModuleInterpreter.GetPromisesExports(),
             "string_decoder" => StringDecoderModuleInterpreter.GetExports(),
@@ -65,7 +65,7 @@ public static class BuiltInModuleValues
     {
         return moduleName is "fs" or "fs/promises" or "url"
             or "process" or "crypto" or "util" or "readline" or "child_process" or "buffer"
-            or "zlib" or "events" or "timers" or "timers/promises" or "string_decoder" or "perf_hooks" or "stream" or "stream/promises" or "stream/web"
+            or "zlib" or "timers" or "timers/promises" or "string_decoder" or "perf_hooks" or "stream" or "stream/promises" or "stream/web"
             or "http" or "worker_threads" or "dns" or "dns/promises" or "net" or "https" or "tls"
             or "dgram" or "cluster" or "vm" or "async_hooks" or "tty";
     }
