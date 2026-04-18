@@ -1397,6 +1397,7 @@ public static class BuiltInModuleTypes
         return primitiveName switch
         {
             "os" => GetOsModuleTypes(),
+            "process" => GetProcessModuleTypes(),
             _ => null
         };
     }

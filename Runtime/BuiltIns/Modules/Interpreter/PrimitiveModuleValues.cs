@@ -23,6 +23,7 @@ public static class PrimitiveModuleValues
         return primitiveName switch
         {
             "os" => OsModuleInterpreter.GetExports(),
+            "process" => ProcessModuleInterpreter.GetExports(),
             _ => throw new Exception($"Unknown primitive module: primitive:{primitiveName}")
         };
     }
@@ -32,6 +33,6 @@ public static class PrimitiveModuleValues
     /// </summary>
     public static bool HasInterpreterSupport(string primitiveName)
     {
-        return primitiveName is "os";
+        return primitiveName is "os" or "process";
     }
 }

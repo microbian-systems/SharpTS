@@ -22,6 +22,7 @@ public static class PrimitiveRegistry
     private static readonly HashSet<string> _primitives = new(StringComparer.Ordinal)
     {
         Prefix + "os",
+        Prefix + "process",
     };
 
     /// <summary>

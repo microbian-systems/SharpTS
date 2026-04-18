@@ -17,6 +17,17 @@ public sealed class BuiltInModuleEmitterRegistry
     }
 
     /// <summary>
+    /// Registers an emitter under an additional key (alias). Used when a single
+    /// emitter serves both a user-facing specifier and the internal primitive
+    /// specifier — e.g. <c>process</c> and <c>primitive:process</c> share
+    /// <see cref="ProcessModuleEmitter"/>.
+    /// </summary>
+    public void RegisterAlias(string alias, IBuiltInModuleEmitter emitter)
+    {
+        _emitters[alias] = emitter;
+    }
+
+    /// <summary>
     /// Gets the emitter for a built-in module.
     /// </summary>
     /// <param name="moduleName">The module name (e.g., "fs", "path").</param>

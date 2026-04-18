@@ -657,7 +657,11 @@ public partial class ILCompiler
         // querystring migrated to stdlib/node/querystring.ts (embedded stdlib).
         _builtInModuleEmitterRegistry.Register(new AssertModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new UrlModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new ProcessModuleEmitter());
+        var processEmitter = new ProcessModuleEmitter();
+        _builtInModuleEmitterRegistry.Register(processEmitter);
+        // Alias: primitive:process shares the same emitter. Stdlib modules use
+        // the primitive specifier; user code uses the plain `process` specifier.
+        _builtInModuleEmitterRegistry.RegisterAlias("primitive:process", processEmitter);
         _builtInModuleEmitterRegistry.Register(new CryptoModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new UtilModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new ReadlineModuleEmitter());

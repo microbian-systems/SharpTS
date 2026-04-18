@@ -275,6 +275,28 @@ Migrated `os` to `stdlib/node/os.ts` as the first module that imports from a `pr
 
 **Compiled-mode dispatch proof.** `import * as os from 'os'` now resolves to stdlib `os.ts`, which imports named members from `primitive:os`. The compiler's PreScan recognizes the primitive specifier and routes calls through the same `BuiltInModuleEmitterRegistry` that used to handle `import 'os'`. End result: no new IL code paths, just re-routing — a minor commit-size testament that the primitive layer's design works with existing compiler infrastructure.
 
+### Phase 3c — Path migration prerequisites (partial)
+
+Attempted the `path` migration and discovered two pre-existing compiler bugs that block it. Shipping the prerequisite infrastructure now (primitives, parser gap-fills, regression tests for the blockers); the actual `path` → stdlib move returns after the compiler fixes.
+
+**Landed:**
+
+- `primitive:process` added to `PrimitiveRegistry`, `PrimitiveProvider`, `PrimitiveModuleValues` (interpreter), `BuiltInModuleTypes.GetPrimitiveTypes`. Delegates to the existing `ProcessModuleInterpreter` for runtime values.
+- `BuiltInModuleEmitterRegistry.RegisterAlias` method and `ProcessModuleEmitter` registered under `primitive:process` (in addition to `process`) so stdlib modules can dispatch process calls through the primitive specifier without disrupting user-level `import { cwd } from 'process'`.
+- Arrow-function parameter parser accepts TypeScript contextual keywords (`from`, `type`, etc.) — general compiler improvement that surfaces any time stdlib code writes `(from: string, to: string) => ...` style signatures.
+- `SharpTS.Tests/SharedTests/CrossModuleRestParamTests.cs` — two `[Theory(Skip=…)]` regression fixtures that pin the compiler bugs below. Removing `Skip` once each bug is fixed will prove the gate naturally.
+
+**Compiler bugs exposed (blocking path migration):**
+
+1. **Rest-parameter cross-module dispatch drops args.** A function with `export function fn(...parts: string[])` called from another module receives `parts = null` — same-module calls work fine. `path.join`, `path.resolve`, and any stdlib function with rest params hit this immediately. Root cause is probably in `$TSFunction.Invoke` / `AdjustArgs` not packaging the tail of args into a rest-array before dispatching to the method.
+2. **Object-literal methods lose their invocation target across imports.** `export const posix = { join(...p) {...} }` with `ns.join(...)` called via import throws `NullReferenceException` in `$Runtime.InvokeMethodValue`. This blocks Node's `path.posix.*` / `path.win32.*` sub-object APIs — the natural shape for platform-flavored namespaces.
+
+**Why defer rather than push through:** both bugs are generic compiler fixes touching cross-module call emission; bundling them with a 400-line TS migration would mix concerns and make review harder. Same pattern as the scoping fix that landed before Phase 3b — isolate the compiler change, then the migration becomes small and auditable.
+
+### Phase 3d — Path migration (planned, after compiler fixes)
+
+Once the rest-param and object-literal bugs above are fixed, the existing `stdlib/node/path.ts` draft (not checked in) can be revived. `primitive:process` is already wired for `path.resolve`'s `cwd()` need.
+
 ### Beyond v1 (not scheduled here)
 
 Migrate modules opportunistically, leaves first. Dependency-ordered candidates:
