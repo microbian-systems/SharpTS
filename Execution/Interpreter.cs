@@ -95,7 +95,8 @@ public partial class Interpreter : IDisposable
             BuiltInNames.Math, BuiltInNames.JSON, BuiltInNames.Object, BuiltInNames.Array,
             BuiltInNames.Number, BuiltInNames.String, BuiltInNames.Boolean, BuiltInNames.Symbol,
             BuiltInNames.Console, BuiltInNames.Process, BuiltInNames.GlobalThis,
-            BuiltInNames.Reflect, BuiltInNames.Promise, BuiltInNames.Atomics
+            BuiltInNames.Reflect, BuiltInNames.Promise, BuiltInNames.Atomics,
+            "Buffer",
         ];
         foreach (var name in singletonNames)
         {
@@ -112,6 +113,20 @@ public partial class Interpreter : IDisposable
         {
             if (!globals.ContainsKey(name))
                 globals[name] = new SharpTSBuiltInConstructor(name, factory);
+        }
+
+        // Promise needs a bare-reference global so `x instanceof Promise`,
+        // `typeof Promise === 'function'`, and stdlib modules that carry
+        // Promise as a value can type-check/run. Its namespace is registered
+        // as non-singleton (to preserve special `new Promise(executor)`
+        // handling), so it wasn't picked up by the loops above. Register a
+        // minimal constructor sentinel — `new Promise(executor)` has its
+        // own dedicated path and does not route through this factory.
+        if (!globals.ContainsKey(BuiltInNames.Promise))
+        {
+            globals[BuiltInNames.Promise] = new SharpTSBuiltInConstructor(
+                BuiltInNames.Promise,
+                _ => throw new Exception("Runtime Error: Use 'new Promise(executor)' syntax."));
         }
 
         return globals.ToFrozenDictionary();

@@ -545,6 +545,10 @@ public readonly struct RuntimeValue : IEquatable<RuntimeValue>
             {
                 SharpTSProxy proxy => proxy.IsCallable ? "function" : "object",
                 ISharpTSCallable => "function",
+                // Node/JS quirk: `typeof Buffer === 'function'` even though our
+                // Buffer is a singleton namespace object. Mirror the branch in
+                // Interpreter.Operators.GetTypeofString.
+                SharpTSBufferConstructor => "function",
                 _ => "object"
             },
             _ => "undefined"

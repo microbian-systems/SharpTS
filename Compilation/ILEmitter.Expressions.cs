@@ -271,6 +271,7 @@ public partial class ILEmitter
             "RegExp" => _ctx.Runtime!.TSRegExpType,
             "TextEncoder" => _ctx.Runtime!.TSTextEncoderType,
             "TextDecoder" => _ctx.Runtime!.TSTextDecoderType,
+            "Buffer" => _ctx.Runtime!.TSBufferType,
             "Array" => _ctx.Types.IListOfObject, // covers both List<object> and $Array
             "Map" => _ctx.Types.DictionaryObjectObject,
             "Set" => _ctx.Types.HashSetOfObject,

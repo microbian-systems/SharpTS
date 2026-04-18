@@ -503,6 +503,10 @@ public partial class Interpreter
         SharpTSBigInt or System.Numerics.BigInteger => "bigint",
         SharpTSProxy proxy => proxy.IsCallable ? "function" : "object",
         SharpTSFunction or SharpTSArrowFunction or SharpTSClass or BuiltInMethod or ISharpTSCallable => "function",
+        // Node/JS quirk: `typeof Buffer === 'function'` even though our Buffer
+        // is a singleton namespace object. Match this explicitly so bare
+        // references behave like the other global constructors.
+        Runtime.Types.SharpTSBufferConstructor => "function",
         _ => "object"
     };
 

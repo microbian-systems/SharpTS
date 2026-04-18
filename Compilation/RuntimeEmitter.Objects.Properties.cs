@@ -360,6 +360,17 @@ public partial class RuntimeEmitter
         // Fallback: Try GetMember(string) method for types like $DiffieHellman, $ECDH
         // that expose properties only through their GetMember dispatch method.
         var getMemberLocal = il.DeclareLocal(_types.MethodInfo);
+        var noGetMemberLabel = il.DefineLabel();
+
+        // Guard: if obj is a System.Type (e.g. a compiled class reference used as
+        // a dynamic target), its inherited GetMember overloads cause
+        // AmbiguousMatchException from GetMethod(name, flags). Skip the fallback
+        // for Type instances — their PropertyDescriptorStore entries (if any)
+        // were already consulted above.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, noGetMemberLabel);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
         il.Emit(OpCodes.Ldstr, "GetMember");
@@ -367,7 +378,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(System.Reflection.BindingFlags)));
         il.Emit(OpCodes.Stloc, getMemberLocal);
 
-        var noGetMemberLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, getMemberLocal);
         il.Emit(OpCodes.Brfalse, noGetMemberLabel);
 

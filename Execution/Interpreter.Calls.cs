@@ -632,9 +632,19 @@ public partial class Interpreter
                 "WeakSet" => left is SharpTSWeakSet,
                 "Date" => left is SharpTSDate,
                 "RegExp" => left is SharpTSRegExp,
+                "TextEncoder" => left is SharpTSTextEncoder,
+                "TextDecoder" => left is SharpTSTextDecoder,
+                "Promise" => left is SharpTSPromise || left is System.Threading.Tasks.Task,
+                "Buffer" => left is SharpTSBuffer,
                 _ => false
             };
         }
+
+        // Buffer is registered as a namespace singleton (SharpTSBufferConstructor),
+        // not as a SharpTSBuiltInConstructor, so `x instanceof Buffer` lands here
+        // with the singleton object on the RHS. Match it explicitly.
+        if (right is SharpTSBufferConstructor)
+            return left is SharpTSBuffer;
 
         if (right is not SharpTSClass targetClass)
             return false;

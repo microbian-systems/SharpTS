@@ -50,6 +50,16 @@ public static class BuiltInConstructorFactory
         [BuiltInNames.Response] = CreateResponse,
         [BuiltInNames.ByteLengthQueuingStrategy] = CreateByteLengthQueuingStrategy,
         [BuiltInNames.CountQueuingStrategy] = CreateCountQueuingStrategy,
+        // TextEncoder / TextDecoder — registered here so bare references
+        // (`const E = TextEncoder`, `x instanceof TextEncoder`, and stdlib
+        // re-exports in util.ts) resolve. `new TextEncoder()` inside user
+        // code continues to use the same underlying runtime type.
+        [BuiltInNames.TextEncoder] = _ => new SharpTSTextEncoder(),
+        [BuiltInNames.TextDecoder] = args =>
+        {
+            var encoding = args.Count > 0 ? args[0]?.ToString() ?? "utf-8" : "utf-8";
+            return new SharpTSTextDecoder(encoding, fatal: false, ignoreBOM: false);
+        },
     };
 
     /// <summary>

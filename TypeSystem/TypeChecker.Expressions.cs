@@ -1267,9 +1267,15 @@ public partial class TypeChecker
         // Error constructors (Error, TypeError, RangeError, etc.)
         if (BuiltInNames.IsErrorTypeName(name.Lexeme))
             return new TypeInfo.Any();
-        // Built-in constructors that can be referenced as variables
+        // Built-in constructors that can be referenced as variables.
+        // Exposing these as Any lets code like `value instanceof Promise`,
+        // `new TextEncoder()`, and `typeof Buffer === 'function'` type-check
+        // without a dedicated declaration, mirroring the compile-mode handling
+        // in ILEmitter.TryEmitBuiltInClassType.
         if (name.Lexeme is "Map" or "Set" or "WeakMap" or "WeakSet" or "WeakRef"
-            or "Date" or "RegExp")
+            or "Date" or "RegExp" or "Promise" or "Buffer"
+            or "TextEncoder" or "TextDecoder"
+            or "FinalizationRegistry" or "Proxy" or "BroadcastChannel")
             return new TypeInfo.Any();
 
         var type = _environment.Get(name.Lexeme);
