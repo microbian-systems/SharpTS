@@ -303,6 +303,15 @@ public class EmittedRuntime
     public MethodBuilder GetMapProperty { get; set; } = null!;
     public MethodBuilder GetSetProperty { get; set; } = null!;
 
+    // Generalized bind target — used when `.bind` is called on any callable other
+    // than $TSFunction (arrays, maps, sets, etc.). Stores (target, boundArgs) and
+    // prepends boundArgs to the call arguments on invocation. thisArg is ignored
+    // because bound methods already capture their receiver.
+    public TypeBuilder BoundAnyFunctionType { get; set; } = null!;
+    public ConstructorBuilder BoundAnyFunctionCtor { get; set; } = null!;
+    public MethodBuilder BoundAnyFunctionInvoke { get; set; } = null!;
+    public MethodBuilder BoundAnyFunctionInvokeWithThis { get; set; } = null!;
+
     // Method callable wrapper for GetMember results (BuiltInMethod etc.)
     public TypeBuilder MethodCallableType { get; set; } = null!;
     public ConstructorBuilder MethodCallableCtor { get; set; } = null!;

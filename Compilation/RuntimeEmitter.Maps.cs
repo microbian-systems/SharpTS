@@ -764,8 +764,10 @@ public partial class RuntimeEmitter
         );
         runtime.BoundMapMethodType = typeBuilder;
 
-        var mapField = typeBuilder.DefineField("_map", _types.DictionaryObjectObject, FieldAttributes.Private);
-        var methodNameField = typeBuilder.DefineField("_methodName", _types.String, FieldAttributes.Private);
+        // Assembly visibility so GetProperty's callable-wrapper handler can read
+        // `_methodName` to return the method name for `map.get.name === 'get'`.
+        var mapField = typeBuilder.DefineField("_map", _types.DictionaryObjectObject, FieldAttributes.Assembly);
+        var methodNameField = typeBuilder.DefineField("_methodName", _types.String, FieldAttributes.Assembly);
         runtime.BoundMapMethodMapField = mapField;
         runtime.BoundMapMethodNameField = methodNameField;
 

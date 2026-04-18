@@ -219,11 +219,10 @@ public partial class RuntimeEmitter
         EmitTSZlibTransformClass(moduleBuilder, runtime);
         EmitTSStreamUtilsClass(moduleBuilder, runtime);
 
-        // Emit function method wrapper classes for bind/call/apply
-        // Must come after TSFunction and BoundTSFunction
-        EmitFunctionBindWrapperClass(moduleBuilder, runtime);
-        EmitFunctionCallWrapperClass(moduleBuilder, runtime);
-        EmitFunctionApplyWrapperClass(moduleBuilder, runtime);
+        // Function wrapper emission is deferred below until AFTER $BoundArrayMethod /
+        // $BoundMapMethod / $BoundSetMethod Phase 1 so their Invoke MethodBuilders
+        // are available to the wrapper bodies (for dispatching .call/.apply/.bind on
+        // bound methods).
 
         // Emit util module types for standalone execution
         // Must come after $Buffer (TextEncoder returns $Buffer)
@@ -250,6 +249,16 @@ public partial class RuntimeEmitter
         // Must come before EmitRuntimeClass so GetMapProperty/GetSetProperty can use them
         EmitBoundMapMethodTypeDefinition(moduleBuilder, runtime);
         EmitBoundSetMethodTypeDefinition(moduleBuilder, runtime);
+
+        // Emit $BoundAnyFunction (the partial-apply wrapper for .bind on non-$TSFunction
+        // callables) and the function bind/call/apply wrappers. All reference the
+        // Bound*Method TypeBuilders above, so they MUST come after Phase 1 of those.
+        // They come before EmitRuntimeClass so GetFunctionMethod (inside EmitRuntimeClass)
+        // can use their constructors.
+        EmitBoundAnyFunctionClass(moduleBuilder, runtime);
+        EmitFunctionBindWrapperClass(moduleBuilder, runtime);
+        EmitFunctionCallWrapperClass(moduleBuilder, runtime);
+        EmitFunctionApplyWrapperClass(moduleBuilder, runtime);
 
         // Emit $MethodCallable type and constructor (Phase 1)
         // Must come before EmitRuntimeClass so GetFieldsProperty can wrap GetMember results

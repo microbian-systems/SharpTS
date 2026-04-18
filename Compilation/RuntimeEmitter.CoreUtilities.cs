@@ -1937,9 +1937,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSDeprecatedFunctionType);
         il.Emit(OpCodes.Brtrue, functionLabel);
 
-        // $BoundArrayMethod / $BoundMapMethod / $BoundSetMethod => "function"
+        // $BoundArrayMethod / $BoundMapMethod / $BoundSetMethod / $BoundAnyFunction => "function"
         // These are callable wrappers returned by GetListProperty/GetMapProperty/GetSetProperty
-        // for dynamic property access on arrays/maps/sets (duck typing across module boundaries).
+        // for dynamic property access on arrays/maps/sets (duck typing across module boundaries)
+        // and by `.bind` on non-$TSFunction targets.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
         il.Emit(OpCodes.Brtrue, functionLabel);
@@ -1950,6 +1951,10 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
+        il.Emit(OpCodes.Brtrue, functionLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundAnyFunctionType);
         il.Emit(OpCodes.Brtrue, functionLabel);
 
         // System.Type => "function"

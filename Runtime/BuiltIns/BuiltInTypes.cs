@@ -98,7 +98,7 @@ public static class BuiltInTypes
             "push" => new TypeInfo.Function([new TypeInfo.Array(elementType)], NumberType, RequiredParams: 1, HasRestParam: true), // variadic: push(...items: T[])
             "pop" => new TypeInfo.Function([], elementType),
             "shift" => new TypeInfo.Function([], elementType),
-            "unshift" => new TypeInfo.Function([elementType], NumberType),
+            "unshift" => new TypeInfo.Function([new TypeInfo.Array(elementType)], NumberType, RequiredParams: 0, HasRestParam: true), // variadic: unshift(...items: T[])
             "slice" => new TypeInfo.Function([NumberType, NumberType], new TypeInfo.Array(elementType), RequiredParams: 0), // start/end are optional
             "map" => new TypeInfo.Function(
                 [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 1)],

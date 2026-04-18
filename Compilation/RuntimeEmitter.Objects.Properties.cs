@@ -1171,6 +1171,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.IsTypedArrayMethod);
         il.Emit(OpCodes.Brtrue, typedArrayLabel);
 
+        // $Bound*Method and $BoundAnyFunction - callable wrappers that need .call/.apply/.bind
+        // support. Route through GetFunctionMethod which handles bind/call/apply/length/name.
+        // Bound methods already capture their receiver, so thisArg passed to .call/.apply is
+        // ignored per JS bound-callable semantics — the CallWrapper/ApplyWrapper Invoke bodies
+        // implement that via EmitDispatchToTarget.
+        var callableWrapperLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Brtrue, callableWrapperLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
+        il.Emit(OpCodes.Brtrue, callableWrapperLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
+        il.Emit(OpCodes.Brtrue, callableWrapperLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundAnyFunctionType);
+        il.Emit(OpCodes.Brtrue, callableWrapperLabel);
+
         // Default - try class-instance fields/property resolution helper
         var classInstanceLabel = il.DefineLabel();
         il.Emit(OpCodes.Br, classInstanceLabel);
@@ -1181,6 +1200,61 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
+        il.Emit(OpCodes.Ret);
+
+        // Callable wrapper handler: route .bind/.call/.apply/.length/.name through
+        // GetFunctionMethod. Also handles .name specially for $BoundArrayMethod /
+        // $BoundMapMethod / $BoundSetMethod by returning the captured method name,
+        // which is more useful than GetFunctionMethod's empty-string fallback.
+        il.MarkLabel(callableWrapperLabel);
+
+        // Special-case "name" for bound methods — return the captured method name
+        // (e.g. `map.get.name === 'get'`). GetFunctionMethod returns "" for unknown
+        // callables, which is wrong for our wrappers.
+        var notNameLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brfalse, notNameLabel);
+
+        var notBAMNameLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Brfalse, notBAMNameLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Ldfld, runtime.BoundArrayMethodNameField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBAMNameLabel);
+
+        var notBMMNameLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
+        il.Emit(OpCodes.Brfalse, notBMMNameLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.BoundMapMethodType);
+        il.Emit(OpCodes.Ldfld, runtime.BoundMapMethodNameField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBMMNameLabel);
+
+        var notBSMNameLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
+        il.Emit(OpCodes.Brfalse, notBSMNameLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.BoundSetMethodType);
+        il.Emit(OpCodes.Ldfld, runtime.BoundSetMethodNameField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBSMNameLabel);
+
+        // $BoundAnyFunction has no name field — fall through to GetFunctionMethod (returns "")
+
+        il.MarkLabel(notNameLabel);
+
+        // All other names (bind/call/apply/length/anything else) — delegate to GetFunctionMethod
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.GetFunctionMethod);
         il.Emit(OpCodes.Ret);
 
         // TypedArray handler - call emitted typed-array member helper

@@ -742,9 +742,10 @@ public partial class RuntimeEmitter
         );
         runtime.BoundArrayMethodType = typeBuilder;
 
-        // Fields
-        var listField = typeBuilder.DefineField("_list", _types.ListOfObject, FieldAttributes.Private);
-        var methodNameField = typeBuilder.DefineField("_methodName", _types.String, FieldAttributes.Private);
+        // Fields. Use Assembly visibility so GetProperty's callable-wrapper handler
+        // can read `_methodName` to return the method name for `arr.push.name === 'push'`.
+        var listField = typeBuilder.DefineField("_list", _types.ListOfObject, FieldAttributes.Assembly);
+        var methodNameField = typeBuilder.DefineField("_methodName", _types.String, FieldAttributes.Assembly);
         runtime.BoundArrayMethodListField = listField;
         runtime.BoundArrayMethodNameField = methodNameField;
 
@@ -794,69 +795,43 @@ public partial class RuntimeEmitter
 
         var il = invokeBuilder.GetILGenerator();
 
-        // Switch on _methodName to dispatch to appropriate runtime method
-        var defaultLabel = il.DefineLabel();
+        // Switch on _methodName to dispatch to appropriate runtime method. Each case
+        // must leave exactly one `object` value on the stack before branching to
+        // endLabel. The fall-through path emits `ldnull` + `ret`.
         var endLabel = il.DefineLabel();
 
-        // Helper to emit a method case
-        void EmitMethodCase(string methodName, MethodBuilder runtimeMethod)
+        // Box a single-value return to object based on the runtime method's return type.
+        // Shared by all case helpers below.
+        void EmitReturnBoxing(MethodBuilder runtimeMethod)
         {
-            var skipLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldfld, methodNameField);
-            il.Emit(OpCodes.Ldstr, methodName);
-            il.Emit(OpCodes.Call, _types.StringOpEquality);
-            il.Emit(OpCodes.Brfalse, skipLabel);
-
-            // Call runtime.Method(_list, args) or runtime.Method(_list) depending on method
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldfld, listField);
-
-            // Methods that take args
-            if (methodName is "push" or "unshift" or "slice" or "indexOf" or "includes" or "concat" or "reduce")
-            {
-                il.Emit(OpCodes.Ldarg_1); // args
-            }
-            else if (methodName == "join")
-            {
-                // join takes a single separator (args[0]) not the whole args array
-                // Handle: args.Length > 0 ? args[0] : null
-                var noArgsLabel = il.DefineLabel();
-                var afterArgLabel = il.DefineLabel();
-                il.Emit(OpCodes.Ldarg_1); // args
-                il.Emit(OpCodes.Ldlen);
-                il.Emit(OpCodes.Brfalse, noArgsLabel);
-                il.Emit(OpCodes.Ldarg_1); // args
-                il.Emit(OpCodes.Ldc_I4_0);
-                il.Emit(OpCodes.Ldelem_Ref); // args[0]
-                il.Emit(OpCodes.Br, afterArgLabel);
-                il.MarkLabel(noArgsLabel);
-                il.Emit(OpCodes.Ldnull);
-                il.MarkLabel(afterArgLabel);
-            }
-
-            il.Emit(OpCodes.Call, runtimeMethod);
-
-            // Box if needed (for methods returning double)
             if (runtimeMethod.ReturnType == _types.Double)
-            {
                 il.Emit(OpCodes.Box, _types.Double);
-            }
             else if (runtimeMethod.ReturnType == _types.Boolean)
-            {
                 il.Emit(OpCodes.Box, _types.Boolean);
-            }
-            else if (runtimeMethod.ReturnType == _types.String)
-            {
-                // String is already object-compatible
-            }
-
-            il.Emit(OpCodes.Br, endLabel);
-            il.MarkLabel(skipLabel);
+            else if (runtimeMethod.ReturnType == _types.Void)
+                il.Emit(OpCodes.Ldnull);
+            // Object/String/ListOfObject/etc. are already object-compatible.
         }
 
-        // Helper to emit a callback method case (list, callback) where callback is args[0]
-        void EmitCallbackMethodCase(string methodName, MethodBuilder runtimeMethod)
+        // Load args[0] onto the stack, or null if args is empty.
+        void EmitArgZeroOrNull()
+        {
+            var noArgsLabel = il.DefineLabel();
+            var doneLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Brfalse, noArgsLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Br, doneLabel);
+            il.MarkLabel(noArgsLabel);
+            il.Emit(OpCodes.Ldnull);
+            il.MarkLabel(doneLabel);
+        }
+
+        // Case: runtime.Method(_list) — no trailing args.
+        void EmitNoArgCase(string methodName, MethodBuilder runtimeMethod)
         {
             var skipLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
@@ -865,58 +840,145 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, _types.StringOpEquality);
             il.Emit(OpCodes.Brfalse, skipLabel);
 
-            // Call runtime.Method(_list, args[0])
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, listField);
-            il.Emit(OpCodes.Ldarg_1); // args
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Ldelem_Ref); // args[0]
             il.Emit(OpCodes.Call, runtimeMethod);
-
-            // Handle return type
-            if (runtimeMethod.ReturnType == _types.Void)
-            {
-                il.Emit(OpCodes.Ldnull); // void methods need to return null for object return
-            }
-            else if (runtimeMethod.ReturnType == _types.Boolean)
-            {
-                il.Emit(OpCodes.Box, _types.Boolean);
-            }
-            else if (runtimeMethod.ReturnType == _types.Double)
-            {
-                il.Emit(OpCodes.Box, _types.Double);
-            }
+            EmitReturnBoxing(runtimeMethod);
 
             il.Emit(OpCodes.Br, endLabel);
             il.MarkLabel(skipLabel);
         }
 
-        // Emit cases for each array method
-        EmitMethodCase("join", runtime.ArrayJoin);
-        EmitMethodCase("push", runtime.ArrayPush);
-        EmitMethodCase("pop", runtime.ArrayPop);
-        EmitMethodCase("shift", runtime.ArrayShift);
-        EmitMethodCase("unshift", runtime.ArrayUnshift);
-        EmitMethodCase("slice", runtime.ArraySlice);
-        EmitMethodCase("indexOf", runtime.ArrayIndexOf);
-        EmitMethodCase("includes", runtime.ArrayIncludes);
-        EmitMethodCase("concat", runtime.ArrayConcat);
-        EmitMethodCase("reverse", runtime.ArrayReverse);
+        // Case: runtime.Method(_list, args[0]) — a single-arg method that takes
+        // one JS argument (includes element / map callback / join separator /
+        // sort comparator / ...). The runtime helper's second param is a plain
+        // `object`, not an `object[]`.
+        void EmitSingleArgCase(string methodName, MethodBuilder runtimeMethod)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, methodNameField);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
 
-        // Methods that take (list, args) for callback + options
-        EmitMethodCase("reduce", runtime.ArrayReduce);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, listField);
+            EmitArgZeroOrNull();
+            il.Emit(OpCodes.Call, runtimeMethod);
+            EmitReturnBoxing(runtimeMethod);
 
-        // Callback-based methods (take list, callback)
-        EmitCallbackMethodCase("map", runtime.ArrayMap);
-        EmitCallbackMethodCase("filter", runtime.ArrayFilter);
-        EmitCallbackMethodCase("forEach", runtime.ArrayForEach);
-        EmitCallbackMethodCase("find", runtime.ArrayFind);
-        EmitCallbackMethodCase("findIndex", runtime.ArrayFindIndex);
-        EmitCallbackMethodCase("some", runtime.ArraySome);
-        EmitCallbackMethodCase("every", runtime.ArrayEvery);
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+
+        // Case: push/unshift — JS-variadic. Loop over args calling the single-arg
+        // helper for each. This makes `boundPush(1, 2, 3)` and `push.apply(arr, [1,2,3])`
+        // behave the same as JS `arr.push(1, 2, 3)`.
+        //   forEach arg in args: runtime.Method(_list, arg)
+        //   return (double)_list.Count
+        void EmitVariadicElementCase(string methodName, MethodBuilder runtimeMethod)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, methodNameField);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            var indexLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, indexLocal);
+
+            var loopStartLabel = il.DefineLabel();
+            var loopEndLabel = il.DefineLabel();
+
+            il.MarkLabel(loopStartLabel);
+            il.Emit(OpCodes.Ldloc, indexLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Bge, loopEndLabel);
+
+            // runtime.Method(_list, args[index])  — return value popped (use Count afterward)
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, listField);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloc, indexLocal);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Call, runtimeMethod);
+            il.Emit(OpCodes.Pop);
+
+            il.Emit(OpCodes.Ldloc, indexLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, indexLocal);
+            il.Emit(OpCodes.Br, loopStartLabel);
+
+            il.MarkLabel(loopEndLabel);
+
+            // Leave (double)_list.Count on the stack, boxed
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, listField);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+
+        // Case: runtime.Method(_list, args) — forwards the whole object[] args
+        // (for slice/reduce/reduceRight/splice which the runtime helper unpacks itself).
+        void EmitArgsArrayCase(string methodName, MethodBuilder runtimeMethod)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, methodNameField);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, listField);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtimeMethod);
+            EmitReturnBoxing(runtimeMethod);
+
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+
+        // No-arg methods
+        EmitNoArgCase("pop", runtime.ArrayPop);
+        EmitNoArgCase("shift", runtime.ArrayShift);
+        EmitNoArgCase("reverse", runtime.ArrayReverse);
+
+        // JS-variadic methods — loop through args, calling the single-element helper
+        // for each. Matches JS semantics: `arr.push(1, 2, 3)` pushes three elements.
+        EmitVariadicElementCase("push", runtime.ArrayPush);
+        EmitVariadicElementCase("unshift", runtime.ArrayUnshift);
+
+        // Single-arg methods (runtime helper takes `object`, not `object[]`).
+        // Aligns with Emitters/ArrayEmitter.cs which also uses EmitSingleArgOrNull
+        // for these methods, so dynamic bound dispatch matches the direct-call path.
+        EmitSingleArgCase("indexOf", runtime.ArrayIndexOf);
+        EmitSingleArgCase("includes", runtime.ArrayIncludes);
+        EmitSingleArgCase("concat", runtime.ArrayConcat);
+        EmitSingleArgCase("join", runtime.ArrayJoin);
+        EmitSingleArgCase("map", runtime.ArrayMap);
+        EmitSingleArgCase("filter", runtime.ArrayFilter);
+        EmitSingleArgCase("forEach", runtime.ArrayForEach);
+        EmitSingleArgCase("find", runtime.ArrayFind);
+        EmitSingleArgCase("findIndex", runtime.ArrayFindIndex);
+        EmitSingleArgCase("some", runtime.ArraySome);
+        EmitSingleArgCase("every", runtime.ArrayEvery);
+
+        // object[]-args methods (runtime helper takes the whole object[] args).
+        EmitArgsArrayCase("slice", runtime.ArraySlice);
+        EmitArgsArrayCase("reduce", runtime.ArrayReduce);
 
         // Default: return null
-        il.MarkLabel(defaultLabel);
         il.Emit(OpCodes.Ldnull);
 
         il.MarkLabel(endLabel);

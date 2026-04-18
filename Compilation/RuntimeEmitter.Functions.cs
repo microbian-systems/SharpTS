@@ -176,6 +176,258 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits the $BoundAnyFunction class — a partial-application wrapper used by
+    /// <c>Function.prototype.bind</c> when the bind receiver is NOT a <c>$TSFunction</c>
+    /// (e.g. a <c>$BoundArrayMethod</c> / <c>$BoundMapMethod</c> / <c>$BoundSetMethod</c>,
+    /// a <c>$BoundTSFunction</c>, or any other callable that <c>InvokeValue</c> knows
+    /// how to dispatch). Stores (target, boundArgs) and, on invocation, prepends
+    /// boundArgs to the call args and dispatches to the target. <c>thisArg</c> is
+    /// ignored because bound methods already capture their receiver.
+    /// </summary>
+    /// <remarks>
+    /// Must be emitted AFTER <c>$TSFunction</c>, <c>$BoundTSFunction</c>, and all three
+    /// <c>$Bound*Method</c> TypeBuilders have been defined (Phase 1), because the
+    /// emitted body of <c>Invoke</c> <c>Callvirt</c>s each of their <c>Invoke</c>
+    /// MethodBuilders directly — there is no <c>InvokeValue</c> yet at this point in
+    /// the emission pipeline.
+    /// </remarks>
+    private void EmitBoundAnyFunctionClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$BoundAnyFunction",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.Object
+        );
+        runtime.BoundAnyFunctionType = typeBuilder;
+
+        var targetField = typeBuilder.DefineField("_target", _types.Object, FieldAttributes.Private);
+        var boundArgsField = typeBuilder.DefineField("_boundArgs", _types.ObjectArray, FieldAttributes.Private);
+
+        // ctor(object target, object[] boundArgs)
+        var ctorBuilder = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.Object, _types.ObjectArray]
+        );
+        runtime.BoundAnyFunctionCtor = ctorBuilder;
+
+        var ctorIL = ctorBuilder.GetILGenerator();
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Stfld, targetField);
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_2);
+        ctorIL.Emit(OpCodes.Stfld, boundArgsField);
+        ctorIL.Emit(OpCodes.Ret);
+
+        // Invoke(object[] args): prepends boundArgs, then dispatches to target by type.
+        var invokeBuilder = typeBuilder.DefineMethod(
+            "Invoke",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.ObjectArray]
+        );
+        runtime.BoundAnyFunctionInvoke = invokeBuilder;
+
+        var il = invokeBuilder.GetILGenerator();
+        var combinedLocal = il.DeclareLocal(_types.ObjectArray);
+        var boundLenLocal = il.DeclareLocal(_types.Int32);
+        var argsLenLocal = il.DeclareLocal(_types.Int32);
+
+        // boundLen = _boundArgs?.Length ?? 0
+        var noBoundLabel = il.DefineLabel();
+        var afterBoundLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, boundArgsField);
+        il.Emit(OpCodes.Brfalse, noBoundLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, boundArgsField);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, boundLenLocal);
+        il.Emit(OpCodes.Br, afterBoundLabel);
+        il.MarkLabel(noBoundLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, boundLenLocal);
+        il.MarkLabel(afterBoundLabel);
+
+        // argsLen = args?.Length ?? 0
+        var noArgsLabel = il.DefineLabel();
+        var afterArgsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, noArgsLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, argsLenLocal);
+        il.Emit(OpCodes.Br, afterArgsLabel);
+        il.MarkLabel(noArgsLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, argsLenLocal);
+        il.MarkLabel(afterArgsLabel);
+
+        // combined = new object[boundLen + argsLen]
+        il.Emit(OpCodes.Ldloc, boundLenLocal);
+        il.Emit(OpCodes.Ldloc, argsLenLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, combinedLocal);
+
+        // if (boundLen > 0) Array.Copy(_boundArgs, 0, combined, 0, boundLen)
+        var skipBoundCopyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, boundLenLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, skipBoundCopyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, boundArgsField);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, combinedLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, boundLenLocal);
+        il.Emit(OpCodes.Call, _types.ArrayType.GetMethod("Copy", [_types.ArrayType, _types.Int32, _types.ArrayType, _types.Int32, _types.Int32])!);
+        il.MarkLabel(skipBoundCopyLabel);
+
+        // if (argsLen > 0) Array.Copy(args, 0, combined, boundLen, argsLen)
+        var skipArgsCopyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argsLenLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, skipArgsCopyLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, combinedLocal);
+        il.Emit(OpCodes.Ldloc, boundLenLocal);
+        il.Emit(OpCodes.Ldloc, argsLenLocal);
+        il.Emit(OpCodes.Call, _types.ArrayType.GetMethod("Copy", [_types.ArrayType, _types.Int32, _types.ArrayType, _types.Int32, _types.Int32])!);
+        il.MarkLabel(skipArgsCopyLabel);
+
+        // Dispatch chain: isinst target against known callables, Callvirt each one's Invoke
+        EmitDispatchToTarget(il, runtime, targetField, combinedLocal);
+
+        // Fall-through: unknown target type → return null
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        // InvokeWithThis(object thisArg, object[] args): bound target ignores thisArg
+        var invokeWithThisBuilder = typeBuilder.DefineMethod(
+            "InvokeWithThis",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.Object, _types.ObjectArray]
+        );
+        runtime.BoundAnyFunctionInvokeWithThis = invokeWithThisBuilder;
+
+        var iwtIL = invokeWithThisBuilder.GetILGenerator();
+        iwtIL.Emit(OpCodes.Ldarg_0);
+        iwtIL.Emit(OpCodes.Ldarg_2);
+        iwtIL.Emit(OpCodes.Callvirt, invokeBuilder);
+        iwtIL.Emit(OpCodes.Ret);
+
+        typeBuilder.CreateType();
+    }
+
+    /// <summary>
+    /// Emits a dispatch chain against an <c>object</c>-typed target field, calling the
+    /// appropriate <c>Invoke</c> method on each known runtime callable type. Used by
+    /// <c>$BoundAnyFunction</c>, <c>$FunctionCallWrapper</c>, and <c>$FunctionApplyWrapper</c>
+    /// to invoke a target whose concrete type isn't known at emission time.
+    ///
+    /// The chain handles: <c>$TSFunction</c>, <c>$BoundTSFunction</c>,
+    /// <c>$BoundArrayMethod</c>, <c>$BoundMapMethod</c>, <c>$BoundSetMethod</c>,
+    /// <c>$BoundAnyFunction</c> (recursive bind). The caller must emit the args array
+    /// and load it into <paramref name="argsLocal"/> before calling this helper.
+    /// After dispatch, each branch emits <c>Ret</c>, so the caller is responsible for
+    /// a fall-through path (e.g. <c>ldnull; ret</c>).
+    /// </summary>
+    private void EmitDispatchToTarget(ILGenerator il, EmittedRuntime runtime, FieldBuilder targetField, LocalBuilder argsLocal)
+    {
+        // $TSFunction → target.Invoke(args)
+        var notTSFunctionLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notTSFunctionLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSFunctionLabel);
+
+        // $BoundTSFunction → target.Invoke(args)
+        var notBoundTSFunctionLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brfalse, notBoundTSFunctionLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvoke);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBoundTSFunctionLabel);
+
+        // $BoundArrayMethod → target.Invoke(args)
+        var notBAMLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Brfalse, notBAMLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Castclass, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.BoundArrayMethodInvoke);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBAMLabel);
+
+        // $BoundMapMethod → target.Invoke(args)
+        var notBMMLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
+        il.Emit(OpCodes.Brfalse, notBMMLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Castclass, runtime.BoundMapMethodType);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.BoundMapMethodInvoke);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBMMLabel);
+
+        // $BoundSetMethod → target.Invoke(args)
+        var notBSMLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
+        il.Emit(OpCodes.Brfalse, notBSMLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Castclass, runtime.BoundSetMethodType);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.BoundSetMethodInvoke);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBSMLabel);
+
+        // $BoundAnyFunction → target.Invoke(args) (recursive chained .bind)
+        var notBAFLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Isinst, runtime.BoundAnyFunctionType);
+        il.Emit(OpCodes.Brfalse, notBAFLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
+        il.Emit(OpCodes.Castclass, runtime.BoundAnyFunctionType);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.BoundAnyFunctionInvoke);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBAFLabel);
+    }
+
+    /// <summary>
     /// Emits the GetFunctionMethod helper that returns bind/call/apply wrappers.
     /// </summary>
     private void EmitGetFunctionMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
@@ -426,23 +678,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, boundArgsLocal);
         il.MarkLabel(afterBoundArgsLabel);
 
-        // Check if target is $TSFunction or $BoundTSFunction
+        // Dispatch based on target type:
+        //   $TSFunction → $BoundTSFunction (keeps thisArg + boundArgs)
+        //   anything else callable (arrays/maps/sets/bound methods/etc.)
+        //     → $BoundAnyFunction (partial-apply only; thisArg ignored because
+        //       those targets already capture their receiver per JS bound-callable semantics)
         var isTSFunctionLabel = il.DefineLabel();
-        var isBoundLabel = il.DefineLabel();
-        var endLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, targetField);
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Brtrue, isTSFunctionLabel);
 
+        // Non-TSFunction target: new $BoundAnyFunction(target, boundArgs)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, targetField);
-        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
-        il.Emit(OpCodes.Brtrue, isBoundLabel);
-
-        // Unknown target type - return null
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, boundArgsLocal);
+        il.Emit(OpCodes.Newobj, runtime.BoundAnyFunctionCtor);
         il.Emit(OpCodes.Ret);
 
         // return new $BoundTSFunction(($TSFunction)_target, thisArg, boundArgs)
@@ -453,12 +705,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, thisArgLocal);
         il.Emit(OpCodes.Ldloc, boundArgsLocal);
         il.Emit(OpCodes.Newobj, runtime.BoundTSFunctionCtor);
-        il.Emit(OpCodes.Ret);
-
-        // For already bound functions, we can't re-bind (simplified)
-        il.MarkLabel(isBoundLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, targetField);
         il.Emit(OpCodes.Ret);
 
         // InvokeWithThis (not used but needed for consistency)
@@ -583,9 +829,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, callArgsLocal);
         il.MarkLabel(afterCallArgsLabel);
 
-        // Check target type and invoke
+        // Check target type and invoke. TSFunction/BoundTSFunction honor the thisArg
+        // via InvokeWithThis; bound methods already capture their receiver so thisArg
+        // is ignored for them (per JS spec for bound callables).
         var isTSFunctionLabel = il.DefineLabel();
-        var isBoundLabel = il.DefineLabel();
+        var isBoundTSFunctionLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, targetField);
@@ -595,8 +843,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, targetField);
         il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
-        il.Emit(OpCodes.Brtrue, isBoundLabel);
+        il.Emit(OpCodes.Brtrue, isBoundTSFunctionLabel);
 
+        // Non-TSFunction callables: dispatch via the shared helper (ignores thisArg).
+        EmitDispatchToTarget(il, runtime, targetField, callArgsLocal);
+
+        // Fall-through: unknown target type → return null
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
@@ -611,7 +863,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         // return (($BoundTSFunction)_target).InvokeWithThis(thisArg, callArgs)
-        il.MarkLabel(isBoundLabel);
+        il.MarkLabel(isBoundTSFunctionLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, targetField);
         il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
@@ -790,9 +1042,10 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(afterConvertLabel);
 
-        // Check target type and invoke
+        // Check target type and invoke. TSFunction/BoundTSFunction honor thisArg;
+        // bound methods ignore it (receiver already captured).
         var isTSFunctionLabel = il.DefineLabel();
-        var isBoundLabel = il.DefineLabel();
+        var isBoundTSFunctionLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, targetField);
@@ -802,8 +1055,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, targetField);
         il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
-        il.Emit(OpCodes.Brtrue, isBoundLabel);
+        il.Emit(OpCodes.Brtrue, isBoundTSFunctionLabel);
 
+        // Non-TSFunction callables: dispatch via the shared helper (ignores thisArg).
+        EmitDispatchToTarget(il, runtime, targetField, callArgsLocal);
+
+        // Fall-through: unknown target type → return null
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
@@ -816,7 +1073,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
         il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(isBoundLabel);
+        il.MarkLabel(isBoundTSFunctionLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, targetField);
         il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);

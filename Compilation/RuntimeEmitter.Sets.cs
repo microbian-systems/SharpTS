@@ -1259,8 +1259,10 @@ public partial class RuntimeEmitter
         );
         runtime.BoundSetMethodType = typeBuilder;
 
-        var setField = typeBuilder.DefineField("_set", _types.HashSetOfObject, FieldAttributes.Private);
-        var methodNameField = typeBuilder.DefineField("_methodName", _types.String, FieldAttributes.Private);
+        // Assembly visibility so GetProperty's callable-wrapper handler can read
+        // `_methodName` to return the method name for `set.add.name === 'add'`.
+        var setField = typeBuilder.DefineField("_set", _types.HashSetOfObject, FieldAttributes.Assembly);
+        var methodNameField = typeBuilder.DefineField("_methodName", _types.String, FieldAttributes.Assembly);
         runtime.BoundSetMethodSetField = setField;
         runtime.BoundSetMethodNameField = methodNameField;
 
