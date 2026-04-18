@@ -14,19 +14,11 @@ public class StringDecoderModuleTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void StringDecoder_Import_Named(ExecutionMode mode)
     {
-        // After Phase 3g migration StringDecoder is a TS class. Compiled mode
-        // reports `typeof SomeClass === 'object'` rather than `'function'` for
-        // user-defined classes — a pre-existing compiler divergence surfaced
-        // by the migration and covered by ClassTypeofIsFunctionTests. The
-        // original assertion was coincidentally passing because the legacy
-        // C# constructor typed as 'function'. Until the gap is fixed, assert
-        // successful construction instead.
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
                 import { StringDecoder } from 'string_decoder';
-                const d = new StringDecoder();
-                console.log(d.encoding === 'utf8');
+                console.log(typeof StringDecoder === 'function');
                 """
         };
 
@@ -42,8 +34,7 @@ public class StringDecoderModuleTests
         {
             ["main.ts"] = """
                 import * as sd from 'string_decoder';
-                const d = new sd.StringDecoder();
-                console.log(d.encoding === 'utf8');
+                console.log(typeof sd.StringDecoder === 'function');
                 """
         };
 

@@ -86,13 +86,9 @@ function looseEquals(a: any, b: any): boolean {
 }
 
 function deepEquals(a: any, b: any, strict: boolean): boolean {
-    // Compiled-mode workaround: chained `||` of mixed typeof/=== comparisons
-    // in an imported-module context can short-circuit incorrectly. Computing
-    // each sub-condition into a local first dodges it. When the compiler bug
-    // is fixed this can revert to an inline compound expression.
-    const aIsObject = typeof a === 'object' && a !== null;
-    const bIsObject = typeof b === 'object' && b !== null;
-    if (!aIsObject || !bIsObject) {
+    // Primitive / null fast path. For any type where SameValue (strict) or
+    // loose equality suffices, we don't need to recurse into structure.
+    if (typeof a !== 'object' || a === null || typeof b !== 'object' || b === null) {
         return strict ? sameValue(a, b) : looseEquals(a, b);
     }
 

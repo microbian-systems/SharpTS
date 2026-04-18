@@ -17,7 +17,7 @@ namespace SharpTS.Tests.SharedTests;
 /// </remarks>
 public class CrossModuleChainedLogicalOrTests
 {
-    [Theory(Skip = "Compiler bug: chained || of typeof/=== in imported-module context short-circuits incorrectly. Interpreted mode is fine; compiled mode regresses.")]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ChainedLogicalOr_WithTypeofAndNull_AcrossModuleImport(ExecutionMode mode)
     {

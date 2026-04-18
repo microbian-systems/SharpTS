@@ -18,7 +18,7 @@ namespace SharpTS.Tests.SharedTests;
 /// </remarks>
 public class ClassTypeofIsFunctionTests
 {
-    [Theory(Skip = "Compiler divergence: typeof <user-class> returns 'object' in compiled mode, should be 'function'. Interpreted mode is correct.")]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TypeofClass_ReturnsFunction_SameModule(ExecutionMode mode)
     {
@@ -33,7 +33,7 @@ public class ClassTypeofIsFunctionTests
         Assert.Equal("function\n", output);
     }
 
-    [Theory(Skip = "Compiler divergence: typeof <user-class> returns 'object' in compiled mode, should be 'function'. Interpreted mode is correct.")]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TypeofClass_ReturnsFunction_ImportedClass(ExecutionMode mode)
     {

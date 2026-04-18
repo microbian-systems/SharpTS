@@ -1937,6 +1937,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSDeprecatedFunctionType);
         il.Emit(OpCodes.Brtrue, functionLabel);
 
+        // System.Type => "function"
+        // Compiled class references (e.g. `const f = Foo` where Foo is a class) are
+        // emitted as Ldtoken + GetTypeFromHandle, which yields a System.Type. Node/JS
+        // spec says classes are functions, so `typeof Foo === 'function'` must hold.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, functionLabel);
+
         // BigInteger => "bigint"
         var bigintLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
