@@ -1937,6 +1937,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSDeprecatedFunctionType);
         il.Emit(OpCodes.Brtrue, functionLabel);
 
+        // $BoundArrayMethod / $BoundMapMethod / $BoundSetMethod => "function"
+        // These are callable wrappers returned by GetListProperty/GetMapProperty/GetSetProperty
+        // for dynamic property access on arrays/maps/sets (duck typing across module boundaries).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Brtrue, functionLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
+        il.Emit(OpCodes.Brtrue, functionLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
+        il.Emit(OpCodes.Brtrue, functionLabel);
+
         // System.Type => "function"
         // Compiled class references (e.g. `const f = Foo` where Foo is a class) are
         // emitted as Ldtoken + GetTypeFromHandle, which yields a System.Type. Node/JS

@@ -246,6 +246,11 @@ public partial class RuntimeEmitter
         // Must come before EmitRuntimeClass so GetListProperty can use the constructor
         EmitBoundArrayMethodTypeDefinition(moduleBuilder, runtime);
 
+        // Emit $BoundMapMethod / $BoundSetMethod types and constructors (Phase 1)
+        // Must come before EmitRuntimeClass so GetMapProperty/GetSetProperty can use them
+        EmitBoundMapMethodTypeDefinition(moduleBuilder, runtime);
+        EmitBoundSetMethodTypeDefinition(moduleBuilder, runtime);
+
         // Emit $MethodCallable type and constructor (Phase 1)
         // Must come before EmitRuntimeClass so GetFieldsProperty can wrap GetMember results
         EmitMethodCallableTypeDefinition(moduleBuilder, runtime);
@@ -328,6 +333,11 @@ public partial class RuntimeEmitter
         // Finalize $BoundArrayMethod with Invoke method (Phase 2)
         // Must come after EmitRuntimeClass (needs array methods defined)
         EmitBoundArrayMethodFinalize(runtime);
+
+        // Finalize $BoundMapMethod / $BoundSetMethod with Invoke method (Phase 2)
+        // Must come after EmitRuntimeClass (needs Map*/Set* runtime methods defined)
+        EmitBoundMapMethodFinalize(runtime);
+        EmitBoundSetMethodFinalize(runtime);
 
         // Finalize $MethodCallable with Invoke method (Phase 2)
         EmitMethodCallableFinalize(runtime);

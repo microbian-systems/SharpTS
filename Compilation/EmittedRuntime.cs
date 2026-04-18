@@ -285,6 +285,24 @@ public class EmittedRuntime
     public FieldBuilder BoundArrayMethodListField { get; set; } = null!;
     public FieldBuilder BoundArrayMethodNameField { get; set; } = null!;
 
+    // Bound map method for dynamic Map property access (duck typing across module boundaries)
+    public TypeBuilder BoundMapMethodType { get; set; } = null!;
+    public ConstructorBuilder BoundMapMethodCtor { get; set; } = null!;
+    public MethodBuilder BoundMapMethodInvoke { get; set; } = null!;
+    public FieldBuilder BoundMapMethodMapField { get; set; } = null!;
+    public FieldBuilder BoundMapMethodNameField { get; set; } = null!;
+
+    // Bound set method for dynamic Set property access (duck typing across module boundaries)
+    public TypeBuilder BoundSetMethodType { get; set; } = null!;
+    public ConstructorBuilder BoundSetMethodCtor { get; set; } = null!;
+    public MethodBuilder BoundSetMethodInvoke { get; set; } = null!;
+    public FieldBuilder BoundSetMethodSetField { get; set; } = null!;
+    public FieldBuilder BoundSetMethodNameField { get; set; } = null!;
+
+    // Helpers that wrap Dictionary/HashSet methods as bound callable wrappers
+    public MethodBuilder GetMapProperty { get; set; } = null!;
+    public MethodBuilder GetSetProperty { get; set; } = null!;
+
     // Method callable wrapper for GetMember results (BuiltInMethod etc.)
     public TypeBuilder MethodCallableType { get; set; } = null!;
     public ConstructorBuilder MethodCallableCtor { get; set; } = null!;

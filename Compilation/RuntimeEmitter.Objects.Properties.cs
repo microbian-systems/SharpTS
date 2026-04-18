@@ -925,6 +925,122 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    private void EmitGetMapProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // GetMapProperty(map: Dictionary<object,object>, name: string) -> object?
+        // Returns size as double, or a $BoundMapMethod wrapper for known Map methods.
+        // Mirrors GetListProperty — ensures duck typing works across module boundaries:
+        // typeof map.get === 'function' and map.get.call(map, k) both work on a Map
+        // received from another module.
+        var method = typeBuilder.DefineMethod(
+            "GetMapProperty",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.DictionaryObjectObject, _types.String]
+        );
+        runtime.GetMapProperty = method;
+
+        var il = method.GetILGenerator();
+
+        var sizeLabel = il.DefineLabel();
+
+        // if (name == "size") goto sizeLabel
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "size");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, sizeLabel);
+
+        // For each known Map method name, return a $BoundMapMethod wrapper.
+        string[] methodNames = ["get", "set", "has", "delete", "clear",
+            "keys", "values", "entries", "forEach"];
+
+        foreach (var methodName in methodNames)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldarg_0); // map
+            il.Emit(OpCodes.Ldarg_1); // name
+            il.Emit(OpCodes.Newobj, runtime.BoundMapMethodCtor);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(skipLabel);
+        }
+
+        // Unknown property: return null
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        // size case: return (double)map.Count
+        il.MarkLabel(sizeLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.DictionaryObjectObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitGetSetProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // GetSetProperty(set: HashSet<object>, name: string) -> object?
+        // Returns size as double, or a $BoundSetMethod wrapper for known Set methods
+        // (including ES2025 set operations). Mirrors GetListProperty / GetMapProperty.
+        var method = typeBuilder.DefineMethod(
+            "GetSetProperty",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.HashSetOfObject, _types.String]
+        );
+        runtime.GetSetProperty = method;
+
+        var il = method.GetILGenerator();
+
+        var sizeLabel = il.DefineLabel();
+
+        // if (name == "size") goto sizeLabel
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "size");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, sizeLabel);
+
+        // For each known Set method name, return a $BoundSetMethod wrapper.
+        string[] methodNames = ["add", "has", "delete", "clear",
+            "keys", "values", "entries", "forEach",
+            "union", "intersection", "difference", "symmetricDifference",
+            "isSubsetOf", "isSupersetOf", "isDisjointFrom"];
+
+        foreach (var methodName in methodNames)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldarg_0); // set
+            il.Emit(OpCodes.Ldarg_1); // name
+            il.Emit(OpCodes.Newobj, runtime.BoundSetMethodCtor);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(skipLabel);
+        }
+
+        // Unknown property: return null
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        // size case: return (double)set.Count
+        il.MarkLabel(sizeLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.HashSetOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitGetProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
@@ -968,6 +1084,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryObjectObject);
         il.Emit(OpCodes.Brtrue, mapLabel);
+
+        // Set (HashSet<object>) - duck-typed access via GetSetProperty
+        var setLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.HashSetOfObject);
+        il.Emit(OpCodes.Brtrue, setLabel);
 
         // Dictionary (regular object)
         il.Emit(OpCodes.Ldarg_0);
@@ -1357,8 +1479,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notMapSizeLabel);
-        // For other Map properties, return null (methods like get, set, has are handled by direct calls)
-        il.Emit(OpCodes.Ldnull);
+        // For other Map properties, dispatch via GetMapProperty — returns a $BoundMapMethod
+        // wrapper for known methods (get/set/has/...) so that `typeof m.get === 'function'`
+        // and `m.get.call(m, k)` work on a Map received from another module.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.DictionaryObjectObject);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.GetMapProperty);
+        il.Emit(OpCodes.Ret);
+
+        // Set (HashSet<object>) handler - dispatch via GetSetProperty for size +
+        // $BoundSetMethod wrappers on known methods (add/has/delete/... plus ES2025
+        // set ops). Mirrors the Map handler above.
+        il.MarkLabel(setLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.HashSetOfObject);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.GetSetProperty);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(listLabel);

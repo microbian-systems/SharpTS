@@ -194,6 +194,8 @@ public partial class RuntimeEmitter
         EmitInvokeMethodValue(typeBuilder, runtime);
         EmitGetFieldsProperty(typeBuilder, runtime);
         EmitGetListProperty(typeBuilder, runtime);
+        EmitGetMapProperty(typeBuilder, runtime);
+        EmitGetSetProperty(typeBuilder, runtime);
         EmitSetFieldsProperty(typeBuilder, runtime);
         EmitSetFieldsPropertyStrict(typeBuilder, runtime);
         // Exception helpers must come before Promise methods (Promise.any uses CreateException)
