@@ -79,10 +79,51 @@ public class CjsBuiltInModuleRequireTests
         Assert.Equal("function\nfunction\n", output);
     }
 
-    // NOTE: require('os') in compiled mode fails because OsModuleEmitter has no
-    // RegisterBuiltInModuleMethod registrations — the TSFunction wrappers are null.
-    // This is a pre-existing gap: modules that only implemented IBuiltInModuleEmitter
-    // for ESM direct-call dispatch (os, crypto, etc.) don't have the runtime helper
-    // methods needed for first-class function wrappers in CJS mode.
-    // Tracked as a separate issue from tty implementation.
+    /// <summary>
+    /// Regression: stdlib ESM modules required from a CJS caller.
+    /// </summary>
+    /// <remarks>
+    /// The 'os' module migrated to stdlib/node/os.ts (embedded stdlib, ESM). CJS require()
+    /// of ESM-in-assembly modules needs special handling: interpreter falls back to
+    /// ExportsAsObject() when DefaultExport is null (named-exports-only modules have no
+    /// default); compiled mode materializes a namespace from the module's export static
+    /// fields. Both paths landed with the path migration; this test pins that os's
+    /// equivalent shape also works.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Cjs_Require_Os_Platform(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.cjs"] = """
+                const os = require('os');
+                console.log(typeof os.platform);
+                console.log(typeof os.EOL);
+                """
+        };
+        var output = TestHarness.RunModules(files, "main.cjs", mode);
+        Assert.Equal("function\nstring\n", output);
+    }
+
+    /// <summary>
+    /// Regression: querystring (also an embedded stdlib ESM module) via require().
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Cjs_Require_Querystring_Parse(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.cjs"] = """
+                const qs = require('querystring');
+                console.log(typeof qs.parse);
+                const parsed = qs.parse('a=1&b=2');
+                console.log(parsed.a);
+                console.log(parsed.b);
+                """
+        };
+        var output = TestHarness.RunModules(files, "main.cjs", mode);
+        Assert.Equal("function\n1\n2\n", output);
+    }
 }

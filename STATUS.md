@@ -424,7 +424,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | Module | Status | Notes |
 |--------|--------|-------|
 | `fs` / `fs/promises` | ✅ | readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, renameSync, copyFileSync, appendFileSync, readFile, writeFile, mkdir, readdir, stat, unlink, rename, rm, access, lstat, realpath, createReadStream, createWriteStream, watch, watchFile, unwatchFile |
-| `path` | ✅ | join, resolve, dirname, basename, extname, normalize, isAbsolute, relative, parse, format, sep, delimiter, posix, win32 |
+| `path` | ✅ | join, resolve, dirname, basename, extname, normalize, isAbsolute, relative, parse, format, sep, delimiter, posix, win32. **SharpTS divergence:** `path.win32.isAbsolute('/foo')` returns `false` (requires drive-letter + separator or UNC double-separator). Node returns `true` for any leading separator. |
 | `os` | ✅ | platform, arch, cpus, hostname, homedir, tmpdir, type, release, uptime, totalmem, freemem, EOL, networkInterfaces, loadavg, userInfo |
 | `process` | ✅ | argv, env, cwd(), exit(), pid, platform, arch, version, stdout, stderr, stdin, hrtime, nextTick, memoryUsage, exitCode; EventEmitter support (on, once, emit, off, removeAllListeners, listeners, listenerCount, eventNames) |
 | `crypto` | ✅ | createHash, createHmac, randomBytes, randomUUID, randomInt, randomFillSync, createCipheriv/Decipheriv, pbkdf2/pbkdf2Sync, scrypt/scryptSync, timingSafeEqual, generateKeyPair/generateKeyPairSync, createSign/Verify, createDiffieHellman, createECDH, hkdf/hkdfSync, getHashes, getCiphers, getCurves, constants |

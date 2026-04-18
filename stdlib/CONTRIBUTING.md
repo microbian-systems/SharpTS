@@ -66,7 +66,33 @@ Target Node.js 24.15.0. Match observable behavior including error codes
 (`ENOENT`, `EACCES`, etc.). Any deliberate divergence needs an explicit
 comment explaining why — no silent differences.
 
-### 6. Default parameter values: reference types only
+### 6. Optional reference-type params: use `!= null`, not `!== undefined`
+
+When checking whether an optional parameter was passed, prefer loose
+null-equality (`!= null`) over the strict `undefined` check:
+
+```ts
+// Good — catches both undefined and null
+export function basename(p: string, ext?: string): string {
+    if (ext != null && ext.length > 0) { /* use ext */ }
+}
+
+// Bad — fails open in compiled mode when arg wasn't passed
+export function basename(p: string, ext?: string): string {
+    if (ext !== undefined && ext.length > 0) { /* NRE if ext is C# null */ }
+}
+```
+
+**Why:** compiled mode passes unset optional reference-type arguments
+through TSFunction.Invoke as C# `null`, not as SharpTS's `undefined`
+sentinel. The JS expression `null !== undefined` evaluates to `true`,
+so the strict check falls through to `.length` on null and NREs. Loose
+null equality (`x != null`) matches both values.
+
+This bit the `path.basename` migration on the `posix.basename(p)`
+(no-ext) overload before the rule was pinned here.
+
+### 7. Default parameter values: reference types only
 
 Reference-type default values (strings, objects, arrays) work correctly
 through module imports:
@@ -91,7 +117,7 @@ export function pad(width?: number): number {
 }
 ```
 
-### 7. No SharpTS-specific APIs
+### 8. No SharpTS-specific APIs
 
 Shim code should be legal Node.js as far as syntax and semantics go.
 `console.log`, `JSON.*`, `Math.*`, `Array.*`, `Object.*`, standard globals
