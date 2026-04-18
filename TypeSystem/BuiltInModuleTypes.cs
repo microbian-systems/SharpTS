@@ -1128,7 +1128,8 @@ public static class BuiltInModuleTypes
             // "assert" — migrated to stdlib/node/assert.ts; types flow from the TS source.
             // "url" — migrated to stdlib/node/url.ts; types flow from the TS source.
             // "util" — migrated to stdlib/node/util.ts; types flow from the TS source.
-            "process" => GetProcessModuleTypes(),
+            // "process" — migrated to stdlib/node/process.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:process reuse GetProcessModuleTypes via GetPrimitiveTypes.
             "crypto" => GetCryptoModuleTypes(),
             "readline" => GetReadlineModuleTypes(),
             "child_process" => GetChildProcessModuleTypes(),

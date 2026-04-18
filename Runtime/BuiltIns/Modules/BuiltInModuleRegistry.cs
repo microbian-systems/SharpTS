@@ -18,7 +18,9 @@ public static class BuiltInModuleRegistry
         // "url" — migrated to stdlib/node/url.ts (embedded stdlib, full WHATWG state machine).
         //   URL/URLSearchParams classes fully implemented in TS; no System.Uri dependency.
         // The EmbeddedStdlibProvider claims these specifiers via the chain.
-        "process",
+        // "process" — migrated to stdlib/node/process.ts (embedded stdlib, wraps primitive:process).
+        //   Global `process` binding (bare `process.cwd()`) is unaffected — registered separately
+        //   in BuiltInRegistry as a singleton namespace.
         "crypto",
         // "util" — migrated to stdlib/node/util.ts (embedded stdlib, pure-TS port).
         "readline",

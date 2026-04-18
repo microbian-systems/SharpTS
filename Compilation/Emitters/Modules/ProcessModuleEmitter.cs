@@ -142,22 +142,41 @@ public sealed class ProcessModuleEmitter : IBuiltInModuleEmitter
     /// <summary>
     /// Emits: process.nextTick(callback, ...args)
     /// Implemented as setTimeout(callback, 0, ...args) - runs as soon as possible.
+    /// Throws if callback is absent or null, matching the interpreter and Node.
     /// </summary>
     private static bool EmitNextTick(IEmitterContext emitter, List<Expr> arguments)
     {
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Emit callback - first argument
-        if (arguments.Count > 0)
+        // Zero-arg call: throw at runtime. Matches ProcessModuleInterpreter.NextTick.
+        if (arguments.Count == 0)
         {
-            emitter.EmitExpression(arguments[0]);
-            emitter.EmitBoxIfNeeded(arguments[0]);
-        }
-        else
-        {
+            il.Emit(OpCodes.Ldstr, "Runtime Error: process.nextTick requires at least 1 argument");
+            il.Emit(OpCodes.Newobj, ctx.Types.ArgumentException.GetConstructor([ctx.Types.String])!);
+            il.Emit(OpCodes.Throw);
+            // Throw is terminal, but the verifier needs a value-producing expression.
             il.Emit(OpCodes.Ldnull);
+            return true;
         }
+
+        // Emit callback, save to local so we can null-check and reuse.
+        emitter.EmitExpression(arguments[0]);
+        emitter.EmitBoxIfNeeded(arguments[0]);
+        var cbLocal = il.DeclareLocal(ctx.Types.Object);
+        il.Emit(OpCodes.Stloc, cbLocal);
+
+        // if (cb == null) throw — matches interpreter "callback must be a function".
+        var callbackOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, cbLocal);
+        il.Emit(OpCodes.Brtrue, callbackOkLabel);
+        il.Emit(OpCodes.Ldstr, "Runtime Error: process.nextTick callback must be a function");
+        il.Emit(OpCodes.Newobj, ctx.Types.ArgumentException.GetConstructor([ctx.Types.String])!);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(callbackOkLabel);
+
+        // Push validated callback for SetTimeout.
+        il.Emit(OpCodes.Ldloc, cbLocal);
 
         // Delay is always 0 for nextTick
         il.Emit(OpCodes.Ldc_R8, 0.0);

@@ -319,7 +319,7 @@ This is the pre-existing general ESM-from-CJS gap finally getting paid down — 
 
 Migrate modules opportunistically, leaves first. Dependency-ordered candidates:
 
-1. **Leaves** (no stdlib-to-stdlib imports): ~~`url`~~ ✅ (done as Phase 3h — full WHATWG Living Standard port; see below), ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS)
+1. **Leaves** (no stdlib-to-stdlib imports): ~~`url`~~ ✅ (done as Phase 3h — full WHATWG Living Standard port; see below), ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS), ~~`util`~~ ✅ (done as Phase 3i — ~1700 lines of C# → 687-line TS; three compiler gaps fixed along the way), ~~`process`~~ ✅ (done as Phase 3j — thin facade over `primitive:process`; one compiler gap documented)
 
 ### Phase 3h — URL migration ✅ COMPLETE
 
@@ -341,7 +341,35 @@ Full WHATWG URL Living Standard port: parser state machine (all 20 states), IPv4
 
 **Scope for follow-up:** the workarounds are load-bearing but narrow; each has a tracked pattern. None affect correctness of URL behavior. Fixing them collapses `url.ts` back toward idiomatic TS.
 
-2. **Composite after leaves**: `util`, `stream`, `fs`, `fs/promises`, `readline`, `http`, `https`, `net`, `tls`
+### Phase 3i — `util` migration ✅ COMPLETE
+
+Migrated `util` to `stdlib/node/util.ts` — a 687-line pure-TS port replacing ~1700 lines of C# (`UtilModuleInterpreter` + `UtilModuleEmitter`). Covers `format`, `inspect`, `inherits`, `promisify`, `callbackify`, `deprecate`, `types.*` duck-typed checks, and `TextEncoder`/`TextDecoder` re-exports. `inherits` branches on target shape (`Object.defineProperty` for compiled-class System.Type refs; plain assignment for interpreter `SharpTSClass`) since `SharpTSClass` rejects `defineProperty`.
+
+**Three compiler gaps fixed as part of this phase** (all general JS/TS conformance bugs surfaced by util, not util-specific):
+
+1. **Stale stack-type tracker after literal emission.** `EmitObjectLiteral` / `EmitArrayLiteral` / `EmitObjectLiteralWithAccessors` forgot to `SetStackUnknown()` after leaving the new reference on the stack. A literal declared after a numeric local inherited the prior `_stackType = Double`, so `EmitBoxIfNeeded` boxed the fresh Dictionary/List pointer as a double — reinterpreting the heap address as a float. Symptom: `typeof ({}) === 'number'`. 12 tests in `LiteralAfterPrimitiveTests`.
+2. **`arguments` magic variable unsupported in both modes.** Type checker now accepts `arguments` as `Any`; interpreter `SharpTSFunction.Call`/`CallV2` defines an `arguments` `SharpTSArray` on the call environment (arrows deliberately skip — they inherit from the enclosing non-arrow). Compiled mode materializes the same binding. Tests in `ArgumentsMagicVariableTests`.
+3. **Closure capture through nested arrows in stdlib.** `ClosureAnalyzer` / `CompilationContext.Closures` / `LocalVariableResolver` / `ILCompiler.ArrowFunctions` / `ILCompiler.Functions` all needed adjustments for captures that cross multiple arrow nesting levels in module-scoped code. Tests in `StdlibClosureCaptureTests`.
+
+**Test gate:** 10041 pass, 15 skipped, 0 failed (+27 new tests, no regressions). All 160 `UtilModuleTests` pass in both modes.
+
+### Phase 3j — `process` migration ✅ COMPLETE
+
+Migrated `process` to `stdlib/node/process.ts` — a thin facade over `primitive:process`, following the same shape as `os.ts`. Replaces the `process` user-facing module; `ProcessModuleEmitter` stays registered under `primitive:process` only, and the C# `ProcessModuleInterpreter`/`ProcessBuiltIns` continue to back the primitive and the global `process` binding (unchanged).
+
+- `stdlib/node/process.ts` — named exports for every property (`platform`, `arch`, `pid`, `version`, `env`, `argv`, `exitCode`, `stdin`/`stdout`/`stderr`) and method (`cwd`, `chdir`, `exit`, `hrtime`, `uptime`, `memoryUsage`, `nextTick`), plus a default export object aggregating all of them so `import process from 'process'` works. ✅
+- Removed `"process"` from `BuiltInModuleRegistry`, `BuiltInModuleValues.GetModuleExports` + `HasInterpreterSupport`, and `BuiltInModuleTypes.GetModuleTypes`. Primitive paths (`GetPrimitiveTypes`, `PrimitiveModuleValues`) retain the existing `ProcessModuleInterpreter` delegation. ✅
+- `ILCompiler`: dropped the plain `Register(processEmitter)` — the emitter is now only registered under the `primitive:process` alias via `RegisterAlias`. ✅
+
+**Test gate:** 10041 pass, 15 skipped, 0 failed (no regressions, one pre-existing failure fixed along the way — see below).
+
+**Compiler gap surfaced (workaround in facade, not fixed):**
+
+`ProcessModuleEmitter.EmitNextTick` doesn't expand `Expr.Spread` arguments — a spread expression passed as a trailing arg gets packed as a single nested-array element rather than expanded into individual slots. `path.ts` didn't hit this because its rest-param functions forward the array directly (`posixJoin(parts)`), not spread-forwarded (`posixJoin(...parts)`). A naive `nextTick(cb, ...args): void { __nextTick(cb, ...args); }` facade drops every trailing arg at the call boundary. **Workaround in `stdlib/node/process.ts`: arity-dispatch through 8 positional args** (matches Node's practical usage; >8 payload args are rare). Documented inline; fixing the emitter to handle `Expr.Spread` is follow-up work.
+
+**Pre-existing compiled-mode bug fixed (not a migration regression):** `process.nextTick()` called with no callback (or a null/undefined callback) used to silently no-op in compiled mode — interpreter mode threw. `ProcessModuleEmitter.EmitNextTick` now emits a null-check and throws `ArgumentException` with the same message the interpreter uses (both the zero-arg and null-callback cases). This unblocks the `NextTick_ThrowsWithoutCallback` test in Compiled mode, which had been failing on `main` well before this migration.
+
+2. **Composite after leaves**: `stream`, `fs`, `fs/promises`, `readline`, `http`, `https`, `net`, `tls`
 3. **Hybrid: thin TS module over `primitive:buffer`** — `Buffer` gets a TS stdlib module for API symmetry, but heavy lifting (byte-array alloc, slice, copy, encode/decode) stays native in `primitive:buffer`. This keeps every module on equal footing (every module has a `.ts` file) without a perf cliff on hot paths. The primitive surface is stable — Node's Buffer API is locked down, so `primitive:buffer` can be designed once and held.
 
 Each migration is its own PR with the same test gate: identical behavior, no standalone-DLL regressions, module written to the authoring contract.

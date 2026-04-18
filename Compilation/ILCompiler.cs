@@ -657,10 +657,9 @@ public partial class ILCompiler
         // "querystring"  — migrated to stdlib/node/querystring.ts.
         // "assert"       — migrated to stdlib/node/assert.ts (pure-logic leaf).
         // "url"          — migrated to stdlib/node/url.ts (full WHATWG state machine).
+        // "process"      — migrated to stdlib/node/process.ts which imports from primitive:process.
+        //   ProcessModuleEmitter remains, registered only under the primitive specifier.
         var processEmitter = new ProcessModuleEmitter();
-        _builtInModuleEmitterRegistry.Register(processEmitter);
-        // Alias: primitive:process shares the same emitter. Stdlib modules use
-        // the primitive specifier; user code uses the plain `process` specifier.
         _builtInModuleEmitterRegistry.RegisterAlias("primitive:process", processEmitter);
         _builtInModuleEmitterRegistry.Register(new CryptoModuleEmitter());
         // "util" — migrated to stdlib/node/util.ts (pure-TS port).
