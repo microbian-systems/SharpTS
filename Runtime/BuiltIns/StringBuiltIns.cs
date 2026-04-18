@@ -383,8 +383,17 @@ public static class StringBuiltIns
 
     private static RuntimeValue ReplaceAllV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
     {
-        var search = args[0].AsString();
-        var replacement = args[1].AsString();
+        var replacement = args[1].ToObject()?.ToString() ?? "";
+
+        if (args[0].ToObject() is SharpTSRegExp regex)
+        {
+            // String.prototype.replaceAll requires a global RegExp (spec §22.1.3.18).
+            if (!regex.Global)
+                throw new Exception("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
+            return RuntimeValue.FromString(regex.Replace(str, replacement));
+        }
+
+        var search = args[0].ToObject()?.ToString() ?? "";
         if (search.Length == 0) return RuntimeValue.FromString(str);
         return RuntimeValue.FromString(str.Replace(search, replacement));
     }

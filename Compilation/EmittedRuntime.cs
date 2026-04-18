@@ -608,6 +608,7 @@ public class EmittedRuntime
     public MethodBuilder RegExpSetLastIndex { get; set; } = null!;
     public MethodBuilder StringMatchRegExp { get; set; } = null!;
     public MethodBuilder StringReplaceRegExp { get; set; } = null!;
+    public MethodBuilder StringReplaceAllRegExp { get; set; } = null!;
     public MethodBuilder StringSearchRegExp { get; set; } = null!;
     public MethodBuilder StringSplitRegExp { get; set; } = null!;
     public MethodBuilder StringMatchAllRegExp { get; set; } = null!;

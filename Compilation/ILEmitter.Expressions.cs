@@ -242,11 +242,49 @@ public partial class ILEmitter
             return;
         }
 
+        // Built-in classes referenced as values (e.g. `instanceof Date`,
+        // `x === Map`, passing Date as an arg). Emit the .NET Type object for
+        // the runtime class so InstanceOf's IsAssignableFrom check matches
+        // instances produced by `new Date()` / `new Map()` / etc.
+        if (TryEmitBuiltInClassType(name))
+            return;
+
         // Unknown variable - throw ReferenceError at runtime
         IL.Emit(OpCodes.Ldstr, name);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.ThrowUndefinedVariable);
         // Emit unreachable null to satisfy IL verification (method never returns but stack must balance)
         EmitNullConstant();
+    }
+
+    /// <summary>
+    /// Resolves a bare reference to a built-in global class name (Date, Map,
+    /// Set, etc.) by emitting the matching .NET Type token. The InstanceOf
+    /// runtime helper then uses Type.IsAssignableFrom to check membership
+    /// against `new X()` instances, so `instanceof Date` works whether the
+    /// user is in script code or inside an embedded stdlib module.
+    /// </summary>
+    private bool TryEmitBuiltInClassType(string name)
+    {
+        Type? t = name switch
+        {
+            "Date" => _ctx.Runtime!.TSDateType,
+            "RegExp" => _ctx.Runtime!.TSRegExpType,
+            "TextEncoder" => _ctx.Runtime!.TSTextEncoderType,
+            "TextDecoder" => _ctx.Runtime!.TSTextDecoderType,
+            "Array" => _ctx.Types.IListOfObject, // covers both List<object> and $Array
+            "Map" => _ctx.Types.DictionaryObjectObject,
+            "Set" => _ctx.Types.HashSetOfObject,
+            "WeakMap" => _ctx.Types.ConditionalWeakTableObjectObject,
+            "WeakSet" => _ctx.Types.ConditionalWeakTableObjectObject,
+            "Promise" => _ctx.Types.TaskOfObject,
+            "Function" => _ctx.Runtime!.TSFunctionType,
+            _ => null
+        };
+        if (t == null) return false;
+        IL.Emit(OpCodes.Ldtoken, t);
+        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Type, "GetTypeFromHandle", _ctx.Types.RuntimeTypeHandle));
+        SetStackUnknown();
+        return true;
     }
 
     // IsKnownVariable is inherited from ExpressionEmitterBase
