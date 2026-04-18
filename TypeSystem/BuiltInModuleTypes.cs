@@ -711,9 +711,11 @@ public static class BuiltInModuleTypes
         };
     }
 
-    /// <summary>
-    /// Gets the exported types for the util module.
-    /// </summary>
+    // GetUtilModuleTypes removed: the 'util' module now lives in
+    // stdlib/node/util.ts. Its export types are derived from the TS source
+    // at import time by the embedded-stdlib loader, so there is no longer
+    // a hand-maintained C# type map.
+    #if false
     public static Dictionary<string, TypeInfo> GetUtilModuleTypes()
     {
         var stringType = new TypeInfo.String();
@@ -822,6 +824,7 @@ public static class BuiltInModuleTypes
             }.ToFrozenDictionary())
         };
     }
+    #endif
 
     /// <summary>
     /// Gets the exported types for the readline module.
@@ -1124,9 +1127,9 @@ public static class BuiltInModuleTypes
             "fs/promises" => GetFsPromisesModuleTypes(),
             // "assert" — migrated to stdlib/node/assert.ts; types flow from the TS source.
             // "url" — migrated to stdlib/node/url.ts; types flow from the TS source.
+            // "util" — migrated to stdlib/node/util.ts; types flow from the TS source.
             "process" => GetProcessModuleTypes(),
             "crypto" => GetCryptoModuleTypes(),
-            "util" => GetUtilModuleTypes(),
             "readline" => GetReadlineModuleTypes(),
             "child_process" => GetChildProcessModuleTypes(),
             "buffer" => GetBufferModuleTypes(),

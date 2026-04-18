@@ -1277,6 +1277,13 @@ public partial class TypeChecker
             or "TextEncoder" or "TextDecoder"
             or "FinalizationRegistry" or "Proxy" or "BroadcastChannel")
             return new TypeInfo.Any();
+        // `arguments` is a JS function-scoped array-like, bound at call time by
+        // the runtime (SharpTSFunction / ILEmitter's function prologue). The
+        // type checker doesn't track function-vs-module context, so we accept
+        // it as Any everywhere; runtime throws a ReferenceError if referenced
+        // outside a non-arrow function, matching JS semantics.
+        if (name.Lexeme == "arguments")
+            return new TypeInfo.Any();
 
         var type = _environment.Get(name.Lexeme);
         if (type == null)

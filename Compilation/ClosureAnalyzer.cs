@@ -167,6 +167,15 @@ public class ClosureAnalyzer : AstVisitorBase
     /// for functions in the stack. Returns null if the variable is top-level.
     /// Note: O(depth) where depth is nesting level, typically small (5-10).
     /// </summary>
+    /// <remarks>
+    /// <c>Stack&lt;T&gt;</c> enumerates LIFO (most-recently-pushed first), so a plain
+    /// <c>foreach</c> already visits the innermost function first — the nearest
+    /// declaring scope wins. That's what we want. The minimal reproducer that
+    /// surfaced this code path had two sibling module-level functions with the
+    /// same parameter name and inner closures capturing it; each function is
+    /// analyzed with its own fresh stack, so sibling collisions don't occur
+    /// through this path.
+    /// </remarks>
     private object? FindDefiningFunction(string name)
     {
         foreach (var func in _functionStack)

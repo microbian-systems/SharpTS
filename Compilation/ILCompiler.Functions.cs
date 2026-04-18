@@ -332,6 +332,16 @@ public partial class ILCompiler
             hasOwnThis: false,
             paramTypes: resolvedParamTypes);
 
+        // If the body references `arguments`, materialize the JS-spec array-like
+        // from the declared parameters and bind it as a local. Arrow functions
+        // do NOT bind `arguments` (they inherit lexically), so we only do this
+        // for real function declarations — which is exactly what this method
+        // emits (see Phase6_EmitArrowAndStateMachineBodies for arrows).
+        if (ReferencesArgumentsIdentifier(funcStmt.Body))
+        {
+            EmitArgumentsLocalPrologue(il, ctx, funcStmt.Parameters, resolvedParamTypes);
+        }
+
         // Hoist inner function declarations (create TSFunction locals before other statements)
         EmitInnerFunctionHoisting(il, ctx, funcStmt.Body);
 
@@ -349,6 +359,189 @@ public partial class ILCompiler
             EmitDefaultReturnValue(il, methodBuilder.ReturnType);
             il.Emit(OpCodes.Ret);
         }
+    }
+
+    /// <summary>
+    /// Returns true if the given statements reference the identifier
+    /// <c>arguments</c> anywhere in the AST (including nested arrow/function
+    /// bodies — since a nested arrow's <c>arguments</c> refers to the
+    /// enclosing non-arrow function's bindings per JS spec).
+    /// </summary>
+    /// <remarks>
+    /// Used by <see cref="EmitFunctionBody"/> to skip the prologue when the
+    /// body never uses <c>arguments</c>. False positives only cost a few IL
+    /// instructions per function; false negatives would be a correctness bug,
+    /// so we delegate traversal to <see cref="Parsing.Visitors.AstVisitorBase"/>
+    /// rather than hand-rolling an incomplete walk.
+    /// </remarks>
+    private static bool ReferencesArgumentsIdentifier(List<Stmt> stmts)
+    {
+        var scanner = new ArgumentsReferenceScanner();
+        foreach (var s in stmts)
+        {
+            scanner.Visit(s);
+            if (scanner.Found) return true;
+        }
+        return false;
+    }
+
+    private sealed class ArgumentsReferenceScanner : Parsing.Visitors.AstVisitorBase
+    {
+        public bool Found { get; private set; }
+
+        protected override void VisitVariable(Expr.Variable expr)
+        {
+            if (expr.Name.Lexeme == "arguments")
+            {
+                Found = true;
+                ShouldContinue = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Emits a function prologue that binds <c>arguments</c> to a fresh
+    /// <c>List&lt;object&gt;</c> holding the boxed declared-parameter values.
+    /// The local is registered under the name <c>arguments</c>, so normal
+    /// variable resolution picks it up. This is the compiled-mode counterpart
+    /// of the <c>SharpTSFunction.Call</c> <c>environment.Define("arguments", ...)</c>
+    /// binding in interpreter mode.
+    /// </summary>
+    /// <remarks>
+    /// The list is populated from declared parameters only — callers that pass
+    /// more arguments than the function declares see those extras silently
+    /// dropped today (a pre-existing calling-convention limitation). Rest
+    /// parameters are inserted as a single List element per the current signature.
+    /// Real codebases already prefer <c>...rest</c> over <c>arguments</c>; this
+    /// covers the legacy-syntax compat case without adding a second call path.
+    /// </remarks>
+    private void EmitArgumentsLocalPrologue(
+        ILGenerator il,
+        CompilationContext ctx,
+        List<Stmt.Parameter> parameters,
+        Type[] paramTypes)
+        => EmitArgumentsLocalPrologueCore(il, ctx, parameters, paramTypes, argBase: 0);
+
+    /// <summary>
+    /// Instance-method variant: `this` occupies arg slot 0, so parameters start
+    /// at slot 1. Same semantics as <see cref="EmitArgumentsLocalPrologue"/>.
+    /// </summary>
+    private void EmitArgumentsLocalPrologueForInstanceMethod(
+        ILGenerator il,
+        CompilationContext ctx,
+        List<Stmt.Parameter> parameters,
+        Type[] paramTypes)
+        => EmitArgumentsLocalPrologueCore(il, ctx, parameters, paramTypes, argBase: 1);
+
+    private void EmitArgumentsLocalPrologueCore(
+        ILGenerator il,
+        CompilationContext ctx,
+        List<Stmt.Parameter> parameters,
+        Type[] paramTypes,
+        int argBase)
+    {
+        var listType = ctx.Types.ListOfObject;
+        var argsLocal = il.DeclareLocal(listType);
+        var addMethod = ctx.Types.GetMethod(listType, "Add", ctx.Types.Object);
+
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        for (int i = 0; i < parameters.Count; i++)
+        {
+            var param = parameters[i];
+            Type paramType = i < paramTypes.Length ? paramTypes[i] : typeof(object);
+            int argIndex = argBase + i;
+
+            if (param.IsRest)
+            {
+                // Rest params are already collected into a List<T> (or similar
+                // IEnumerable) at this arg slot. Spread them into `arguments`
+                // via AddRange so each caller-supplied value occupies its own
+                // index, matching `arguments` semantics.
+                EmitRestParamSpread(il, ctx, listType, argsLocal, argIndex, paramType);
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldloc, argsLocal);
+                il.Emit(OpCodes.Ldarg, argIndex);
+                if (paramType.IsValueType)
+                {
+                    il.Emit(OpCodes.Box, paramType);
+                }
+                il.Emit(OpCodes.Callvirt, addMethod);
+            }
+        }
+
+        ctx.Locals.RegisterLocal("arguments", argsLocal);
+    }
+
+    /// <summary>
+    /// Spreads a rest-parameter collection into the <c>arguments</c> list so
+    /// its elements occupy distinct indices. Supports the two shapes SharpTS
+    /// materializes for rest today: <c>List&lt;object&gt;</c>
+    /// (AddRange-compatible with the target list) and typed lists like
+    /// <c>List&lt;double&gt;</c> / <c>List&lt;bool&gt;</c> (must iterate and
+    /// box each element).
+    /// </summary>
+    private void EmitRestParamSpread(
+        ILGenerator il,
+        CompilationContext ctx,
+        Type targetListType,
+        LocalBuilder argsLocal,
+        int argIndex,
+        Type paramType)
+    {
+        // Fast path: parameter is already List<object?> (the common case).
+        if (paramType == targetListType)
+        {
+            var addRange = targetListType.GetMethod("AddRange", [ctx.Types.IEnumerableOfObject])!;
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Ldarg, argIndex);
+            il.Emit(OpCodes.Callvirt, addRange);
+            return;
+        }
+
+        // Slow path: typed List<T> (e.g. List<double>). Iterate via the generic
+        // enumerator and box each element.
+        // Find the element type from the parameter's generic argument.
+        if (!paramType.IsGenericType)
+        {
+            // Unknown shape — skip silently; `arguments` will miss the rest element.
+            return;
+        }
+        var elemType = paramType.GetGenericArguments()[0];
+        var addMethod = ctx.Types.GetMethod(targetListType, "Add", ctx.Types.Object);
+        var enumerableType = typeof(System.Collections.Generic.IEnumerable<>).MakeGenericType(elemType);
+        var enumeratorType = typeof(System.Collections.Generic.IEnumerator<>).MakeGenericType(elemType);
+        var getEnumerator = enumerableType.GetMethod("GetEnumerator")!;
+        var moveNext = typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!;
+        var getCurrent = enumeratorType.GetProperty("Current")!.GetGetMethod()!;
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var enumeratorLocal = il.DeclareLocal(enumeratorType);
+
+        il.Emit(OpCodes.Ldarg, argIndex);
+        il.Emit(OpCodes.Callvirt, getEnumerator);
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, enumeratorLocal);
+        il.Emit(OpCodes.Callvirt, moveNext);
+        il.Emit(OpCodes.Brfalse, loopEnd);
+
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, enumeratorLocal);
+        il.Emit(OpCodes.Callvirt, getCurrent);
+        if (elemType.IsValueType)
+        {
+            il.Emit(OpCodes.Box, elemType);
+        }
+        il.Emit(OpCodes.Callvirt, addMethod);
+
+        il.Emit(OpCodes.Br, loopStart);
+        il.MarkLabel(loopEnd);
     }
 
     /// <summary>

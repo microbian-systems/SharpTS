@@ -13,6 +13,22 @@ public partial class ILCompiler
     private readonly Dictionary<Expr.ArrowFunction, Expr.ArrowFunction?> _arrowParent = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrowFunction> _arrowsNeedingFunctionDC = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrowFunction> _arrowsNeedingArrowDC = new(ReferenceEqualityComparer.Instance);
+    // Maps each collected arrow (or `function` expression) to the AST node of
+    // the top-level function that lexically contains it. Needed so
+    // PropagateFunctionDCRequirements matches `$functionDC` field lookups
+    // against the CORRECT enclosing function — not just any function whose
+    // display class happens to have a field with a matching name. Before
+    // this was tracked, two sibling module-level functions with a same-named
+    // parameter (e.g. both taking `fn`) aliased onto whichever enclosing
+    // function's display class was enumerated first, causing the later
+    // function's captured param to read back null at runtime.
+    //
+    // We store the AST node rather than a qualified name because
+    // CollectAndDefineArrowFunctions runs after module context is cleared, so
+    // name qualification isn't available here. The AST node is stable; we
+    // resolve it to the qualified name at propagate time via FunctionAstNodes.
+    private readonly Dictionary<Expr.ArrowFunction, Stmt.Function> _arrowEnclosingFunction = new(ReferenceEqualityComparer.Instance);
+    private Stmt.Function? _currentEnclosingFunctionStmt;
     private Expr.ArrowFunction? _currentParentArrow;
     private string? _currentCollectClassName;
 
@@ -305,10 +321,12 @@ public partial class ILCompiler
                     }
 
                     var previousEnclosing = _currentEnclosingFunctionName;
+                    var previousEnclosingStmt = _currentEnclosingFunctionStmt;
                     if (_functionNestingDepth == 0)
                     {
                         // Top-level function: use its qualified name as enclosing context
                         _currentEnclosingFunctionName = GetDefinitionContext().GetQualifiedFunctionName(f.Name.Lexeme);
+                        _currentEnclosingFunctionStmt = f;
                     }
 
                     _functionNestingDepth++;
@@ -317,6 +335,7 @@ public partial class ILCompiler
                     _functionNestingDepth--;
 
                     _currentEnclosingFunctionName = previousEnclosing;
+                    _currentEnclosingFunctionStmt = previousEnclosingStmt;
                 }
                 foreach (var p in f.Parameters)
                     if (p.DefaultValue != null)
@@ -428,6 +447,14 @@ public partial class ILCompiler
                 if (af.IsAsync && _currentCollectClassName != null)
                 {
                     _async.ArrowEnclosingClassNames[af] = _currentCollectClassName;
+                }
+
+                // Track the immediately enclosing top-level function so we can
+                // match `$functionDC` requests to the right display class
+                // during PropagateFunctionDCRequirements.
+                if (_currentEnclosingFunctionStmt != null)
+                {
+                    _arrowEnclosingFunction[af] = _currentEnclosingFunctionStmt;
                 }
 
                 // Track parent arrow for function DC propagation
@@ -592,18 +619,41 @@ public partial class ILCompiler
     /// </summary>
     private void PropagateFunctionDCRequirements()
     {
-        // First, identify arrows that directly need $functionDC
+        // First, identify arrows that directly need $functionDC.
+        //
+        // An arrow needs $functionDC when it captures a variable that lives on
+        // its enclosing top-level function's display class. We resolve the
+        // enclosing function from `_arrowEnclosingFunction` (populated at
+        // collection time) rather than iterating every registered display
+        // class by name — the old "match on field name" heuristic aliased
+        // same-named parameters across sibling module-level functions, so a
+        // closure would read from another function's uninitialized display
+        // class field and blow up with NullReferenceException at runtime.
+        // Resolve the enclosing AST node back to the qualified function name
+        // by scanning FunctionAstNodes (populated during DefineFunction per
+        // module). This pair is one-to-one and the map is small.
+        string? ResolveQualifiedName(Stmt.Function stmt)
+        {
+            foreach (var kv in _closures.FunctionAstNodes)
+            {
+                if (ReferenceEquals(kv.Value, stmt)) return kv.Key;
+            }
+            return null;
+        }
+
         foreach (var (arrow, captures) in _collectedArrows)
         {
-            // Check if this arrow directly captures function-level variables
-            foreach (var (funcName, funcDCFields) in _closures.FunctionDisplayClassFields)
+            if (!_arrowEnclosingFunction.TryGetValue(arrow, out var enclosingStmt))
+                continue;
+            var enclosingFuncName = ResolveQualifiedName(enclosingStmt);
+            if (enclosingFuncName == null)
+                continue;
+            if (!_closures.FunctionDisplayClassFields.TryGetValue(enclosingFuncName, out var funcDCFields))
+                continue;
+            if (captures.Any(c => funcDCFields.ContainsKey(c)))
             {
-                if (captures.Any(c => funcDCFields.ContainsKey(c)))
-                {
-                    _arrowsNeedingFunctionDC.Add(arrow);
-                    _closures.ArrowFunctionDCSource[arrow] = funcName;
-                    break;
-                }
+                _arrowsNeedingFunctionDC.Add(arrow);
+                _closures.ArrowFunctionDCSource[arrow] = enclosingFuncName;
             }
         }
 
@@ -837,14 +887,26 @@ public partial class ILCompiler
             }
 
             // Set the $arrowDC field if this arrow captures arrow-scope variables
+            // from a parent arrow. Populate BOTH the parent-slot pair (for
+            // LocalVariableResolver case 2c — arrows that also own a DC) and
+            // the legacy own-slot pair (for arrows without their own DC,
+            // which read parent fields through the same direct-field map). The
+            // own slots may be overwritten later if this arrow turns out to
+            // have its own arrow-scope DC; in that case the parent slots
+            // remain intact so same-named parent fields are still reachable.
             if (_closures.ArrowScopeDCFields.TryGetValue(arrow, out var arrowScopeDCFieldRef))
             {
                 ctx.CurrentArrowScopeDCField = arrowScopeDCFieldRef;
 
-                // Also set up the captured arrow locals info so LocalVariableResolver can use it
                 if (_closures.ArrowScopeDCSource.TryGetValue(arrow, out var sourceArrowRef) &&
                     _closures.ArrowScopeDisplayClassFields.TryGetValue(sourceArrowRef, out var arrowDCFields))
                 {
+                    ctx.ParentArrowScopeDisplayClassFields = arrowDCFields;
+                    ctx.ParentArrowCapturedLocals = [.. arrowDCFields.Keys];
+                    // Legacy fallback: arrows without their own arrow-scope DC
+                    // also see these as their "own" fields (read through
+                    // $arrowDC) — preserved for compatibility with code paths
+                    // that haven't been updated to check the parent slots.
                     ctx.ArrowScopeDisplayClassFields = arrowDCFields;
                     ctx.CapturedArrowLocals = [.. arrowDCFields.Keys];
                 }

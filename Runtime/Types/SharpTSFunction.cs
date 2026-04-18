@@ -64,6 +64,10 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
             : new RuntimeEnvironment(_closure);
 
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
+        // Bind the JS-spec `arguments` array-like to the current call's args.
+        // Arrow functions do NOT bind `arguments` — they inherit from the
+        // enclosing non-arrow function (handled by SharpTSArrowFunction).
+        environment.Define("arguments", new SharpTSArray(arguments));
 
         var result = interpreter.ExecuteBlock(_declaration.Body, environment);
         if (result.Type == ExecutionResult.ResultType.Return)
@@ -131,6 +135,11 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
             : new RuntimeEnvironment(_closure);
 
         ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
+        // See Call for the JS-spec rationale; materialize the args span into a
+        // SharpTSArray so `arguments[i]` and `arguments.length` work.
+        var argsList = new List<object?>(arguments.Length);
+        for (int i = 0; i < arguments.Length; i++) argsList.Add(arguments[i].ToObject());
+        environment.Define("arguments", new SharpTSArray(argsList));
 
         var result = interpreter.ExecuteBlock(_declaration.Body, environment);
         if (result.Type == ExecutionResult.ResultType.Return)

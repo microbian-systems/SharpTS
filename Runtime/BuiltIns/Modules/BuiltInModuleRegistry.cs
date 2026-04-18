@@ -20,7 +20,7 @@ public static class BuiltInModuleRegistry
         // The EmbeddedStdlibProvider claims these specifiers via the chain.
         "process",
         "crypto",
-        "util",
+        // "util" — migrated to stdlib/node/util.ts (embedded stdlib, pure-TS port).
         "readline",
         "child_process",
         "buffer",

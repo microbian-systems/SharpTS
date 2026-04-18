@@ -663,7 +663,7 @@ public partial class ILCompiler
         // the primitive specifier; user code uses the plain `process` specifier.
         _builtInModuleEmitterRegistry.RegisterAlias("primitive:process", processEmitter);
         _builtInModuleEmitterRegistry.Register(new CryptoModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new UtilModuleEmitter());
+        // "util" — migrated to stdlib/node/util.ts (pure-TS port).
         _builtInModuleEmitterRegistry.Register(new ReadlineModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new ChildProcessModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new BufferModuleEmitter());

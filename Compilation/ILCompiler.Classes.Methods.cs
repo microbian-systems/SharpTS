@@ -962,6 +962,19 @@ public partial class ILCompiler
             ctx.ILBuilder.BeginExceptionBlock();
         }
 
+        // If the body references `arguments`, emit the prologue that binds it
+        // to a List<object> of the declared parameters. Class methods have `this`
+        // at arg slot 0 and actual params at 1..N, which the prologue respects
+        // through the paramTypes array we already built (see EmitMethod above).
+        if (method.Body != null && ReferencesArgumentsIdentifier(method.Body))
+        {
+            // Use the method's param types (without the implicit `this`).
+            var resolvedParamTypes = methodBuilder.GetParameters()
+                .Select(p => p.ParameterType)
+                .ToArray();
+            EmitArgumentsLocalPrologueForInstanceMethod(il, ctx, method.Parameters, resolvedParamTypes);
+        }
+
         // Abstract methods have no body to emit
         if (method.Body != null)
         {

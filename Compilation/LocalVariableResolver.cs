@@ -106,30 +106,37 @@ public class LocalVariableResolver : IVariableResolver
             // No DC access available — fall through to other checks
         }
 
-        // 2b. Arrow scope display class fields (captured arrow-local vars)
+        // 2b. Arrow scope display class fields — CURRENT arrow's own DC (direct
+        // access via the arrow's DC local).
         if (_ctx.CapturedArrowLocals?.Contains(name) == true &&
-            _ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var arrowDCField) == true)
+            _ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var arrowDCField) == true &&
+            _ctx.ArrowScopeDisplayClassLocal != null)
         {
-            if (_ctx.ArrowScopeDisplayClassLocal != null)
-            {
-                // Direct access from arrow body - use the local
-                _il.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
-                _il.Emit(OpCodes.Ldfld, arrowDCField);
-            }
-            else if (_ctx.CurrentArrowScopeDCField != null)
-            {
-                // Access from nested arrow body - go through $arrowDC field
-                _il.Emit(OpCodes.Ldarg_0); // Load display class instance
-                _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField); // Load arrow scope display class
-                _il.Emit(OpCodes.Ldfld, arrowDCField); // Load the variable field
-            }
-            else
-            {
-                // Fallback - shouldn't happen
-                return null;
-            }
+            _il.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+            _il.Emit(OpCodes.Ldfld, arrowDCField);
             return StackType.Unknown;
         }
+
+        // 2c. Arrow scope display class fields — PARENT arrow's DC, reachable
+        // through the current arrow's `$arrowDC` field. Kept separate from the
+        // own-DC slots above so an arrow that *both* owns a DC (for its own
+        // locals captured by inner arrows) AND captures values from a parent
+        // arrow's DC can dispatch each variable to the correct path.
+        if (_ctx.ParentArrowCapturedLocals?.Contains(name) == true &&
+            _ctx.ParentArrowScopeDisplayClassFields?.TryGetValue(name, out var parentArrowDCField) == true &&
+            _ctx.CurrentArrowScopeDCField != null)
+        {
+            _il.Emit(OpCodes.Ldarg_0);                              // this
+            _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField); // this.$arrowDC (parent's DC)
+            _il.Emit(OpCodes.Ldfld, parentArrowDCField);            // parent.<name>
+            return StackType.Unknown;
+        }
+
+        // (Removed: the old CapturedArrowLocals + $arrowDC chain path. With
+        // ParentArrowCapturedLocals now the dedicated parent slot, the old
+        // path was emitting broken Ldarg_0 sequences in non-display-class
+        // method contexts (object-literal methods) where Ldarg_0 is `__this`
+        // rather than a display class instance.)
 
         // 3. Locals (with type awareness)
         var local = _ctx.Locals.GetLocal(name);
@@ -197,6 +204,8 @@ public class LocalVariableResolver : IVariableResolver
             _ctx.FunctionDisplayClassFields?.ContainsKey(name) == true) return true;
         if (_ctx.CapturedArrowLocals?.Contains(name) == true &&
             _ctx.ArrowScopeDisplayClassFields?.ContainsKey(name) == true) return true;
+        if (_ctx.ParentArrowCapturedLocals?.Contains(name) == true &&
+            _ctx.ParentArrowScopeDisplayClassFields?.ContainsKey(name) == true) return true;
         if (_ctx.Locals.HasLocal(name)) return true;
         if (_ctx.CapturedFields?.ContainsKey(name) == true) return true;
         if (_ctx.CapturedTopLevelVars?.Contains(name) == true &&
@@ -263,34 +272,47 @@ public class LocalVariableResolver : IVariableResolver
             _il.Emit(OpCodes.Ldloc, temp);
         }
 
-        // 1b. Arrow scope display class fields (captured arrow-local vars)
+        // 1b. Arrow scope display class fields (captured arrow-local vars) —
+        // CURRENT arrow's own DC (direct access via the arrow's DC local).
         if (_ctx.CapturedArrowLocals?.Contains(name) == true &&
-            _ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var arrowDCFieldStore) == true)
+            _ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var arrowDCFieldStore) == true &&
+            _ctx.ArrowScopeDisplayClassLocal != null)
         {
-            // Use temp local pattern for storing to fields
             var tempArrow = _il.DeclareLocal(_types.Object);
             _il.Emit(OpCodes.Stloc, tempArrow);
-
-            if (_ctx.ArrowScopeDisplayClassLocal != null)
-            {
-                // Direct access from arrow body - use the local
-                _il.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
-            }
-            else if (_ctx.CurrentArrowScopeDCField != null)
-            {
-                // Access from nested arrow body - go through $arrowDC field
-                _il.Emit(OpCodes.Ldarg_0); // Load display class instance
-                _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField); // Load arrow scope display class
-            }
-            else
-            {
-                // Fallback - shouldn't happen
-                return false;
-            }
-
+            _il.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
             _il.Emit(OpCodes.Ldloc, tempArrow);
             _il.Emit(OpCodes.Stfld, arrowDCFieldStore);
             return true;
+        }
+
+        // 1c. Arrow scope display class fields — PARENT arrow's DC, reachable
+        // through `$arrowDC`. Mirror of read path 2c. Also covers the old
+        // "no own DC, chain through parent" case where the field was tracked
+        // in ArrowScopeDisplayClassFields before the parent/own slot split.
+        {
+            FieldBuilder? storeField = null;
+            if (_ctx.ParentArrowCapturedLocals?.Contains(name) == true &&
+                _ctx.ParentArrowScopeDisplayClassFields?.TryGetValue(name, out var parentField) == true)
+            {
+                storeField = parentField;
+            }
+            else if (_ctx.CapturedArrowLocals?.Contains(name) == true &&
+                     _ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var ownChainField) == true &&
+                     _ctx.ArrowScopeDisplayClassLocal == null)
+            {
+                storeField = ownChainField;
+            }
+            if (storeField != null && _ctx.CurrentArrowScopeDCField != null)
+            {
+                var tempArrow = _il.DeclareLocal(_types.Object);
+                _il.Emit(OpCodes.Stloc, tempArrow);
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField);
+                _il.Emit(OpCodes.Ldloc, tempArrow);
+                _il.Emit(OpCodes.Stfld, storeField);
+                return true;
+            }
         }
 
         // 2. Locals
