@@ -1312,13 +1312,8 @@ public class EmittedRuntime
     public ConstructorBuilder TSHeadersCtor { get; set; } = null!;
     public MethodBuilder TSHeadersSetMethod { get; set; } = null!;
 
-    // $URL type - emitted for standalone URL support
-    public TypeBuilder TSUrlType { get; set; } = null!;
-    public ConstructorBuilder TSUrlCtor { get; set; } = null!;
-
-    // $URLSearchParams type - emitted for standalone URLSearchParams support
-    public TypeBuilder TSUrlSearchParamsType { get; set; } = null!;
-    public ConstructorBuilder TSUrlSearchParamsCtor { get; set; } = null!;
+    // URL / URLSearchParams — migrated to stdlib/node/url.ts; the TS class is
+    // the canonical implementation. No compile-time runtime type is emitted.
 
     // $FetchResponse type - emitted for standalone fetch support
     public TypeBuilder TSFetchResponseType { get; set; } = null!;

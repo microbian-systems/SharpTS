@@ -303,15 +303,6 @@ function makeRecord(): URLRecord {
     };
 }
 
-// Helper: push a string to a string[] array. Workaround for a compiled-mode
-// code-gen bug where `url.path.push(str)` inside a large function with many
-// switch branches wraps the argument in an array and stores that instead of
-// the string (the resulting element shows as `System.Object[]`). Routing the
-// push through an explicit `(string[], string)` function dodges the bug.
-function pushPathSegment(arr: string[], s: string): void {
-    arr.push(s);
-}
-
 function hasAuthority(r: URLRecord): boolean {
     return r.host != null;
 }
@@ -943,7 +934,7 @@ function basicUrlParse(input: string, base?: URLRecord | null): URLRecord | null
                         url.host = base.host;
                         if (!startsWithWindowsDriveLetter(str.substring(pointer))
                             && base.path.length > 0 && isNormalizedWindowsDriveLetter(base.path[0])) {
-                            pushPathSegment(url.path, base.path[0]);
+                            url.path.push(base.path[0]);
                         }
                     }
                     state = STATE_PATH;
@@ -996,17 +987,17 @@ function basicUrlParse(input: string, base?: URLRecord | null): URLRecord | null
                     if (isDoubleDot(buffer)) {
                         shortenPath(url);
                         if (c !== CHAR_SLASH && !(isSpecialURL(url) && c === CHAR_BACKSLASH)) {
-                            pushPathSegment(url.path, '');
+                            url.path.push('');
                         }
                     } else if (isSingleDot(buffer)) {
                         if (c !== CHAR_SLASH && !(isSpecialURL(url) && c === CHAR_BACKSLASH)) {
-                            pushPathSegment(url.path, '');
+                            url.path.push('');
                         }
                     } else {
                         if (url.scheme === 'file' && url.path.length === 0 && isWindowsDriveLetter(buffer)) {
                             buffer = buffer.charAt(0) + ':';
                         }
-                        pushPathSegment(url.path, buffer);
+                        url.path.push(buffer);
                     }
                     buffer = '';
                     if (c === CHAR_QUESTION) {
@@ -1227,7 +1218,7 @@ export class URL {
             const s = segs[i];
             if (isSingleDot(s)) continue;
             if (isDoubleDot(s)) { if (this._record.path.length > 0) this._record.path.pop(); continue; }
-            pushPathSegment(this._record.path, percentEncodeString(s, isPathPercentEncode));
+            this._record.path.push(percentEncodeString(s, isPathPercentEncode));
         }
     }
 
@@ -1274,11 +1265,17 @@ export class URL {
 // ─── URLSearchParams ────────────────────────────────────────────────
 
 export class URLSearchParams {
-    private _list: Array<[string, string]>;
+    // Parallel arrays — SharpTS codegen currently has a nested-array push
+    // regression where `this._pairs.push([k, v])` on a `string[][]` field
+    // wraps the inner array as an extra element. Until that's fixed, store
+    // keys and values in two parallel arrays and index them together.
+    private _keys: string[];
+    private _values: string[];
     private _owner: URL | null;
 
     constructor(init?: any) {
-        this._list = [];
+        this._keys = [];
+        this._values = [];
         this._owner = null;
         // SharpTS parser gap: `get`, `set`, `delete` as class method names
         // confuse the parser (get/set get read as accessor keywords; delete
@@ -1297,7 +1294,11 @@ export class URLSearchParams {
         };
         if (init == null) return;
         if (init instanceof URLSearchParams) {
-            for (const [k, v] of (init as any)._list) this._list.push([k, v]);
+            const src = init as any;
+            for (let i = 0; i < src._keys.length; i++) {
+                this._keys.push(src._keys[i]);
+                this._values.push(src._values[i]);
+            }
             return;
         }
         if (typeof init === 'string') {
@@ -1312,13 +1313,17 @@ export class URLSearchParams {
                 if (!Array.isArray(pair) || pair.length !== 2) {
                     throw new TypeError('URLSearchParams: each sequence item must be a 2-tuple');
                 }
-                this._list.push([String(pair[0]), String(pair[1])]);
+                this._keys.push(String(pair[0]));
+                this._values.push(String(pair[1]));
             }
             return;
         }
         if (typeof init === 'object') {
             const keys = Object.keys(init);
-            for (const k of keys) this._list.push([k, String(init[k])]);
+            for (const k of keys) {
+                this._keys.push(k);
+                this._values.push(String(init[k]));
+            }
             return;
         }
         this._parseFromString(String(init));
@@ -1337,12 +1342,14 @@ export class URLSearchParams {
             else { name = p.substring(0, eq); value = p.substring(eq + 1); }
             name = percentDecode(name.split('+').join(' '));
             value = percentDecode(value.split('+').join(' '));
-            this._list.push([name, value]);
+            this._keys.push(name);
+            this._values.push(value);
         }
     }
 
     private _update(query: string | null): void {
-        this._list = [];
+        this._keys = [];
+        this._values = [];
         if (query != null && query.length > 0) this._parseFromString(query);
     }
 
@@ -1352,25 +1359,31 @@ export class URLSearchParams {
         (this._owner as any)._record.query = serialized.length === 0 ? null : serialized;
     }
 
-    get size(): number { return this._list.length; }
+    get size(): number { return this._keys.length; }
 
     append(name: string, value: string): void {
-        this._list.push([String(name), String(value)]);
+        this._keys.push(String(name));
+        this._values.push(String(value));
         this._notifyOwner();
     }
 
     private _deleteKey(key: string): void {
-        const next: Array<[string, string]> = [];
-        for (let i = 0; i < this._list.length; i++) {
-            if (this._list[i][0] !== key) next.push(this._list[i]);
+        const nextK: string[] = [];
+        const nextV: string[] = [];
+        for (let i = 0; i < this._keys.length; i++) {
+            if (this._keys[i] !== key) {
+                nextK.push(this._keys[i]);
+                nextV.push(this._values[i]);
+            }
         }
-        this._list = next;
+        this._keys = nextK;
+        this._values = nextV;
         this._notifyOwner();
     }
 
     private _getFirst(key: string): string | null {
-        for (let i = 0; i < this._list.length; i++) {
-            if (this._list[i][0] === key) return this._list[i][1];
+        for (let i = 0; i < this._keys.length; i++) {
+            if (this._keys[i] === key) return this._values[i];
         }
         return null;
     }
@@ -1378,70 +1391,94 @@ export class URLSearchParams {
     getAll(name: string): string[] {
         const key = String(name);
         const out: string[] = [];
-        for (let i = 0; i < this._list.length; i++) {
-            if (this._list[i][0] === key) out.push(this._list[i][1]);
+        for (let i = 0; i < this._keys.length; i++) {
+            if (this._keys[i] === key) out.push(this._values[i]);
         }
         return out;
     }
 
     has(name: string): boolean {
         const key = String(name);
-        for (let i = 0; i < this._list.length; i++) {
-            if (this._list[i][0] === key) return true;
+        for (let i = 0; i < this._keys.length; i++) {
+            if (this._keys[i] === key) return true;
         }
         return false;
     }
 
     private _setKey(key: string, val: string): void {
         let found = false;
-        const next: Array<[string, string]> = [];
-        for (let i = 0; i < this._list.length; i++) {
-            if (this._list[i][0] === key) {
-                if (!found) { next.push([key, val]); found = true; }
-            } else next.push(this._list[i]);
+        const nextK: string[] = [];
+        const nextV: string[] = [];
+        for (let i = 0; i < this._keys.length; i++) {
+            if (this._keys[i] === key) {
+                if (!found) { nextK.push(key); nextV.push(val); found = true; }
+            } else {
+                nextK.push(this._keys[i]);
+                nextV.push(this._values[i]);
+            }
         }
-        if (!found) next.push([key, val]);
-        this._list = next;
+        if (!found) { nextK.push(key); nextV.push(val); }
+        this._keys = nextK;
+        this._values = nextV;
         this._notifyOwner();
     }
 
     sort(): void {
-        this._list.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+        // Stable insertion sort by key. Parallel arrays are simpler than
+        // putting a comparator over indices through Array.sort, which
+        // currently has closure issues with `this` captures. Use
+        // localeCompare for string comparison — relational operators on
+        // strings get numeric coercion in compiled mode today.
+        const n = this._keys.length;
+        for (let i = 1; i < n; i++) {
+            const k = this._keys[i];
+            const v = this._values[i];
+            let j = i - 1;
+            while (j >= 0 && this._keys[j].localeCompare(k) > 0) {
+                this._keys[j + 1] = this._keys[j];
+                this._values[j + 1] = this._values[j];
+                j--;
+            }
+            this._keys[j + 1] = k;
+            this._values[j + 1] = v;
+        }
         this._notifyOwner();
     }
 
     forEach(callback: Function, thisArg?: any): void {
-        for (let i = 0; i < this._list.length; i++) {
-            const entry = this._list[i];
-            callback.call(thisArg, entry[1], entry[0], this);
+        for (let i = 0; i < this._keys.length; i++) {
+            callback.call(thisArg, this._values[i], this._keys[i], this);
         }
     }
 
     keys(): string[] {
         const out: string[] = [];
-        for (let i = 0; i < this._list.length; i++) out.push(this._list[i][0]);
+        for (let i = 0; i < this._keys.length; i++) out.push(this._keys[i]);
         return out;
     }
 
     values(): string[] {
         const out: string[] = [];
-        for (let i = 0; i < this._list.length; i++) out.push(this._list[i][1]);
+        for (let i = 0; i < this._values.length; i++) out.push(this._values[i]);
         return out;
     }
 
-    entries(): Array<[string, string]> {
-        const out: Array<[string, string]> = [];
-        for (let i = 0; i < this._list.length; i++) out.push([this._list[i][0], this._list[i][1]]);
+    entries(): string[][] {
+        const out: string[][] = [];
+        for (let i = 0; i < this._keys.length; i++) {
+            const pair: string[] = [this._keys[i], this._values[i]];
+            out.push(pair);
+        }
         return out;
     }
 
     toString(): string {
         let out = '';
-        for (let i = 0; i < this._list.length; i++) {
+        for (let i = 0; i < this._keys.length; i++) {
             if (i > 0) out += '&';
-            out += percentEncodeString(this._list[i][0], isFormUrlencodedPercentEncode).split('%20').join('+');
+            out += percentEncodeString(this._keys[i], isFormUrlencodedPercentEncode).split('%20').join('+');
             out += '=';
-            out += percentEncodeString(this._list[i][1], isFormUrlencodedPercentEncode).split('%20').join('+');
+            out += percentEncodeString(this._values[i], isFormUrlencodedPercentEncode).split('%20').join('+');
         }
         return out;
     }

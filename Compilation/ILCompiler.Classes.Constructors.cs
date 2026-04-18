@@ -92,6 +92,10 @@ public partial class ILCompiler
             CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
             EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+            // Constructors have a void signature; without this the `return;`
+            // inside a ctor body defaults to object and emits `ldnull` before
+            // the `ret`, producing an invalid method.
+            CurrentMethodReturnType = typeof(void),
         };
 
         // Add class generic type parameters to context

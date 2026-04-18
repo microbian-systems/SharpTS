@@ -15,8 +15,9 @@ public static class BuiltInModuleRegistry
         // "os" — migrated to stdlib/node/os.ts (embedded stdlib, wraps primitive:os).
         // "querystring" — migrated to stdlib/node/querystring.ts (embedded stdlib).
         // "assert" — migrated to stdlib/node/assert.ts (embedded stdlib, pure-logic leaf).
+        // "url" — migrated to stdlib/node/url.ts (embedded stdlib, full WHATWG state machine).
+        //   URL/URLSearchParams classes fully implemented in TS; no System.Uri dependency.
         // The EmbeddedStdlibProvider claims these specifiers via the chain.
-        "url",
         "process",
         "crypto",
         "util",

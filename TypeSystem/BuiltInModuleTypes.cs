@@ -484,45 +484,6 @@ public static class BuiltInModuleTypes
     // via normal type inference.
 
     /// <summary>
-    /// Gets the exported types for the url module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetUrlModuleTypes()
-    {
-        var stringType = new TypeInfo.String();
-        var anyType = new TypeInfo.Any();
-
-        // URL class type (simplified - represents the URL constructor/class)
-        var urlClassType = new TypeInfo.Any(); // Full class typing would require more infrastructure
-
-        // URLSearchParams class type
-        var urlSearchParamsType = new TypeInfo.Any();
-
-        return new Dictionary<string, TypeInfo>
-        {
-            // URL class constructor
-            ["URL"] = urlClassType,
-            // URLSearchParams class constructor
-            ["URLSearchParams"] = urlSearchParamsType,
-            // parse function (legacy)
-            ["parse"] = new TypeInfo.Function(
-                [stringType, stringType, anyType],
-                anyType,
-                RequiredParams: 1
-            ),
-            // format function (legacy)
-            ["format"] = new TypeInfo.Function(
-                [anyType],
-                stringType
-            ),
-            // resolve function (legacy)
-            ["resolve"] = new TypeInfo.Function(
-                [stringType, stringType],
-                stringType
-            )
-        };
-    }
-
-    /// <summary>
     /// Gets the exported types for the process module.
     /// </summary>
     public static Dictionary<string, TypeInfo> GetProcessModuleTypes()
@@ -1162,7 +1123,7 @@ public static class BuiltInModuleTypes
             "fs" => GetFsModuleTypes(),
             "fs/promises" => GetFsPromisesModuleTypes(),
             // "assert" — migrated to stdlib/node/assert.ts; types flow from the TS source.
-            "url" => GetUrlModuleTypes(),
+            // "url" — migrated to stdlib/node/url.ts; types flow from the TS source.
             "process" => GetProcessModuleTypes(),
             "crypto" => GetCryptoModuleTypes(),
             "util" => GetUtilModuleTypes(),

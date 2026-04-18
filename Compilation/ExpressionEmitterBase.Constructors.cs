@@ -233,19 +233,13 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
-            case "URLSearchParams":
-                EmitBoxedArgOrNull(arguments, 0);
-                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSUrlSearchParamsCtor);
-                SetStackUnknown();
-                return true;
+            // URL / URLSearchParams — no compile-time built-in. Users must
+            // `import { URL, URLSearchParams } from 'url'`; `new URL(...)` then
+            // resolves through normal variable lookup to the TS stdlib class.
 
             // --- Two boxed args (null if missing) ---
             case "Proxy":
                 EmitTwoArgConstructor(arguments, Ctx.Runtime!.CreateProxy);
-                return true;
-
-            case "URL":
-                EmitTwoArgConstructor(arguments, Ctx.Runtime!.TSUrlCtor);
                 return true;
 
             case "Request":

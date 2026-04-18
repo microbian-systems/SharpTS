@@ -1254,8 +1254,8 @@ public partial class TypeChecker
         if (name.Lexeme == "Response") return new TypeInfo.Any(); // Response constructor/namespace
         if (name.Lexeme == "Iterator") return new TypeInfo.Any(); // Iterator namespace (ES2025)
         if (name.Lexeme == "Intl") return new TypeInfo.Any(); // Intl namespace
-        if (name.Lexeme == "URL") return new TypeInfo.Any(); // URL constructor
-        if (name.Lexeme == "URLSearchParams") return new TypeInfo.Any(); // URLSearchParams constructor
+        // URL / URLSearchParams — migrated to stdlib/node/url.ts; no longer
+        // implicit globals. Resolved through normal import lookup.
         if (name.Lexeme is "ReadableStream" or "WritableStream" or "TransformStream"
             or "ByteLengthQueuingStrategy" or "CountQueuingStrategy")
             return new TypeInfo.Any(); // Web Streams constructors

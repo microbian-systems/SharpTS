@@ -319,19 +319,28 @@ This is the pre-existing general ESM-from-CJS gap finally getting paid down — 
 
 Migrate modules opportunistically, leaves first. Dependency-ordered candidates:
 
-1. **Leaves** (no stdlib-to-stdlib imports): `url` (attempted as Phase 3h — see below), ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS)
+1. **Leaves** (no stdlib-to-stdlib imports): ~~`url`~~ ✅ (done as Phase 3h — full WHATWG Living Standard port; see below), ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS)
 
-### Phase 3h — URL migration (attempted, reverted)
+### Phase 3h — URL migration ✅ COMPLETE
 
-Attempted a full WHATWG URL Living Standard port (parser state machine, URL class, URLSearchParams, legacy parse/format/resolve, fileURLToPath/pathToFileURL). Wrote a complete ~1600-line TS implementation covering all 20 parser states, IPv4/IPv6/opaque host parsing, percent-encode sets, and WHATWG-compliant serialization. Implementation archived at `docs/plans/stdlib-url-whatwg-wip.ts` for future continuation.
+Full WHATWG URL Living Standard port: parser state machine (all 20 states), IPv4/IPv6/opaque host parsing, percent-encode sets, WHATWG-compliant serialization, URL class with property getters/setters, URLSearchParams, legacy parse/format/resolve, fileURLToPath/pathToFileURL. ~1640 lines of TS, replaces ~2400 lines of C# (SharpTSURL, UrlModuleInterpreter, UrlModuleEmitter, RuntimeEmitter.Url) plus pattern-matched compile-time interception.
 
-Reverted before landing because the migration surfaced three distinct code-gen bugs. **All three root causes are now diagnosed and fixed** (see the compiler-bugs commit that supersedes this retrospective):
+**Architectural change**: ripped out the global-URL escape hatch. Previously `new URL(...)` without an import pattern-matched to a compile-time-emitted `$URL` class backed by System.Uri, so a user's global URL saw different semantics from `import { URL } from 'url'`. The built-in `$URL` / `$URLSearchParams` emitters are now removed. The TS stdlib class is the single source of URL behavior; user code must `import { URL, URLSearchParams } from 'url'` to use them (matches ESM-strict stance; no global URL polyfill).
 
-1. **Push on record field wraps argument in an array** — caused by `CheckSet` not handling `TypeInfo.Interface`, which threw "Only instances and objects have properties." The type check aborted mid-body, TypeMap entries for subsequent expressions were never populated, and the IL emitter fell through to generic `InvokeMethodValue` dispatch that wrapped the single-arg push call in an `object[]`. Fix: add Interface case to `CheckSet` that mirrors the Record handler.
-2. **`shortenPath` throws `InvalidProgramException`** — caused by `EmitReturn` treating `typeof(void)` as a generic value type (because `typeof(void).IsValueType` is true), emitting `ldloca/initobj/ldloc/ret` which pushes garbage then returns for a void signature. Fix: explicitly skip value emission when `returnType == typeof(void)`.
-3. **Interpreter "Index access not supported on this type"** — the type checker didn't accept `string[number]` indexing (even though it's valid JS), and the interpreter's `ResolveIndexTarget` correspondingly lacked a `(string, double)` case. Fix: add both.
+**Compiler bugs surfaced and fixed as part of this phase:**
 
-Combined, these three bugs had stayed hidden because smaller test surfaces never combined all the ingredients: interface parameter + primitive field assignment + array field push + void early-return + string char indexing. URL hit all of them. Migration itself is unblocked — leave it on the queue after the three-bug fix commit lands.
+1. Class constructors with `return;` emitted invalid IL (the return-type default fell through `EmitReturn`'s object branch because `CurrentMethodReturnType` wasn't set for ctors). Fix: set `CurrentMethodReturnType = typeof(void)` in the ctor context.
+2. Indexing `typeof x === 'object'`-narrowed values by string threw "Index type 'string' is not valid for indexing 'object'", aborting the enclosing method's type check mid-body. That aborted body triggered the push-wrap pattern from Phase 3h's earlier three-bug commit. Fix: accept `TypeInfo.Object` with string index, return `Any`.
+
+**Workarounds living in `stdlib/node/url.ts` (to remove when the compiler catches up):**
+
+- URLSearchParams stores keys and values as two parallel `string[]` arrays, not a `string[][]` of pairs — nested-array push on class fields still has a codegen gap where the inner array gets wrapped one level deep.
+- URLSearchParams.sort uses insertion sort, not `Array.sort` with a comparator, because `this` captures inside arrow comparators fail to resolve.
+- `get`/`set`/`delete` are assigned as per-instance function properties in the constructor because the parser treats `get`/`set` as accessor keywords and `delete` as a reserved word when used as class method names.
+- String comparison via `localeCompare` instead of `>` because compiled-mode relational operators on strings coerce to numbers today.
+
+**Scope for follow-up:** the workarounds are load-bearing but narrow; each has a tracked pattern. None affect correctness of URL behavior. Fixing them collapses `url.ts` back toward idiomatic TS.
+
 2. **Composite after leaves**: `util`, `stream`, `fs`, `fs/promises`, `readline`, `http`, `https`, `net`, `tls`
 3. **Hybrid: thin TS module over `primitive:buffer`** — `Buffer` gets a TS stdlib module for API symmetry, but heavy lifting (byte-array alloc, slice, copy, encode/decode) stays native in `primitive:buffer`. This keeps every module on equal footing (every module has a `.ts` file) without a perf cliff on hot paths. The primitive surface is stable — Node's Buffer API is locked down, so `primitive:buffer` can be designed once and held.
 

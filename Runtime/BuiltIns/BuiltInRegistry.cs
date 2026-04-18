@@ -225,7 +225,7 @@ public sealed class BuiltInRegistry
         RegisterAbortSignalNamespace(registry);
         RegisterAbortControllerType(registry);
         RegisterAbortSignalType(registry);
-        RegisterUrlTypes(registry);
+        // URL / URLSearchParams — migrated to stdlib/node/url.ts; no C# instance types.
         RegisterRequestResponseTypes(registry);
         RegisterResponseNamespace(registry);
         RegisterIntlNamespace(registry);
@@ -1186,14 +1186,6 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterInstanceType(typeof(SharpTSAbortSignal), (instance, name) =>
             AbortSignalBuiltIns.GetMember((SharpTSAbortSignal)instance, name));
-    }
-
-    private static void RegisterUrlTypes(BuiltInRegistry registry)
-    {
-        registry.RegisterInstanceType(typeof(SharpTSURL), (instance, name) =>
-            ((SharpTSURL)instance).GetMember(name));
-        registry.RegisterInstanceType(typeof(SharpTSURLSearchParams), (instance, name) =>
-            ((SharpTSURLSearchParams)instance).GetMember(name));
     }
 
     private static void RegisterRequestResponseTypes(BuiltInRegistry registry)

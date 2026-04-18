@@ -89,7 +89,7 @@ public static class BuiltInNames
         Array, Object, Number, String, Boolean,
         Promise, ArrayBuffer, SharedArrayBuffer, DataView,
         MessageChannel, EventEmitter, AbortController, Headers,
-        TextEncoder, TextDecoder, URL, URLSearchParams,
+        TextEncoder, TextDecoder,
         Request, Response,
         ReadableStream, WritableStream, TransformStream,
         ByteLengthQueuingStrategy, CountQueuingStrategy
@@ -126,8 +126,7 @@ public static class BuiltInNames
     public const string AbortSignal = "AbortSignal";
     public const string BroadcastChannel = "BroadcastChannel";
     public const string Headers = "Headers";
-    public const string URL = "URL";
-    public const string URLSearchParams = "URLSearchParams";
+    // URL / URLSearchParams — migrated to stdlib/node/url.ts; no built-in name.
     public const string ReadableStream = "ReadableStream";
     public const string WritableStream = "WritableStream";
     public const string TransformStream = "TransformStream";

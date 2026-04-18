@@ -656,7 +656,7 @@ public partial class ILCompiler
         // "path"         — migrated to stdlib/node/path.ts (pure-TS, uses primitive:process for cwd).
         // "querystring"  — migrated to stdlib/node/querystring.ts.
         // "assert"       — migrated to stdlib/node/assert.ts (pure-logic leaf).
-        _builtInModuleEmitterRegistry.Register(new UrlModuleEmitter());
+        // "url"          — migrated to stdlib/node/url.ts (full WHATWG state machine).
         var processEmitter = new ProcessModuleEmitter();
         _builtInModuleEmitterRegistry.Register(processEmitter);
         // Alias: primitive:process shares the same emitter. Stdlib modules use
