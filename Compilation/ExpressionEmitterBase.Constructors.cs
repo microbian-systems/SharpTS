@@ -317,21 +317,9 @@ public abstract partial class ExpressionEmitterBase
             // now resolves to the TS class via the standard user-class constructor path.
 
             // --- PerformanceObserver ---
-            case "PerformanceObserver":
-                IL.Emit(OpCodes.Ldc_I4_1);
-                IL.Emit(OpCodes.Newarr, typeof(object));
-                if (arguments.Count > 0)
-                {
-                    IL.Emit(OpCodes.Dup);
-                    IL.Emit(OpCodes.Ldc_I4_0);
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                    IL.Emit(OpCodes.Stelem_Ref);
-                }
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.PerfHooksCreateObserver);
-                SetStackUnknown();
-                return true;
-
+            // PerformanceObserver — no longer pattern-matched globally. Users must
+            // `import { PerformanceObserver } from 'perf_hooks'` (ESM-strict);
+            // the class is a pure-TS class in stdlib/node/perf_hooks.ts.
             // --- SharedArrayBuffer / ArrayBuffer ---
             case "SharedArrayBuffer":
                 if (arguments.Count == 0)

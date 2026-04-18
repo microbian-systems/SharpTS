@@ -319,7 +319,7 @@ This is the pre-existing general ESM-from-CJS gap finally getting paid down — 
 
 Migrate modules opportunistically, leaves first. Dependency-ordered candidates:
 
-1. **Leaves** (no stdlib-to-stdlib imports): ~~`url`~~ ✅ (done as Phase 3h — full WHATWG Living Standard port; see below), ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS), ~~`util`~~ ✅ (done as Phase 3i — ~1700 lines of C# → 687-line TS; three compiler gaps fixed along the way), ~~`process`~~ ✅ (done as Phase 3j — thin facade over `primitive:process`; one compiler gap documented)
+1. **Leaves** (no stdlib-to-stdlib imports): ~~`url`~~ ✅ (done as Phase 3h — full WHATWG Living Standard port; see below), ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS), ~~`util`~~ ✅ (done as Phase 3i — ~1700 lines of C# → 687-line TS; three compiler gaps fixed along the way), ~~`process`~~ ✅ (done as Phase 3j — thin facade over `primitive:process`; one compiler gap documented), ~~`perf_hooks`~~ ✅ (done as Phase 3k — pure-TS performance + PerformanceObserver over new `primitive:perf`; ~2000-line C# / IL collapse → ~170-line TS)
 
 ### Phase 3h — URL migration ✅ COMPLETE
 
@@ -368,6 +368,21 @@ Migrated `process` to `stdlib/node/process.ts` — a thin facade over `primitive
 `ProcessModuleEmitter.EmitNextTick` doesn't expand `Expr.Spread` arguments — a spread expression passed as a trailing arg gets packed as a single nested-array element rather than expanded into individual slots. `path.ts` didn't hit this because its rest-param functions forward the array directly (`posixJoin(parts)`), not spread-forwarded (`posixJoin(...parts)`). A naive `nextTick(cb, ...args): void { __nextTick(cb, ...args); }` facade drops every trailing arg at the call boundary. **Workaround in `stdlib/node/process.ts`: arity-dispatch through 8 positional args** (matches Node's practical usage; >8 payload args are rare). Documented inline; fixing the emitter to handle `Expr.Spread` is follow-up work.
 
 **Pre-existing compiled-mode bug fixed (not a migration regression):** `process.nextTick()` called with no callback (or a null/undefined callback) used to silently no-op in compiled mode — interpreter mode threw. `ProcessModuleEmitter.EmitNextTick` now emits a null-check and throws `ArgumentException` with the same message the interpreter uses (both the zero-arg and null-callback cases). This unblocks the `NextTick_ThrowsWithoutCallback` test in Compiled mode, which had been failing on `main` well before this migration.
+
+### Phase 3k — `perf_hooks` migration ✅ COMPLETE
+
+Migrated `perf_hooks` to `stdlib/node/perf_hooks.ts` with a new `primitive:perf` exposing just `now()`. The rest of the API surface (`mark`, `measure`, `getEntries*`, `clear*`, `PerformanceObserver`) is pure TypeScript. **Net: +65 insertions, −2051 deletions** — the biggest compression ratio of any migration so far, unlocked by lifting all the mark/measure/observer dispatch from hand-written IL to TypeScript.
+
+- `primitive:perf` added to `PrimitiveRegistry`, `PrimitiveModuleValues`, `BuiltInModuleTypes.GetPrimitiveTypes`. Surface is a single `now(): number` returning high-res ms since first call. ✅
+- `Compilation/RuntimeEmitter.PerfHooks.cs` → renamed `RuntimeEmitter.PerfPrimitive.cs` and shrunk from 1598 lines to ~100 (just the Stopwatch-backed `PerfPrimitiveNow` method + three backing fields, lazily initialized). `EmittedRuntime` loses 23 fields and gains 3. ✅
+- `Compilation/Emitters/Modules/PerfHooksModuleEmitter.cs` deleted. `PerfPrimitiveEmitter` (~30 lines) dispatches `primitive:perf.now()` to `$Runtime.PerfPrimitiveNow`. ✅
+- `Runtime/BuiltIns/Modules/Interpreter/PerfHooksModuleInterpreter.cs` deleted. `PerfPrimitiveInterpreter` (~30 lines) exposes a `Stopwatch`-backed `now` BuiltInMethod. ✅
+- `stdlib/node/perf_hooks.ts` — full Node perf_hooks surface in ~170 lines: `performance` as an object literal with methods capturing module-scope `_entries` array; `PerformanceObserver` as a TS class pushing registrations to a module-scope `_observers` array; synchronous callback dispatch from `mark`/`measure`. `timeOrigin` captured at module load as `Date.now() - __now()`. ✅
+- Removed `perf_hooks` from `BuiltInModuleRegistry`, `BuiltInModuleValues.GetModuleExports` + `HasInterpreterSupport`, and `BuiltInModuleTypes.GetModuleTypes` / `GetPerfHooksModuleTypes`. ✅
+
+**Architectural change**: removed the global-`PerformanceObserver` escape hatch. Previously `new PerformanceObserver(cb)` without an import was pattern-matched at compile time to a `$Runtime.PerfHooksCreateObserver` call, so a user's global `PerformanceObserver` saw different semantics from `import { PerformanceObserver } from 'perf_hooks'`. The compile-time `case "PerformanceObserver"` in `ExpressionEmitterBase.Constructors.cs` is deleted. Matches the URL migration's ESM-strict stance — users must import.
+
+**Test gate:** 10041 pass, 15 skipped, 0 failed. All 55 `PerfHooksModuleTests` pass in both modes, including PerformanceObserver callback dispatch. No regressions.
 
 2. **Composite after leaves**: `stream`, `fs`, `fs/promises`, `readline`, `http`, `https`, `net`, `tls`
 3. **Hybrid: thin TS module over `primitive:buffer`** — `Buffer` gets a TS stdlib module for API symmetry, but heavy lifting (byte-array alloc, slice, copy, encode/decode) stays native in `primitive:buffer`. This keeps every module on equal footing (every module has a `.ts` file) without a perf cliff on hot paths. The primitive surface is stable — Node's Buffer API is locked down, so `primitive:buffer` can be designed once and held.

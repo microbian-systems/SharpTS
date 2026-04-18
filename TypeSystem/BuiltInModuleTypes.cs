@@ -1139,7 +1139,8 @@ public static class BuiltInModuleTypes
             "timers" => GetTimersModuleTypes(),
             "timers/promises" => GetTimersPromisesModuleTypes(),
             // "string_decoder" — migrated to stdlib/node/string_decoder.ts; types flow from the TS source.
-            "perf_hooks" => GetPerfHooksModuleTypes(),
+            // "perf_hooks" — migrated to stdlib/node/perf_hooks.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:perf are in GetPerfPrimitiveTypes.
             "stream" => GetStreamModuleTypes(),
             "stream/promises" => GetStreamPromisesModuleTypes(),
             "stream/web" => GetStreamWebModuleTypes(),
@@ -1171,7 +1172,21 @@ public static class BuiltInModuleTypes
         {
             "os" => GetOsModuleTypes(),
             "process" => GetProcessModuleTypes(),
+            "perf" => GetPerfPrimitiveTypes(),
             _ => null
+        };
+    }
+
+    /// <summary>
+    /// Types for <c>primitive:perf</c> — just <c>now()</c> returning high-res ms.
+    /// The full perf_hooks surface (mark, measure, etc.) is typed from the TS source.
+    /// </summary>
+    private static Dictionary<string, TypeInfo> GetPerfPrimitiveTypes()
+    {
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        return new Dictionary<string, TypeInfo>
+        {
+            ["now"] = new TypeInfo.Function([], numberType),
         };
     }
 
@@ -1754,74 +1769,9 @@ public static class BuiltInModuleTypes
         };
     }
 
-    /// <summary>
-    /// Gets the exported types for the perf_hooks module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetPerfHooksModuleTypes()
-    {
-        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
-        var stringType = new TypeInfo.String();
-        var anyType = new TypeInfo.Any();
-        var voidType = new TypeInfo.Void();
-
-        // PerformanceEntry: { name: string, entryType: string, startTime: number, duration: number }
-        var performanceEntryType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["name"] = stringType,
-            ["entryType"] = stringType,
-            ["startTime"] = numberType,
-            ["duration"] = numberType
-        }.ToFrozenDictionary());
-
-        var performanceEntryArrayType = new TypeInfo.Array(performanceEntryType);
-
-        var performanceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["now"] = new TypeInfo.Function([], numberType),
-            ["timeOrigin"] = numberType,
-            ["mark"] = new TypeInfo.Function([stringType, anyType], performanceEntryType, RequiredParams: 1),
-            ["measure"] = new TypeInfo.Function([stringType, stringType, stringType], performanceEntryType, RequiredParams: 1),
-            ["getEntries"] = new TypeInfo.Function([], performanceEntryArrayType),
-            ["getEntriesByName"] = new TypeInfo.Function([stringType, stringType], performanceEntryArrayType, RequiredParams: 1),
-            ["getEntriesByType"] = new TypeInfo.Function([stringType], performanceEntryArrayType),
-            ["clearMarks"] = new TypeInfo.Function([stringType], voidType, RequiredParams: 0),
-            ["clearMeasures"] = new TypeInfo.Function([stringType], voidType, RequiredParams: 0)
-        }.ToFrozenDictionary());
-
-        // PerformanceObserverEntryList: { getEntries(): PerformanceEntry[] }
-        var entryListType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["getEntries"] = new TypeInfo.Function([], performanceEntryArrayType)
-        }.ToFrozenDictionary());
-
-        // PerformanceObserver instance: { observe(options): void, disconnect(): void }
-        var observerInstanceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["observe"] = new TypeInfo.Function([anyType], voidType),
-            ["disconnect"] = new TypeInfo.Function([], voidType)
-        }.ToFrozenDictionary());
-
-        // PerformanceObserver constructor
-        var observerConstructorType = new TypeInfo.Interface(
-            Name: "PerformanceObserver",
-            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
-            OptionalMembers: FrozenSet<string>.Empty,
-            ConstructorSignatures:
-            [
-                new TypeInfo.ConstructorSignature(
-                    TypeParams: null,
-                    ParamTypes: [new TypeInfo.Function([entryListType], voidType)],
-                    ReturnType: observerInstanceType,
-                    RequiredParams: 1)
-            ]
-        );
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["performance"] = performanceType,
-            ["PerformanceObserver"] = observerConstructorType
-        };
-    }
+    // GetPerfHooksModuleTypes removed — "perf_hooks" is now implemented in
+    // stdlib/node/perf_hooks.ts; types flow from the TS source's exports.
+    // The narrow primitive surface (just `now()`) is typed in GetPerfPrimitiveTypes.
 
     /// <summary>
     /// Gets the exported types for the stream module.

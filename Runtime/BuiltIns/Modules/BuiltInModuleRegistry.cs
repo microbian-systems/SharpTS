@@ -31,7 +31,7 @@ public static class BuiltInModuleRegistry
         "timers",
         "timers/promises",
         // "string_decoder" — migrated to stdlib/node/string_decoder.ts (uses Buffer JS API).
-        "perf_hooks",
+        // "perf_hooks" — migrated to stdlib/node/perf_hooks.ts (pure-TS over primitive:perf).
         "stream",
         "stream/promises",
         "stream/web",

@@ -671,7 +671,9 @@ public partial class ILCompiler
         _builtInModuleEmitterRegistry.Register(new TimersModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new TimersPromisesModuleEmitter());
         // "string_decoder" — migrated to stdlib/node/string_decoder.ts.
-        _builtInModuleEmitterRegistry.Register(new PerfHooksModuleEmitter());
+        // "perf_hooks" — migrated to stdlib/node/perf_hooks.ts (pure-TS over primitive:perf).
+        //   Only the narrow now() method needs host access; mark/measure/observer are TS.
+        _builtInModuleEmitterRegistry.Register(new PerfPrimitiveEmitter());
         _builtInModuleEmitterRegistry.Register(new StreamModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new StreamPromisesModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new StreamWebModuleEmitter());

@@ -1694,29 +1694,12 @@ public class EmittedRuntime
     public MethodBuilder UrlFormat { get; set; } = null!;
     public MethodBuilder UrlResolve { get; set; } = null!;
 
-    // perf_hooks module methods
-    public MethodBuilder PerfHooksGetPerformance { get; set; } = null!;
-    public MethodBuilder PerfHooksPerformanceNow { get; set; } = null!;
-    public FieldBuilder PerfHooksStartTicks { get; set; } = null!;
-    public FieldBuilder PerfHooksTicksPerMs { get; set; } = null!;
-    public FieldBuilder PerfHooksEntries { get; set; } = null!;
-    public FieldBuilder PerfHooksObservers { get; set; } = null!;
-    public MethodBuilder PerfHooksEnsureEntries { get; set; } = null!;
-    public MethodBuilder PerfHooksCreateEntry { get; set; } = null!;
-    public MethodBuilder PerfHooksGetEntryField { get; set; } = null!;
-    public MethodBuilder PerfHooksGetEntryDouble { get; set; } = null!;
-    public MethodBuilder PerfHooksFindMark { get; set; } = null!;
-    public MethodBuilder PerfHooksNotifyObservers { get; set; } = null!;
-    public MethodBuilder PerfHooksMark { get; set; } = null!;
-    public MethodBuilder PerfHooksMeasure { get; set; } = null!;
-    public MethodBuilder PerfHooksGetEntries { get; set; } = null!;
-    public MethodBuilder PerfHooksGetEntriesByName { get; set; } = null!;
-    public MethodBuilder PerfHooksGetEntriesByType { get; set; } = null!;
-    public MethodBuilder PerfHooksFilterEntries { get; set; } = null!;
-    public MethodBuilder PerfHooksClearByType { get; set; } = null!;
-    public MethodBuilder PerfHooksClearMarks { get; set; } = null!;
-    public MethodBuilder PerfHooksClearMeasures { get; set; } = null!;
-    public MethodBuilder PerfHooksCreateObserver { get; set; } = null!;
+    // primitive:perf — only a single now() method is host-tied; the rest of
+    // perf_hooks (mark/measure/entries/observer) is pure TypeScript in
+    // stdlib/node/perf_hooks.ts. Backing fields initialize lazily on first call.
+    public MethodBuilder PerfPrimitiveNow { get; set; } = null!;
+    public FieldBuilder PerfPrimitiveStartTicks { get; set; } = null!;
+    public FieldBuilder PerfPrimitiveTicksPerMs { get; set; } = null!;
 
     // $Readable type - emitted for standalone stream support
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSReadable

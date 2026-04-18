@@ -23,6 +23,7 @@ public static class PrimitiveRegistry
     {
         Prefix + "os",
         Prefix + "process",
+        Prefix + "perf",
     };
 
     /// <summary>

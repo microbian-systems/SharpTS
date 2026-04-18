@@ -455,8 +455,9 @@ public partial class RuntimeEmitter
         EmitZlibMethods(typeBuilder, runtime);
         // DNS module methods
         EmitDnsModuleMethods(typeBuilder, runtime);
-        // perf_hooks module methods
-        EmitPerfHooksMethods(typeBuilder, runtime);
+        // primitive:perf — only the host-tied now() method; the rest of perf_hooks
+        // is pure TypeScript in stdlib/node/perf_hooks.ts.
+        EmitPerfPrimitiveMethods(typeBuilder, runtime);
         // string_decoder module migrated to stdlib/node/string_decoder.ts.
 
         // Intl support (Intl.NumberFormat)
