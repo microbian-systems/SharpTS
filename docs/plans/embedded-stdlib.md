@@ -319,7 +319,24 @@ This is the pre-existing general ESM-from-CJS gap finally getting paid down — 
 
 Migrate modules opportunistically, leaves first. Dependency-ordered candidates:
 
-1. **Leaves** (no stdlib-to-stdlib imports): `url`, ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS)
+1. **Leaves** (no stdlib-to-stdlib imports): `url` (attempted as Phase 3h — see below), ~~`events`~~ ✅ (done as Phase 3f — self-contained TS EventEmitter, C# SharpTSEventEmitter retained for runtime inheritance), ~~`assert`~~ ✅ (done as Phase 3e — pure-logic leaf, ~1700 deletions → 290-line TS), ~~`string_decoder`~~ ✅ (done as Phase 3g — TS class over Buffer JS API, ~800 deletions → 105-line TS)
+
+### Phase 3h — URL migration (attempted, reverted)
+
+Attempted a full WHATWG URL Living Standard port (parser state machine, URL class, URLSearchParams, legacy parse/format/resolve, fileURLToPath/pathToFileURL). Wrote a complete ~1600-line TS implementation covering all 20 parser states, IPv4/IPv6/opaque host parsing, percent-encode sets, and WHATWG-compliant serialization. Implementation archived at `docs/plans/stdlib-url-whatwg-wip.ts` for future continuation.
+
+Reverted before landing because the migration surfaced three distinct compiled-mode code-gen bugs in large functions with record-field array access:
+
+1. **Push on record field wraps argument in an array.** `url.path.push(buffer)` where `buffer` is a string stores `System.Object[]` (an array) rather than the string itself. Isolated reproductions (small function with the same record type) work correctly — the bug only manifests inside large functions with many switch states. Workaround: route through a `(string[], string) => void` helper function, which fixes the store but the root cause is unknown.
+2. **`shortenPath` helper throws `InvalidProgramException` in compiled mode.** A small `URLRecord → void` function with 3 conditional branches over `url.path.length`/`url.scheme`/`isNormalizedWindowsDriveLetter` emits invalid IL. Compiled program cannot start. Reduced repro not yet isolated.
+3. **Interpreter "Index access not supported on this type"** when calling url module functions with certain URL inputs. Stack trace points to `SharpTSFunction.CallV2`; the actual failing indexing operation wasn't pinned down.
+
+Combined, these three bugs required open-ended compiler investigation beyond the scope of a leaf migration. Other stdlib migrations (path, assert, events) all hit one or two isolated compiler gaps that were fixable in ~20 lines; URL surfaced three systemic issues the leaf-migration scope wasn't built to absorb.
+
+**Deferred until compiler work.** Good next steps when resuming:
+- Isolate a minimal repro for bug #1 (push-on-field-in-large-function) to support a targeted fix
+- Examine IL emission for `shortenPath`-shaped functions to find bug #2
+- Separately, decide whether the URL class should remain a compile-time-emitted runtime type (current behavior) or migrate to a pure stdlib TS class (architecturally cleaner but needs global-dispatch plumbing)
 2. **Composite after leaves**: `util`, `stream`, `fs`, `fs/promises`, `readline`, `http`, `https`, `net`, `tls`
 3. **Hybrid: thin TS module over `primitive:buffer`** — `Buffer` gets a TS stdlib module for API symmetry, but heavy lifting (byte-array alloc, slice, copy, encode/decode) stays native in `primitive:buffer`. This keeps every module on equal footing (every module has a `.ts` file) without a perf cliff on hot paths. The primitive surface is stable — Node's Buffer API is locked down, so `primitive:buffer` can be designed once and held.
 
