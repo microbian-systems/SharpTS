@@ -80,6 +80,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
             // ES2022 Private Class Elements support

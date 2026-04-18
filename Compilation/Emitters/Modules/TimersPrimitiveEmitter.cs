@@ -4,15 +4,16 @@ using SharpTS.Parsing;
 namespace SharpTS.Compilation.Emitters.Modules;
 
 /// <summary>
-/// Emits IL code for the Node.js 'timers' module.
+/// Emits IL for the <c>primitive:timers</c> primitive module. Dispatches the
+/// callback-based timer API (setTimeout/clearTimeout/setInterval/clearInterval/
+/// setImmediate/clearImmediate) to the existing <c>$Runtime</c> methods. The
+/// user-facing <c>timers</c> module lives in <c>stdlib/node/timers.ts</c> and
+/// arity-dispatches rest args into this primitive (the primitive's emitter
+/// packs flat trailing args into the object[] that $Runtime expects).
 /// </summary>
-/// <remarks>
-/// Re-exports the global timer functions (setTimeout, setInterval, etc.)
-/// as module exports.
-/// </remarks>
-public sealed class TimersModuleEmitter : IBuiltInModuleEmitter
+public sealed class TimersPrimitiveEmitter : IBuiltInModuleEmitter
 {
-    public string ModuleName => "timers";
+    public string ModuleName => "primitive:timers";
 
     private static readonly string[] _exportedMembers =
     [

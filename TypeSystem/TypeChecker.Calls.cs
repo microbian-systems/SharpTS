@@ -288,92 +288,59 @@ public partial class TypeChecker
             return new TypeInfo.Primitive(Parsing.TokenType.TYPE_BOOLEAN);
         }
 
-        // Handle setTimeout(callback, delay?, ...args) — skip for timers/promises version (returns Promise/AsyncIterable)
-        if (call.Callee is Expr.Variable setTimeoutVar && setTimeoutVar.Name.Lexeme == "setTimeout")
+        // Timer functions (setTimeout / clearTimeout / setInterval / clearInterval)
+        // have two resolutions: the JS globals (untyped, `_environment.Get` returns
+        // null — handled here) and imports from stdlib/node/timers{,/promises}.ts
+        // (which return a proper Function with a concrete signature — generic
+        // function-call validation handles them, so this block is skipped).
+        if (call.Callee is Expr.Variable setTimeoutVar && setTimeoutVar.Name.Lexeme == "setTimeout"
+            && _environment.Get(setTimeoutVar.Name.Lexeme) is null or TypeInfo.Any)
         {
-            var varType = _environment.Get(setTimeoutVar.Name.Lexeme);
-            var isModuleVersion = varType is TypeInfo.Function { ReturnType: TypeInfo.Promise or TypeInfo.AsyncIterable };
+            if (call.Arguments.Count < 1)
+                throw new TypeCheckException("setTimeout() requires at least one argument (callback).");
 
-            if (!isModuleVersion)
+            var callbackType = CheckExpr(call.Arguments[0]);
+            if (callbackType is not TypeInfo.Function && callbackType is not TypeInfo.Any)
+                throw new TypeCheckException($"setTimeout() callback must be a function, got '{callbackType}'.");
+
+            if (call.Arguments.Count >= 2)
             {
-                if (call.Arguments.Count < 1)
-                {
-                    throw new TypeCheckException("setTimeout() requires at least one argument (callback).");
-                }
-
-                // First argument must be a function
-                var callbackType = CheckExpr(call.Arguments[0]);
-                if (callbackType is not TypeInfo.Function && callbackType is not TypeInfo.Any)
-                {
-                    throw new TypeCheckException($"setTimeout() callback must be a function, got '{callbackType}'.");
-                }
-
-                // Second argument (delay) must be a number if provided
-                if (call.Arguments.Count >= 2)
-                {
-                    var delayType = CheckExpr(call.Arguments[1]);
-                    if (!IsNumber(delayType) && delayType is not TypeInfo.Any && delayType is not TypeInfo.Undefined)
-                    {
-                        throw new TypeCheckException($"setTimeout() delay must be a number, got '{delayType}'.");
-                    }
-                }
-
-                // Additional arguments are passed to the callback (any type allowed)
-                for (int i = 2; i < call.Arguments.Count; i++)
-                {
-                    CheckExpr(call.Arguments[i]);
-                }
-
-                return new TypeInfo.Timeout();
+                var delayType = CheckExpr(call.Arguments[1]);
+                if (!IsNumber(delayType) && delayType is not TypeInfo.Any && delayType is not TypeInfo.Undefined)
+                    throw new TypeCheckException($"setTimeout() delay must be a number, got '{delayType}'.");
             }
+
+            for (int i = 2; i < call.Arguments.Count; i++) CheckExpr(call.Arguments[i]);
+            return new TypeInfo.Timeout();
         }
 
-        // Handle clearTimeout(handle?)
-        if (call.Callee is Expr.Variable clearTimeoutVar && clearTimeoutVar.Name.Lexeme == "clearTimeout")
+        if (call.Callee is Expr.Variable clearTimeoutVar && clearTimeoutVar.Name.Lexeme == "clearTimeout"
+            && _environment.Get(clearTimeoutVar.Name.Lexeme) is null or TypeInfo.Any)
             return CheckClearTimerCall(call, "clearTimeout");
 
-        // Handle setInterval(callback, delay?, ...args) — skip for timers/promises version (returns AsyncIterable)
-        if (call.Callee is Expr.Variable setIntervalVar && setIntervalVar.Name.Lexeme == "setInterval")
+        if (call.Callee is Expr.Variable setIntervalVar && setIntervalVar.Name.Lexeme == "setInterval"
+            && _environment.Get(setIntervalVar.Name.Lexeme) is null or TypeInfo.Any)
         {
-            var varType = _environment.Get(setIntervalVar.Name.Lexeme);
-            var isModuleVersion = varType is TypeInfo.Function { ReturnType: TypeInfo.Promise or TypeInfo.AsyncIterable };
+            if (call.Arguments.Count < 1)
+                throw new TypeCheckException("setInterval() requires at least one argument (callback).");
 
-            if (!isModuleVersion)
+            var callbackType = CheckExpr(call.Arguments[0]);
+            if (callbackType is not TypeInfo.Function && callbackType is not TypeInfo.Any)
+                throw new TypeCheckException($"setInterval() callback must be a function, got '{callbackType}'.");
+
+            if (call.Arguments.Count >= 2)
             {
-                if (call.Arguments.Count < 1)
-                {
-                    throw new TypeCheckException("setInterval() requires at least one argument (callback).");
-                }
-
-                // First argument must be a function
-                var callbackType = CheckExpr(call.Arguments[0]);
-                if (callbackType is not TypeInfo.Function && callbackType is not TypeInfo.Any)
-                {
-                    throw new TypeCheckException($"setInterval() callback must be a function, got '{callbackType}'.");
-                }
-
-                // Second argument (delay) must be a number if provided
-                if (call.Arguments.Count >= 2)
-                {
-                    var delayType = CheckExpr(call.Arguments[1]);
-                    if (!IsNumber(delayType) && delayType is not TypeInfo.Any && delayType is not TypeInfo.Undefined)
-                    {
-                        throw new TypeCheckException($"setInterval() delay must be a number, got '{delayType}'.");
-                    }
-                }
-
-                // Additional arguments are passed to the callback (any type allowed)
-                for (int i = 2; i < call.Arguments.Count; i++)
-                {
-                    CheckExpr(call.Arguments[i]);
-                }
-
-                return new TypeInfo.Timeout();
+                var delayType = CheckExpr(call.Arguments[1]);
+                if (!IsNumber(delayType) && delayType is not TypeInfo.Any && delayType is not TypeInfo.Undefined)
+                    throw new TypeCheckException($"setInterval() delay must be a number, got '{delayType}'.");
             }
+
+            for (int i = 2; i < call.Arguments.Count; i++) CheckExpr(call.Arguments[i]);
+            return new TypeInfo.Timeout();
         }
 
-        // Handle clearInterval(handle?)
-        if (call.Callee is Expr.Variable clearIntervalVar && clearIntervalVar.Name.Lexeme == "clearInterval")
+        if (call.Callee is Expr.Variable clearIntervalVar && clearIntervalVar.Name.Lexeme == "clearInterval"
+            && _environment.Get(clearIntervalVar.Name.Lexeme) is null or TypeInfo.Any)
             return CheckClearTimerCall(call, "clearInterval");
 
         // Handle queueMicrotask(callback)

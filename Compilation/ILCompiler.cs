@@ -40,6 +40,7 @@ public partial class ILCompiler
     private readonly BuiltInModuleEmitterRegistry _builtInModuleEmitterRegistry = new();  // Built-in module emitters
     private readonly Dictionary<string, string> _builtInModuleNamespaces = [];  // Variable name -> module name for direct dispatch
     private readonly Dictionary<string, (string ModuleName, string MethodName)> _builtInModuleMethodBindings = [];  // Variable name -> (module, method) for named imports
+    private readonly HashSet<string> _importedNames = [];  // Every named / default / namespace import, any module source. Used to shadow global call handlers.
     private TypeBuilder _programType = null!;
 
     // Organized state containers (see ILCompiler.State.cs for definitions)
@@ -392,6 +393,19 @@ public partial class ILCompiler
         {
             if (stmt is Stmt.Import import && !import.IsTypeOnly)
             {
+                // Record every imported local name — call handlers for globally-
+                // intercepted names (TimerHandler, FetchHandler) need to know
+                // when a name is imported to avoid shadowing stdlib TS re-exports.
+                if (import.DefaultImport != null) _importedNames.Add(import.DefaultImport.Lexeme);
+                if (import.NamespaceImport != null) _importedNames.Add(import.NamespaceImport.Lexeme);
+                if (import.NamedImports != null)
+                {
+                    foreach (var spec in import.NamedImports.Where(s => !s.IsTypeOnly))
+                    {
+                        _importedNames.Add(spec.LocalName?.Lexeme ?? spec.Imported.Lexeme);
+                    }
+                }
+
                 // Check if the import path is a built-in module or an stdlib-internal
                 // primitive. Both dispatch through BuiltInModuleEmitterRegistry — the
                 // primitive case's key is the full specifier (e.g. "primitive:os").
@@ -668,8 +682,10 @@ public partial class ILCompiler
         _builtInModuleEmitterRegistry.Register(new BufferModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new ZlibModuleEmitter());
         // "events" — migrated to stdlib/node/events.ts (pure-TS EventEmitter).
-        _builtInModuleEmitterRegistry.Register(new TimersModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new TimersPromisesModuleEmitter());
+        // "timers" and "timers/promises" migrated to stdlib/node/timers{,/promises}.ts
+        //   (TS facades over primitive:timers and primitive:timers/promises respectively).
+        _builtInModuleEmitterRegistry.Register(new TimersPrimitiveEmitter());
+        _builtInModuleEmitterRegistry.Register(new TimersPromisesPrimitiveEmitter());
         // "string_decoder" — migrated to stdlib/node/string_decoder.ts.
         // "perf_hooks" — migrated to stdlib/node/perf_hooks.ts (pure-TS over primitive:perf).
         //   Only the narrow now() method needs host access; mark/measure/observer are TS.

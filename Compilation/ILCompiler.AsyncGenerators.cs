@@ -134,6 +134,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
             // Registry services
@@ -202,6 +203,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode || CheckForUseStrict(method.Body),
             // ES2022 Private Class Elements support for async generator methods

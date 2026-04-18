@@ -26,6 +26,8 @@ public static class PrimitiveRegistry
         Prefix + "perf",
         Prefix + "tty",
         Prefix + "async_hooks",
+        Prefix + "timers",
+        Prefix + "timers/promises",
     };
 
     /// <summary>

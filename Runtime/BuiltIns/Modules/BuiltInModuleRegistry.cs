@@ -28,8 +28,8 @@ public static class BuiltInModuleRegistry
         "buffer",
         "zlib",
         // "events" — migrated to stdlib/node/events.ts (pure-TS EventEmitter).
-        "timers",
-        "timers/promises",
+        // "timers" / "timers/promises" — migrated to stdlib/node/timers{,/promises}.ts
+        //   (TS facades over primitive:timers and primitive:timers/promises).
         // "string_decoder" — migrated to stdlib/node/string_decoder.ts (uses Buffer JS API).
         // "perf_hooks" — migrated to stdlib/node/perf_hooks.ts (pure-TS over primitive:perf).
         "stream",

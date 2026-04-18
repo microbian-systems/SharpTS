@@ -470,6 +470,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             ClassExprBackingFields = _classExprs.BackingFields,
             ClassExprProperties = _classExprs.Properties,

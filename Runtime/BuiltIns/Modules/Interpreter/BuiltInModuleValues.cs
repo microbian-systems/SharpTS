@@ -36,8 +36,8 @@ public static class BuiltInModuleValues
             "buffer" => BufferModuleInterpreter.GetExports(),
             "zlib" => ZlibModuleInterpreter.GetExports(),
             // "events" — migrated to stdlib/node/events.ts (pure-TS EventEmitter).
-            "timers" => TimersModuleInterpreter.GetExports(),
-            "timers/promises" => TimersModuleInterpreter.GetPromisesExports(),
+            // "timers" / "timers/promises" — migrated to stdlib/node/timers{,/promises}.ts.
+            //   TimersPrimitiveInterpreter is reused by PrimitiveModuleValues.
             // "string_decoder" — migrated to stdlib/node/string_decoder.ts (pure-TS over Buffer API).
             // "perf_hooks" — migrated to stdlib/node/perf_hooks.ts (pure-TS over primitive:perf).
             "stream" => StreamModuleInterpreter.GetExports(),
@@ -66,7 +66,7 @@ public static class BuiltInModuleValues
     {
         return moduleName is "fs" or "fs/promises"
             or "crypto" or "readline" or "child_process" or "buffer"
-            or "zlib" or "timers" or "timers/promises" or "stream" or "stream/promises" or "stream/web"
+            or "zlib" or "stream" or "stream/promises" or "stream/web"
             or "http" or "worker_threads" or "dns" or "dns/promises" or "net" or "https" or "tls"
             or "dgram" or "cluster" or "vm";
     }

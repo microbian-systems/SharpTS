@@ -4,13 +4,17 @@ using SharpTS.Parsing;
 namespace SharpTS.Compilation.Emitters.Modules;
 
 /// <summary>
-/// Emits IL code for the Node.js 'timers/promises' module.
-/// Promise-based timer operations: setTimeout, setImmediate, setInterval.
-/// Supports AbortSignal via options.signal.
+/// Emits IL for the <c>primitive:timers/promises</c> primitive module.
+/// Promise-based timer operations (setTimeout/setImmediate/setInterval) with
+/// AbortSignal support via <c>options.signal</c>. Dispatches to existing
+/// <c>$Runtime.SetTimeoutPromise[WithSignal]</c> etc. methods. The user-facing
+/// <c>timers/promises</c> module lives in <c>stdlib/node/timers/promises.ts</c>
+/// and re-exports these without spread issues (these signatures take positional
+/// delay/value/options — no rest params).
 /// </summary>
-public sealed class TimersPromisesModuleEmitter : IBuiltInModuleEmitter
+public sealed class TimersPromisesPrimitiveEmitter : IBuiltInModuleEmitter
 {
-    public string ModuleName => "timers/promises";
+    public string ModuleName => "primitive:timers/promises";
 
     private static readonly string[] _exportedMembers =
     [

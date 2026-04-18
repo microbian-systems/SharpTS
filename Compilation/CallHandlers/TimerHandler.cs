@@ -19,9 +19,11 @@ public class TimerHandler : ICallHandler
         var il = emitter.IL;
         var ctx = emitter.Context;
 
-        // Skip if this variable is bound to a built-in module import (e.g., timers/promises)
-        // to let the module emitter handle it instead of the global timer handler
-        if (ctx.BuiltInModuleMethodBindings?.ContainsKey(v.Name.Lexeme) == true)
+        // Skip when the variable is shadowed by any module import — built-in
+        // (dispatch through the primitive emitter) or stdlib TS re-export
+        // (dispatch through normal module-field resolution). Either way, the
+        // global timer handler must not intercept the call.
+        if (ctx.ImportedNames?.Contains(v.Name.Lexeme) == true)
             return false;
 
         return v.Name.Lexeme switch

@@ -1136,8 +1136,9 @@ public static class BuiltInModuleTypes
             "buffer" => GetBufferModuleTypes(),
             "zlib" => GetZlibModuleTypes(),
             // "events" — migrated to stdlib/node/events.ts; types flow from the TS source.
-            "timers" => GetTimersModuleTypes(),
-            "timers/promises" => GetTimersPromisesModuleTypes(),
+            // "timers" / "timers/promises" — migrated to stdlib/node/timers{,/promises}.ts;
+            //   types flow from the TS source. Primitive-layer types reuse the
+            //   same shapes via GetPrimitiveTypes (GetTimersModuleTypes stays public).
             // "string_decoder" — migrated to stdlib/node/string_decoder.ts; types flow from the TS source.
             // "perf_hooks" — migrated to stdlib/node/perf_hooks.ts; types flow from the TS source.
             //   Primitive-layer types for primitive:perf are in GetPerfPrimitiveTypes.
@@ -1177,6 +1178,11 @@ public static class BuiltInModuleTypes
             "perf" => GetPerfPrimitiveTypes(),
             "tty" => GetTtyPrimitiveTypes(),
             "async_hooks" => GetAsyncHooksPrimitiveTypes(),
+            // Primitive timer types reuse the user-facing module type shapes — the
+            // primitive surface matches the Node surface; the TS facade just
+            // arity-dispatches around the spread-compiler gap.
+            "timers" => GetTimersModuleTypes(),
+            "timers/promises" => GetTimersPromisesModuleTypes(),
             _ => null
         };
     }

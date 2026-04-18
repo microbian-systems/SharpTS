@@ -118,12 +118,13 @@ public partial class Interpreter
         }
 
         // Handle global functions via registry (Symbol, BigInt, parseInt, setTimeout, Error types, etc.)
-        // Skip if the variable is shadowed by a module import (e.g., timers/promises setTimeout)
+        // Skip if the variable is shadowed by a module import (e.g., stdlib 'timers' / 'timers/promises'
+        // re-exports setTimeout as a SharpTSFunction, which implements ISharpTSCallable).
         if (call.Callee is Expr.Variable globalVar)
         {
             var gvName = globalVar.Name.Lexeme;
             bool isShadowed = _environment.TryGet(gvName, out var shadowVal) &&
-                shadowVal.ToObject() is ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
+                shadowVal.ToObject() is ISharpTSCallable or ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
             if (!isShadowed)
             {
                 if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
@@ -286,12 +287,13 @@ public partial class Interpreter
         }
 
         // Handle global functions via registry (Symbol, BigInt, parseInt, setTimeout, Error types, etc.)
-        // Skip if the variable is shadowed by a module import (e.g., timers/promises setTimeout)
+        // Skip if the variable is shadowed by a module import (e.g., stdlib 'timers' / 'timers/promises'
+        // re-exports setTimeout as a SharpTSFunction, which implements ISharpTSCallable).
         if (call.Callee is Expr.Variable globalVar)
         {
             var gvName = globalVar.Name.Lexeme;
             bool isShadowed = _environment.TryGet(gvName, out var shadowVal) &&
-                shadowVal.ToObject() is ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
+                shadowVal.ToObject() is ISharpTSCallable or ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
             if (!isShadowed)
             {
                 if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))

@@ -502,6 +502,7 @@ public partial class ILCompiler
                 BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
                 BuiltInModuleNamespaces = _builtInModuleNamespaces,
                 BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+                ImportedNames = _importedNames,
                 ClassExprBuilders = _classExprs.Builders,
                 // Check for function-level "use strict" directive
                 IsStrictMode = _isStrictMode || CheckForUseStrict(func.Body),
@@ -882,6 +883,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
                 BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+                ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
             // ES2022 Private Class Elements support for async methods
@@ -1066,6 +1068,7 @@ public partial class ILCompiler
                 BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
                 BuiltInModuleNamespaces = _builtInModuleNamespaces,
                 BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+                ImportedNames = _importedNames,
                 ClassExprBuilders = _classExprs.Builders,
                 IsStrictMode = _isStrictMode,
                 // ES2022 Private Class Elements support

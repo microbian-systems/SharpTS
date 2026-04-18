@@ -234,6 +234,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             UnionGenerator = _unionGenerator,
             // Check for function-level "use strict" directive
@@ -691,6 +692,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             // Class expression support
             VarToClassExpr = _classExprs.VarToClassExpr,
             ClassExprStaticFields = _classExprs.StaticFields,
@@ -915,6 +917,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             VarToClassExpr = _classExprs.VarToClassExpr,
             ClassExprStaticFields = _classExprs.StaticFields,
             ClassExprStaticMethods = _classExprs.StaticMethods,

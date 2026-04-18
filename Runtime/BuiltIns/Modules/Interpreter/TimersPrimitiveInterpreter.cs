@@ -4,14 +4,14 @@ using Interp = SharpTS.Execution.Interpreter;
 namespace SharpTS.Runtime.BuiltIns.Modules.Interpreter;
 
 /// <summary>
-/// Interpreter-mode implementation of the Node.js 'timers' module.
+/// Interpreter-mode implementation of <c>primitive:timers</c> and
+/// <c>primitive:timers/promises</c>. The user-facing <c>timers</c> and
+/// <c>timers/promises</c> modules live in <c>stdlib/node/timers.ts</c> and
+/// <c>stdlib/node/timers/promises.ts</c>; both import from these primitives.
+/// GetExports() returns the callback API; GetPromisesExports() returns the
+/// promise-based API.
 /// </summary>
-/// <remarks>
-/// Provides timer functions that are also available as globals.
-/// Includes setTimeout, setInterval, setImmediate and their clear counterparts.
-/// Also provides promise-based variants via GetPromisesExports().
-/// </remarks>
-public static class TimersModuleInterpreter
+public static class TimersPrimitiveInterpreter
 {
     /// <summary>
     /// Gets exported values for the timers/promises module.
