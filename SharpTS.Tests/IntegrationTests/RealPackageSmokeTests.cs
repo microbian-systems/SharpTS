@@ -225,7 +225,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
         Assert.Contains("36", result.StandardOutput);
     }
 
-    [SkippableFact(Skip = "Blocked on interpreter issues")]
+    [SkippableFact]
     public void Uuid_Compiled()
     {
         SkipIfNoNpm();

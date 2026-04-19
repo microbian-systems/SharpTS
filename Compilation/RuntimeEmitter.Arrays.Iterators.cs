@@ -7,9 +7,19 @@ public partial class RuntimeEmitter
 {
     /// <summary>
     /// Emits IL to create callback args array [list[i], (double)i, list],
-    /// invoke the callback via InvokeValue, and leave the result on the stack.
+    /// invoke the callback via InvokeMethodValue with undefined thisArg,
+    /// and leave the result on the stack.
     /// Expects: arg0 = list (List&lt;object&gt;), arg1 = callback (object).
     /// </summary>
+    /// <remarks>
+    /// Must dispatch through <see cref="EmittedRuntime.InvokeMethodValue"/> (not
+    /// <see cref="EmittedRuntime.InvokeValue"/>) so that callbacks compiled from
+    /// <c>function(…){…}</c> expressions (which carry a synthetic <c>__this</c>
+    /// first parameter) have the <c>__this</c> slot filled by the runtime rather
+    /// than absorbing the first real argument (list[i]) into it. ES spec: when
+    /// no <c>thisArg</c> is supplied to forEach/map/filter/etc., the callback's
+    /// <c>this</c> is undefined in strict mode, which we represent as null.
+    /// </remarks>
     private void EmitCallbackArgsAndInvoke(ILGenerator il, LocalBuilder indexLocal, EmittedRuntime runtime)
     {
         // var args = new object[] { list[i], (double)i, list }
@@ -38,12 +48,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Stelem_Ref);
 
-        // Store args, load callback + args, call InvokeValue
+        // InvokeMethodValue(null /* thisArg */, callback, args)
         var argsLocal = il.DeclareLocal(_types.ObjectArray);
         il.Emit(OpCodes.Stloc, argsLocal);
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldarg_1); // callback
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
     }
 
     private void EmitArrayMap(TypeBuilder typeBuilder, EmittedRuntime runtime)

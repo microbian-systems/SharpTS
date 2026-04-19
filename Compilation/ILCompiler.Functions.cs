@@ -238,6 +238,20 @@ public partial class ILCompiler
             FunctionToModule = _modules.FunctionToModule,
             EnumToModule = _modules.EnumToModule,
             DotNetNamespace = _modules.CurrentDotNetNamespace,
+            // CJS/ESM resolution — needed so require('./literal') and module.exports/exports
+            // work inside function bodies nested in a CJS module (e.g. debug's common.js
+            // setup() calls require('ms') from inside the exported function).
+            ModuleResolver = _modules.Resolver,
+            ModuleExportFields = _modules.ExportFields,
+            ModuleInitMethods = _modules.InitMethods,
+            ModuleImportFields = _modules.ImportFields,
+            ModuleTypes = _modules.Types,
+            CommonJsExportFields = _modules.CommonJsExportFields,
+            CommonJsGetExportsMethods = _modules.CommonJsGetExportsMethods,
+            CurrentCjsExportsField = _modules.CurrentPath != null
+                && _modules.CommonJsExportFields.TryGetValue(_modules.CurrentPath, out var cjsExports)
+                ? cjsExports
+                : null,
             TypeEmitterRegistry = _typeEmitterRegistry,
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,

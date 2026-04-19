@@ -641,7 +641,7 @@ public class StateMachineEmitHelpers
     {
         emitOperand();
         EnsureBoxed();
-        _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", [_types.Object]));
+        _il.Emit(OpCodes.Call, _runtime!.JsToInt32);
         _il.Emit(OpCodes.Not);
         _il.Emit(OpCodes.Conv_R8);
         _il.Emit(OpCodes.Box, _types.Double);
@@ -882,14 +882,14 @@ public class StateMachineEmitHelpers
     /// </summary>
     public void EmitBitwiseBinary(OpCode bitwiseOp)
     {
-        // Convert left to int32
+        // Convert left to int32 (ECMA-262 ToInt32: wraps, never throws)
         var rightLocal = _il.DeclareLocal(_types.Object);
         _il.Emit(OpCodes.Stloc, rightLocal);
-        _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", [_types.Object]));
+        _il.Emit(OpCodes.Call, _runtime!.JsToInt32);
 
         // Convert right to int32
         _il.Emit(OpCodes.Ldloc, rightLocal);
-        _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", [_types.Object]));
+        _il.Emit(OpCodes.Call, _runtime!.JsToInt32);
 
         // Apply bitwise operation
         _il.Emit(bitwiseOp);

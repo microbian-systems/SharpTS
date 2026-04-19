@@ -88,6 +88,7 @@ public class EmittedRuntime
     public MethodBuilder Stringify { get; set; } = null!;
     public MethodBuilder ToNumber { get; set; } = null!;
     public MethodBuilder ConvertToNumber { get; set; } = null!;
+    public MethodBuilder JsToInt32 { get; set; } = null!;
     public MethodBuilder IsTruthy { get; set; } = null!;
     public MethodBuilder TypeOf { get; set; } = null!;
     public MethodBuilder InstanceOf { get; set; } = null!;

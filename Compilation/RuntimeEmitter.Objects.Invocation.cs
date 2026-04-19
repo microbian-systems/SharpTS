@@ -355,12 +355,17 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         // Check if value is $TSFunction and call InvokeWithThis
         // arg0 = receiver, arg1 = function, arg2 = args
-        var nullLabel = il.DefineLabel();
         var notTSFunctionLabel = il.DefineLabel();
 
-        // if (function == null) return null
+        // if (function == null) return null immediately — we can't fall through to the
+        // later Isinst chain because it ends with a proxy check that calls GetType() on
+        // the function value, which NREs on null.
+        var notNullLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, nullLabel);
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNullLabel);
 
         // if (function is $TSFunction tsFunc)
         il.Emit(OpCodes.Ldarg_1);
@@ -586,7 +591,6 @@ public partial class RuntimeEmitter
         il.MarkLabel(notBoundAnyFunctionLabel);
 
         // Handle $MethodCallable (wraps BuiltInMethod from GetMember)
-        il.MarkLabel(nullLabel);
         var notMethodCallableLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.MethodCallableType);

@@ -168,14 +168,14 @@ public partial class ILEmitter
 
     private void EmitBitwiseBinary(Expr.Binary b)
     {
-        // Convert to int32 for bitwise operations
+        // Convert to int32 for bitwise operations (ECMA-262 ToInt32: wraps, never throws)
         EmitExpression(b.Left);
         EmitBoxIfNeeded(b.Left);
-        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Convert, "ToInt32", _ctx.Types.Object));
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.JsToInt32);
 
         EmitExpression(b.Right);
         EmitBoxIfNeeded(b.Right);
-        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Convert, "ToInt32", _ctx.Types.Object));
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.JsToInt32);
 
         switch (b.Operator.Type)
         {
@@ -343,7 +343,7 @@ public partial class ILEmitter
                 {
                     EmitExpression(u.Right);
                     EmitBoxIfNeeded(u.Right);
-                    IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Convert, "ToInt32", _ctx.Types.Object));
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.JsToInt32);
                     IL.Emit(OpCodes.Not);
                     EmitConvR8AndBox();
                 }

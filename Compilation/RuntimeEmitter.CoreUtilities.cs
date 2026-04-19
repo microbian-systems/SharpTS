@@ -1649,6 +1649,88 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits JsToInt32(object) → int that implements ECMA-262 ToInt32
+    /// (7.1.6 in the spec). Unlike Convert.ToInt32, NaN / ±Infinity / out-of-range
+    /// doubles wrap modulo 2^32 instead of throwing, matching JavaScript's
+    /// bitwise-op and `x | 0` semantics. Required for packages like lodash
+    /// and debug that rely on <c>hash |= 0</c> idioms.
+    /// </summary>
+    private void EmitJsToInt32(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "JsToInt32",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Int32,
+            [_types.Object]
+        );
+        runtime.JsToInt32 = method;
+
+        var il = method.GetILGenerator();
+
+        const double TWO_32 = 4294967296.0;
+        const double TWO_31 = 2147483648.0;
+
+        // n = ToNumber(arg0)
+        var nLocal = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, nLocal);
+
+        // if (!double.IsFinite(n)) return 0
+        var finiteLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Call, typeof(double).GetMethod("IsFinite", [typeof(double)])!);
+        il.Emit(OpCodes.Brtrue, finiteLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(finiteLabel);
+
+        // truncated = n >= 0 ? Math.Floor(n) : Math.Ceiling(n)
+        var truncLocal = il.DeclareLocal(_types.Double);
+        var negLabel = il.DefineLabel();
+        var truncDoneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Blt, negLabel);
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Call, typeof(Math).GetMethod("Floor", [typeof(double)])!);
+        il.Emit(OpCodes.Stloc, truncLocal);
+        il.Emit(OpCodes.Br, truncDoneLabel);
+        il.MarkLabel(negLabel);
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Call, typeof(Math).GetMethod("Ceiling", [typeof(double)])!);
+        il.Emit(OpCodes.Stloc, truncLocal);
+        il.MarkLabel(truncDoneLabel);
+
+        // int32bit = truncated - Math.Floor(truncated / 2^32) * 2^32   (mathematical mod)
+        var int32bitLocal = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldloc, truncLocal);
+        il.Emit(OpCodes.Ldloc, truncLocal);
+        il.Emit(OpCodes.Ldc_R8, TWO_32);
+        il.Emit(OpCodes.Div);
+        il.Emit(OpCodes.Call, typeof(Math).GetMethod("Floor", [typeof(double)])!);
+        il.Emit(OpCodes.Ldc_R8, TWO_32);
+        il.Emit(OpCodes.Mul);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, int32bitLocal);
+
+        // return int32bit >= 2^31 ? (int)(int32bit - 2^32) : (int)int32bit
+        var smallLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, int32bitLocal);
+        il.Emit(OpCodes.Ldc_R8, TWO_31);
+        il.Emit(OpCodes.Blt, smallLabel);
+        il.Emit(OpCodes.Ldloc, int32bitLocal);
+        il.Emit(OpCodes.Ldc_R8, TWO_32);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(smallLabel);
+        il.Emit(OpCodes.Ldloc, int32bitLocal);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits ConvertToNumber — matches JS Number(value) semantics.
     /// Differs from ToNumber in that empty/whitespace strings return 0 (not NaN).
     /// </summary>

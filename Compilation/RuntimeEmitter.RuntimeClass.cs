@@ -176,6 +176,7 @@ public partial class RuntimeEmitter
         EmitConsoleLogMultiple(typeBuilder, runtime);
         EmitToNumber(typeBuilder, runtime);
         EmitConvertToNumber(typeBuilder, runtime);
+        EmitJsToInt32(typeBuilder, runtime);
         EmitIsTruthy(typeBuilder, runtime);
         EmitTypeOf(typeBuilder, runtime);
         EmitInstanceOf(typeBuilder, runtime);
