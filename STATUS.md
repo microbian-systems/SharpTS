@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-04-07 (Web Streams API: ReadableStream/WritableStream/TransformStream + queuing strategies, available as globals and via `node:stream/web`)
+**Last Updated:** 2026-04-18 (Embedded TypeScript stdlib — 14 Node modules migrated from C#/IL to `.ts`; `@DotNetType` full parity — interpreter + compiled with delegates and events)
 
 ## Legend
 - ✅ Implemented
@@ -451,6 +451,63 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `perf_hooks` | ✅ | performance.now(), timeOrigin, mark(), measure(), getEntries(), getEntriesByName(), getEntriesByType(), clearMarks(), clearMeasures(); PerformanceObserver |
 | `worker_threads` | ✅ | Worker, isMainThread, parentPort, workerData, MessageChannel, MessagePort |
 | `async_hooks` | ✅ | AsyncLocalStorage: run, getStore, enterWith, exit, disable; async context propagation via .NET AsyncLocal |
+
+### Module Implementation Source
+
+14 modules are implemented in TypeScript under `stdlib/node/*.ts`, embedded in `SharpTS.dll` as resources and compiled alongside user code at `--compile` time. The remaining modules stay C#-backed for host-I/O reasons. See `docs/plans/embedded-stdlib.md` for the provider chain, `primitive:*` layer, and migration rationale.
+
+| Implementation | Modules |
+|---|---|
+| **TypeScript stdlib** | `assert`, `async_hooks`, `events`, `os`, `path`, `perf_hooks`, `process`, `querystring`, `readline`, `string_decoder`, `timers`, `timers/promises`, `tty`, `url`, `util` |
+| **C# / IL (host-I/O)** | `fs`, `fs/promises`, `crypto`, `stream`, `stream/promises`, `stream/web`, `buffer`, `http`, `https`, `net`, `tls`, `dgram`, `cluster`, `child_process`, `vm`, `zlib`, `dns`, `dns/promises`, `worker_threads` |
+
+---
+
+## 16. .NET INTEROP (`@DotNetType`)
+
+`@DotNetType` marks a declared class as a facade over a real .NET type, enabling TypeScript code to use BCL types directly. **Works in both interpreter and compiled modes** as of 2026-04-18.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `@DotNetType("Namespace.Type")` on `declare class` | ✅ | Instance methods, static methods, constructors, properties, fields |
+| `@DotNetOverload("type1,type2,...")` overload hints | ✅ | Pin a specific overload when argument-based resolution is ambiguous |
+| Overload resolution | ✅ | Identity → widening → narrowing → object cost scale; same semantics in both modes |
+| Generic type instantiation | ✅ | Closed generics via string specifier (e.g., `"System.Collections.Generic.List<string>"`) |
+| Delegate parameters | ✅ | TS functions auto-marshaled to .NET delegates (`Action`, `Func<...>`, custom delegates) via `DotNetDelegateShim` |
+| Event subscription (`+=` / `-=`) | ✅ | `obj.on(e)` / `obj.off(e)` style plus direct `+=` compound assignment in compiled mode; main-thread-only |
+| Exception mapping | ✅ | .NET exceptions surface as JS-catchable errors with message preservation (`DotNetExceptionMapper`) |
+| Value / reference type marshaling | ✅ | Primitives, strings, arrays, dictionaries; `DotNetMarshaller` centralizes conversion |
+| External assembly discovery | ✅ | `TryResolveExternalType` scans loaded AppDomain assemblies; no additional reference wiring needed |
+
+Compiled mode uses late-bound reflection to the shim (`DotNetDelegateShim` / `DotNetEventBinder`) so the output DLL stays standalone. See `docs/dotnet-types.md` for the full guide.
+
+---
+
+## Breaking Changes (2026-04-18)
+
+The embedded-stdlib migration removed implicit global bindings for several classes previously created as compile-time fallbacks. User code must now `import` these from the owning module explicitly (matches ESM-strict semantics and Node's own behavior):
+
+| Class | Previous behavior | Required now |
+|---|---|---|
+| `URL`, `URLSearchParams` | Available as globals, backed by a pattern-matched `$URL` / `$URLSearchParams` emitter over `System.Uri`. | `import { URL, URLSearchParams } from 'url'` |
+| `PerformanceObserver` | Available as a global, backed by `$Runtime.PerfHooksCreateObserver`. | `import { PerformanceObserver } from 'perf_hooks'` |
+| `AsyncLocalStorage` | Available as a global, backed by `$AsyncLocalStorage`. | `import { AsyncLocalStorage } from 'async_hooks'` |
+
+The underlying implementations are unchanged — only the import requirement is new. Behavior at the import site is identical to the previous global.
+
+Additional behavioral divergence: `path.win32.isAbsolute('/foo')` returns `false` (matches WHATWG-like strictness — requires drive-letter + separator or UNC double-separator). Node returns `true` for any leading separator.
+
+### Known stdlib workarounds (tracked debt)
+
+The following stdlib TS files carry workarounds for compiler gaps that surfaced during migration. Behavior is correct at the documented API surface; listed here so future fixes can remove them:
+
+- `stdlib/node/process.ts` (`nextTick`) and `stdlib/node/timers.ts` (`setTimeout`/`setInterval`/`setImmediate`) — arity-dispatch across 8 positional args because the built-in emitter doesn't expand `Expr.Spread` when forwarding to primitive methods. Payloads with >8 args are silently truncated.
+- `stdlib/node/async_hooks.ts` (`run`, `exit`) — drops the optional `...args` parameter; the underlying `SharpTSAsyncLocalStorage` still supports it. No current tests exercise this path.
+- Default parameters through `$TSFunction.Invoke` only apply for reference-type params. Value-type defaults (`x: number = 5` on a module export) silently receive `0` / `false` / `0n`; stdlib authors use `param?: T` + `??` — see `stdlib/CONTRIBUTING.md`.
+
+### Known regression (2026-04-18)
+
+- `TimersPromises_SetInterval_AbortSignal_PreAborted` (interpreter mode only, skipped) — the `timers/primitive` sync throw on a pre-aborted `AbortSignal` loses `Error` identity at the `SharpTSFunction` boundary; `e` arrives as a string so `e.message` is undefined. Compiled-mode path is unaffected. Fix belongs in the interpreter's function-boundary exception handling.
 
 ---
 
