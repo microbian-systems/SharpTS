@@ -22,23 +22,25 @@ public static class BuiltInModuleValues
         {
             "fs" => FsModuleInterpreter.GetExports(),
             "fs/promises" => FsPromisesModuleInterpreter.GetExports(),
-            "path" => PathModuleInterpreter.GetExports(),
-            "os" => OsModuleInterpreter.GetExports(),
-            "querystring" => QuerystringModuleInterpreter.GetExports(),
-            "assert" => AssertModuleInterpreter.GetExports(),
-            "url" => UrlModuleInterpreter.GetExports(),
-            "process" => ProcessModuleInterpreter.GetExports(),
+            // "path" — migrated to stdlib/node/path.ts (pure-TS, uses primitive:process for cwd).
+            // "os" — migrated to stdlib/node/os.ts which imports from primitive:os.
+            //   OsModuleInterpreter is reused by PrimitiveModuleValues; not routed here.
+            // "assert" — migrated to stdlib/node/assert.ts (pure-logic leaf).
+            // "url" — migrated to stdlib/node/url.ts (full WHATWG state machine).
+            // "util" — migrated to stdlib/node/util.ts (pure-TS port).
+            // "process" — migrated to stdlib/node/process.ts which imports from primitive:process.
+            //   ProcessModuleInterpreter is reused by PrimitiveModuleValues; not routed here.
             "crypto" => CryptoModuleInterpreter.GetExports(),
-            "util" => UtilModuleInterpreter.GetExports(),
-            "readline" => ReadlineModuleInterpreter.GetExports(),
+            // "readline" — migrated to stdlib/node/readline.ts which imports from primitive:readline.
+            //   ReadlinePrimitiveInterpreter is reused by PrimitiveModuleValues; not routed here.
             "child_process" => ChildProcessModuleInterpreter.GetExports(),
             "buffer" => BufferModuleInterpreter.GetExports(),
             "zlib" => ZlibModuleInterpreter.GetExports(),
-            "events" => EventsModuleInterpreter.GetExports(),
-            "timers" => TimersModuleInterpreter.GetExports(),
-            "timers/promises" => TimersModuleInterpreter.GetPromisesExports(),
-            "string_decoder" => StringDecoderModuleInterpreter.GetExports(),
-            "perf_hooks" => PerfHooksModuleInterpreter.GetExports(),
+            // "events" — migrated to stdlib/node/events.ts (pure-TS EventEmitter).
+            // "timers" / "timers/promises" — migrated to stdlib/node/timers{,/promises}.ts.
+            //   TimersPrimitiveInterpreter is reused by PrimitiveModuleValues.
+            // "string_decoder" — migrated to stdlib/node/string_decoder.ts (pure-TS over Buffer API).
+            // "perf_hooks" — migrated to stdlib/node/perf_hooks.ts (pure-TS over primitive:perf).
             "stream" => StreamModuleInterpreter.GetExports(),
             "stream/promises" => StreamPromisesModuleInterpreter.GetExports(),
             "stream/web" => StreamWebModuleInterpreter.GetExports(),
@@ -52,8 +54,8 @@ public static class BuiltInModuleValues
             "dgram" => DgramModuleInterpreter.GetExports(),
             "cluster" => ClusterModuleInterpreter.GetExports(),
             "vm" => VmModuleInterpreter.GetExports(),
-            "async_hooks" => AsyncHooksModuleInterpreter.GetExports(),
-            "tty" => TtyModuleInterpreter.GetExports(),
+            // "async_hooks" — migrated to stdlib/node/async_hooks.ts (TS class over primitive:async_hooks).
+            // "tty" — migrated to stdlib/node/tty.ts (pure-TS over primitive:tty).
             _ => throw new Exception($"Unknown built-in module: {moduleName}")
         };
     }
@@ -63,10 +65,10 @@ public static class BuiltInModuleValues
     /// </summary>
     public static bool HasInterpreterSupport(string moduleName)
     {
-        return moduleName is "fs" or "fs/promises" or "path" or "os" or "querystring" or "assert" or "url"
-            or "process" or "crypto" or "util" or "readline" or "child_process" or "buffer"
-            or "zlib" or "events" or "timers" or "timers/promises" or "string_decoder" or "perf_hooks" or "stream" or "stream/promises" or "stream/web"
+        return moduleName is "fs" or "fs/promises"
+            or "crypto" or "child_process" or "buffer"
+            or "zlib" or "stream" or "stream/promises" or "stream/web"
             or "http" or "worker_threads" or "dns" or "dns/promises" or "net" or "https" or "tls"
-            or "dgram" or "cluster" or "vm" or "async_hooks" or "tty";
+            or "dgram" or "cluster" or "vm";
     }
 }

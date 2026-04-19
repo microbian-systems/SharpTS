@@ -87,13 +87,20 @@ public partial class Interpreter
         }
 
         // ESM file required from CJS — execute as ESM and return its namespace object.
+        // ExportsAsObject() mirrors Node's ESM→CJS interop: the require() caller gets
+        // an object of all named exports (not the default export alone). This matters
+        // for stdlib modules (path, os, querystring) whose consumers write
+        // `const path = require('path'); path.join(...)` — path.join must resolve to
+        // the named export, which DefaultExport wouldn't expose for pure-TS stdlib.
         ExecuteModule(parsed);
         var instance = _loadedModules.GetValueOrDefault(resolvedPath);
         if (instance == null)
         {
             return null;
         }
-        return GetCurrentExports(instance);
+        return instance.CommonJsModuleObject != null
+            ? instance.CommonJsModuleObject.GetProperty("exports")
+            : instance.ExportsAsObject();
     }
 
     /// <summary>
@@ -175,6 +182,10 @@ public partial class Interpreter
         {
             return instance.CommonJsModuleObject.GetProperty("exports");
         }
-        return instance.DefaultExport;
+        // ESM→CJS interop: when a CJS caller requires an ESM module, it expects a namespace
+        // object of named exports (Node's semantics), not the default export alone. Stdlib
+        // modules like path.ts have named exports but no default export — returning just
+        // DefaultExport would yield null.
+        return instance.DefaultExport ?? instance.ExportsAsObject();
     }
 }

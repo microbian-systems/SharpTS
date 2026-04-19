@@ -31,6 +31,10 @@ internal static class GlobalFunctionHandlers
         // Utility functions
         registry.RegisterV2(BuiltInNames.StructuredClone, HandleStructuredClone);
 
+        // URI encoding globals (ECMAScript standard)
+        registry.RegisterV2(BuiltInNames.EncodeURIComponent, HandleEncodeURIComponent);
+        registry.RegisterV2(BuiltInNames.DecodeURIComponent, HandleDecodeURIComponent);
+
         // Timer functions
         registry.RegisterV2(BuiltInNames.SetTimeout, HandleSetTimeout);
         registry.RegisterV2(BuiltInNames.ClearTimeout, HandleClearTimeout);
@@ -182,6 +186,48 @@ internal static class GlobalFunctionHandlers
             }
         }
         return RuntimeValue.FromBoxed(StructuredClone.Clone(value, transfer));
+    }
+
+    private static async ValueTask<RuntimeValue> HandleEncodeURIComponent(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
+        IReadOnlyList<Expr> arguments,
+        Interpreter interpreter)
+    {
+        // JS: encodeURIComponent(undefined) === "undefined"; encodeURIComponent() throws.
+        if (arguments.Count < 1)
+            throw new InterpreterException($"{BuiltInNames.EncodeURIComponent}() requires exactly one argument.");
+
+        var argRV = await evaluateArg(arguments[0]);
+        var str = CoerceToString(argRV);
+        return RuntimeValue.FromString(Uri.EscapeDataString(str));
+    }
+
+    private static async ValueTask<RuntimeValue> HandleDecodeURIComponent(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
+        IReadOnlyList<Expr> arguments,
+        Interpreter interpreter)
+    {
+        if (arguments.Count < 1)
+            throw new InterpreterException($"{BuiltInNames.DecodeURIComponent}() requires exactly one argument.");
+
+        var argRV = await evaluateArg(arguments[0]);
+        var str = CoerceToString(argRV);
+        try
+        {
+            return RuntimeValue.FromString(Uri.UnescapeDataString(str));
+        }
+        catch (UriFormatException ex)
+        {
+            throw new InterpreterException($"URIError: {ex.Message}");
+        }
+    }
+
+    private static string CoerceToString(RuntimeValue value)
+    {
+        if (value.IsUndefined) return "undefined";
+        if (value.IsNull) return "null";
+        if (value.IsString) return value.AsString();
+        return value.ToObject()?.ToString() ?? "";
     }
 
     private static async ValueTask<RuntimeValue> HandleSetTimeout(

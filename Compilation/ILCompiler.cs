@@ -40,6 +40,7 @@ public partial class ILCompiler
     private readonly BuiltInModuleEmitterRegistry _builtInModuleEmitterRegistry = new();  // Built-in module emitters
     private readonly Dictionary<string, string> _builtInModuleNamespaces = [];  // Variable name -> module name for direct dispatch
     private readonly Dictionary<string, (string ModuleName, string MethodName)> _builtInModuleMethodBindings = [];  // Variable name -> (module, method) for named imports
+    private readonly HashSet<string> _importedNames = [];  // Every named / default / namespace import, any module source. Used to shadow global call handlers.
     private TypeBuilder _programType = null!;
 
     // Organized state containers (see ILCompiler.State.cs for definitions)
@@ -81,8 +82,17 @@ public partial class ILCompiler
     // Shared context for definition phase (module name resolution)
     private CompilationContext? _definitionContext;
 
-    // Top-level variables captured by async functions (need to be static fields)
+    // Top-level variables captured by async functions (need to be static fields).
+    // Union across all modules; kept for closure analysis and as a lookup source
+    // when building module-scoped snapshots. Emission contexts do NOT use this
+    // dict directly — see _moduleTopLevelStaticVars.
     private readonly Dictionary<string, FieldBuilder> _topLevelStaticVars = [];
+
+    // Per-module top-level var/const fields (non-captured only). Captured vars
+    // live on the shared entry-point display class. This split scopes plain
+    // top-level bindings correctly — a `const foo` in main.ts no longer leaks
+    // into lib.ts's resolver.
+    private readonly Dictionary<string, Dictionary<string, FieldBuilder>> _moduleTopLevelStaticVars = [];
 
     // Entry point
     private MethodBuilder? _entryPoint;
@@ -383,10 +393,27 @@ public partial class ILCompiler
         {
             if (stmt is Stmt.Import import && !import.IsTypeOnly)
             {
-                // Check if the import path is a built-in module
+                // Record every imported local name — call handlers for globally-
+                // intercepted names (TimerHandler, FetchHandler) need to know
+                // when a name is imported to avoid shadowing stdlib TS re-exports.
+                if (import.DefaultImport != null) _importedNames.Add(import.DefaultImport.Lexeme);
+                if (import.NamespaceImport != null) _importedNames.Add(import.NamespaceImport.Lexeme);
+                if (import.NamedImports != null)
+                {
+                    foreach (var spec in import.NamedImports.Where(s => !s.IsTypeOnly))
+                    {
+                        _importedNames.Add(spec.LocalName?.Lexeme ?? spec.Imported.Lexeme);
+                    }
+                }
+
+                // Check if the import path is a built-in module or an stdlib-internal
+                // primitive. Both dispatch through BuiltInModuleEmitterRegistry — the
+                // primitive case's key is the full specifier (e.g. "primitive:os").
                 string? builtInModuleName = Runtime.BuiltIns.Modules.BuiltInModuleRegistry.IsBuiltIn(import.ModulePath)
                     ? import.ModulePath  // Use the module path directly as the module name
-                    : Runtime.BuiltIns.Modules.BuiltInModuleRegistry.GetModuleName(import.ModulePath);  // Try sentinel path
+                    : Modules.Stdlib.PrimitiveRegistry.IsPrimitive(import.ModulePath)
+                        ? import.ModulePath  // "primitive:os" is its own emitter key
+                        : Runtime.BuiltIns.Modules.BuiltInModuleRegistry.GetModuleName(import.ModulePath);  // Try sentinel path
                 if (builtInModuleName != null)
                 {
                     // Default import: import os from 'os' -> os maps to "os"
@@ -638,24 +665,32 @@ public partial class ILCompiler
         _typeEmitterRegistry.RegisterStatic("Iterator", new IteratorStaticEmitter());
 
         // Built-in module emitters
-        _builtInModuleEmitterRegistry.Register(new PathModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new OsModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new FsModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new QuerystringModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new AssertModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new UrlModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new ProcessModuleEmitter());
+        // "path"         — migrated to stdlib/node/path.ts (pure-TS, uses primitive:process for cwd).
+        // "querystring"  — migrated to stdlib/node/querystring.ts.
+        // "assert"       — migrated to stdlib/node/assert.ts (pure-logic leaf).
+        // "url"          — migrated to stdlib/node/url.ts (full WHATWG state machine).
+        // "process"      — migrated to stdlib/node/process.ts which imports from primitive:process.
+        //   ProcessModuleEmitter remains, registered only under the primitive specifier.
+        var processEmitter = new ProcessModuleEmitter();
+        _builtInModuleEmitterRegistry.RegisterAlias("primitive:process", processEmitter);
         _builtInModuleEmitterRegistry.Register(new CryptoModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new UtilModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new ReadlineModuleEmitter());
+        // "util" — migrated to stdlib/node/util.ts (pure-TS port).
+        // "readline" — migrated to stdlib/node/readline.ts; emitter registered under primitive:readline only.
+        _builtInModuleEmitterRegistry.Register(new ReadlinePrimitiveEmitter());
         _builtInModuleEmitterRegistry.Register(new ChildProcessModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new BufferModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new ZlibModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new EventsModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new TimersModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new TimersPromisesModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new StringDecoderModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new PerfHooksModuleEmitter());
+        // "events" — migrated to stdlib/node/events.ts (pure-TS EventEmitter).
+        // "timers" and "timers/promises" migrated to stdlib/node/timers{,/promises}.ts
+        //   (TS facades over primitive:timers and primitive:timers/promises respectively).
+        _builtInModuleEmitterRegistry.Register(new TimersPrimitiveEmitter());
+        _builtInModuleEmitterRegistry.Register(new TimersPromisesPrimitiveEmitter());
+        // "string_decoder" — migrated to stdlib/node/string_decoder.ts.
+        // "perf_hooks" — migrated to stdlib/node/perf_hooks.ts (pure-TS over primitive:perf).
+        //   Only the narrow now() method needs host access; mark/measure/observer are TS.
+        _builtInModuleEmitterRegistry.Register(new PerfPrimitiveEmitter());
         _builtInModuleEmitterRegistry.Register(new StreamModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new StreamPromisesModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new StreamWebModuleEmitter());
@@ -669,8 +704,10 @@ public partial class ILCompiler
         _builtInModuleEmitterRegistry.Register(new DgramModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new ClusterModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new VmModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new AsyncHooksModuleEmitter());
-        _builtInModuleEmitterRegistry.Register(new TtyModuleEmitter());
+        // "async_hooks" migrated to stdlib/node/async_hooks.ts (TS class over primitive:async_hooks).
+        _builtInModuleEmitterRegistry.Register(new AsyncHooksPrimitiveEmitter());
+        // "tty" migrated to stdlib/node/tty.ts (pure-TS over primitive:tty).
+        _builtInModuleEmitterRegistry.Register(new TtyPrimitiveEmitter());
 
         // https delegates to http emitter
         var httpsEmitter = new HttpModuleEmitter();
@@ -700,7 +737,14 @@ public partial class ILCompiler
         Phase3_CreateProgramType();
         PreScanBuiltInModuleImports(allStatements);
         ModulePhase4_DefineModuleTypes(modules);
-        DefineTopLevelCapturedVariables(allStatements);
+        // Captured top-level vars continue to share the entry-point display class
+        // (script-compatible closure semantics). Non-captured vars are per-module
+        // so ordinary import/export name collisions no longer leak scope.
+        AnalyzeCapturedTopLevelVars(allStatements);
+        foreach (var m in modules)
+        {
+            DefineModuleScopedTopLevelStaticFields(m.Statements, m.Path);
+        }
         ModulePhase5_DefineDeclarations(modules);
         InitializeTypedInterop();
         InitializeTypeEmitterRegistries();
@@ -1034,9 +1078,22 @@ public partial class ILCompiler
     /// </remarks>
     private void DefineTopLevelCapturedVariables(List<Stmt> statements)
     {
-        // First, identify all top-level variable names
+        // Single-file compile path — treat the statements as one "module" with no path.
+        AnalyzeCapturedTopLevelVars(statements);
+        DefineModuleScopedTopLevelStaticFields(statements, modulePath: null);
+    }
+
+    /// <summary>
+    /// Cross-module pass: populates <see cref="_ClosureState.CapturedTopLevelVars"/>
+    /// and defines the shared entry-point display class. Captured top-level vars
+    /// are kept in a single cross-module set by design — closures in one module
+    /// may capture vars from another during script-style scope merging; two
+    /// modules are not expected to capture identically-named locals.
+    /// </summary>
+    private void AnalyzeCapturedTopLevelVars(List<Stmt> allStatements)
+    {
         var allTopLevelVars = new HashSet<string>();
-        foreach (var stmt in statements)
+        foreach (var stmt in allStatements)
         {
             string? varName = stmt switch
             {
@@ -1044,13 +1101,12 @@ public partial class ILCompiler
                 Stmt.Const c => c.Name.Lexeme,
                 _ => null
             };
-            if (varName != null && !_topLevelStaticVars.ContainsKey(varName))
+            if (varName != null)
             {
                 allTopLevelVars.Add(varName);
             }
         }
 
-        // Use ClosureAnalyzer to identify which variables are captured
         foreach (var varName in allTopLevelVars)
         {
             if (_closures.Analyzer.IsVariableCaptured(varName))
@@ -1059,15 +1115,13 @@ public partial class ILCompiler
             }
         }
 
-        // Create entry-point display class if there are captured variables
-        if (_closures.CapturedTopLevelVars.Count > 0)
+        if (_closures.CapturedTopLevelVars.Count > 0 && _closures.EntryPointDisplayClass == null)
         {
             var displayClass = _moduleBuilder.DefineType(
                 "<>c__EntryPointDisplayClass",
                 TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
                 _types.Object);
 
-            // Define fields for each captured variable
             foreach (var varName in _closures.CapturedTopLevelVars)
             {
                 var field = displayClass.DefineField(
@@ -1077,7 +1131,6 @@ public partial class ILCompiler
                 _closures.EntryPointDisplayClassFields[varName] = field;
             }
 
-            // Define default constructor
             var ctor = displayClass.DefineConstructor(
                 MethodAttributes.Public,
                 CallingConventions.Standard,
@@ -1090,25 +1143,124 @@ public partial class ILCompiler
             _closures.EntryPointDisplayClass = displayClass;
             _closures.EntryPointDisplayClassCtor = ctor;
 
-            // Define a static field to hold the display class instance
-            // This allows module init methods to access the same display class
             _closures.EntryPointDisplayClassStaticField = _programType.DefineField(
                 "$entryPointDC",
                 displayClass,
                 FieldAttributes.Public | FieldAttributes.Static);
         }
+    }
 
-        // Define static fields for non-captured variables only
-        foreach (var varName in allTopLevelVars)
+    /// <summary>
+    /// Per-module pass: defines static fields for non-captured top-level
+    /// var/const declarations and records them in
+    /// <see cref="_moduleTopLevelStaticVars"/>. Captured vars are handled by
+    /// <see cref="AnalyzeCapturedTopLevelVars"/> and live on the shared
+    /// entry-point display class.
+    /// </summary>
+    /// <param name="modulePath">The module this statement set belongs to, or
+    /// <c>null</c> for single-file compilation (which shares a global scope).</param>
+    private void DefineModuleScopedTopLevelStaticFields(List<Stmt> statements, string? modulePath)
+    {
+        Dictionary<string, FieldBuilder>? moduleDict = null;
+        if (modulePath != null)
         {
-            if (!_closures.CapturedTopLevelVars.Contains(varName))
+            if (!_moduleTopLevelStaticVars.TryGetValue(modulePath, out moduleDict))
             {
-                var field = _programType.DefineField(
-                    $"$topLevel_{varName}",
-                    _types.Object,
-                    FieldAttributes.Public | FieldAttributes.Static);
-                _topLevelStaticVars[varName] = field;
+                moduleDict = new Dictionary<string, FieldBuilder>();
+                _moduleTopLevelStaticVars[modulePath] = moduleDict;
             }
         }
+
+        foreach (var stmt in statements)
+        {
+            string? varName = stmt switch
+            {
+                Stmt.Var v => v.Name.Lexeme,
+                Stmt.Const c => c.Name.Lexeme,
+                _ => null
+            };
+            if (varName == null || _closures.CapturedTopLevelVars.Contains(varName)) continue;
+
+            // Each module gets its own field, so two modules that both declare
+            // `const foo` have independent storage. Field names are qualified
+            // by module when a path is present; script mode keeps unqualified
+            // names since scripts intentionally share global scope.
+            string fieldName = modulePath == null
+                ? $"$topLevel_{varName}"
+                : $"$topLevel_{SanitizeModuleForField(modulePath)}_{varName}";
+
+            var field = _programType.DefineField(
+                fieldName,
+                _types.Object,
+                FieldAttributes.Public | FieldAttributes.Static);
+
+            // The global dict (_topLevelStaticVars) is last-write-wins by name. That's
+            // only consulted for captured-var dispatch via name, which this path skips
+            // (we `continue` above when the var is captured). For non-captured vars,
+            // resolution goes through ctx.TopLevelStaticVars which is module-scoped.
+            _topLevelStaticVars[varName] = field;
+            if (moduleDict != null)
+            {
+                moduleDict[varName] = field;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Produces a field-name-safe fragment from a module path. Used to
+    /// disambiguate per-module static fields (e.g. two modules both declaring
+    /// <c>const foo</c>).
+    /// </summary>
+    private static string SanitizeModuleForField(string modulePath)
+    {
+        var chars = new char[modulePath.Length];
+        for (int i = 0; i < modulePath.Length; i++)
+        {
+            char c = modulePath[i];
+            chars[i] = char.IsLetterOrDigit(c) ? c : '_';
+        }
+        return new string(chars);
+    }
+
+    /// <summary>
+    /// Builds a fresh dict of top-level static vars visible to code emitted
+    /// for <paramref name="modulePath"/>. Merges this module's var/const fields
+    /// with its import fields. Returns <c>null</c> when there's nothing to expose.
+    /// </summary>
+    /// <remarks>
+    /// Always return a new dict — never share a reference across emission
+    /// contexts. Mutation by emitters (e.g. <see cref="EmitModuleInit"/> adding
+    /// import fields after the fact) must not leak into other modules.
+    /// </remarks>
+    private Dictionary<string, FieldBuilder>? BuildTopLevelStaticVarsForModule(string? modulePath)
+    {
+        Dictionary<string, FieldBuilder>? result = null;
+
+        if (modulePath != null)
+        {
+            if (_moduleTopLevelStaticVars.TryGetValue(modulePath, out var moduleVars))
+            {
+                foreach (var (name, field) in moduleVars)
+                {
+                    result ??= new Dictionary<string, FieldBuilder>();
+                    result[name] = field;
+                }
+            }
+            if (_modules.ImportFields.TryGetValue(modulePath, out var imports))
+            {
+                foreach (var (name, field) in imports)
+                {
+                    result ??= new Dictionary<string, FieldBuilder>();
+                    result[name] = field;
+                }
+            }
+        }
+        else if (_topLevelStaticVars.Count > 0)
+        {
+            // Single-file / script-style: no per-module scoping — expose the global union.
+            result = new Dictionary<string, FieldBuilder>(_topLevelStaticVars);
+        }
+
+        return result;
     }
 }

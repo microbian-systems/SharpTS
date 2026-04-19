@@ -38,8 +38,8 @@ public static class BuiltInConstructorFactory
         [BuiltInNames.EventEmitter] = _ => new SharpTSEventEmitter(),
         [BuiltInNames.AbortController] = _ => new SharpTSAbortController(),
         [BuiltInNames.Headers] = CreateHeaders,
-        [BuiltInNames.URL] = CreateURL,
-        [BuiltInNames.URLSearchParams] = CreateURLSearchParams,
+        // URL / URLSearchParams — migrated to stdlib/node/url.ts; no built-in
+        // global constructor. Users must `import { URL } from 'url'`.
         [BuiltInNames.Proxy] = args =>
         {
             if (args.Count != 2)
@@ -50,6 +50,16 @@ public static class BuiltInConstructorFactory
         [BuiltInNames.Response] = CreateResponse,
         [BuiltInNames.ByteLengthQueuingStrategy] = CreateByteLengthQueuingStrategy,
         [BuiltInNames.CountQueuingStrategy] = CreateCountQueuingStrategy,
+        // TextEncoder / TextDecoder — registered here so bare references
+        // (`const E = TextEncoder`, `x instanceof TextEncoder`, and stdlib
+        // re-exports in util.ts) resolve. `new TextEncoder()` inside user
+        // code continues to use the same underlying runtime type.
+        [BuiltInNames.TextEncoder] = _ => new SharpTSTextEncoder(),
+        [BuiltInNames.TextDecoder] = args =>
+        {
+            var encoding = args.Count > 0 ? args[0]?.ToString() ?? "utf-8" : "utf-8";
+            return new SharpTSTextDecoder(encoding, fatal: false, ignoreBOM: false);
+        },
     };
 
     /// <summary>
@@ -218,54 +228,6 @@ public static class BuiltInConstructorFactory
             return SharpTSSet.FromArray(valuesArray);
 
         return new SharpTSSet();
-    }
-
-    private static object CreateURL(IReadOnlyList<object?> args)
-    {
-        if (args.Count == 0)
-            throw new Exception("Failed to construct 'URL': 1 argument required");
-
-        var urlString = args[0]?.ToString() ?? "";
-
-        if (args.Count > 1 && args[1] is { } arg1)
-        {
-            var baseUrl = arg1.ToString() ?? "";
-            return new SharpTSURL(urlString, baseUrl);
-        }
-
-        return new SharpTSURL(urlString);
-    }
-
-    private static object CreateURLSearchParams(IReadOnlyList<object?> args)
-    {
-        if (args.Count == 0 || args[0] is not { } arg0)
-            return new SharpTSURLSearchParams();
-
-        if (arg0 is string s)
-            return new SharpTSURLSearchParams(s.TrimStart('?'));
-
-        // Handle object/dictionary initialization
-        if (arg0 is SharpTSObject obj)
-        {
-            var searchParams = new SharpTSURLSearchParams();
-            foreach (var kvp in obj.Fields)
-            {
-                searchParams.Append(kvp.Key, kvp.Value?.ToString() ?? "");
-            }
-            return searchParams;
-        }
-
-        if (arg0 is Dictionary<string, object?> dict)
-        {
-            var searchParams = new SharpTSURLSearchParams();
-            foreach (var kvp in dict)
-            {
-                searchParams.Append(kvp.Key, kvp.Value?.ToString() ?? "");
-            }
-            return searchParams;
-        }
-
-        return new SharpTSURLSearchParams(arg0.ToString() ?? "");
     }
 
     private static object CreateByteLengthQueuingStrategy(IReadOnlyList<object?> args)

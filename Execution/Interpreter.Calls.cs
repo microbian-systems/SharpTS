@@ -118,12 +118,13 @@ public partial class Interpreter
         }
 
         // Handle global functions via registry (Symbol, BigInt, parseInt, setTimeout, Error types, etc.)
-        // Skip if the variable is shadowed by a module import (e.g., timers/promises setTimeout)
+        // Skip if the variable is shadowed by a module import (e.g., stdlib 'timers' / 'timers/promises'
+        // re-exports setTimeout as a SharpTSFunction, which implements ISharpTSCallable).
         if (call.Callee is Expr.Variable globalVar)
         {
             var gvName = globalVar.Name.Lexeme;
             bool isShadowed = _environment.TryGet(gvName, out var shadowVal) &&
-                shadowVal.ToObject() is ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
+                shadowVal.ToObject() is ISharpTSCallable or ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
             if (!isShadowed)
             {
                 if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
@@ -286,12 +287,13 @@ public partial class Interpreter
         }
 
         // Handle global functions via registry (Symbol, BigInt, parseInt, setTimeout, Error types, etc.)
-        // Skip if the variable is shadowed by a module import (e.g., timers/promises setTimeout)
+        // Skip if the variable is shadowed by a module import (e.g., stdlib 'timers' / 'timers/promises'
+        // re-exports setTimeout as a SharpTSFunction, which implements ISharpTSCallable).
         if (call.Callee is Expr.Variable globalVar)
         {
             var gvName = globalVar.Name.Lexeme;
             bool isShadowed = _environment.TryGet(gvName, out var shadowVal) &&
-                shadowVal.ToObject() is ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
+                shadowVal.ToObject() is ISharpTSCallable or ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
             if (!isShadowed)
             {
                 if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
@@ -457,7 +459,11 @@ public partial class Interpreter
             OperatorDescriptor.Plus => RuntimeValue.FromNumber((double)left! + (double)right!),
             OperatorDescriptor.Arithmetic => RuntimeValue.FromNumber(EvaluateArithmetic(op.Type, (double)left!, (double)right!)),
             OperatorDescriptor.Power => RuntimeValue.FromNumber(Math.Pow((double)left!, (double)right!)),
-            OperatorDescriptor.Comparison => RuntimeValue.FromBoolean(EvaluateComparison(op.Type, (double)left!, (double)right!)),
+            // JS AbstractRelationalComparison: string vs string → lexicographic.
+            OperatorDescriptor.Comparison =>
+                left is string ls && right is string rs
+                    ? RuntimeValue.FromBoolean(EvaluateStringComparison(op.Type, ls, rs))
+                    : RuntimeValue.FromBoolean(EvaluateComparison(op.Type, (double)left!, (double)right!)),
             OperatorDescriptor.Equality eq => RuntimeValue.FromBoolean(EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated)),
             OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
                 RuntimeValue.FromNumber(EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right))),
@@ -490,7 +496,12 @@ public partial class Interpreter
             OperatorDescriptor.Plus => EvaluatePlus(left, right),
             OperatorDescriptor.Arithmetic => EvaluateArithmetic(op.Type, (double)left!, (double)right!),
             OperatorDescriptor.Power => Math.Pow((double)left!, (double)right!),
-            OperatorDescriptor.Comparison => EvaluateComparison(op.Type, (double)left!, (double)right!),
+            // JS AbstractRelationalComparison: if both are strings, compare
+            // lexicographically; otherwise coerce to number.
+            OperatorDescriptor.Comparison =>
+                left is string ls && right is string rs
+                    ? EvaluateStringComparison(op.Type, ls, rs)
+                    : EvaluateComparison(op.Type, (double)left!, (double)right!),
             OperatorDescriptor.Equality eq => EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated),
             OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
                 EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right)),
@@ -524,6 +535,23 @@ public partial class Interpreter
         TokenType.GREATER_EQUAL => left >= right,
         _ => throw new InterpreterException($"Unknown comparison operator: {op}")
     };
+
+    /// <summary>
+    /// Evaluates string relational comparison using lexicographic ordering
+    /// (JS AbstractRelationalComparison when both operands are strings).
+    /// </summary>
+    private static bool EvaluateStringComparison(TokenType op, string left, string right)
+    {
+        int cmp = string.CompareOrdinal(left, right);
+        return op switch
+        {
+            TokenType.LESS => cmp < 0,
+            TokenType.GREATER => cmp > 0,
+            TokenType.LESS_EQUAL => cmp <= 0,
+            TokenType.GREATER_EQUAL => cmp >= 0,
+            _ => throw new InterpreterException($"Unknown comparison operator: {op}")
+        };
+    }
 
     /// <summary>
     /// Evaluates equality operators (==, ===, !=, !==).
@@ -632,9 +660,19 @@ public partial class Interpreter
                 "WeakSet" => left is SharpTSWeakSet,
                 "Date" => left is SharpTSDate,
                 "RegExp" => left is SharpTSRegExp,
+                "TextEncoder" => left is SharpTSTextEncoder,
+                "TextDecoder" => left is SharpTSTextDecoder,
+                "Promise" => left is SharpTSPromise || left is System.Threading.Tasks.Task,
+                "Buffer" => left is SharpTSBuffer,
                 _ => false
             };
         }
+
+        // Buffer is registered as a namespace singleton (SharpTSBufferConstructor),
+        // not as a SharpTSBuiltInConstructor, so `x instanceof Buffer` lands here
+        // with the singleton object on the RHS. Match it explicitly.
+        if (right is SharpTSBufferConstructor)
+            return left is SharpTSBuffer;
 
         if (right is not SharpTSClass targetClass)
             return false;

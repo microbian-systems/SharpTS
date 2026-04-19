@@ -57,8 +57,13 @@ public static class BuiltInTypes
             "toUpperCase" => new TypeInfo.Function([], StringType),
             "toLowerCase" => new TypeInfo.Function([], StringType),
             "trim" => new TypeInfo.Function([], StringType),
-            "replace" => new TypeInfo.Function([StringType, StringType], StringType),
-            "split" => new TypeInfo.Function([StringType, NumberType], new TypeInfo.Array(StringType), RequiredParams: 1), // limit is optional
+            // replace(searchValue, replaceValue) accepts string | RegExp for the
+            // pattern and string | (match, ...groups) => string for the value.
+            // Use Any for both to cover every JS overload the interpreter and
+            // compiler already support at runtime.
+            "replace" => new TypeInfo.Function([AnyType, AnyType], StringType),
+            // split accepts string | RegExp for the separator.
+            "split" => new TypeInfo.Function([AnyType, NumberType], new TypeInfo.Array(StringType), RequiredParams: 1), // limit is optional
             "includes" => new TypeInfo.Function([StringType], BooleanType),
             "startsWith" => new TypeInfo.Function([StringType], BooleanType),
             "endsWith" => new TypeInfo.Function([StringType], BooleanType),
@@ -72,7 +77,8 @@ public static class BuiltInTypes
             "lastIndexOf" => new TypeInfo.Function([StringType], NumberType),
             "trimStart" => new TypeInfo.Function([], StringType),
             "trimEnd" => new TypeInfo.Function([], StringType),
-            "replaceAll" => new TypeInfo.Function([StringType, StringType], StringType),
+            // replaceAll accepts string | RegExp for the pattern.
+            "replaceAll" => new TypeInfo.Function([AnyType, AnyType], StringType),
             "at" => new TypeInfo.Function([NumberType], StringType), // returns string | undefined in TS
             "normalize" => new TypeInfo.Function([StringType], StringType, RequiredParams: 0),
             "localeCompare" => new TypeInfo.Function([StringType], NumberType),
@@ -92,7 +98,7 @@ public static class BuiltInTypes
             "push" => new TypeInfo.Function([new TypeInfo.Array(elementType)], NumberType, RequiredParams: 1, HasRestParam: true), // variadic: push(...items: T[])
             "pop" => new TypeInfo.Function([], elementType),
             "shift" => new TypeInfo.Function([], elementType),
-            "unshift" => new TypeInfo.Function([elementType], NumberType),
+            "unshift" => new TypeInfo.Function([new TypeInfo.Array(elementType)], NumberType, RequiredParams: 0, HasRestParam: true), // variadic: unshift(...items: T[])
             "slice" => new TypeInfo.Function([NumberType, NumberType], new TypeInfo.Array(elementType), RequiredParams: 0), // start/end are optional
             "map" => new TypeInfo.Function(
                 [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 1)],

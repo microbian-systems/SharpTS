@@ -82,6 +82,13 @@ public partial class CompilationContext
     // Example: import { readFile } from 'fs/promises' -> readFile -> ("fs/promises", "readFile")
     public Dictionary<string, (string ModuleName, string MethodName)>? BuiltInModuleMethodBindings { get; set; }
 
+    // All imported names from any module (builtin, primitive, stdlib TS, or user).
+    // Call handlers for globally-intercepted names (TimerHandler, FetchHandler, etc.)
+    // check this set to avoid shadowing imports. Stdlib TS modules like
+    // 'timers' re-export setTimeout/setInterval as TS functions that must
+    // win over the global handler.
+    public HashSet<string>? ImportedNames { get; set; }
+
     // ============================================
     // Registry Services
     // ============================================

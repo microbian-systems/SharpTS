@@ -81,6 +81,10 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.ConcatArrays);
         }
+        // The stack now holds a List<object?> reference. Reset the stack-type
+        // tracker so a subsequent EmitBoxIfNeeded doesn't reinterpret the
+        // reference as whatever primitive the previous expression left behind.
+        SetStackUnknown();
     }
 
     protected override void EmitObjectLiteral(Expr.ObjectLiteral o)
@@ -148,6 +152,13 @@ public partial class ILEmitter
 
             // Result is already Dictionary<string, object?>, no CreateObject needed
         }
+        // The stack now holds a Dictionary reference (or $Object wrapper).
+        // Reset the stack-type tracker so a subsequent EmitBoxIfNeeded doesn't
+        // reinterpret the reference as whatever primitive the previous
+        // expression left behind — e.g. `const x = 0; const y = {};` used to
+        // emit `Box Double` on the fresh Dictionary pointer, producing a
+        // double whose bits were the reinterpreted heap address.
+        SetStackUnknown();
     }
 
     /// <summary>
@@ -211,8 +222,10 @@ public partial class ILEmitter
             }
         }
 
-        // Leave the $Object on the stack
+        // Leave the $Object on the stack. Reset the stack-type tracker —
+        // see EmitObjectLiteral for the rationale.
         IL.Emit(OpCodes.Ldloc, objLocal);
+        SetStackUnknown();
     }
 
     /// <summary>

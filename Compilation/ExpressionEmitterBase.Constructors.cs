@@ -129,11 +129,10 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
-            case "AsyncLocalStorage":
-                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSAsyncLocalStorageCtor);
-                SetStackUnknown();
-                return true;
-
+            // AsyncLocalStorage — no longer pattern-matched globally. Users must
+            // `import { AsyncLocalStorage } from 'async_hooks'` (ESM-strict);
+            // the class is a pure-TS class in stdlib/node/async_hooks.ts that
+            // wraps the underlying $AsyncLocalStorage instance via primitive:async_hooks.
             case "Resolver":
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.DnsResolverFactory);
                 SetStackUnknown();
@@ -233,19 +232,13 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
-            case "URLSearchParams":
-                EmitBoxedArgOrNull(arguments, 0);
-                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSUrlSearchParamsCtor);
-                SetStackUnknown();
-                return true;
+            // URL / URLSearchParams — no compile-time built-in. Users must
+            // `import { URL, URLSearchParams } from 'url'`; `new URL(...)` then
+            // resolves through normal variable lookup to the TS stdlib class.
 
             // --- Two boxed args (null if missing) ---
             case "Proxy":
                 EmitTwoArgConstructor(arguments, Ctx.Runtime!.CreateProxy);
-                return true;
-
-            case "URL":
-                EmitTwoArgConstructor(arguments, Ctx.Runtime!.TSUrlCtor);
                 return true;
 
             case "Request":
@@ -319,38 +312,13 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
-            // --- StringDecoder ---
-            case "StringDecoder":
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                    IL.Emit(OpCodes.Call, Ctx.Runtime!.Stringify);
-                }
-                else
-                {
-                    IL.Emit(OpCodes.Ldstr, "utf8");
-                }
-                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSStringDecoderCtor);
-                SetStackUnknown();
-                return true;
+            // StringDecoder migrated to stdlib/node/string_decoder.ts — user's `new StringDecoder()`
+            // now resolves to the TS class via the standard user-class constructor path.
 
             // --- PerformanceObserver ---
-            case "PerformanceObserver":
-                IL.Emit(OpCodes.Ldc_I4_1);
-                IL.Emit(OpCodes.Newarr, typeof(object));
-                if (arguments.Count > 0)
-                {
-                    IL.Emit(OpCodes.Dup);
-                    IL.Emit(OpCodes.Ldc_I4_0);
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                    IL.Emit(OpCodes.Stelem_Ref);
-                }
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.PerfHooksCreateObserver);
-                SetStackUnknown();
-                return true;
-
+            // PerformanceObserver — no longer pattern-matched globally. Users must
+            // `import { PerformanceObserver } from 'perf_hooks'` (ESM-strict);
+            // the class is a pure-TS class in stdlib/node/perf_hooks.ts.
             // --- SharedArrayBuffer / ArrayBuffer ---
             case "SharedArrayBuffer":
                 if (arguments.Count == 0)
@@ -492,7 +460,7 @@ public abstract partial class ExpressionEmitterBase
         {
             "TextEncoder" => TryEmitBuiltInConstructor("TextEncoder", arguments),
             "TextDecoder" => TryEmitBuiltInConstructor("TextDecoder", arguments),
-            "StringDecoder" => TryEmitBuiltInConstructor("StringDecoder", arguments),
+            // "StringDecoder" — migrated to stdlib/node/string_decoder.ts.
             "PerformanceObserver" => TryEmitBuiltInConstructor("PerformanceObserver", arguments),
             "BroadcastChannel" => TryEmitBuiltInConstructor("BroadcastChannel", arguments),
             "ReadableStream" => TryEmitBuiltInConstructor("ReadableStream", arguments),

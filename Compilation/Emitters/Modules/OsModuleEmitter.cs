@@ -11,7 +11,9 @@ namespace SharpTS.Compilation.Emitters.Modules;
 /// </summary>
 public sealed class OsModuleEmitter : IBuiltInModuleEmitter
 {
-    public string ModuleName => "os";
+    // Registered under the primitive:os key — the user-facing 'os' specifier is
+    // served by stdlib/node/os.ts, which imports from this primitive.
+    public string ModuleName => "primitive:os";
 
     private static readonly string[] _exportedMembers =
     [

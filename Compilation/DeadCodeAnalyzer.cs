@@ -370,11 +370,29 @@ public class DeadCodeAnalyzer
     /// <summary>
     /// Determine if a type always/never matches a typeof result.
     /// </summary>
+    /// <returns>
+    /// <c>true</c> if the type <em>always</em> matches the typeof result, <c>false</c> if it
+    /// <em>never</em> matches, <c>null</c> if it's indeterminate (e.g., the type is <c>any</c>
+    /// or <c>unknown</c>, or a union whose members give mixed answers).
+    /// </returns>
+    /// <remarks>
+    /// Indeterminate types MUST return <c>null</c> so the dead-code analyzer doesn't fold
+    /// away branches that are actually reachable at runtime. Returning <c>false</c> for
+    /// <c>any</c> was a latent bug: <c>typeof anyVar !== 'object'</c> then folded to
+    /// always-true, erasing the entire if-branch from emitted IL.
+    /// </remarks>
     private bool? EvaluateTypeAgainstTypeof(TypeInfo type, string typeofResult)
     {
+        // Indeterminate types: runtime value could be anything, so typeof could match or not.
+        if (type is TypeInfo.Any or TypeInfo.Unknown or TypeInfo.Inferred)
+            return null;
+
         // For union types, check if ALL or NONE match
         if (type is TypeInfo.Union union)
         {
+            // If any member is indeterminate, the whole result is indeterminate.
+            if (union.FlattenedTypes.Any(t => t is TypeInfo.Any or TypeInfo.Unknown or TypeInfo.Inferred))
+                return null;
             var matches = union.FlattenedTypes.Select(t => TypeMatchesTypeof(t, typeofResult)).ToList();
             if (matches.All(m => m)) return true;   // All match
             if (matches.All(m => !m)) return false; // None match

@@ -747,4 +747,196 @@ public partial class RuntimeEmitter
         il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);
     }
+
+    /// <summary>
+    /// Phase 1: Define $BoundMapMethod type, fields, and constructor.
+    /// Wraps a Dictionary<object,object> + method name pair so property access like
+    /// `map.get` yields a callable that survives cross-module boundaries and reports
+    /// `typeof === 'function'`. Mirrors $BoundArrayMethod.
+    /// Must be called before EmitRuntimeClass so GetMapProperty can use the constructor.
+    /// </summary>
+    internal void EmitBoundMapMethodTypeDefinition(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$BoundMapMethod",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.Object
+        );
+        runtime.BoundMapMethodType = typeBuilder;
+
+        // Assembly visibility so GetProperty's callable-wrapper handler can read
+        // `_methodName` to return the method name for `map.get.name === 'get'`.
+        var mapField = typeBuilder.DefineField("_map", _types.DictionaryObjectObject, FieldAttributes.Assembly);
+        var methodNameField = typeBuilder.DefineField("_methodName", _types.String, FieldAttributes.Assembly);
+        runtime.BoundMapMethodMapField = mapField;
+        runtime.BoundMapMethodNameField = methodNameField;
+
+        var ctorBuilder = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.DictionaryObjectObject, _types.String]
+        );
+        runtime.BoundMapMethodCtor = ctorBuilder;
+
+        var ctorIL = ctorBuilder.GetILGenerator();
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Stfld, mapField);
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_2);
+        ctorIL.Emit(OpCodes.Stfld, methodNameField);
+        ctorIL.Emit(OpCodes.Ret);
+
+        var invokeBuilder = typeBuilder.DefineMethod(
+            "Invoke",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.ObjectArray]
+        );
+        runtime.BoundMapMethodInvoke = invokeBuilder;
+    }
+
+    /// <summary>
+    /// Phase 2: Emit Invoke body for $BoundMapMethod and create the type.
+    /// Must be called after EmitRuntimeClass so Map* runtime methods exist.
+    /// </summary>
+    internal void EmitBoundMapMethodFinalize(EmittedRuntime runtime)
+    {
+        var typeBuilder = runtime.BoundMapMethodType;
+        var mapField = runtime.BoundMapMethodMapField;
+        var methodNameField = runtime.BoundMapMethodNameField;
+        var invokeBuilder = runtime.BoundMapMethodInvoke;
+
+        var il = invokeBuilder.GetILGenerator();
+        var endLabel = il.DefineLabel();
+
+        // Helper: emit "if (_methodName == name) { push _map; ...body...; goto endLabel; }"
+        void EmitCase(string methodName, Action emitBody)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, methodNameField);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            emitBody();
+
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+
+        // Helper: load args[i] or null if i >= args.Length
+        void EmitArgOrNull(int index)
+        {
+            var elseLabel = il.DefineLabel();
+            var doneLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Ldc_I4, index);
+            il.Emit(OpCodes.Ble, elseLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4, index);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Br, doneLabel);
+            il.MarkLabel(elseLabel);
+            il.Emit(OpCodes.Ldnull);
+            il.MarkLabel(doneLabel);
+        }
+
+        // Each case loads _map then arg(s), calls the helper, and leaves one value on stack.
+
+        // get(key) -> value
+        EmitCase("get", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, mapField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.MapGet);
+        });
+
+        // set(key, value) -> map (chainable)
+        EmitCase("set", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, mapField);
+            EmitArgOrNull(0);
+            EmitArgOrNull(1);
+            il.Emit(OpCodes.Call, runtime.MapSet);
+        });
+
+        // has(key) -> boolean
+        EmitCase("has", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, mapField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.MapHas);
+            il.Emit(OpCodes.Box, _types.Boolean);
+        });
+
+        // delete(key) -> boolean
+        EmitCase("delete", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, mapField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.MapDelete);
+            il.Emit(OpCodes.Box, _types.Boolean);
+        });
+
+        // clear() -> undefined
+        EmitCase("clear", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, mapField);
+            il.Emit(OpCodes.Call, runtime.MapClear);
+            il.Emit(OpCodes.Ldnull);
+        });
+
+        // keys() -> iterator
+        EmitCase("keys", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, mapField);
+            il.Emit(OpCodes.Call, runtime.MapKeys);
+        });
+
+        // values() -> iterator
+        EmitCase("values", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, mapField);
+            il.Emit(OpCodes.Call, runtime.MapValues);
+        });
+
+        // entries() -> iterator
+        EmitCase("entries", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, mapField);
+            il.Emit(OpCodes.Call, runtime.MapEntries);
+        });
+
+        // forEach(callback) -> undefined
+        EmitCase("forEach", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, mapField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.MapForEach);
+            il.Emit(OpCodes.Ldnull);
+        });
+
+        // Fallthrough: return null
+        il.Emit(OpCodes.Ldnull);
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ret);
+
+        typeBuilder.CreateType();
+    }
 }

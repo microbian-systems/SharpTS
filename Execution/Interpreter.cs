@@ -1,10 +1,12 @@
 using SharpTS.Modules;
+using SharpTS.Modules.Stdlib;
 using SharpTS.Parsing;
 using SharpTS.Parsing.Visitors;
 using SharpTS.Runtime;
 using SharpTS.Runtime.BuiltIns;
 using SharpTS.Runtime.BuiltIns.Modules;
 using SharpTS.Runtime.BuiltIns.Modules.Interpreter;
+using SharpTS.Runtime.DotNet;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
 using SharpTS.TypeSystem;
@@ -94,7 +96,8 @@ public partial class Interpreter : IDisposable
             BuiltInNames.Math, BuiltInNames.JSON, BuiltInNames.Object, BuiltInNames.Array,
             BuiltInNames.Number, BuiltInNames.String, BuiltInNames.Boolean, BuiltInNames.Symbol,
             BuiltInNames.Console, BuiltInNames.Process, BuiltInNames.GlobalThis,
-            BuiltInNames.Reflect, BuiltInNames.Promise, BuiltInNames.Atomics
+            BuiltInNames.Reflect, BuiltInNames.Promise, BuiltInNames.Atomics,
+            "Buffer",
         ];
         foreach (var name in singletonNames)
         {
@@ -111,6 +114,20 @@ public partial class Interpreter : IDisposable
         {
             if (!globals.ContainsKey(name))
                 globals[name] = new SharpTSBuiltInConstructor(name, factory);
+        }
+
+        // Promise needs a bare-reference global so `x instanceof Promise`,
+        // `typeof Promise === 'function'`, and stdlib modules that carry
+        // Promise as a value can type-check/run. Its namespace is registered
+        // as non-singleton (to preserve special `new Promise(executor)`
+        // handling), so it wasn't picked up by the loops above. Register a
+        // minimal constructor sentinel — `new Promise(executor)` has its
+        // own dedicated path and does not route through this factory.
+        if (!globals.ContainsKey(BuiltInNames.Promise))
+        {
+            globals[BuiltInNames.Promise] = new SharpTSBuiltInConstructor(
+                BuiltInNames.Promise,
+                _ => throw new Exception("Runtime Error: Use 'new Promise(executor)' syntax."));
         }
 
         return globals.ToFrozenDictionary();
@@ -1166,6 +1183,21 @@ public partial class Interpreter : IDisposable
         // Handle built-in modules specially - populate exports from interpreter implementations
         if (module.IsBuiltIn)
         {
+            // Primitive modules (primitive:os, etc.) share dispatch with the C# built-ins
+            // but live in a separate registry that user code cannot import.
+            var primitiveName = PrimitiveRegistry.GetPrimitiveName(module.Path);
+            if (primitiveName != null && PrimitiveModuleValues.HasInterpreterSupport(primitiveName))
+            {
+                var primitiveExports = PrimitiveModuleValues.GetPrimitiveExports(primitiveName);
+                foreach (var (name, value) in primitiveExports)
+                {
+                    moduleInstance.SetExport(name, value);
+                }
+                moduleInstance.DefaultExport = moduleInstance.ExportsAsObject();
+                moduleInstance.IsExecuted = true;
+                return;
+            }
+
             var moduleName = BuiltInModuleRegistry.GetModuleName(module.Path);
             if (moduleName != null && BuiltInModuleValues.HasInterpreterSupport(moduleName))
             {
@@ -1779,6 +1811,14 @@ public partial class Interpreter : IDisposable
 
     internal ExecutionResult VisitClass(Stmt.Class classStmt)
     {
+        // @DotNetType declare class: bind a DotNet wrapper into the environment
+        // instead of creating an empty SharpTSClass. Non-DotNet declare classes still
+        // fall through and produce an empty SharpTSClass for type-only compatibility.
+        if (classStmt.IsDeclare)
+        {
+            if (TryRegisterDotNetType(classStmt)) return ExecutionResult.Success();
+        }
+
         object? superclass = null;
         if (classStmt.SuperclassExpr != null)
         {

@@ -114,17 +114,18 @@ public partial class ILEmitter
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+                    // Don't cast — the regex-aware helper accepts object.
                     EmitExpression(arguments[1]);
                     EmitBoxIfNeeded(arguments[1]);
-                    IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.Stringify);
                 }
                 else
                 {
                     IL.Emit(OpCodes.Ldstr, "");
+                    IL.Emit(OpCodes.Ldnull);
                     IL.Emit(OpCodes.Ldstr, "");
                 }
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.StringReplaceAll);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.StringReplaceAllRegExp);
                 break;
 
             case "split":

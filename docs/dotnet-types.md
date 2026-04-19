@@ -16,7 +16,16 @@ This guide covers **inbound interop** - calling .NET code from TypeScript using 
 ## Prerequisites
 
 - .NET 10.0 SDK
-- Compilation mode (`--compile`) - this feature is available only in compiled execution
+- Decorators enabled (default, or pass `--experimentalDecorators` for Legacy mode)
+
+`@DotNetType` works in **both** execution modes:
+
+| Mode | Notes |
+|------|-------|
+| **Compiled** (`--compile`) | Overload resolution runs at compile time using TypeScript static types. IL-level `Callvirt`/`Newobj` directly invoke the resolved method. |
+| **Interpreted** (default) | Overload resolution runs per call against the actual runtime argument types. Resolved `MethodInfo`s are cached on the wrapper so repeated calls avoid reflection lookup. |
+
+Use `@DotNetOverload(...)` when runtime resolution can't pick the overload you want — see [Overload Hints](#overload-hints).
 
 > **Note:** Decorators are enabled by default (TC39 Stage 3). Use `--experimentalDecorators` for Legacy (Stage 2) decorators, or `--noDecorators` to disable decorator support.
 
@@ -145,6 +154,38 @@ sb.append(true);     // Calls Append(bool)
 2. Lossless conversion (e.g., `number` → `float`)
 3. Narrowing conversion (e.g., `number` → `int`)
 4. Object fallback (any → `object`)
+
+The same cost scale is used in both compiled and interpreted modes, so an overload
+that resolves in one mode resolves the same way in the other — as long as the
+argument types are unambiguous.
+
+### Overload Hints
+
+When a method has multiple overloads that a TypeScript call can't distinguish
+(e.g., you want `ToInt32(int)` instead of the default `ToInt32(double)`), use
+`@DotNetOverload("<signature>")` to pin the target signature:
+
+```typescript
+@DotNetType("System.Convert")
+declare class Convert {
+    // Without the hint, runtime picks ToInt32(double) for a TS number.
+    // The hint narrows to ToInt32(int) — truncates 3.7 to 3 instead of
+    // rounding to 4.
+    @DotNetOverload("int")
+    static toInt32(value: number): number;
+}
+
+console.log(Convert.toInt32(3.7)); // 3
+```
+
+The hint value is a comma-separated list of parameter types matching the
+overload's signature. Recognized aliases: `int`, `long`, `short`, `byte`, `sbyte`,
+`uint`, `ulong`, `ushort`, `float`/`single`, `double`, `decimal`, `bool`/`boolean`,
+`char`, `string`, `object`, plus their `System.*` equivalents. Other types can
+be named by their fully-qualified CLR name.
+
+Use `@DotNetOverload("constructor-sig")` on a declared constructor to pin the
+constructor overload similarly.
 
 ---
 
@@ -443,8 +484,8 @@ The following .NET features are not currently supported:
 |---------|--------|-------|
 | Generic types | Not supported | Cannot declare `List<T>` directly |
 | `ref` / `out` parameters | Not supported | Methods with ref/out params cannot be called |
-| Events | Not supported | Cannot subscribe to .NET events |
-| Delegates | Not supported | Cannot pass callbacks to .NET |
+| Events | Supported (both modes) | Use `addEventListener`/`removeEventListener` — see [Events](#events) |
+| Delegates | Supported (both modes) | TS functions auto-convert to delegate params — see [Delegates](#delegates-and-callbacks) |
 | Indexers | Not supported | Cannot use `obj[index]` syntax |
 | Operators | Not supported | Operator overloads not accessible |
 | Extension methods | Not supported | Must call as static methods |
@@ -455,6 +496,140 @@ The following .NET features are not currently supported:
 For unsupported features, consider:
 1. Creating a C# wrapper class that exposes a simpler API
 2. Using reflection-based interop via compiled TypeScript (see [.NET Integration Guide](dotnet-integration.md))
+
+---
+
+## Delegates and Callbacks
+
+Any TypeScript function can be passed where a .NET method expects a delegate —
+works in both **interpreter** and **compiled** modes.
+The interpreter builds a shim on demand so the delegate's Invoke signature
+round-trips through the TS callable:
+
+```typescript
+@DotNetType("System.Collections.Generic.List`1")
+declare class IntList {
+    constructor();
+    add(item: number): void;
+    forEach(action: (item: number) => void): void;  // Action<int>
+    findAll(predicate: (item: number) => boolean): IntList;  // Predicate<int>
+}
+
+let items = new IntList();
+items.add(1); items.add(2); items.add(3);
+items.forEach((n) => console.log(n));
+```
+
+Supported delegate shapes:
+
+| .NET type | TS shape |
+|-----------|----------|
+| `Action` | `() => void` |
+| `Action<T1…>` | `(a: T1, …) => void` |
+| `Func<TResult>` | `() => TResult` |
+| `Func<T1…, TResult>` | `(a: T1, …) => TResult` |
+| `Predicate<T>` | `(a: T) => boolean` |
+| `EventHandler` | `(sender: any, args: any) => void` |
+| `EventHandler<T>` | `(sender: any, payload: T) => void` |
+
+Incoming .NET values are normalized for TypeScript on entry to the callback
+(integral numerics → `number`, complex objects → wrapped instance). The return
+value is converted back to the delegate's declared return type; a `throw` inside
+the TS callback propagates synchronously to the .NET caller.
+
+### Threading contract
+
+> **Main-thread only.** Delegate shims run the TS callable *on whatever thread
+> invoked the delegate*. The interpreter is not thread-safe, so invoking a shim
+> off the SharpTS event-loop thread (e.g., from a `Timer`, a `Task` continuation,
+> or a background thread) is **undefined behavior** — races, corrupted state, or
+> crashes are possible.
+>
+> A future release may introduce an opt-in marshalling hint (e.g.,
+> `@DotNetCallback("marshal")`) that hops off-thread invocations back to the
+> event loop. Today, keep delegate sinks synchronous and on-thread.
+
+---
+
+## Events
+
+Works in both **interpreter** and **compiled** modes.
+
+TypeScript has no syntax for `+=` on .NET events, so SharpTS exposes a DOM-style
+API on any `@DotNetType`-wrapped instance or class:
+
+```typescript
+@DotNetType("System.Timers.Timer")
+declare class Timer {
+    constructor(interval: number);
+    start(): void;
+    stop(): void;
+    addEventListener(
+        name: string,
+        handler: (sender: any, args: any) => void
+    ): void;
+    removeEventListener(
+        name: string,
+        handler: (sender: any, args: any) => void
+    ): void;
+}
+```
+
+- Event names use the PascalCase .NET name (e.g., `"Elapsed"`, `"StringReceived"`).
+- `addEventListener` looks up the `EventInfo` by name and wires a delegate shim.
+- `removeEventListener` must receive the **same function reference** originally
+  passed to `addEventListener` — the subscription is keyed by that reference so
+  the underlying `RemoveEventHandler` call can find the matching shim.
+- Static events work the same way: `ClassName.addEventListener("Name", handler)`.
+- Subscribing the same `(name, handler)` pair twice is idempotent.
+
+The threading contract above applies: if the .NET event fires from a background
+thread, the handler will be invoked on that thread. Prefer event sources that
+fire on the event-loop thread, or wrap `.NET` APIs in a helper that re-raises
+events on the main thread.
+
+---
+
+## Exception Mapping
+
+When a .NET method called through `@DotNetType` throws, SharpTS translates the
+exception to a JavaScript-style error so `try`/`catch` in TypeScript works naturally.
+The original `.NET` exception is preserved on `e.cause` for diagnostics.
+
+| .NET exception | JS error (`e.name`) |
+|----------------|---------------------|
+| `ArgumentNullException` | `TypeError` |
+| `ArgumentException` | `TypeError` |
+| `InvalidCastException` | `TypeError` |
+| `NullReferenceException` | `TypeError` |
+| `ArgumentOutOfRangeException` | `RangeError` |
+| `IndexOutOfRangeException` | `RangeError` |
+| `OverflowException` | `RangeError` |
+| `DivideByZeroException` | `RangeError` |
+| `FormatException` | `SyntaxError` |
+| *(everything else)* | `Error` |
+
+`TargetInvocationException` is unwrapped before classification, so the mapped
+error reflects the actual failure, not the reflection wrapper.
+
+```typescript
+@DotNetType("System.Guid")
+declare class Guid {
+    static parse(input: string): Guid;
+}
+
+try {
+    Guid.parse("not-a-guid");
+} catch (e) {
+    console.log(e.name);     // "SyntaxError" (FormatException → SyntaxError)
+    console.log(e.message);  // .NET's original message
+    // e.cause holds the original System.FormatException
+}
+```
+
+Currently the mapping is applied in interpreter mode. Compiled mode propagates
+the raw .NET exception — `DotNetExceptionMapper.ClassifyAsJsErrorName` is a
+public entry point so compiled-mode callers can opt into the same classification.
 
 ---
 
@@ -482,12 +657,15 @@ For unsupported features, consider:
 - Decorators are enabled by default. If you used `--noDecorators`, remove that flag.
 - `@DotNetType` is a built-in compiler decorator, not a user-defined one
 
-### Compilation Only
+### Type Not Found at Runtime
 
-**Error:** Feature not available in interpreted mode
+**Error:** `@DotNetType: .NET type '…' not found in any loaded assembly.`
 
-- The `@DotNetType` feature requires compilation (`--compile` flag)
-- Interpreted mode does not support external .NET type bindings
+In interpreted mode the type is resolved at the point the `declare class`
+statement executes, from the set of assemblies currently loaded into the
+process. If your type lives in a third-party assembly, make sure it's
+loaded before the script runs — e.g., reference it from the host app or
+`Assembly.LoadFrom` it up front.
 
 ---
 

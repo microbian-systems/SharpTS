@@ -539,17 +539,18 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         {
             emitter.EmitExpression(arguments[0]);
             emitter.EmitBoxIfNeeded(arguments[0]);
-            il.Emit(OpCodes.Castclass, ctx.Types.String);
+            // Don't cast — the regex-aware helper accepts object and branches.
             emitter.EmitExpression(arguments[1]);
             emitter.EmitBoxIfNeeded(arguments[1]);
-            il.Emit(OpCodes.Castclass, ctx.Types.String);
+            il.Emit(OpCodes.Call, ctx.Runtime!.Stringify); // replacement is always string
         }
         else
         {
             il.Emit(OpCodes.Ldstr, "");
+            il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ldstr, "");
         }
-        il.Emit(OpCodes.Call, ctx.Runtime!.StringReplaceAll);
+        il.Emit(OpCodes.Call, ctx.Runtime!.StringReplaceAllRegExp);
     }
 
     private static void EmitAt(IEmitterContext emitter, List<Expr> arguments)

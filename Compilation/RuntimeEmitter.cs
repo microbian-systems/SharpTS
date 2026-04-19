@@ -74,10 +74,7 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSRegExp
         EmitTSRegExpClass(moduleBuilder, runtime);
 
-        // Emit $AssertionError class for standalone assert module support
-        // NOTE: Must stay in sync with AssertionError in AssertModuleInterpreter.cs
-        EmitTSAssertionErrorClass(moduleBuilder, runtime);
-
+        // AssertionError now lives in stdlib/node/assert.ts (embedded stdlib migration).
         // Emit $NodeError class for standalone fs module support
         // NOTE: Must stay in sync with NodeError in Runtime/BuiltIns/Modules/NodeError.cs
         EmitNodeErrorClass(moduleBuilder, runtime);
@@ -222,11 +219,10 @@ public partial class RuntimeEmitter
         EmitTSZlibTransformClass(moduleBuilder, runtime);
         EmitTSStreamUtilsClass(moduleBuilder, runtime);
 
-        // Emit function method wrapper classes for bind/call/apply
-        // Must come after TSFunction and BoundTSFunction
-        EmitFunctionBindWrapperClass(moduleBuilder, runtime);
-        EmitFunctionCallWrapperClass(moduleBuilder, runtime);
-        EmitFunctionApplyWrapperClass(moduleBuilder, runtime);
+        // Function wrapper emission is deferred below until AFTER $BoundArrayMethod /
+        // $BoundMapMethod / $BoundSetMethod Phase 1 so their Invoke MethodBuilders
+        // are available to the wrapper bodies (for dispatching .call/.apply/.bind on
+        // bound methods).
 
         // Emit util module types for standalone execution
         // Must come after $Buffer (TextEncoder returns $Buffer)
@@ -238,9 +234,8 @@ public partial class RuntimeEmitter
         EmitTSTextDecoderClass(moduleBuilder, runtime);
         EmitTSTextDecoderDecodeMethodClass(moduleBuilder, runtime);
 
-        // Emit $StringDecoder class for string_decoder module
-        // Must come after $Buffer (StringDecoder works with Buffer)
-        EmitTSStringDecoderClass(moduleBuilder, runtime);
+        // $StringDecoder class removed — StringDecoder migrated to
+        // stdlib/node/string_decoder.ts (pure-TS over the Buffer JS API).
 
         // Emit $Stats class for fs.stat() and related methods
         // Must come before fs module methods which use it
@@ -249,6 +244,21 @@ public partial class RuntimeEmitter
         // Emit $BoundArrayMethod type and constructor (Phase 1)
         // Must come before EmitRuntimeClass so GetListProperty can use the constructor
         EmitBoundArrayMethodTypeDefinition(moduleBuilder, runtime);
+
+        // Emit $BoundMapMethod / $BoundSetMethod types and constructors (Phase 1)
+        // Must come before EmitRuntimeClass so GetMapProperty/GetSetProperty can use them
+        EmitBoundMapMethodTypeDefinition(moduleBuilder, runtime);
+        EmitBoundSetMethodTypeDefinition(moduleBuilder, runtime);
+
+        // Emit $BoundAnyFunction (the partial-apply wrapper for .bind on non-$TSFunction
+        // callables) and the function bind/call/apply wrappers. All reference the
+        // Bound*Method TypeBuilders above, so they MUST come after Phase 1 of those.
+        // They come before EmitRuntimeClass so GetFunctionMethod (inside EmitRuntimeClass)
+        // can use their constructors.
+        EmitBoundAnyFunctionClass(moduleBuilder, runtime);
+        EmitFunctionBindWrapperClass(moduleBuilder, runtime);
+        EmitFunctionCallWrapperClass(moduleBuilder, runtime);
+        EmitFunctionApplyWrapperClass(moduleBuilder, runtime);
 
         // Emit $MethodCallable type and constructor (Phase 1)
         // Must come before EmitRuntimeClass so GetFieldsProperty can wrap GetMember results
@@ -332,6 +342,11 @@ public partial class RuntimeEmitter
         // Finalize $BoundArrayMethod with Invoke method (Phase 2)
         // Must come after EmitRuntimeClass (needs array methods defined)
         EmitBoundArrayMethodFinalize(runtime);
+
+        // Finalize $BoundMapMethod / $BoundSetMethod with Invoke method (Phase 2)
+        // Must come after EmitRuntimeClass (needs Map*/Set* runtime methods defined)
+        EmitBoundMapMethodFinalize(runtime);
+        EmitBoundSetMethodFinalize(runtime);
 
         // Finalize $MethodCallable with Invoke method (Phase 2)
         EmitMethodCallableFinalize(runtime);

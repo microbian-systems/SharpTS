@@ -134,6 +134,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
             // Registry services
@@ -142,7 +143,7 @@ public partial class ILCompiler
             EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
             CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
-            TopLevelStaticVars = _topLevelStaticVars
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath)
         };
 
         // Use the new emitter for full async generator body emission
@@ -202,6 +203,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode || CheckForUseStrict(method.Body),
             // ES2022 Private Class Elements support for async generator methods
@@ -213,7 +215,7 @@ public partial class ILCompiler
             EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
             CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
-            TopLevelStaticVars = _topLevelStaticVars
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath)
         };
 
         // Emit MoveNextAsync body

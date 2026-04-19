@@ -1,6 +1,7 @@
 using SharpTS.Parsing;
 using SharpTS.Runtime;
 using SharpTS.Runtime.BuiltIns;
+using SharpTS.Runtime.DotNet;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
 using SharpTS.TypeSystem;
@@ -267,6 +268,12 @@ public partial class Interpreter
         // Category-based dispatch
         return category switch
         {
+            // @DotNetType external types
+            TypeCategory.External when obj is DotNetInstance dotNetInstance =>
+                RuntimeValue.FromBoxed(dotNetInstance.GetMember(memberName)),
+            TypeCategory.External when obj is DotNetClass dotNetClass =>
+                RuntimeValue.FromBoxed(dotNetClass.GetStaticMember(memberName)),
+
             // User-defined types
             TypeCategory.Class when obj is SharpTSClass klass =>
                 EvaluateGetOnClassRV(klass, memberName),
@@ -573,6 +580,14 @@ public partial class Interpreter
 
         switch (category)
         {
+            case TypeCategory.External when obj is DotNetInstance dotNetInstance:
+                dotNetInstance.SetMember(memberName, value, this);
+                return value;
+
+            case TypeCategory.External when obj is DotNetClass dotNetClass:
+                dotNetClass.SetStaticMember(memberName, value, this);
+                return value;
+
             case TypeCategory.Class when obj is SharpTSClass klass:
                 if (klass.HasStaticAutoAccessor(memberName))
                 {

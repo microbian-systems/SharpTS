@@ -13,7 +13,7 @@ public static class ArrayBuiltIns
             .MethodV2("push", 1, int.MaxValue, PushV2)
             .MethodV2("pop", 0, PopV2)
             .MethodV2("shift", 0, ShiftV2)
-            .MethodV2("unshift", 1, UnshiftV2)
+            .MethodV2("unshift", 1, int.MaxValue, UnshiftV2)
             .MethodV2("slice", 0, 2, SliceV2)
             .MethodV2("map", 1, MapV2)
             .MethodV2("filter", 1, FilterV2)
@@ -331,7 +331,10 @@ public static class ArrayBuiltIns
     {
         if (arr.IsFrozen || arr.IsSealed || !arr.IsExtensible)
             return RuntimeValue.FromNumber(arr.Elements.Count);
-        arr.Elements.AddFirst(args[0].ToObject());
+        // JS variadic: unshift(a, b, c) on [x, y] yields [a, b, c, x, y].
+        // AddFirst preserves insertion position, so walk args in reverse.
+        for (int i = args.Length - 1; i >= 0; i--)
+            arr.Elements.AddFirst(args[i].ToObject());
         return RuntimeValue.FromNumber(arr.Elements.Count);
     }
 

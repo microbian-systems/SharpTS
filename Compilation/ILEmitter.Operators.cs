@@ -64,9 +64,27 @@ public partial class ILEmitter
                 break;
 
             case Comparison cmp:
-                EmitExpressionAsDouble(b.Left);
-                EmitExpressionAsDouble(b.Right);
-                IL.Emit(cmp.Opcode);
+                // JS AbstractRelationalComparison: when both operands are
+                // statically known strings, use lexicographic comparison via
+                // string.CompareOrdinal. Otherwise coerce to number (current
+                // fast path). The TypeChecker rejects mixed string/number
+                // comparison, so only same-type paths reach here.
+                if (IsStringComparison(b))
+                {
+                    EmitExpression(b.Left);
+                    EnsureString();
+                    EmitExpression(b.Right);
+                    EnsureString();
+                    IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.String, "CompareOrdinal", _ctx.Types.String, _ctx.Types.String));
+                    IL.Emit(OpCodes.Ldc_I4_0);
+                    IL.Emit(cmp.Opcode);
+                }
+                else
+                {
+                    EmitExpressionAsDouble(b.Left);
+                    EmitExpressionAsDouble(b.Right);
+                    IL.Emit(cmp.Opcode);
+                }
                 if (cmp.Negated)
                 {
                     // For <= and >=, we use the inverse opcode and negate
@@ -1331,6 +1349,28 @@ public partial class ILEmitter
 
         return IsNumericType(leftType) && IsNumericType(rightType);
     }
+
+    private bool IsStringComparison(Expr.Binary b)
+    {
+        // Check if both operands are statically string-typed — safe to emit
+        // direct string.CompareOrdinal IL for lexicographic JS comparison.
+        if (_ctx.TypeMap == null) return false;
+
+        var leftType = _ctx.TypeMap.Get(b.Left);
+        var rightType = _ctx.TypeMap.Get(b.Right);
+
+        return IsStringTypeInfo(leftType) && IsStringTypeInfo(rightType);
+    }
+
+    private static bool IsStringTypeInfo(TypeSystem.TypeInfo? type) => type switch
+    {
+        TypeSystem.TypeInfo.String => true,
+        TypeSystem.TypeInfo.StringLiteral => true,
+        // Union where every branch is string (e.g. a union of string literals
+        // produced by widening different literal elements of an array).
+        TypeSystem.TypeInfo.Union u => u.FlattenedTypes.All(IsStringTypeInfo),
+        _ => false
+    };
 
     private bool IsBigIntOperation(Expr.Binary b)
     {

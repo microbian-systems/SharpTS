@@ -1137,8 +1137,9 @@ public partial class Parser
 
         if (!Check(TokenType.RIGHT_PAREN))
         {
-            // Must start with identifier, [, {, or ... for it to be arrow function params
-            if (!Check(TokenType.IDENTIFIER) && !Check(TokenType.LEFT_BRACKET) && !Check(TokenType.LEFT_BRACE) && !Check(TokenType.DOT_DOT_DOT))
+            // Must start with identifier (or contextual keyword usable as one), [, {, or ...
+            if (!Check(TokenType.IDENTIFIER) && !IsContextualKeyword(Peek().Type) &&
+                !Check(TokenType.LEFT_BRACKET) && !Check(TokenType.LEFT_BRACE) && !Check(TokenType.DOT_DOT_DOT))
             {
                 _current = savedPosition;
                 return null;
@@ -1193,13 +1194,16 @@ public partial class Parser
                     // Check for rest parameter
                     bool isRest = Match(TokenType.DOT_DOT_DOT);
 
-                    if (!Check(TokenType.IDENTIFIER))
+                    if (!Check(TokenType.IDENTIFIER) && !IsContextualKeyword(Peek().Type))
                     {
                         _current = savedPosition;
                         return null;
                     }
 
-                    Token paramName = Advance();
+                    Token paramTok = Advance();
+                    Token paramName = paramTok.Type == TokenType.IDENTIFIER
+                        ? paramTok
+                        : new Token(TokenType.IDENTIFIER, paramTok.Lexeme, null, paramTok.Line);
                     string? paramType = null;
                     if (Match(TokenType.COLON))
                     {

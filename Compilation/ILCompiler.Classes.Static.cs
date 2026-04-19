@@ -89,13 +89,14 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
             IsStaticConstructorContext = true,
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Module-level variable access
-            TopLevelStaticVars = _topLevelStaticVars,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
             EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
@@ -287,6 +288,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
             // ES2022 Private Class Elements support
@@ -294,7 +296,7 @@ public partial class ILCompiler
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Module-level variable access
-            TopLevelStaticVars = _topLevelStaticVars,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
             EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
@@ -511,6 +513,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
             // ES2022 Private Class Elements support

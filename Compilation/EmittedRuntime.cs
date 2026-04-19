@@ -285,6 +285,33 @@ public class EmittedRuntime
     public FieldBuilder BoundArrayMethodListField { get; set; } = null!;
     public FieldBuilder BoundArrayMethodNameField { get; set; } = null!;
 
+    // Bound map method for dynamic Map property access (duck typing across module boundaries)
+    public TypeBuilder BoundMapMethodType { get; set; } = null!;
+    public ConstructorBuilder BoundMapMethodCtor { get; set; } = null!;
+    public MethodBuilder BoundMapMethodInvoke { get; set; } = null!;
+    public FieldBuilder BoundMapMethodMapField { get; set; } = null!;
+    public FieldBuilder BoundMapMethodNameField { get; set; } = null!;
+
+    // Bound set method for dynamic Set property access (duck typing across module boundaries)
+    public TypeBuilder BoundSetMethodType { get; set; } = null!;
+    public ConstructorBuilder BoundSetMethodCtor { get; set; } = null!;
+    public MethodBuilder BoundSetMethodInvoke { get; set; } = null!;
+    public FieldBuilder BoundSetMethodSetField { get; set; } = null!;
+    public FieldBuilder BoundSetMethodNameField { get; set; } = null!;
+
+    // Helpers that wrap Dictionary/HashSet methods as bound callable wrappers
+    public MethodBuilder GetMapProperty { get; set; } = null!;
+    public MethodBuilder GetSetProperty { get; set; } = null!;
+
+    // Generalized bind target — used when `.bind` is called on any callable other
+    // than $TSFunction (arrays, maps, sets, etc.). Stores (target, boundArgs) and
+    // prepends boundArgs to the call arguments on invocation. thisArg is ignored
+    // because bound methods already capture their receiver.
+    public TypeBuilder BoundAnyFunctionType { get; set; } = null!;
+    public ConstructorBuilder BoundAnyFunctionCtor { get; set; } = null!;
+    public MethodBuilder BoundAnyFunctionInvoke { get; set; } = null!;
+    public MethodBuilder BoundAnyFunctionInvokeWithThis { get; set; } = null!;
+
     // Method callable wrapper for GetMember results (BuiltInMethod etc.)
     public TypeBuilder MethodCallableType { get; set; } = null!;
     public ConstructorBuilder MethodCallableCtor { get; set; } = null!;
@@ -608,6 +635,7 @@ public class EmittedRuntime
     public MethodBuilder RegExpSetLastIndex { get; set; } = null!;
     public MethodBuilder StringMatchRegExp { get; set; } = null!;
     public MethodBuilder StringReplaceRegExp { get; set; } = null!;
+    public MethodBuilder StringReplaceAllRegExp { get; set; } = null!;
     public MethodBuilder StringSearchRegExp { get; set; } = null!;
     public MethodBuilder StringSplitRegExp { get; set; } = null!;
     public MethodBuilder StringMatchAllRegExp { get; set; } = null!;
@@ -826,9 +854,6 @@ public class EmittedRuntime
     public MethodBuilder OsFreemem { get; set; } = null!;
     public MethodBuilder OsLoadavg { get; set; } = null!;
     public MethodBuilder OsNetworkInterfaces { get; set; } = null!;
-
-    // Path module methods
-    public MethodBuilder PathFormat { get; set; } = null!;
 
     // Fs module methods
     public MethodBuilder FsExistsSync { get; set; } = null!;
@@ -1225,30 +1250,6 @@ public class EmittedRuntime
     public MethodBuilder GenerateRsaKeyPairRaw { get; set; } = null!;
     public MethodBuilder GenerateEcKeyPairRaw { get; set; } = null!;
 
-    // Path helpers (standalone - no SharpTS.dll dependency)
-    // POSIX path methods
-    public MethodBuilder PosixJoin { get; set; } = null!;
-    public MethodBuilder PosixResolve { get; set; } = null!;
-    public MethodBuilder PosixBasename { get; set; } = null!;
-    public MethodBuilder PosixDirname { get; set; } = null!;
-    public MethodBuilder PosixNormalize { get; set; } = null!;
-    public MethodBuilder PosixIsAbsolute { get; set; } = null!;
-    public MethodBuilder PosixRelative { get; set; } = null!;
-    public MethodBuilder PosixParse { get; set; } = null!;
-    public MethodBuilder PosixFormat { get; set; } = null!;
-    // Win32 path methods
-    public MethodBuilder Win32Join { get; set; } = null!;
-    public MethodBuilder Win32Resolve { get; set; } = null!;
-    public MethodBuilder Win32Basename { get; set; } = null!;
-    public MethodBuilder Win32Dirname { get; set; } = null!;
-    public MethodBuilder Win32Normalize { get; set; } = null!;
-    public MethodBuilder Win32IsAbsolute { get; set; } = null!;
-    public MethodBuilder Win32Relative { get; set; } = null!;
-    public MethodBuilder Win32Parse { get; set; } = null!;
-    public MethodBuilder Win32Format { get; set; } = null!;
-    // Shared path helper
-    public MethodBuilder ComputeRelative { get; set; } = null!;
-
     // HKDF key derivation
     public MethodBuilder CryptoHkdfSync { get; set; } = null!;
 
@@ -1339,13 +1340,8 @@ public class EmittedRuntime
     public ConstructorBuilder TSHeadersCtor { get; set; } = null!;
     public MethodBuilder TSHeadersSetMethod { get; set; } = null!;
 
-    // $URL type - emitted for standalone URL support
-    public TypeBuilder TSUrlType { get; set; } = null!;
-    public ConstructorBuilder TSUrlCtor { get; set; } = null!;
-
-    // $URLSearchParams type - emitted for standalone URLSearchParams support
-    public TypeBuilder TSUrlSearchParamsType { get; set; } = null!;
-    public ConstructorBuilder TSUrlSearchParamsCtor { get; set; } = null!;
+    // URL / URLSearchParams — migrated to stdlib/node/url.ts; the TS class is
+    // the canonical implementation. No compile-time runtime type is emitted.
 
     // $FetchResponse type - emitted for standalone fetch support
     public TypeBuilder TSFetchResponseType { get; set; } = null!;
@@ -1680,14 +1676,6 @@ public class EmittedRuntime
     public MethodBuilder IntlSegmenterSegment { get; set; } = null!;
     public MethodBuilder IntlSegmenterResolvedOptions { get; set; } = null!;
 
-    // Assert module - emitted $AssertionError type for standalone assemblies
-    // NOTE: Must stay in sync with AssertionError in AssertModuleInterpreter.cs
-    public TypeBuilder TSAssertionErrorType { get; set; } = null!;
-    public ConstructorBuilder TSAssertionErrorCtor { get; set; } = null!;
-    public MethodBuilder TSAssertionErrorActualGetter { get; set; } = null!;
-    public MethodBuilder TSAssertionErrorExpectedGetter { get; set; } = null!;
-    public MethodBuilder TSAssertionErrorOperatorGetter { get; set; } = null!;
-
     // FS module - emitted $NodeError type for standalone assemblies
     // NOTE: Must stay in sync with NodeError in Runtime/BuiltIns/Modules/NodeError.cs
     public Type NodeErrorType { get; set; } = null!;
@@ -1696,24 +1684,6 @@ public class EmittedRuntime
     public MethodBuilder NodeErrorSyscallGetter { get; set; } = null!;
     public MethodBuilder NodeErrorPathGetter { get; set; } = null!;
     public MethodBuilder NodeErrorErrnoGetter { get; set; } = null!;
-
-    // Assert module - helper methods
-    public MethodBuilder AssertIsTruthy { get; set; } = null!;
-    public MethodBuilder AssertStrictEquals { get; set; } = null!;
-    public MethodBuilder AssertLooseEquals { get; set; } = null!;
-    public MethodBuilder AssertDeepEquals { get; set; } = null!;
-
-    // Assert module methods
-    public MethodBuilder AssertOk { get; set; } = null!;
-    public MethodBuilder AssertStrictEqual { get; set; } = null!;
-    public MethodBuilder AssertNotStrictEqual { get; set; } = null!;
-    public MethodBuilder AssertDeepStrictEqual { get; set; } = null!;
-    public MethodBuilder AssertNotDeepStrictEqual { get; set; } = null!;
-    public MethodBuilder AssertThrows { get; set; } = null!;
-    public MethodBuilder AssertDoesNotThrow { get; set; } = null!;
-    public MethodBuilder AssertFail { get; set; } = null!;
-    public MethodBuilder AssertEqual { get; set; } = null!;
-    public MethodBuilder AssertNotEqual { get; set; } = null!;
 
     // TTY module methods
     public MethodBuilder TtyIsatty { get; set; } = null!;
@@ -1724,37 +1694,12 @@ public class EmittedRuntime
     public MethodBuilder UrlFormat { get; set; } = null!;
     public MethodBuilder UrlResolve { get; set; } = null!;
 
-    // string_decoder module - $StringDecoder type
-    public Type TSStringDecoderType { get; set; } = null!;
-    public ConstructorBuilder TSStringDecoderCtor { get; set; } = null!;
-    public MethodBuilder TSStringDecoderEncodingGetter { get; set; } = null!;
-    public MethodBuilder TSStringDecoderWrite { get; set; } = null!;
-    public MethodBuilder TSStringDecoderEnd { get; set; } = null!;
-    public MethodBuilder StringDecoderGetConstructor { get; set; } = null!;
-
-    // perf_hooks module methods
-    public MethodBuilder PerfHooksGetPerformance { get; set; } = null!;
-    public MethodBuilder PerfHooksPerformanceNow { get; set; } = null!;
-    public FieldBuilder PerfHooksStartTicks { get; set; } = null!;
-    public FieldBuilder PerfHooksTicksPerMs { get; set; } = null!;
-    public FieldBuilder PerfHooksEntries { get; set; } = null!;
-    public FieldBuilder PerfHooksObservers { get; set; } = null!;
-    public MethodBuilder PerfHooksEnsureEntries { get; set; } = null!;
-    public MethodBuilder PerfHooksCreateEntry { get; set; } = null!;
-    public MethodBuilder PerfHooksGetEntryField { get; set; } = null!;
-    public MethodBuilder PerfHooksGetEntryDouble { get; set; } = null!;
-    public MethodBuilder PerfHooksFindMark { get; set; } = null!;
-    public MethodBuilder PerfHooksNotifyObservers { get; set; } = null!;
-    public MethodBuilder PerfHooksMark { get; set; } = null!;
-    public MethodBuilder PerfHooksMeasure { get; set; } = null!;
-    public MethodBuilder PerfHooksGetEntries { get; set; } = null!;
-    public MethodBuilder PerfHooksGetEntriesByName { get; set; } = null!;
-    public MethodBuilder PerfHooksGetEntriesByType { get; set; } = null!;
-    public MethodBuilder PerfHooksFilterEntries { get; set; } = null!;
-    public MethodBuilder PerfHooksClearByType { get; set; } = null!;
-    public MethodBuilder PerfHooksClearMarks { get; set; } = null!;
-    public MethodBuilder PerfHooksClearMeasures { get; set; } = null!;
-    public MethodBuilder PerfHooksCreateObserver { get; set; } = null!;
+    // primitive:perf — only a single now() method is host-tied; the rest of
+    // perf_hooks (mark/measure/entries/observer) is pure TypeScript in
+    // stdlib/node/perf_hooks.ts. Backing fields initialize lazily on first call.
+    public MethodBuilder PerfPrimitiveNow { get; set; } = null!;
+    public FieldBuilder PerfPrimitiveStartTicks { get; set; } = null!;
+    public FieldBuilder PerfPrimitiveTicksPerMs { get; set; } = null!;
 
     // $Readable type - emitted for standalone stream support
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSReadable

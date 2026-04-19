@@ -805,6 +805,11 @@ public partial class Interpreter
         {
             return (object?)headers.Get(headerKey) ?? SharpTSUndefined.Instance;
         }
+        if (obj is string str && index is double strIdx)
+        {
+            int i = (int)strIdx;
+            return (i >= 0 && i < str.Length) ? (object)str[i].ToString() : SharpTSUndefined.Instance;
+        }
         throw new InterpreterException("Index access not supported on this type.");
     }
 

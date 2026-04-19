@@ -151,6 +151,12 @@ public partial class TypeChecker
             // Allow bracket access on any object/interface (returns any for unknown keys)
             if (objType is TypeInfo.Record or TypeInfo.Interface or TypeInfo.Instance)
                 return new TypeInfo.Any();
+
+            // `typeof x === 'object'` narrows x to TypeInfo.Object. Indexing such
+            // a narrowed value by string is valid JS and must return Any — not
+            // throwing here is important for code like `Object.keys(obj).forEach(k => obj[k])`.
+            if (objType is TypeInfo.Object)
+                return new TypeInfo.Any();
         }
 
         // Handle number index
@@ -177,6 +183,12 @@ public partial class TypeChecker
             if (objType is TypeInfo.Array arrayType)
             {
                 return arrayType.ElementType;
+            }
+
+            // String indexed by number returns a string (single character, or undefined at runtime).
+            if (objType is TypeInfo.String or TypeInfo.StringLiteral)
+            {
+                return new TypeInfo.String();
             }
 
             // TypedArray index access returns number

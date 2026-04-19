@@ -11,23 +11,28 @@ public static class BuiltInModuleRegistry
     [
         "fs",
         "fs/promises",
-        "path",
-        "os",
-        "querystring",
-        "assert",
-        "url",
-        "process",
+        // "path" — migrated to stdlib/node/path.ts (embedded stdlib, uses primitive:process for cwd).
+        // "os" — migrated to stdlib/node/os.ts (embedded stdlib, wraps primitive:os).
+        // "querystring" — migrated to stdlib/node/querystring.ts (embedded stdlib).
+        // "assert" — migrated to stdlib/node/assert.ts (embedded stdlib, pure-logic leaf).
+        // "url" — migrated to stdlib/node/url.ts (embedded stdlib, full WHATWG state machine).
+        //   URL/URLSearchParams classes fully implemented in TS; no System.Uri dependency.
+        // The EmbeddedStdlibProvider claims these specifiers via the chain.
+        // "process" — migrated to stdlib/node/process.ts (embedded stdlib, wraps primitive:process).
+        //   Global `process` binding (bare `process.cwd()`) is unaffected — registered separately
+        //   in BuiltInRegistry as a singleton namespace.
         "crypto",
-        "util",
-        "readline",
+        // "util" — migrated to stdlib/node/util.ts (embedded stdlib, pure-TS port).
+        // "readline" — migrated to stdlib/node/readline.ts (TS wrapper over primitive:readline,
+        //   class-instance-via-primitive pattern like async_hooks).
         "child_process",
         "buffer",
         "zlib",
-        "events",
-        "timers",
-        "timers/promises",
-        "string_decoder",
-        "perf_hooks",
+        // "events" — migrated to stdlib/node/events.ts (pure-TS EventEmitter).
+        // "timers" / "timers/promises" — migrated to stdlib/node/timers{,/promises}.ts
+        //   (TS facades over primitive:timers and primitive:timers/promises).
+        // "string_decoder" — migrated to stdlib/node/string_decoder.ts (uses Buffer JS API).
+        // "perf_hooks" — migrated to stdlib/node/perf_hooks.ts (pure-TS over primitive:perf).
         "stream",
         "stream/promises",
         "stream/web",
@@ -41,8 +46,8 @@ public static class BuiltInModuleRegistry
         "dgram",
         "cluster",
         "vm",
-        "async_hooks",
-        "tty"
+        // "async_hooks" — migrated to stdlib/node/async_hooks.ts (TS class over primitive:async_hooks).
+        // "tty" — migrated to stdlib/node/tty.ts (pure-TS over primitive:tty).
     ];
 
     /// <summary>

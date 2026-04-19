@@ -734,6 +734,7 @@ public partial class Interpreter
         (SharpTSInstance symInstance, SharpTSSymbol symKey) => new IndexTarget.InstanceSymbol(symInstance, symKey),
         (SharpTSGlobalThis globalThis, string globalKey) => new IndexTarget.GlobalThis(globalThis, globalKey),
         (SharpTSHeaders headers, string headerKey) => new IndexTarget.HeadersString(headers, headerKey),
+        (string str, double strIdx) => new IndexTarget.StringChar(str, (int)strIdx),
         _ => new IndexTarget.Unsupported(obj, index)
     };
 
@@ -779,6 +780,9 @@ public partial class Interpreter
             IndexTarget.InstanceSymbol t => t.Target.GetBySymbol(t.Key) ?? SharpTSUndefined.Instance,
             IndexTarget.GlobalThis t => t.Target.GetProperty(t.Key),
             IndexTarget.HeadersString t => (object?)t.Target.Get(t.Key) ?? SharpTSUndefined.Instance,
+            IndexTarget.StringChar t => (t.Index >= 0 && t.Index < t.Target.Length)
+                ? (object)t.Target[t.Index].ToString()
+                : SharpTSUndefined.Instance,
             IndexTarget.Unsupported => throw new InterpreterException("Index access not supported on this type."),
             _ => throw new InterpreterException("Index access not supported on this type.")
         });

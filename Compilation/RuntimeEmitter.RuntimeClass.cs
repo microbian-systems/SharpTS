@@ -194,6 +194,8 @@ public partial class RuntimeEmitter
         EmitInvokeMethodValue(typeBuilder, runtime);
         EmitGetFieldsProperty(typeBuilder, runtime);
         EmitGetListProperty(typeBuilder, runtime);
+        EmitGetMapProperty(typeBuilder, runtime);
+        EmitGetSetProperty(typeBuilder, runtime);
         EmitSetFieldsProperty(typeBuilder, runtime);
         EmitSetFieldsPropertyStrict(typeBuilder, runtime);
         // Exception helpers must come before Promise methods (Promise.any uses CreateException)
@@ -397,23 +399,20 @@ public partial class RuntimeEmitter
         EmitAsyncGeneratorAwaitContinueMethods(typeBuilder, moduleBuilder, runtime);
         // NodeError conversion helpers (must be before fs methods which use them)
         EmitNodeErrorHelpers(typeBuilder, runtime);
-        // Built-in module methods (path, fs, os, dns)
-        EmitPathModuleMethods(typeBuilder, runtime);
+        // Built-in module methods (fs, os, dns) — path migrated to stdlib/node/path.ts.
         EmitFsModuleMethods(typeBuilder, runtime);
         EmitOsModuleMethods(typeBuilder, runtime);
         EmitDnsModuleMethods(typeBuilder, runtime);
         EmitDnsPromisesMethods(typeBuilder, runtime);
         // Emit wrapper methods for named imports
         EmitFsModuleMethodWrappers(typeBuilder, runtime);
-        EmitPathModulePropertyWrappers(typeBuilder, runtime);
-        // Querystring module methods
-        EmitQuerystringMethods(typeBuilder, runtime);
-        // Assert module methods
-        EmitAssertMethods(typeBuilder, runtime);
+        // Querystring module methods migrated to stdlib/node/querystring.ts.
+        // Path module methods migrated to stdlib/node/path.ts.
+        // Assert module methods migrated to stdlib/node/assert.ts.
         // TTY module methods
-        EmitTtyModuleMethods(typeBuilder, runtime);
-        // URL module methods
-        EmitUrlMethods(typeBuilder, runtime);
+        // primitive:tty — just isatty; user-facing tty is stdlib/node/tty.ts.
+        EmitTtyPrimitiveMethods(typeBuilder, runtime);
+        // URL module — migrated to stdlib/node/url.ts; no runtime helpers emitted.
         // HTTP module methods (fetch, http.createServer, etc.) - must be before globalThis
         EmitHttpModuleMethods(typeBuilder, runtime);
         // Net module methods (net.createServer, net.connect, etc.)
@@ -430,9 +429,6 @@ public partial class RuntimeEmitter
         EmitConsoleExtensions(typeBuilder, runtime);
         // Crypto module methods
         EmitCryptoMethods(typeBuilder, runtime);
-        // Path module methods (standalone - no SharpTS.dll dependency)
-        EmitComputeRelative(typeBuilder, runtime);
-        EmitPathHelpers(typeBuilder, runtime);
         // Util module methods
         EmitUtilMethods(typeBuilder, runtime);
         // Readline module methods
@@ -460,10 +456,10 @@ public partial class RuntimeEmitter
         EmitZlibMethods(typeBuilder, runtime);
         // DNS module methods
         EmitDnsModuleMethods(typeBuilder, runtime);
-        // perf_hooks module methods
-        EmitPerfHooksMethods(typeBuilder, runtime);
-        // string_decoder module constructor helper
-        EmitStringDecoderGetConstructor(typeBuilder, runtime);
+        // primitive:perf — only the host-tied now() method; the rest of perf_hooks
+        // is pure TypeScript in stdlib/node/perf_hooks.ts.
+        EmitPerfPrimitiveMethods(typeBuilder, runtime);
+        // string_decoder module migrated to stdlib/node/string_decoder.ts.
 
         // Intl support (Intl.NumberFormat)
         EmitIntlMethods(typeBuilder, runtime);

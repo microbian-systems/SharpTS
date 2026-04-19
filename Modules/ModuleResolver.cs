@@ -1,4 +1,6 @@
 using System.Collections.Frozen;
+using SharpTS.Modules.Stdlib;
+using SharpTS.Modules.Stdlib.Providers;
 using SharpTS.Parsing;
 using SharpTS.Parsing.Visitors;
 using SharpTS.Runtime.BuiltIns.Modules;
@@ -22,6 +24,7 @@ public class ModuleResolver
     private readonly HashSet<string> _loadingModules = [];  // For circular detection
     private readonly HashSet<string> _loadingScriptRefs = [];  // For circular script reference detection
     private readonly Dictionary<string, ModulePackageJson?> _packageJsonCache = [];
+    private readonly StdlibProviderChain _stdlibChain;
 
     /// <summary>
     /// Creates a new module resolver rooted at the given path.
@@ -30,7 +33,18 @@ public class ModuleResolver
     public ModuleResolver(string basePath)
     {
         _basePath = Path.GetDirectoryName(Path.GetFullPath(basePath)) ?? ".";
+        _stdlibChain = new StdlibProviderChain(
+        [
+            new PrimitiveProvider(),
+            new EmbeddedStdlibProvider(),
+            new BuiltInCSharpProvider(),
+        ]);
     }
+
+    /// <summary>
+    /// The stdlib provider chain. Exposed for diagnostics; not intended for mutation.
+    /// </summary>
+    internal StdlibProviderChain StdlibChain => _stdlibChain;
 
     /// <summary>
     /// Resolves a module specifier to an absolute file path.
@@ -69,10 +83,27 @@ public class ModuleResolver
             // Strip 'node:' prefix (e.g., 'node:fs' -> 'fs')
             var bareSpecifier = specifier.StartsWith("node:") ? specifier[5..] : specifier;
 
-            // Check for built-in modules first (fs, path, os, etc.)
-            if (BuiltInModuleRegistry.IsBuiltIn(bareSpecifier))
+            // Origin-gate primitive:* specifiers. The narrow C# interop surface that
+            // stdlib TS modules rely on is intentionally hidden from user code —
+            // only modules already loaded from stdlib: virtual paths may reach it.
+            // Leaking it would couple user programs to an unstable internal API.
+            if (PrimitiveRegistry.IsPrimitive(bareSpecifier) &&
+                !currentModulePath.StartsWith(EmbeddedStdlibProvider.VirtualPathPrefix, StringComparison.Ordinal))
             {
-                return BuiltInModuleRegistry.GetBuiltInPath(bareSpecifier);
+                throw new Exception(
+                    $"Module Error: Cannot import '{specifier}'. The primitive: namespace " +
+                    "is reserved for SharpTS stdlib modules and is not available to user code.");
+            }
+
+            // Consult the stdlib provider chain. In the current phase, only the
+            // BuiltInCSharpProvider claims anything, so this is behaviorally identical
+            // to the legacy IsBuiltIn check. Once TypeScript stdlib modules ship as
+            // embedded resources, the EmbeddedStdlibProvider answers first and returns
+            // a "stdlib:node/<name>.ts" virtual path, causing LoadModule to compile
+            // the TS source in place of the C# built-in dispatch.
+            if (_stdlibChain.TryResolve(bareSpecifier, out var stdlibModule) && stdlibModule is not null)
+            {
+                return stdlibModule.VirtualPath;
             }
 
             // Try self-referencing: if nearest package.json has "name" matching the specifier
@@ -481,6 +512,36 @@ public class ModuleResolver
     /// <exception cref="Exception">If a circular dependency is detected</exception>
     public ParsedModule LoadModule(string absolutePath, DecoratorMode decoratorMode = DecoratorMode.None)
     {
+        // Embedded stdlib TypeScript module — compile from resource instead of filesystem.
+        if (absolutePath.StartsWith(EmbeddedStdlibProvider.VirtualPathPrefix, StringComparison.Ordinal))
+        {
+            return LoadStdlibModule(absolutePath, decoratorMode);
+        }
+
+        // Primitive C# module — materialize a placeholder ParsedModule with types.
+        // Origin-gating in ResolveModulePath has already ensured only stdlib-origin
+        // modules resolve here, so no per-caller check is needed.
+        if (absolutePath.StartsWith(PrimitiveRegistry.Prefix, StringComparison.Ordinal))
+        {
+            if (!_moduleCache.TryGetValue(absolutePath, out var primitiveModule))
+            {
+                var primitiveName = PrimitiveRegistry.GetPrimitiveName(absolutePath)!;
+                primitiveModule = new ParsedModule(absolutePath, []) { IsBuiltIn = true, IsTypeChecked = true };
+                var primitiveTypes = BuiltInModuleTypes.GetPrimitiveTypes(primitiveName);
+                if (primitiveTypes != null)
+                {
+                    foreach (var (name, type) in primitiveTypes)
+                    {
+                        primitiveModule.ExportedTypes[name] = type;
+                    }
+                    primitiveModule.DefaultExportType = new TypeInfo.Record(
+                        primitiveModule.ExportedTypes.ToFrozenDictionary());
+                }
+                _moduleCache[absolutePath] = primitiveModule;
+            }
+            return primitiveModule;
+        }
+
         // Skip built-in modules - they don't need to be loaded from files
         if (absolutePath.StartsWith(BuiltInModuleRegistry.BuiltInPrefix))
         {
@@ -652,6 +713,78 @@ public class ModuleResolver
     }
 
     /// <summary>
+    /// Loads a stdlib TypeScript module from its embedded resource. The virtual
+    /// path (e.g. "stdlib:node/querystring.ts") is used as both the module ID
+    /// and cache key — there is no real filesystem location.
+    /// </summary>
+    private ParsedModule LoadStdlibModule(string virtualPath, DecoratorMode decoratorMode)
+    {
+        if (_moduleCache.TryGetValue(virtualPath, out var cached))
+            return cached;
+
+        if (_loadingModules.Contains(virtualPath))
+            throw new Exception($"Module Error: Circular dependency detected involving '{virtualPath}'.");
+
+        var specifier = EmbeddedStdlibProvider.TryExtractSpecifier(virtualPath);
+        if (specifier is null)
+            throw new Exception($"Module Error: Malformed stdlib virtual path '{virtualPath}'.");
+
+        if (!_stdlibChain.TryResolve(specifier, out var stdlibModule) || stdlibModule is null)
+            throw new Exception($"Module Error: No stdlib provider resolved '{specifier}'.");
+
+        if (stdlibModule.Source is not TypeScriptSource tsSource)
+            throw new Exception($"Module Error: Stdlib module '{specifier}' is not TypeScript source.");
+
+        _loadingModules.Add(virtualPath);
+        try
+        {
+            var lexer = new Lexer(tsSource.Text);
+            var tokens = lexer.ScanTokens();
+            var parser = new Parser(tokens, decoratorMode);
+            var parseResult = parser.Parse();
+            if (!parseResult.IsSuccess)
+                throw new Exception(parseResult.Diagnostics.First().ToString());
+
+            var module = new ParsedModule(virtualPath, parseResult.Statements)
+            {
+                IsScript = false,
+                IsCommonJs = false,
+            };
+
+            _moduleCache[virtualPath] = module;
+
+            // Recursively resolve imports. Stdlib modules should only import from
+            // other stdlib specifiers or C# built-ins; the resolver chain handles
+            // both transparently.
+            foreach (var stmt in parseResult.Statements)
+            {
+                if (stmt is Stmt.Import import)
+                {
+                    var importedPath = ResolveModulePath(import.ModulePath, virtualPath);
+                    var importedModule = LoadModule(importedPath, decoratorMode);
+                    importedModule.IsScript = false;
+                    if (!module.Dependencies.Contains(importedModule))
+                        module.Dependencies.Add(importedModule);
+                }
+                else if (stmt is Stmt.Export export && export.FromModulePath != null)
+                {
+                    var reexportPath = ResolveModulePath(export.FromModulePath, virtualPath);
+                    var reexportedModule = LoadModule(reexportPath, decoratorMode);
+                    reexportedModule.IsScript = false;
+                    if (!module.Dependencies.Contains(reexportedModule))
+                        module.Dependencies.Add(reexportedModule);
+                }
+            }
+
+            return module;
+        }
+        finally
+        {
+            _loadingModules.Remove(virtualPath);
+        }
+    }
+
+    /// <summary>
     /// Walks a CommonJS module's body for literal `require('./literal')` calls and recursively
     /// loads each target. Adds resolved targets to <see cref="ParsedModule.Dependencies"/>.
     /// Non-literal specifiers are ignored here — the IL compiler will reject them later.
@@ -769,8 +902,11 @@ public class ModuleResolver
     /// </summary>
     public ParsedModule? GetCachedModule(string absolutePath)
     {
-        // Don't normalize built-in module paths
-        if (!absolutePath.StartsWith(BuiltInModuleRegistry.BuiltInPrefix))
+        // Don't normalize virtual paths (builtin: sentinels, stdlib: TS sources,
+        // primitive: C# interop modules — none resolve to a real filesystem path).
+        if (!absolutePath.StartsWith(BuiltInModuleRegistry.BuiltInPrefix)
+            && !absolutePath.StartsWith(EmbeddedStdlibProvider.VirtualPathPrefix, StringComparison.Ordinal)
+            && !absolutePath.StartsWith(PrimitiveRegistry.Prefix, StringComparison.Ordinal))
         {
             absolutePath = Path.GetFullPath(absolutePath);
         }

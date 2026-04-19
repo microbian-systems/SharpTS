@@ -467,6 +467,22 @@ public partial class TypeChecker
              // For now, disallow adding new properties to records via assignment to mimic strictness
              throw new TypeCheckException($" Property '{set.Name.Lexeme}' does not exist on type '{record}'.");
         }
+        else if (objType is TypeInfo.Interface itf)
+        {
+            foreach (var member in itf.GetAllMembers())
+            {
+                if (member.Key == set.Name.Lexeme)
+                {
+                    TypeInfo valueType = CheckExpr(set.Value);
+                    if (!IsCompatible(member.Value, valueType))
+                    {
+                        throw new TypeCheckException($" Cannot assign '{valueType}' to property '{set.Name.Lexeme}' of type '{member.Value}'.");
+                    }
+                    return valueType;
+                }
+            }
+            throw new TypeCheckException($" Property '{set.Name.Lexeme}' does not exist on interface '{itf.Name}'.");
+        }
         // Handle Error property assignment (name, message, stack are mutable strings; cause is any)
         if (objType is TypeInfo.Error)
         {

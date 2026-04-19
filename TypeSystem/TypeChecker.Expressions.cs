@@ -1225,6 +1225,8 @@ public partial class TypeChecker
         if (name.Lexeme == "clearTimeout") return new TypeInfo.Any(); // clearTimeout() global function
         if (name.Lexeme == "clearInterval") return new TypeInfo.Any(); // clearInterval() global function
         if (name.Lexeme == "queueMicrotask") return new TypeInfo.Any(); // queueMicrotask() global function
+        if (name.Lexeme == "encodeURIComponent") return new TypeInfo.Any(); // URI encoding global
+        if (name.Lexeme == "decodeURIComponent") return new TypeInfo.Any(); // URI decoding global
         if (name.Lexeme == "undefined") return new TypeInfo.Undefined(); // Global undefined
         if (name.Lexeme == "NaN") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER); // Global NaN
         if (name.Lexeme == "Infinity") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER); // Global Infinity
@@ -1252,8 +1254,8 @@ public partial class TypeChecker
         if (name.Lexeme == "Response") return new TypeInfo.Any(); // Response constructor/namespace
         if (name.Lexeme == "Iterator") return new TypeInfo.Any(); // Iterator namespace (ES2025)
         if (name.Lexeme == "Intl") return new TypeInfo.Any(); // Intl namespace
-        if (name.Lexeme == "URL") return new TypeInfo.Any(); // URL constructor
-        if (name.Lexeme == "URLSearchParams") return new TypeInfo.Any(); // URLSearchParams constructor
+        // URL / URLSearchParams — migrated to stdlib/node/url.ts; no longer
+        // implicit globals. Resolved through normal import lookup.
         if (name.Lexeme is "ReadableStream" or "WritableStream" or "TransformStream"
             or "ByteLengthQueuingStrategy" or "CountQueuingStrategy")
             return new TypeInfo.Any(); // Web Streams constructors
@@ -1265,9 +1267,22 @@ public partial class TypeChecker
         // Error constructors (Error, TypeError, RangeError, etc.)
         if (BuiltInNames.IsErrorTypeName(name.Lexeme))
             return new TypeInfo.Any();
-        // Built-in constructors that can be referenced as variables
+        // Built-in constructors that can be referenced as variables.
+        // Exposing these as Any lets code like `value instanceof Promise`,
+        // `new TextEncoder()`, and `typeof Buffer === 'function'` type-check
+        // without a dedicated declaration, mirroring the compile-mode handling
+        // in ILEmitter.TryEmitBuiltInClassType.
         if (name.Lexeme is "Map" or "Set" or "WeakMap" or "WeakSet" or "WeakRef"
-            or "Date" or "RegExp")
+            or "Date" or "RegExp" or "Promise" or "Buffer"
+            or "TextEncoder" or "TextDecoder"
+            or "FinalizationRegistry" or "Proxy" or "BroadcastChannel")
+            return new TypeInfo.Any();
+        // `arguments` is a JS function-scoped array-like, bound at call time by
+        // the runtime (SharpTSFunction / ILEmitter's function prologue). The
+        // type checker doesn't track function-vs-module context, so we accept
+        // it as Any everywhere; runtime throws a ReferenceError if referenced
+        // outside a non-arrow function, matching JS semantics.
+        if (name.Lexeme == "arguments")
             return new TypeInfo.Any();
 
         var type = _environment.Get(name.Lexeme);

@@ -216,7 +216,7 @@ public sealed class BuiltInRegistry
         RegisterBufferNamespace(registry);
         RegisterBufferType(registry);
         RegisterEventEmitterType(registry);
-        RegisterStringDecoderType(registry);
+        // StringDecoder migrated to stdlib/node/string_decoder.ts — TS class uses standard dispatch.
         RegisterStreamTypes(registry);
         RegisterChildProcessType(registry);
         RegisterHttpTypes(registry);
@@ -225,7 +225,7 @@ public sealed class BuiltInRegistry
         RegisterAbortSignalNamespace(registry);
         RegisterAbortControllerType(registry);
         RegisterAbortSignalType(registry);
-        RegisterUrlTypes(registry);
+        // URL / URLSearchParams — migrated to stdlib/node/url.ts; no C# instance types.
         RegisterRequestResponseTypes(registry);
         RegisterResponseNamespace(registry);
         RegisterIntlNamespace(registry);
@@ -784,13 +784,6 @@ public sealed class BuiltInRegistry
             ((SharpTSEventEmitterConstructor)instance).GetProperty(name));
     }
 
-    private static void RegisterStringDecoderType(BuiltInRegistry registry)
-    {
-        // StringDecoder members accessed via property access (decoder.write, decoder.end, etc.)
-        registry.RegisterInstanceType(typeof(SharpTSStringDecoder), (instance, name) =>
-            SharpTSStringDecoder.GetMember((SharpTSStringDecoder)instance, name));
-    }
-
     private static void RegisterDiffieHellmanType(BuiltInRegistry registry)
     {
         // DiffieHellman members accessed via property access (dh.generateKeys, dh.computeSecret, etc.)
@@ -1193,14 +1186,6 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterInstanceType(typeof(SharpTSAbortSignal), (instance, name) =>
             AbortSignalBuiltIns.GetMember((SharpTSAbortSignal)instance, name));
-    }
-
-    private static void RegisterUrlTypes(BuiltInRegistry registry)
-    {
-        registry.RegisterInstanceType(typeof(SharpTSURL), (instance, name) =>
-            ((SharpTSURL)instance).GetMember(name));
-        registry.RegisterInstanceType(typeof(SharpTSURLSearchParams), (instance, name) =>
-            ((SharpTSURLSearchParams)instance).GetMember(name));
     }
 
     private static void RegisterRequestResponseTypes(BuiltInRegistry registry)

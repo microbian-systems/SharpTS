@@ -707,6 +707,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
             // ES2022 Private Class Elements support
@@ -714,7 +715,7 @@ public partial class ILCompiler
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Module-level variable access
-            TopLevelStaticVars = _topLevelStaticVars,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
             EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
@@ -874,6 +875,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             // Check for method-level "use strict" directive
             IsStrictMode = _isStrictMode || CheckForUseStrict(method.Body),
@@ -883,7 +885,7 @@ public partial class ILCompiler
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Module-level variable access
-            TopLevelStaticVars = _topLevelStaticVars,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
             EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
@@ -960,6 +962,19 @@ public partial class ILCompiler
 
             // Begin try block - use builder to keep exception depth in sync
             ctx.ILBuilder.BeginExceptionBlock();
+        }
+
+        // If the body references `arguments`, emit the prologue that binds it
+        // to a List<object> of the declared parameters. Class methods have `this`
+        // at arg slot 0 and actual params at 1..N, which the prologue respects
+        // through the paramTypes array we already built (see EmitMethod above).
+        if (method.Body != null && ReferencesArgumentsIdentifier(method.Body))
+        {
+            // Use the method's param types (without the implicit `this`).
+            var resolvedParamTypes = methodBuilder.GetParameters()
+                .Select(p => p.ParameterType)
+                .ToArray();
+            EmitArgumentsLocalPrologueForInstanceMethod(il, ctx, method.Parameters, resolvedParamTypes);
         }
 
         // Abstract methods have no body to emit

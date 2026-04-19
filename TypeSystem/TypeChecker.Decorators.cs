@@ -30,10 +30,11 @@ public partial class TypeChecker
     /// </summary>
     private static readonly HashSet<string> BuiltInDecorators =
     [
-        "lock",        // Thread-safe method execution
-        "DotNetType",  // Maps TypeScript class to external .NET type
-        "Obsolete",    // Marks a type or member as obsolete
-        "deprecated",  // Alias for Obsolete
+        "lock",            // Thread-safe method execution
+        "DotNetType",      // Maps TypeScript class to external .NET type
+        "DotNetOverload",  // Forces a specific .NET overload for @DotNetType methods
+        "Obsolete",        // Marks a type or member as obsolete
+        "deprecated",      // Alias for Obsolete
     ];
 
     /// <summary>

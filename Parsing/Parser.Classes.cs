@@ -183,8 +183,12 @@ public partial class Parser
                 continue;
             }
 
-            // Check for getter/setter
-            if (Check(TokenType.GET) || Check(TokenType.SET))
+            // Check for getter/setter. `get`/`set` only start an accessor
+            // when followed by a property name. If followed by a method/field
+            // opener (`(`, `<`, `:`, `=`, `;`, `?`, `!`), they're a regular
+            // method or field named `get` / `set` — fall through to the
+            // method/field paths below.
+            if ((Check(TokenType.GET) || Check(TokenType.SET)) && !IsMethodOrFieldOpener(PeekNext().Type))
             {
                 // Validate: generator cannot be used with getter/setter
                 if (isMemberGenerator)
@@ -658,8 +662,12 @@ public partial class Parser
                 continue;
             }
 
-            // Check for getter/setter
-            if (Check(TokenType.GET) || Check(TokenType.SET))
+            // Check for getter/setter. `get`/`set` only start an accessor
+            // when followed by a property name. If followed by a method/field
+            // opener (`(`, `<`, `:`, `=`, `;`, `?`, `!`), they're a regular
+            // method or field named `get` / `set` — fall through to the
+            // method/field paths below.
+            if ((Check(TokenType.GET) || Check(TokenType.SET)) && !IsMethodOrFieldOpener(PeekNext().Type))
             {
                 // Validate: generator cannot be used with getter/setter
                 if (isMemberGenerator)

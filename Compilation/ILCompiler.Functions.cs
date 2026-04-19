@@ -200,20 +200,9 @@ public partial class ILCompiler
         var hasFunctionDC = _closures.FunctionDisplayClasses.TryGetValue(qualifiedFunctionName, out var functionDCType);
         var capturedLocals = hasFunctionDC ? _closures.Analyzer.GetCapturedLocals(funcStmt) : null;
 
-        // Merge module import fields with top-level static vars
-        Dictionary<string, FieldBuilder>? topLevelVars = null;
-        if (_topLevelStaticVars.Count > 0 ||
-            (_modules.CurrentPath != null && _modules.ImportFields.TryGetValue(_modules.CurrentPath, out var moduleImportFields) && moduleImportFields.Count > 0))
-        {
-            topLevelVars = new Dictionary<string, FieldBuilder>(_topLevelStaticVars);
-            if (_modules.CurrentPath != null && _modules.ImportFields.TryGetValue(_modules.CurrentPath, out var importFields))
-            {
-                foreach (var (name, field) in importFields)
-                {
-                    topLevelVars[name] = field;
-                }
-            }
-        }
+        // Build module-scoped top-level vars so this function only sees its own
+        // module's bindings plus global imports.
+        Dictionary<string, FieldBuilder>? topLevelVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath);
 
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
         {
@@ -245,6 +234,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             UnionGenerator = _unionGenerator,
             // Check for function-level "use strict" directive
@@ -327,6 +317,32 @@ public partial class ILCompiler
             throw new CompileException($"Cannot compile function '{funcStmt.Name.Lexeme}' without a body.");
         }
 
+        // Emit default parameter null-checks at the top of the body. OverloadGenerator
+        // already emits separate lower-arity methods that forward with defaults, but the
+        // $TSFunction.Invoke path (module imports, callback dispatch) always targets the
+        // full-arity method with nulls padded in via AdjustArgs. Without this, callers
+        // through that path see null for every missing defaulted argument.
+        // paramTypes is passed so value-type params (double, bool) are skipped — the
+        // null-check pattern only works for reference types.
+        var resolvedParamTypes = methodBuilder.GetParameters()
+            .Select(p => p.ParameterType)
+            .ToArray();
+        emitter.EmitDefaultParameters(
+            funcStmt.Parameters,
+            isInstanceMethod: false,
+            hasOwnThis: false,
+            paramTypes: resolvedParamTypes);
+
+        // If the body references `arguments`, materialize the JS-spec array-like
+        // from the declared parameters and bind it as a local. Arrow functions
+        // do NOT bind `arguments` (they inherit lexically), so we only do this
+        // for real function declarations — which is exactly what this method
+        // emits (see Phase6_EmitArrowAndStateMachineBodies for arrows).
+        if (ReferencesArgumentsIdentifier(funcStmt.Body))
+        {
+            EmitArgumentsLocalPrologue(il, ctx, funcStmt.Parameters, resolvedParamTypes);
+        }
+
         // Hoist inner function declarations (create TSFunction locals before other statements)
         EmitInnerFunctionHoisting(il, ctx, funcStmt.Body);
 
@@ -344,6 +360,189 @@ public partial class ILCompiler
             EmitDefaultReturnValue(il, methodBuilder.ReturnType);
             il.Emit(OpCodes.Ret);
         }
+    }
+
+    /// <summary>
+    /// Returns true if the given statements reference the identifier
+    /// <c>arguments</c> anywhere in the AST (including nested arrow/function
+    /// bodies — since a nested arrow's <c>arguments</c> refers to the
+    /// enclosing non-arrow function's bindings per JS spec).
+    /// </summary>
+    /// <remarks>
+    /// Used by <see cref="EmitFunctionBody"/> to skip the prologue when the
+    /// body never uses <c>arguments</c>. False positives only cost a few IL
+    /// instructions per function; false negatives would be a correctness bug,
+    /// so we delegate traversal to <see cref="Parsing.Visitors.AstVisitorBase"/>
+    /// rather than hand-rolling an incomplete walk.
+    /// </remarks>
+    private static bool ReferencesArgumentsIdentifier(List<Stmt> stmts)
+    {
+        var scanner = new ArgumentsReferenceScanner();
+        foreach (var s in stmts)
+        {
+            scanner.Visit(s);
+            if (scanner.Found) return true;
+        }
+        return false;
+    }
+
+    private sealed class ArgumentsReferenceScanner : Parsing.Visitors.AstVisitorBase
+    {
+        public bool Found { get; private set; }
+
+        protected override void VisitVariable(Expr.Variable expr)
+        {
+            if (expr.Name.Lexeme == "arguments")
+            {
+                Found = true;
+                ShouldContinue = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Emits a function prologue that binds <c>arguments</c> to a fresh
+    /// <c>List&lt;object&gt;</c> holding the boxed declared-parameter values.
+    /// The local is registered under the name <c>arguments</c>, so normal
+    /// variable resolution picks it up. This is the compiled-mode counterpart
+    /// of the <c>SharpTSFunction.Call</c> <c>environment.Define("arguments", ...)</c>
+    /// binding in interpreter mode.
+    /// </summary>
+    /// <remarks>
+    /// The list is populated from declared parameters only — callers that pass
+    /// more arguments than the function declares see those extras silently
+    /// dropped today (a pre-existing calling-convention limitation). Rest
+    /// parameters are inserted as a single List element per the current signature.
+    /// Real codebases already prefer <c>...rest</c> over <c>arguments</c>; this
+    /// covers the legacy-syntax compat case without adding a second call path.
+    /// </remarks>
+    private void EmitArgumentsLocalPrologue(
+        ILGenerator il,
+        CompilationContext ctx,
+        List<Stmt.Parameter> parameters,
+        Type[] paramTypes)
+        => EmitArgumentsLocalPrologueCore(il, ctx, parameters, paramTypes, argBase: 0);
+
+    /// <summary>
+    /// Instance-method variant: `this` occupies arg slot 0, so parameters start
+    /// at slot 1. Same semantics as <see cref="EmitArgumentsLocalPrologue"/>.
+    /// </summary>
+    private void EmitArgumentsLocalPrologueForInstanceMethod(
+        ILGenerator il,
+        CompilationContext ctx,
+        List<Stmt.Parameter> parameters,
+        Type[] paramTypes)
+        => EmitArgumentsLocalPrologueCore(il, ctx, parameters, paramTypes, argBase: 1);
+
+    private void EmitArgumentsLocalPrologueCore(
+        ILGenerator il,
+        CompilationContext ctx,
+        List<Stmt.Parameter> parameters,
+        Type[] paramTypes,
+        int argBase)
+    {
+        var listType = ctx.Types.ListOfObject;
+        var argsLocal = il.DeclareLocal(listType);
+        var addMethod = ctx.Types.GetMethod(listType, "Add", ctx.Types.Object);
+
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        for (int i = 0; i < parameters.Count; i++)
+        {
+            var param = parameters[i];
+            Type paramType = i < paramTypes.Length ? paramTypes[i] : typeof(object);
+            int argIndex = argBase + i;
+
+            if (param.IsRest)
+            {
+                // Rest params are already collected into a List<T> (or similar
+                // IEnumerable) at this arg slot. Spread them into `arguments`
+                // via AddRange so each caller-supplied value occupies its own
+                // index, matching `arguments` semantics.
+                EmitRestParamSpread(il, ctx, listType, argsLocal, argIndex, paramType);
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldloc, argsLocal);
+                il.Emit(OpCodes.Ldarg, argIndex);
+                if (paramType.IsValueType)
+                {
+                    il.Emit(OpCodes.Box, paramType);
+                }
+                il.Emit(OpCodes.Callvirt, addMethod);
+            }
+        }
+
+        ctx.Locals.RegisterLocal("arguments", argsLocal);
+    }
+
+    /// <summary>
+    /// Spreads a rest-parameter collection into the <c>arguments</c> list so
+    /// its elements occupy distinct indices. Supports the two shapes SharpTS
+    /// materializes for rest today: <c>List&lt;object&gt;</c>
+    /// (AddRange-compatible with the target list) and typed lists like
+    /// <c>List&lt;double&gt;</c> / <c>List&lt;bool&gt;</c> (must iterate and
+    /// box each element).
+    /// </summary>
+    private void EmitRestParamSpread(
+        ILGenerator il,
+        CompilationContext ctx,
+        Type targetListType,
+        LocalBuilder argsLocal,
+        int argIndex,
+        Type paramType)
+    {
+        // Fast path: parameter is already List<object?> (the common case).
+        if (paramType == targetListType)
+        {
+            var addRange = targetListType.GetMethod("AddRange", [ctx.Types.IEnumerableOfObject])!;
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Ldarg, argIndex);
+            il.Emit(OpCodes.Callvirt, addRange);
+            return;
+        }
+
+        // Slow path: typed List<T> (e.g. List<double>). Iterate via the generic
+        // enumerator and box each element.
+        // Find the element type from the parameter's generic argument.
+        if (!paramType.IsGenericType)
+        {
+            // Unknown shape — skip silently; `arguments` will miss the rest element.
+            return;
+        }
+        var elemType = paramType.GetGenericArguments()[0];
+        var addMethod = ctx.Types.GetMethod(targetListType, "Add", ctx.Types.Object);
+        var enumerableType = typeof(System.Collections.Generic.IEnumerable<>).MakeGenericType(elemType);
+        var enumeratorType = typeof(System.Collections.Generic.IEnumerator<>).MakeGenericType(elemType);
+        var getEnumerator = enumerableType.GetMethod("GetEnumerator")!;
+        var moveNext = typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!;
+        var getCurrent = enumeratorType.GetProperty("Current")!.GetGetMethod()!;
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var enumeratorLocal = il.DeclareLocal(enumeratorType);
+
+        il.Emit(OpCodes.Ldarg, argIndex);
+        il.Emit(OpCodes.Callvirt, getEnumerator);
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, enumeratorLocal);
+        il.Emit(OpCodes.Callvirt, moveNext);
+        il.Emit(OpCodes.Brfalse, loopEnd);
+
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, enumeratorLocal);
+        il.Emit(OpCodes.Callvirt, getCurrent);
+        if (elemType.IsValueType)
+        {
+            il.Emit(OpCodes.Box, elemType);
+        }
+        il.Emit(OpCodes.Callvirt, addMethod);
+
+        il.Emit(OpCodes.Br, loopStart);
+        il.MarkLabel(loopEnd);
     }
 
     /// <summary>
@@ -480,7 +679,7 @@ public partial class ILCompiler
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
             NamespaceFields = _namespaceFields,
-            TopLevelStaticVars = _topLevelStaticVars,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             Runtime = _runtime,
             FunctionGenericParams = _functions.GenericParams,
             IsGenericFunction = _functions.IsGeneric,
@@ -493,6 +692,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             // Class expression support
             VarToClassExpr = _classExprs.VarToClassExpr,
             ClassExprStaticFields = _classExprs.StaticFields,
@@ -704,7 +904,7 @@ public partial class ILCompiler
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
             NamespaceFields = _namespaceFields,
-            TopLevelStaticVars = _topLevelStaticVars,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             Runtime = _runtime,
             FunctionGenericParams = _functions.GenericParams,
             IsGenericFunction = _functions.IsGeneric,
@@ -717,6 +917,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             VarToClassExpr = _classExprs.VarToClassExpr,
             ClassExprStaticFields = _classExprs.StaticFields,
             ClassExprStaticMethods = _classExprs.StaticMethods,

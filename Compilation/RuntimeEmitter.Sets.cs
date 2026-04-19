@@ -1242,4 +1242,242 @@ public partial class RuntimeEmitter
     }
 
     #endregion
+
+    /// <summary>
+    /// Phase 1: Define $BoundSetMethod type, fields, and constructor.
+    /// Wraps a HashSet<object> + method name pair so property access like
+    /// `set.has` yields a callable that survives cross-module boundaries and reports
+    /// `typeof === 'function'`. Mirrors $BoundArrayMethod / $BoundMapMethod.
+    /// Must be called before EmitRuntimeClass so GetSetProperty can use the constructor.
+    /// </summary>
+    internal void EmitBoundSetMethodTypeDefinition(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$BoundSetMethod",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.Object
+        );
+        runtime.BoundSetMethodType = typeBuilder;
+
+        // Assembly visibility so GetProperty's callable-wrapper handler can read
+        // `_methodName` to return the method name for `set.add.name === 'add'`.
+        var setField = typeBuilder.DefineField("_set", _types.HashSetOfObject, FieldAttributes.Assembly);
+        var methodNameField = typeBuilder.DefineField("_methodName", _types.String, FieldAttributes.Assembly);
+        runtime.BoundSetMethodSetField = setField;
+        runtime.BoundSetMethodNameField = methodNameField;
+
+        var ctorBuilder = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.HashSetOfObject, _types.String]
+        );
+        runtime.BoundSetMethodCtor = ctorBuilder;
+
+        var ctorIL = ctorBuilder.GetILGenerator();
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Stfld, setField);
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_2);
+        ctorIL.Emit(OpCodes.Stfld, methodNameField);
+        ctorIL.Emit(OpCodes.Ret);
+
+        var invokeBuilder = typeBuilder.DefineMethod(
+            "Invoke",
+            MethodAttributes.Public,
+            _types.Object,
+            [_types.ObjectArray]
+        );
+        runtime.BoundSetMethodInvoke = invokeBuilder;
+    }
+
+    /// <summary>
+    /// Phase 2: Emit Invoke body for $BoundSetMethod and create the type.
+    /// Must be called after EmitRuntimeClass so Set* runtime methods exist.
+    /// </summary>
+    internal void EmitBoundSetMethodFinalize(EmittedRuntime runtime)
+    {
+        var typeBuilder = runtime.BoundSetMethodType;
+        var setField = runtime.BoundSetMethodSetField;
+        var methodNameField = runtime.BoundSetMethodNameField;
+        var invokeBuilder = runtime.BoundSetMethodInvoke;
+
+        var il = invokeBuilder.GetILGenerator();
+        var endLabel = il.DefineLabel();
+
+        void EmitCase(string methodName, Action emitBody)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, methodNameField);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            emitBody();
+
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+
+        void EmitArgOrNull(int index)
+        {
+            var elseLabel = il.DefineLabel();
+            var doneLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Ldc_I4, index);
+            il.Emit(OpCodes.Ble, elseLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4, index);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Br, doneLabel);
+            il.MarkLabel(elseLabel);
+            il.Emit(OpCodes.Ldnull);
+            il.MarkLabel(doneLabel);
+        }
+
+        // add(value) -> set (chainable)
+        EmitCase("add", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.SetAdd);
+        });
+
+        // has(value) -> boolean
+        EmitCase("has", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.SetHas);
+            il.Emit(OpCodes.Box, _types.Boolean);
+        });
+
+        // delete(value) -> boolean
+        EmitCase("delete", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.SetDelete);
+            il.Emit(OpCodes.Box, _types.Boolean);
+        });
+
+        // clear() -> undefined
+        EmitCase("clear", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            il.Emit(OpCodes.Call, runtime.SetClear);
+            il.Emit(OpCodes.Ldnull);
+        });
+
+        // keys() -> iterator
+        EmitCase("keys", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            il.Emit(OpCodes.Call, runtime.SetKeys);
+        });
+
+        // values() -> iterator
+        EmitCase("values", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            il.Emit(OpCodes.Call, runtime.SetValues);
+        });
+
+        // entries() -> iterator
+        EmitCase("entries", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            il.Emit(OpCodes.Call, runtime.SetEntries);
+        });
+
+        // forEach(callback) -> undefined
+        EmitCase("forEach", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.SetForEach);
+            il.Emit(OpCodes.Ldnull);
+        });
+
+        // ES2025 set operations: union, intersection, difference, symmetricDifference
+        EmitCase("union", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.SetUnion);
+        });
+
+        EmitCase("intersection", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.SetIntersection);
+        });
+
+        EmitCase("difference", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.SetDifference);
+        });
+
+        EmitCase("symmetricDifference", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.SetSymmetricDifference);
+        });
+
+        EmitCase("isSubsetOf", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.SetIsSubsetOf);
+            il.Emit(OpCodes.Box, _types.Boolean);
+        });
+
+        EmitCase("isSupersetOf", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.SetIsSupersetOf);
+            il.Emit(OpCodes.Box, _types.Boolean);
+        });
+
+        EmitCase("isDisjointFrom", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, setField);
+            EmitArgOrNull(0);
+            il.Emit(OpCodes.Call, runtime.SetIsDisjointFrom);
+            il.Emit(OpCodes.Box, _types.Boolean);
+        });
+
+        // Fallthrough: return null
+        il.Emit(OpCodes.Ldnull);
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ret);
+
+        typeBuilder.CreateType();
+    }
 }

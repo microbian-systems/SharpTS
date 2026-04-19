@@ -342,8 +342,10 @@ public partial class TypeChecker
             return new TypeInfo.AbortController();
         }
 
-        // Handle constructors that accept any arguments and return Any
-        if (isSimpleName && simpleClassName is "Headers" or "URL" or "URLSearchParams" or "Request" or "Response"
+        // Handle constructors that accept any arguments and return Any.
+        // URL / URLSearchParams are not here — migrated to stdlib/node/url.ts,
+        // so they're resolved through normal import lookup, not special-cased.
+        if (isSimpleName && simpleClassName is "Headers" or "Request" or "Response"
             or "ReadableStream" or "WritableStream" or "TransformStream"
             or "ByteLengthQueuingStrategy" or "CountQueuingStrategy")
         {

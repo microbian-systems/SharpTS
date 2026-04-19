@@ -150,6 +150,21 @@ public partial class CompilationContext
     /// </summary>
     public FieldBuilder? CurrentArrowScopeDCField { get; set; }
 
+    /// <summary>
+    /// Field map of the PARENT arrow's scope display class (variable name -> field),
+    /// accessible via <see cref="CurrentArrowScopeDCField"/>. Set independently of
+    /// <see cref="ArrowScopeDisplayClassFields"/> (which holds the CURRENT arrow's
+    /// own DC fields) so that arrows which both own a DC and chain through a
+    /// parent's DC can resolve captured variables from either scope.
+    /// </summary>
+    public Dictionary<string, FieldBuilder>? ParentArrowScopeDisplayClassFields { get; set; }
+
+    /// <summary>
+    /// Set of variable names that are stored in the PARENT arrow's scope display
+    /// class, reachable through <see cref="CurrentArrowScopeDCField"/>.
+    /// </summary>
+    public HashSet<string>? ParentArrowCapturedLocals { get; set; }
+
     // ============================================
     // Inner Function Support
     // ============================================

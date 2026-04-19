@@ -11,90 +11,6 @@ public static class BuiltInModuleTypes
     private static TypeInfo BooleanType => new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
 
     /// <summary>
-    /// Builds the common path method/property signatures shared by the module and its posix/win32 sub-objects.
-    /// </summary>
-    private static Dictionary<string, TypeInfo> BuildPathMembers()
-    {
-        var parsedPathType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["root"] = new TypeInfo.String(),
-            ["dir"] = new TypeInfo.String(),
-            ["base"] = new TypeInfo.String(),
-            ["name"] = new TypeInfo.String(),
-            ["ext"] = new TypeInfo.String()
-        }.ToFrozenDictionary());
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["join"] = new TypeInfo.Function(
-                [new TypeInfo.Any()],
-                new TypeInfo.String(),
-                HasRestParam: true
-            ),
-            ["resolve"] = new TypeInfo.Function(
-                [new TypeInfo.Any()],
-                new TypeInfo.String(),
-                HasRestParam: true
-            ),
-            ["basename"] = new TypeInfo.Function(
-                [new TypeInfo.String(), new TypeInfo.String()],
-                new TypeInfo.String(),
-                RequiredParams: 1
-            ),
-            ["dirname"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["extname"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["normalize"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["isAbsolute"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                BooleanType
-            ),
-            ["relative"] = new TypeInfo.Function(
-                [new TypeInfo.String(), new TypeInfo.String()],
-                new TypeInfo.String()
-            ),
-            ["parse"] = new TypeInfo.Function(
-                [new TypeInfo.String()],
-                parsedPathType
-            ),
-            ["format"] = new TypeInfo.Function(
-                [parsedPathType],
-                new TypeInfo.String()
-            ),
-            ["sep"] = new TypeInfo.String(),
-            ["delimiter"] = new TypeInfo.String()
-        };
-    }
-
-    /// <summary>
-    /// Gets the exported types for the path module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetPathModuleTypes()
-    {
-        var pathObjectType = GetPathObjectType();
-        var members = BuildPathMembers();
-        members["posix"] = pathObjectType;
-        members["win32"] = pathObjectType;
-        return members;
-    }
-
-    /// <summary>
-    /// Gets the type for the path.posix and path.win32 objects.
-    /// </summary>
-    private static TypeInfo.Record GetPathObjectType()
-    {
-        return new TypeInfo.Record(BuildPathMembers().ToFrozenDictionary());
-    }
-
-    /// <summary>
     /// Gets the exported types for the os module.
     /// </summary>
     public static Dictionary<string, TypeInfo> GetOsModuleTypes()
@@ -563,159 +479,9 @@ public static class BuiltInModuleTypes
         return fsPromises.Fields.ToDictionary(kv => kv.Key, kv => kv.Value);
     }
 
-    /// <summary>
-    /// Gets the exported types for the querystring module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetQuerystringModuleTypes()
-    {
-        var stringType = new TypeInfo.String();
-        var anyType = new TypeInfo.Any();
-
-        return new Dictionary<string, TypeInfo>
-        {
-            // parse(str, sep?, eq?, options?) -> object
-            ["parse"] = new TypeInfo.Function(
-                [stringType, stringType, stringType, anyType],
-                anyType,
-                RequiredParams: 1
-            ),
-            // stringify(obj, sep?, eq?, options?) -> string
-            ["stringify"] = new TypeInfo.Function(
-                [anyType, stringType, stringType, anyType],
-                stringType,
-                RequiredParams: 1
-            ),
-            // escape(str) -> string
-            ["escape"] = new TypeInfo.Function([stringType], stringType),
-            // unescape(str) -> string
-            ["unescape"] = new TypeInfo.Function([stringType], stringType),
-            // decode is alias for parse
-            ["decode"] = new TypeInfo.Function(
-                [stringType, stringType, stringType, anyType],
-                anyType,
-                RequiredParams: 1
-            ),
-            // encode is alias for stringify
-            ["encode"] = new TypeInfo.Function(
-                [anyType, stringType, stringType, anyType],
-                stringType,
-                RequiredParams: 1
-            )
-        };
-    }
-
-    /// <summary>
-    /// Gets the exported types for the assert module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetAssertModuleTypes()
-    {
-        var anyType = new TypeInfo.Any();
-        var stringType = new TypeInfo.String();
-        var voidType = new TypeInfo.Void();
-
-        return new Dictionary<string, TypeInfo>
-        {
-            // ok(value, message?) -> void
-            ["ok"] = new TypeInfo.Function(
-                [anyType, stringType],
-                voidType,
-                RequiredParams: 1
-            ),
-            // strictEqual(actual, expected, message?) -> void
-            ["strictEqual"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            ),
-            // notStrictEqual(actual, expected, message?) -> void
-            ["notStrictEqual"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            ),
-            // deepStrictEqual(actual, expected, message?) -> void
-            ["deepStrictEqual"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            ),
-            // notDeepStrictEqual(actual, expected, message?) -> void
-            ["notDeepStrictEqual"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            ),
-            // throws(fn, message?) -> void
-            ["throws"] = new TypeInfo.Function(
-                [anyType, stringType],
-                voidType,
-                RequiredParams: 1
-            ),
-            // doesNotThrow(fn, message?) -> void
-            ["doesNotThrow"] = new TypeInfo.Function(
-                [anyType, stringType],
-                voidType,
-                RequiredParams: 1
-            ),
-            // fail(message?) -> void
-            ["fail"] = new TypeInfo.Function(
-                [stringType],
-                voidType,
-                RequiredParams: 0
-            ),
-            // equal(actual, expected, message?) -> void (loose equality)
-            ["equal"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            ),
-            // notEqual(actual, expected, message?) -> void (loose equality)
-            ["notEqual"] = new TypeInfo.Function(
-                [anyType, anyType, stringType],
-                voidType,
-                RequiredParams: 2
-            )
-        };
-    }
-
-    /// <summary>
-    /// Gets the exported types for the url module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetUrlModuleTypes()
-    {
-        var stringType = new TypeInfo.String();
-        var anyType = new TypeInfo.Any();
-
-        // URL class type (simplified - represents the URL constructor/class)
-        var urlClassType = new TypeInfo.Any(); // Full class typing would require more infrastructure
-
-        // URLSearchParams class type
-        var urlSearchParamsType = new TypeInfo.Any();
-
-        return new Dictionary<string, TypeInfo>
-        {
-            // URL class constructor
-            ["URL"] = urlClassType,
-            // URLSearchParams class constructor
-            ["URLSearchParams"] = urlSearchParamsType,
-            // parse function (legacy)
-            ["parse"] = new TypeInfo.Function(
-                [stringType, stringType, anyType],
-                anyType,
-                RequiredParams: 1
-            ),
-            // format function (legacy)
-            ["format"] = new TypeInfo.Function(
-                [anyType],
-                stringType
-            ),
-            // resolve function (legacy)
-            ["resolve"] = new TypeInfo.Function(
-                [stringType, stringType],
-                stringType
-            )
-        };
-    }
+    // GetQuerystringModuleTypes removed: the 'querystring' module now lives in
+    // stdlib/node/querystring.ts. Its export types are derived from the TS source
+    // via normal type inference.
 
     /// <summary>
     /// Gets the exported types for the process module.
@@ -945,9 +711,11 @@ public static class BuiltInModuleTypes
         };
     }
 
-    /// <summary>
-    /// Gets the exported types for the util module.
-    /// </summary>
+    // GetUtilModuleTypes removed: the 'util' module now lives in
+    // stdlib/node/util.ts. Its export types are derived from the TS source
+    // at import time by the embedded-stdlib loader, so there is no longer
+    // a hand-maintained C# type map.
+    #if false
     public static Dictionary<string, TypeInfo> GetUtilModuleTypes()
     {
         var stringType = new TypeInfo.String();
@@ -1056,6 +824,7 @@ public static class BuiltInModuleTypes
             }.ToFrozenDictionary())
         };
     }
+    #endif
 
     /// <summary>
     /// Gets the exported types for the readline module.
@@ -1343,40 +1112,6 @@ public static class BuiltInModuleTypes
     }
 
     /// <summary>
-    /// Gets the exported types for the events module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetEventsModuleTypes()
-    {
-        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
-        var eventEmitterType = new TypeInfo.EventEmitter();
-
-        // EventEmitter is an interface with a constructor signature
-        // This allows both `new EventEmitter()` and `new events.EventEmitter()` to type check
-        var eventEmitterConstructorType = new TypeInfo.Interface(
-            Name: "EventEmitter",
-            Members: new Dictionary<string, TypeInfo>
-            {
-                // Static property on the constructor
-                ["defaultMaxListeners"] = numberType
-            }.ToFrozenDictionary(),
-            OptionalMembers: FrozenSet<string>.Empty,
-            // Constructor signature: new () => EventEmitter
-            ConstructorSignatures:
-            [
-                new TypeInfo.ConstructorSignature(
-                    TypeParams: null,
-                    ParamTypes: [],
-                    ReturnType: eventEmitterType)
-            ]
-        );
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["EventEmitter"] = eventEmitterConstructorType
-        };
-    }
-
-    /// <summary>
     /// Gets the exported types for a built-in module by name.
     /// </summary>
     /// <param name="moduleName">The module name (e.g., "path", "fs", "os").</param>
@@ -1385,25 +1120,29 @@ public static class BuiltInModuleTypes
     {
         return moduleName switch
         {
-            "path" => GetPathModuleTypes(),
-            "os" => GetOsModuleTypes(),
+            // "path" — migrated to stdlib/node/path.ts; types flow from the TS source.
+            // "os" — migrated to stdlib/node/os.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:os reuse GetOsModuleTypes via GetPrimitiveTypes.
             "fs" => GetFsModuleTypes(),
             "fs/promises" => GetFsPromisesModuleTypes(),
-            "querystring" => GetQuerystringModuleTypes(),
-            "assert" => GetAssertModuleTypes(),
-            "url" => GetUrlModuleTypes(),
-            "process" => GetProcessModuleTypes(),
+            // "assert" — migrated to stdlib/node/assert.ts; types flow from the TS source.
+            // "url" — migrated to stdlib/node/url.ts; types flow from the TS source.
+            // "util" — migrated to stdlib/node/util.ts; types flow from the TS source.
+            // "process" — migrated to stdlib/node/process.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:process reuse GetProcessModuleTypes via GetPrimitiveTypes.
             "crypto" => GetCryptoModuleTypes(),
-            "util" => GetUtilModuleTypes(),
-            "readline" => GetReadlineModuleTypes(),
+            // "readline" — migrated to stdlib/node/readline.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:readline reuse GetReadlineModuleTypes via GetPrimitiveTypes.
             "child_process" => GetChildProcessModuleTypes(),
             "buffer" => GetBufferModuleTypes(),
             "zlib" => GetZlibModuleTypes(),
-            "events" => GetEventsModuleTypes(),
-            "timers" => GetTimersModuleTypes(),
-            "timers/promises" => GetTimersPromisesModuleTypes(),
-            "string_decoder" => GetStringDecoderModuleTypes(),
-            "perf_hooks" => GetPerfHooksModuleTypes(),
+            // "events" — migrated to stdlib/node/events.ts; types flow from the TS source.
+            // "timers" / "timers/promises" — migrated to stdlib/node/timers{,/promises}.ts;
+            //   types flow from the TS source. Primitive-layer types reuse the
+            //   same shapes via GetPrimitiveTypes (GetTimersModuleTypes stays public).
+            // "string_decoder" — migrated to stdlib/node/string_decoder.ts; types flow from the TS source.
+            // "perf_hooks" — migrated to stdlib/node/perf_hooks.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:perf are in GetPerfPrimitiveTypes.
             "stream" => GetStreamModuleTypes(),
             "stream/promises" => GetStreamPromisesModuleTypes(),
             "stream/web" => GetStreamWebModuleTypes(),
@@ -1416,10 +1155,78 @@ public static class BuiltInModuleTypes
             "dgram" => GetDgramModuleTypes(),
             "cluster" => GetClusterModuleTypes(),
             "vm" => GetVmModuleTypes(),
-            "async_hooks" => GetAsyncHooksModuleTypes(),
+            // "async_hooks" — migrated to stdlib/node/async_hooks.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:async_hooks are in GetAsyncHooksPrimitiveTypes.
             "worker_threads" => GetWorkerThreadsModuleTypes(),
-            "tty" => GetTtyModuleTypes(),
+            // "tty" — migrated to stdlib/node/tty.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:tty are in GetTtyPrimitiveTypes.
             _ => null
+        };
+    }
+
+    /// <summary>
+    /// Gets the exported types for a primitive module (name without the
+    /// <c>primitive:</c> prefix). Primitives share type shape with their
+    /// matching user-facing module — stdlib TS code targets the same surface
+    /// Node's docs describe, just reached through the stdlib-internal specifier.
+    /// </summary>
+    public static Dictionary<string, TypeInfo>? GetPrimitiveTypes(string primitiveName)
+    {
+        return primitiveName switch
+        {
+            "os" => GetOsModuleTypes(),
+            "process" => GetProcessModuleTypes(),
+            "perf" => GetPerfPrimitiveTypes(),
+            "tty" => GetTtyPrimitiveTypes(),
+            "async_hooks" => GetAsyncHooksPrimitiveTypes(),
+            // Primitive timer types reuse the user-facing module type shapes — the
+            // primitive surface matches the Node surface; the TS facade just
+            // arity-dispatches around the spread-compiler gap.
+            "timers" => GetTimersModuleTypes(),
+            "timers/promises" => GetTimersPromisesModuleTypes(),
+            // Readline's primitive surface is the full module surface — the TS
+            // facade wraps the returned Interface and forwards calls dynamically.
+            "readline" => GetReadlineModuleTypes(),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Types for <c>primitive:tty</c> — just <c>isatty(fd)</c> returning a boolean.
+    /// </summary>
+    private static Dictionary<string, TypeInfo> GetTtyPrimitiveTypes()
+    {
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        var booleanType = new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
+        return new Dictionary<string, TypeInfo>
+        {
+            ["isatty"] = new TypeInfo.Function([numberType], booleanType),
+        };
+    }
+
+    /// <summary>
+    /// Types for <c>primitive:async_hooks</c> — just <c>create()</c> returning an
+    /// opaque AsyncLocalStorage backing instance (typed <c>any</c>; TS wraps it).
+    /// </summary>
+    private static Dictionary<string, TypeInfo> GetAsyncHooksPrimitiveTypes()
+    {
+        var anyType = new TypeInfo.Any();
+        return new Dictionary<string, TypeInfo>
+        {
+            ["create"] = new TypeInfo.Function([], anyType),
+        };
+    }
+
+    /// <summary>
+    /// Types for <c>primitive:perf</c> — just <c>now()</c> returning high-res ms.
+    /// The full perf_hooks surface (mark, measure, etc.) is typed from the TS source.
+    /// </summary>
+    private static Dictionary<string, TypeInfo> GetPerfPrimitiveTypes()
+    {
+        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        return new Dictionary<string, TypeInfo>
+        {
+            ["now"] = new TypeInfo.Function([], numberType),
         };
     }
 
@@ -2002,109 +1809,9 @@ public static class BuiltInModuleTypes
         };
     }
 
-    /// <summary>
-    /// Gets the exported types for the string_decoder module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetStringDecoderModuleTypes()
-    {
-        // StringDecoder instance type (what new StringDecoder() returns)
-        var stringDecoderInstanceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["encoding"] = new TypeInfo.String(),
-            ["write"] = new TypeInfo.Function([new TypeInfo.Any()], new TypeInfo.String()),
-            ["end"] = new TypeInfo.Function([new TypeInfo.Any()], new TypeInfo.String(), RequiredParams: 0)
-        }.ToFrozenDictionary());
-
-        // StringDecoder is an interface with a constructor signature
-        // This allows `new StringDecoder()` to type check
-        var stringDecoderConstructorType = new TypeInfo.Interface(
-            Name: "StringDecoder",
-            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
-            OptionalMembers: FrozenSet<string>.Empty,
-            ConstructorSignatures:
-            [
-                new TypeInfo.ConstructorSignature(
-                    TypeParams: null,
-                    ParamTypes: [new TypeInfo.String()],
-                    ReturnType: stringDecoderInstanceType,
-                    RequiredParams: 0) // Encoding is optional
-            ]
-        );
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["StringDecoder"] = stringDecoderConstructorType
-        };
-    }
-
-    /// <summary>
-    /// Gets the exported types for the perf_hooks module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetPerfHooksModuleTypes()
-    {
-        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
-        var stringType = new TypeInfo.String();
-        var anyType = new TypeInfo.Any();
-        var voidType = new TypeInfo.Void();
-
-        // PerformanceEntry: { name: string, entryType: string, startTime: number, duration: number }
-        var performanceEntryType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["name"] = stringType,
-            ["entryType"] = stringType,
-            ["startTime"] = numberType,
-            ["duration"] = numberType
-        }.ToFrozenDictionary());
-
-        var performanceEntryArrayType = new TypeInfo.Array(performanceEntryType);
-
-        var performanceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["now"] = new TypeInfo.Function([], numberType),
-            ["timeOrigin"] = numberType,
-            ["mark"] = new TypeInfo.Function([stringType, anyType], performanceEntryType, RequiredParams: 1),
-            ["measure"] = new TypeInfo.Function([stringType, stringType, stringType], performanceEntryType, RequiredParams: 1),
-            ["getEntries"] = new TypeInfo.Function([], performanceEntryArrayType),
-            ["getEntriesByName"] = new TypeInfo.Function([stringType, stringType], performanceEntryArrayType, RequiredParams: 1),
-            ["getEntriesByType"] = new TypeInfo.Function([stringType], performanceEntryArrayType),
-            ["clearMarks"] = new TypeInfo.Function([stringType], voidType, RequiredParams: 0),
-            ["clearMeasures"] = new TypeInfo.Function([stringType], voidType, RequiredParams: 0)
-        }.ToFrozenDictionary());
-
-        // PerformanceObserverEntryList: { getEntries(): PerformanceEntry[] }
-        var entryListType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["getEntries"] = new TypeInfo.Function([], performanceEntryArrayType)
-        }.ToFrozenDictionary());
-
-        // PerformanceObserver instance: { observe(options): void, disconnect(): void }
-        var observerInstanceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["observe"] = new TypeInfo.Function([anyType], voidType),
-            ["disconnect"] = new TypeInfo.Function([], voidType)
-        }.ToFrozenDictionary());
-
-        // PerformanceObserver constructor
-        var observerConstructorType = new TypeInfo.Interface(
-            Name: "PerformanceObserver",
-            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
-            OptionalMembers: FrozenSet<string>.Empty,
-            ConstructorSignatures:
-            [
-                new TypeInfo.ConstructorSignature(
-                    TypeParams: null,
-                    ParamTypes: [new TypeInfo.Function([entryListType], voidType)],
-                    ReturnType: observerInstanceType,
-                    RequiredParams: 1)
-            ]
-        );
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["performance"] = performanceType,
-            ["PerformanceObserver"] = observerConstructorType
-        };
-    }
+    // GetPerfHooksModuleTypes removed — "perf_hooks" is now implemented in
+    // stdlib/node/perf_hooks.ts; types flow from the TS source's exports.
+    // The narrow primitive surface (just `now()`) is typed in GetPerfPrimitiveTypes.
 
     /// <summary>
     /// Gets the exported types for the stream module.
@@ -2459,42 +2166,9 @@ public static class BuiltInModuleTypes
         };
     }
 
-    /// <summary>
-    /// Gets the exported types for the vm module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetAsyncHooksModuleTypes()
-    {
-        var anyType = new TypeInfo.Any();
-
-        // AsyncLocalStorage instance type with methods
-        var asyncLocalStorageInstanceType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["run"] = new TypeInfo.Function([anyType, anyType, anyType], anyType, RequiredParams: 2, HasRestParam: true),
-            ["getStore"] = new TypeInfo.Function([], anyType),
-            ["enterWith"] = new TypeInfo.Function([anyType], new TypeInfo.Void()),
-            ["exit"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1, HasRestParam: true),
-            ["disable"] = new TypeInfo.Function([], new TypeInfo.Void()),
-        }.ToFrozenDictionary());
-
-        // AsyncLocalStorage constructor type
-        var asyncLocalStorageConstructorType = new TypeInfo.Interface(
-            Name: "AsyncLocalStorage",
-            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
-            OptionalMembers: FrozenSet<string>.Empty,
-            ConstructorSignatures:
-            [
-                new TypeInfo.ConstructorSignature(
-                    TypeParams: null,
-                    ParamTypes: [],
-                    ReturnType: asyncLocalStorageInstanceType)
-            ]
-        );
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["AsyncLocalStorage"] = asyncLocalStorageConstructorType
-        };
-    }
+    // GetAsyncHooksModuleTypes removed — "async_hooks" is now implemented in
+    // stdlib/node/async_hooks.ts; types flow from the TS source. See
+    // GetAsyncHooksPrimitiveTypes for primitive:async_hooks.
 
     public static Dictionary<string, TypeInfo> GetVmModuleTypes()
     {
@@ -2523,16 +2197,6 @@ public static class BuiltInModuleTypes
         };
     }
 
-    /// <summary>
-    /// Gets the exported types for the tty module.
-    /// </summary>
-    public static Dictionary<string, TypeInfo> GetTtyModuleTypes()
-    {
-        var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
-
-        return new Dictionary<string, TypeInfo>
-        {
-            ["isatty"] = new TypeInfo.Function([numberType], BooleanType),
-        };
-    }
+    // GetTtyModuleTypes removed — "tty" is now implemented in stdlib/node/tty.ts;
+    // types flow from the TS source. See GetTtyPrimitiveTypes for primitive:tty.
 }

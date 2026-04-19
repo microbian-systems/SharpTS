@@ -27,8 +27,78 @@ public partial class RuntimeEmitter
         EmitStringMatchRegExp(typeBuilder, runtime);
         EmitStringMatchAllRegExp(typeBuilder, runtime);
         EmitStringReplaceRegExp(typeBuilder, runtime);
+        EmitStringReplaceAllRegExp(typeBuilder, runtime);
         EmitStringSearchRegExp(typeBuilder, runtime);
         EmitStringSplitRegExp(typeBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Runtime helper for String.prototype.replaceAll with optional RegExp pattern.
+    /// Compiled signature: (string str, object pattern, string replacement) -> string.
+    /// Dispatches to $RegExp.Replace for global-regex patterns, otherwise falls
+    /// back to C#'s String.Replace (full-string all-occurrences semantics).
+    /// </summary>
+    private void EmitStringReplaceAllRegExp(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "StringReplaceAllRegExp",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.String, _types.Object, _types.String]
+        );
+        runtime.StringReplaceAllRegExp = method;
+
+        var il = method.GetILGenerator();
+        var regexpLocal = il.DeclareLocal(runtime.TSRegExpType);
+        var searchLocal = il.DeclareLocal(_types.String);
+        var stringPathLabel = il.DefineLabel();
+        var patternNullLabel = il.DefineLabel();
+        var afterSearchLabel = il.DefineLabel();
+        var returnOriginalLabel = il.DefineLabel();
+
+        // var regexp = pattern as $RegExp
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+        il.Emit(OpCodes.Stloc, regexpLocal);
+        il.Emit(OpCodes.Ldloc, regexpLocal);
+        il.Emit(OpCodes.Brfalse, stringPathLabel);
+
+        // return regexp.Replace(str, replacement) — Replace already walks all
+        // matches for global regexes (spec requires the RegExp be global, but
+        // enforcement is in the interpreter; the IL helper accepts any regex).
+        il.Emit(OpCodes.Ldloc, regexpLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, _tsRegExpReplaceMethod);
+        il.Emit(OpCodes.Ret);
+
+        // String pattern path: search = pattern?.ToString() ?? ""
+        il.MarkLabel(stringPathLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, patternNullLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
+        il.Emit(OpCodes.Br, afterSearchLabel);
+        il.MarkLabel(patternNullLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.MarkLabel(afterSearchLabel);
+        il.Emit(OpCodes.Stloc, searchLocal);
+
+        // if (search.Length == 0) return str
+        il.Emit(OpCodes.Ldloc, searchLocal);
+        il.Emit(OpCodes.Callvirt, _types.String.GetProperty("Length")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, returnOriginalLabel);
+
+        // return str.Replace(search, replacement)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, searchLocal);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Replace", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(returnOriginalLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
     }
 
     private void EmitCreateRegExp(TypeBuilder typeBuilder, EmittedRuntime runtime)

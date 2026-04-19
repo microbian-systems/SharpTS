@@ -384,7 +384,9 @@ public partial class RuntimeEmitter
             _types.String,
             [_types.String]);
         runtime.ReadlineQuestionSync = method;
-        runtime.RegisterBuiltInModuleMethod("readline", "questionSync", method);
+        // No RegisterBuiltInModuleMethod — `readline` is now a TS stdlib module
+        // (stdlib/node/readline.ts) that calls primitive:readline. CJS
+        // require('readline') flows through the standard ESM→CJS namespace-object path.
 
         var il = method.GetILGenerator();
 
@@ -421,7 +423,6 @@ public partial class RuntimeEmitter
             _types.Object,
             [_types.Object]);
         runtime.ReadlineCreateInterface = method;
-        runtime.RegisterBuiltInModuleMethod("readline", "createInterface", method);
 
         var il = method.GetILGenerator();
 

@@ -431,7 +431,12 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stsfld, initializedField);
 
+        // Set _modules.CurrentPath before CreateCompilationContext so
+        // BuildTopLevelStaticVarsForModule can scope to this module.
+        var savedPath = _modules.CurrentPath;
+        _modules.CurrentPath = module.Path;
         var ctx = CreateCompilationContext(il);
+        _modules.CurrentPath = savedPath;
         ctx.CurrentModulePath = module.Path;
         ctx.ModuleExportFields = _modules.ExportFields;
         ctx.ModuleTypes = _modules.Types;
@@ -441,16 +446,8 @@ public partial class ILCompiler
         ctx.CommonJsExportFields = _modules.CommonJsExportFields;
         ctx.CommonJsGetExportsMethods = _modules.CommonJsGetExportsMethods;
 
-        // Populate TopLevelStaticVars with this module's import fields
-        // This allows functions in this module to access imported values
-        if (_modules.ImportFields.TryGetValue(module.Path, out var moduleImportFields))
-        {
-            ctx.TopLevelStaticVars ??= new Dictionary<string, FieldBuilder>();
-            foreach (var (name, field) in moduleImportFields)
-            {
-                ctx.TopLevelStaticVars[name] = field;
-            }
-        }
+        // Note: imports are already merged into ctx.TopLevelStaticVars via
+        // BuildTopLevelStaticVarsForModule in CreateCompilationContext.
 
         var emitter = new ILEmitter(ctx);
 
@@ -512,7 +509,12 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stsfld, initializedField);
 
+        // Scripts share global scope — pass null modulePath so BuildTopLevelStaticVarsForModule
+        // returns the global dict (non-captured field is visible across script-merged files).
+        var savedPath = _modules.CurrentPath;
+        _modules.CurrentPath = null;
         var ctx = CreateCompilationContext(il);
+        _modules.CurrentPath = savedPath;
         ctx.CurrentModulePath = script.Path;
         ctx.ModuleExportFields = _modules.ExportFields;
         ctx.ModuleTypes = _modules.Types;
@@ -678,7 +680,10 @@ public partial class ILCompiler
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
             NamespaceFields = _namespaceFields,
-            TopLevelStaticVars = _topLevelStaticVars,
+            // Scope top-level static vars to the current module to prevent
+            // cross-module name collisions (e.g. `const foo` in main.ts
+            // shadowing `export function foo()` in lib.ts).
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             Runtime = _runtime,
             FunctionGenericParams = _functions.GenericParams,
             IsGenericFunction = _functions.IsGeneric,
@@ -699,6 +704,7 @@ public partial class ILCompiler
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
             BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
             // Registry services
