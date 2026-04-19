@@ -320,7 +320,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // minimatch — glob pattern matcher
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "ASI resolved; now blocked on other parse errors in minimatch source")]
+    [SkippableFact]
     public void Minimatch_Interpreter()
     {
         SkipIfNoNpm();

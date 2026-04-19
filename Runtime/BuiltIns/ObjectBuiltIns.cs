@@ -246,7 +246,53 @@ public static class ObjectBuiltIns
             return args[0];
         }
 
-        throw new Exception("Runtime Error: Object.assign() target must be an object");
+        // JS functions are objects — Object.assign(fn, {...}) should copy props onto the function.
+        if (args[0] is SharpTSFunction targetFn)
+        {
+            CopySourcesOntoFunction(args, (name, value) => targetFn.SetProperty(name, value));
+            return args[0];
+        }
+        if (args[0] is SharpTSArrowFunction targetArrowFn)
+        {
+            CopySourcesOntoFunction(args, (name, value) => targetArrowFn.SetProperty(name, value));
+            return args[0];
+        }
+        if (args[0] is SharpTSAsyncFunction targetAsyncFn)
+        {
+            CopySourcesOntoFunction(args, (name, value) => targetAsyncFn.SetProperty(name, value));
+            return args[0];
+        }
+        if (args[0] is SharpTSAsyncArrowFunction targetAsyncArrowFn)
+        {
+            CopySourcesOntoFunction(args, (name, value) => targetAsyncArrowFn.SetProperty(name, value));
+            return args[0];
+        }
+        // RegExp instances accept arbitrary property assignment in JS.
+        if (args[0] is SharpTSRegExp targetRegExp)
+        {
+            CopySourcesOntoFunction(args, (name, value) => targetRegExp.SetProperty(name, value));
+            return args[0];
+        }
+
+        throw new Exception($"Runtime Error: Object.assign() target must be an object (got {args[0]?.GetType().Name ?? "null"})");
+    }
+
+    private static void CopySourcesOntoFunction(List<object?> args, Action<string, object?> set)
+    {
+        for (int i = 1; i < args.Count; i++)
+        {
+            if (args[i] == null) continue;
+            if (args[i] is SharpTSObject srcObj)
+            {
+                foreach (var kv in srcObj.Fields)
+                    set(kv.Key, kv.Value);
+            }
+            else if (args[i] is SharpTSInstance srcInst)
+            {
+                foreach (var key in srcInst.GetFieldNames())
+                    set(key, srcInst.GetRawField(key));
+            }
+        }
     }
 
     private static RuntimeValue FreezeV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)

@@ -134,6 +134,8 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable
     private readonly Expr.ArrowFunction _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    // JS: async arrows are objects and support property assignment.
+    private Dictionary<string, object?>? _properties;
 
     /// <summary>
     /// Indicates whether this function has its own 'this' binding (function expressions)
@@ -147,6 +149,20 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable
         _closure = closure;
         HasOwnThis = hasOwnThis;
         _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
+    }
+
+    public bool TryGetProperty(string name, out object? value)
+    {
+        if (_properties != null && _properties.TryGetValue(name, out value))
+            return true;
+        value = null;
+        return false;
+    }
+
+    public void SetProperty(string name, object? value)
+    {
+        _properties ??= [];
+        _properties[name] = value;
     }
 
     public int Arity() => _arity;

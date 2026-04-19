@@ -279,6 +279,10 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
     private readonly Expr.ArrowFunction _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    // JS: arrow/function expressions are objects; support property assignment
+    // (e.g. minimatch's `exports.minimatch.sep = "/"`).
+    private Dictionary<string, object?>? _properties;
+    private Dictionary<string, (ISharpTSCallable? Get, ISharpTSCallable? Set)>? _accessors;
 
     /// <summary>
     /// Indicates whether this function has its own 'this' binding (function expressions)
@@ -292,6 +296,51 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
         _closure = closure;
         HasOwnThis = hasOwnThis;
         _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
+    }
+
+    /// <summary>JS function-as-object property access.</summary>
+    public bool TryGetProperty(string name, out object? value)
+    {
+        if (_properties != null && _properties.TryGetValue(name, out value))
+            return true;
+        value = null;
+        return false;
+    }
+
+    /// <summary>Sets a JS-object property on this arrow function.</summary>
+    public void SetProperty(string name, object? value)
+    {
+        _properties ??= [];
+        _properties[name] = value;
+    }
+
+    /// <summary>Removes a JS-object property from this arrow function.</summary>
+    public bool DeleteProperty(string name)
+    {
+        bool removed = _properties?.Remove(name) ?? false;
+        removed |= _accessors?.Remove(name) ?? false;
+        return removed;
+    }
+
+    /// <summary>Defines a getter/setter pair via Object.defineProperty.</summary>
+    public void DefineAccessor(string name, ISharpTSCallable? getter, ISharpTSCallable? setter)
+    {
+        _accessors ??= [];
+        _accessors[name] = (getter, setter);
+    }
+
+    /// <summary>Returns the accessor pair for <paramref name="name"/> if defined.</summary>
+    public bool TryGetAccessor(string name, out ISharpTSCallable? getter, out ISharpTSCallable? setter)
+    {
+        if (_accessors != null && _accessors.TryGetValue(name, out var pair))
+        {
+            getter = pair.Get;
+            setter = pair.Set;
+            return true;
+        }
+        getter = null;
+        setter = null;
+        return false;
     }
 
     public int Arity() => _arity;

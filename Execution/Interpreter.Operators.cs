@@ -54,7 +54,7 @@ public partial class Interpreter
             }
         }
 
-        throw new InterpreterException("Only instances and objects have fields.");
+        throw new InterpreterException($"Only instances and objects have fields. Cannot compound-set '{compound.Name.Lexeme}' on {obj?.GetType().Name ?? "null"}.");
     }
 
     /// <summary>
@@ -125,7 +125,7 @@ public partial class Interpreter
 
         if (!TryGetPropertyRV(obj, logical.Name, out RuntimeValue currentRV))
         {
-            throw new InterpreterException("Only instances and objects have fields.");
+            throw new InterpreterException($"Only instances and objects have fields. Cannot logical-get '{logical.Name.Lexeme}' on {obj?.GetType().Name ?? "null"}.");
         }
 
         switch (logical.Operator.Type)
@@ -145,7 +145,7 @@ public partial class Interpreter
         RuntimeValue newValue = EvaluateRV(logical.Value);
         if (!TrySetProperty(obj, logical.Name, newValue.ToObject()))
         {
-            throw new InterpreterException("Only instances and objects have fields.");
+            throw new InterpreterException($"Only instances and objects have fields. Cannot logical-set '{logical.Name.Lexeme}' on {obj?.GetType().Name ?? "null"}.");
         }
         return newValue;
     }

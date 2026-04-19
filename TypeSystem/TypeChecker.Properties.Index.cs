@@ -23,6 +23,13 @@ public partial class TypeChecker
             return new TypeInfo.Any();
         }
 
+        // Indexing a method's inferred-return-type placeholder (still being resolved during
+        // body checking, e.g. calling a sibling static method from a ternary). Treat as any.
+        if (objType is TypeInfo.Inferred)
+        {
+            return new TypeInfo.Any();
+        }
+
         // Optional bracket access: strip null/undefined from object type
         if (getIndex.Optional && objType is TypeInfo.Union optUnion)
         {

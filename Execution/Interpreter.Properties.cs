@@ -389,8 +389,17 @@ public partial class Interpreter
                 return RuntimeValue.FromBoxed(proto);
             }
         }
+        if (obj is SharpTSArrowFunction arrowFn)
+        {
+            if (arrowFn.TryGetAccessor(memberName, out var getter, out _) && getter != null)
+                return RuntimeValue.FromBoxed(getter.Call(this, []));
+            if (arrowFn.TryGetProperty(memberName, out var arrowProp))
+                return RuntimeValue.FromBoxed(arrowProp);
+        }
         if (obj is SharpTSAsyncFunction asyncFn && asyncFn.TryGetProperty(memberName, out var asyncProp))
             return RuntimeValue.FromBoxed(asyncProp);
+        if (obj is SharpTSAsyncArrowFunction asyncArrowFn && asyncArrowFn.TryGetProperty(memberName, out var asyncArrowProp))
+            return RuntimeValue.FromBoxed(asyncArrowProp);
 
         var member = BuiltInRegistry.Instance.GetMemberByCategory(category, obj, memberName);
         if (member != null)
@@ -579,9 +588,22 @@ public partial class Interpreter
             }
             return SharpTSUndefined.Instance;
         }
+        if (obj is SharpTSArrowFunction arrowFn2)
+        {
+            if (arrowFn2.TryGetAccessor(memberName, out var arrowGetter, out _) && arrowGetter != null)
+                return arrowGetter.Call(this, []);
+            if (arrowFn2.TryGetProperty(memberName, out var arrowProp2)) return arrowProp2;
+            if (memberName == "length") return (double)arrowFn2.Arity();
+            return SharpTSUndefined.Instance;
+        }
         if (obj is SharpTSAsyncFunction asyncFn2)
         {
             if (asyncFn2.TryGetProperty(memberName, out var asyncProp2)) return asyncProp2;
+            return SharpTSUndefined.Instance;
+        }
+        if (obj is SharpTSAsyncArrowFunction asyncArrowFn2)
+        {
+            if (asyncArrowFn2.TryGetProperty(memberName, out var asyncArrowProp2)) return asyncArrowProp2;
             return SharpTSUndefined.Instance;
         }
 
@@ -697,9 +719,24 @@ public partial class Interpreter
             userFn.SetProperty(set.Name.Lexeme, value);
             return value;
         }
+        if (obj is SharpTSArrowFunction arrowFn)
+        {
+            if (arrowFn.TryGetAccessor(set.Name.Lexeme, out _, out var arrowSetter) && arrowSetter != null)
+            {
+                arrowSetter.Call(this, [value]);
+                return value;
+            }
+            arrowFn.SetProperty(set.Name.Lexeme, value);
+            return value;
+        }
         if (obj is SharpTSAsyncFunction asyncFn)
         {
             asyncFn.SetProperty(set.Name.Lexeme, value);
+            return value;
+        }
+        if (obj is SharpTSAsyncArrowFunction asyncArrowFn)
+        {
+            asyncArrowFn.SetProperty(set.Name.Lexeme, value);
             return value;
         }
 
@@ -749,7 +786,10 @@ public partial class Interpreter
                     regex.LastIndex = (int)(double)value!;
                     return value;
                 }
-                throw new InterpreterException($"Cannot set property '{memberName}' on RegExp.");
+                // JS: RegExp instances are objects; allow arbitrary property assignment
+                // (minimatch stores `_src`/`_glob` this way).
+                regex.SetProperty(memberName, value);
+                return value;
 
             case TypeCategory.Error when obj is SharpTSError error:
                 if (ErrorBuiltIns.SetMember(error, memberName, value))
@@ -809,7 +849,7 @@ public partial class Interpreter
             return value;
         }
 
-        throw new InterpreterException("Only instances and objects have fields.");
+        throw new InterpreterException($"Only instances and objects have fields. Cannot set '{memberName}' on {obj?.GetType().Name ?? "null"}.");
     }
 
     /// <summary>
@@ -847,7 +887,7 @@ public partial class Interpreter
             throw new InterpreterException($"Cannot set property '{memberName}' on BroadcastChannel.");
         }
 
-        throw new InterpreterException("Only instances and objects have fields.");
+        throw new InterpreterException($"Only instances and objects have fields. Cannot set '{memberName}' on {obj?.GetType().Name ?? "null"}.");
     }
 
     /// <summary>

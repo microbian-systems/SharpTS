@@ -23,6 +23,25 @@ public class SharpTSRegExp : ITypeCategorized
     private readonly bool _global;
     private readonly bool _ignoreCase;
     private readonly bool _multiline;
+    // JS: RegExp instances are objects and support arbitrary property assignment
+    // (e.g. minimatch's `Object.assign(new RegExp(...), { _src, _glob })`).
+    // internal: emitted $RegExp has its own storage; runtime↔emitted parity
+    // tests track public methods only (see RuntimeTypeSyncTests).
+    private Dictionary<string, object?>? _properties;
+
+    internal bool TryGetProperty(string name, out object? value)
+    {
+        if (_properties != null && _properties.TryGetValue(name, out value))
+            return true;
+        value = null;
+        return false;
+    }
+
+    internal void SetProperty(string name, object? value)
+    {
+        _properties ??= [];
+        _properties[name] = value;
+    }
 
     /// <summary>
     /// The index at which to start the next match (used with global flag).

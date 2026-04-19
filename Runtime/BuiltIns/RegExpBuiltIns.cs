@@ -13,10 +13,12 @@ public static class RegExpBuiltIns
     /// </summary>
     public static object? GetMember(SharpTSRegExp receiver, string name)
     {
-        return name switch
+        // User-set properties shadow nothing built-in but are returned when no
+        // builtin matches (JS: RegExp instances are ordinary objects).
+        var builtIn = name switch
         {
             // ========== Properties ==========
-            "source" => receiver.Source,
+            "source" => (object?)receiver.Source,
             "flags" => receiver.Flags,
             "global" => receiver.Global,
             "ignoreCase" => receiver.IgnoreCase,
@@ -43,6 +45,8 @@ public static class RegExpBuiltIns
 
             _ => null
         };
+        if (builtIn != null) return builtIn;
+        return receiver.TryGetProperty(name, out var userVal) ? userVal : null;
     }
 
     /// <summary>

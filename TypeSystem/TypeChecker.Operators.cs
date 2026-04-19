@@ -19,36 +19,46 @@ public partial class TypeChecker
         TypeInfo left = CheckExpr(binary.Left);
         TypeInfo right = CheckExpr(binary.Right);
         var desc = SemanticOperatorResolver.Resolve(binary.Operator.Type);
+        int line = binary.Operator.Line;
 
         return desc switch
         {
-            OperatorDescriptor.Plus => CheckPlusOperator(left, right),
-            OperatorDescriptor.Arithmetic or OperatorDescriptor.Power => CheckArithmeticBinary(left, right),
-            OperatorDescriptor.Comparison => CheckComparisonBinary(left, right),
+            OperatorDescriptor.Plus => CheckPlusOperator(left, right, line),
+            OperatorDescriptor.Arithmetic or OperatorDescriptor.Power => CheckArithmeticBinary(left, right, line),
+            OperatorDescriptor.Comparison => CheckComparisonBinary(left, right, line),
             OperatorDescriptor.Equality => new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN),
-            OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift => CheckBitwiseBinary(left, right),
-            OperatorDescriptor.UnsignedRightShift => CheckUnsignedShiftBinary(left, right),
+            OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift => CheckBitwiseBinary(left, right, line),
+            OperatorDescriptor.UnsignedRightShift => CheckUnsignedShiftBinary(left, right, line),
             OperatorDescriptor.In or OperatorDescriptor.InstanceOf => new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN),
             _ => new TypeInfo.Any()
         };
     }
 
-    private TypeInfo CheckPlusOperator(TypeInfo left, TypeInfo right)
+    /// <summary>
+    /// True if this type is Any, Inferred, or a Union containing an Any/Inferred arm.
+    /// A union that includes 'any' is effectively permissive (JS semantics); operators
+    /// should not reject the other arms in that case.
+    /// </summary>
+    private static bool IsAnyPermissive(TypeInfo t) =>
+        t is TypeInfo.Any or TypeInfo.Inferred
+        || (t is TypeInfo.Union u && u.FlattenedTypes.Any(inner => inner is TypeInfo.Any or TypeInfo.Inferred));
+
+    private TypeInfo CheckPlusOperator(TypeInfo left, TypeInfo right, int line = 0)
     {
-        // Any bypasses type checking - return any for any+anything
-        if (left is TypeInfo.Any || right is TypeInfo.Any) return new TypeInfo.Any();
+        // Any/Inferred (incl. in unions) bypasses type checking - return any
+        if (IsAnyPermissive(left) || IsAnyPermissive(right)) return new TypeInfo.Any();
         if (IsBigInt(left) && IsBigInt(right)) return new TypeInfo.BigInt();
         if (IsNumber(left) && IsNumber(right)) return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
         if (IsString(left) || IsString(right)) return new TypeInfo.String();
         if ((IsBigInt(left) && IsNumber(right)) || (IsNumber(left) && IsBigInt(right)))
-            throw new TypeCheckException("Cannot mix bigint and number in arithmetic operations. Use explicit BigInt() or Number() conversion.");
-        throw new TypeCheckException("Operator '+' cannot be applied to types '" + left + "' and '" + right + "'.");
+            throw new TypeCheckException("Cannot mix bigint and number in arithmetic operations. Use explicit BigInt() or Number() conversion.", line > 0 ? line : null);
+        throw new TypeCheckException("Operator '+' cannot be applied to types '" + left + "' and '" + right + "'.", line > 0 ? line : null);
     }
 
-    private TypeInfo CheckArithmeticBinary(TypeInfo left, TypeInfo right)
+    private TypeInfo CheckArithmeticBinary(TypeInfo left, TypeInfo right, int line = 0)
     {
-        // Any bypasses type checking - return any for any op anything
-        if (left is TypeInfo.Any || right is TypeInfo.Any)
+        // Any/Inferred (incl. in unions) bypasses type checking
+        if (IsAnyPermissive(left) || IsAnyPermissive(right))
             return new TypeInfo.Any();
         // Allow number+number OR bigint+bigint, NOT mixed
         if (IsBigInt(left) && IsBigInt(right))
@@ -56,14 +66,14 @@ public partial class TypeChecker
         if (IsNumber(left) && IsNumber(right))
             return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
         if ((IsBigInt(left) && IsNumber(right)) || (IsNumber(left) && IsBigInt(right)))
-            throw new TypeCheckException("Cannot mix bigint and number in arithmetic operations. Use explicit BigInt() or Number() conversion.");
-        throw new TypeCheckException("Operands must be numbers or bigints of the same type.");
+            throw new TypeCheckException("Cannot mix bigint and number in arithmetic operations. Use explicit BigInt() or Number() conversion.", line > 0 ? line : null);
+        throw new TypeCheckException($"Operands must be numbers or bigints of the same type. Got '{left}' and '{right}'.", line > 0 ? line : null);
     }
 
-    private TypeInfo CheckComparisonBinary(TypeInfo left, TypeInfo right)
+    private TypeInfo CheckComparisonBinary(TypeInfo left, TypeInfo right, int line = 0)
     {
-        // Any bypasses type checking
-        if (left is TypeInfo.Any || right is TypeInfo.Any)
+        // Any/Inferred (incl. in unions) bypasses type checking
+        if (IsAnyPermissive(left) || IsAnyPermissive(right))
             return new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
         // Allow number vs number, bigint vs bigint, or string vs string
         // (JS AbstractRelationalComparison: both strings → lexicographic).
@@ -72,14 +82,14 @@ public partial class TypeChecker
             || (IsString(left) && IsString(right)))
             return new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
         if ((IsBigInt(left) && IsNumber(right)) || (IsNumber(left) && IsBigInt(right)))
-            throw new TypeCheckException("Cannot compare bigint and number directly. Use explicit conversion.");
-        throw new TypeCheckException("Comparison operands must be numbers, bigints, or strings of the same type.");
+            throw new TypeCheckException("Cannot compare bigint and number directly. Use explicit conversion.", line > 0 ? line : null);
+        throw new TypeCheckException($"Comparison operands must be numbers, bigints, or strings of the same type. Got '{left}' and '{right}'.", line > 0 ? line : null);
     }
 
-    private TypeInfo CheckBitwiseBinary(TypeInfo left, TypeInfo right)
+    private TypeInfo CheckBitwiseBinary(TypeInfo left, TypeInfo right, int line = 0)
     {
-        // Any bypasses type checking - return any for any op anything
-        if (left is TypeInfo.Any || right is TypeInfo.Any)
+        // Any/Inferred (incl. in unions) bypasses type checking
+        if (IsAnyPermissive(left) || IsAnyPermissive(right))
             return new TypeInfo.Any();
         // Allow both number and bigint (separately)
         if (IsBigInt(left) && IsBigInt(right))
@@ -87,20 +97,20 @@ public partial class TypeChecker
         if (IsNumber(left) && IsNumber(right))
             return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
         if ((IsBigInt(left) && IsNumber(right)) || (IsNumber(left) && IsBigInt(right)))
-            throw new TypeCheckException("Cannot mix bigint and number in bitwise operations.");
-        throw new TypeCheckException("Bitwise operators require numeric operands.");
+            throw new TypeCheckException("Cannot mix bigint and number in bitwise operations.", line > 0 ? line : null);
+        throw new TypeCheckException($"Bitwise operators require numeric operands. Got '{left}' and '{right}'.", line > 0 ? line : null);
     }
 
-    private TypeInfo CheckUnsignedShiftBinary(TypeInfo left, TypeInfo right)
+    private TypeInfo CheckUnsignedShiftBinary(TypeInfo left, TypeInfo right, int line = 0)
     {
-        // Any bypasses type checking - return any
-        if (left is TypeInfo.Any || right is TypeInfo.Any)
+        // Any/Inferred (incl. in unions) bypasses type checking
+        if (IsAnyPermissive(left) || IsAnyPermissive(right))
             return new TypeInfo.Any();
         // Unsigned right shift - NOT SUPPORTED for bigint in TypeScript!
         if (IsBigInt(left) || IsBigInt(right))
-            throw new TypeCheckException("Unsigned right shift (>>>) is not supported for bigint.");
+            throw new TypeCheckException("Unsigned right shift (>>>) is not supported for bigint.", line > 0 ? line : null);
         if (!IsNumber(left) || !IsNumber(right))
-            throw new TypeCheckException("Bitwise operators require numeric operands.");
+            throw new TypeCheckException("Bitwise operators require numeric operands.", line > 0 ? line : null);
         return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
     }
 

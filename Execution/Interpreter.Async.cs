@@ -684,7 +684,7 @@ public partial class Interpreter
 
         if (!TryGetPropertyRV(obj, logical.Name, out RuntimeValue currentRV))
         {
-            throw new InterpreterException("Only instances and objects have fields.");
+            throw new InterpreterException($"Only instances and objects have fields. Cannot logical-get '{logical.Name.Lexeme}' on {obj?.GetType().Name ?? "null"}.");
         }
 
         switch (logical.Operator.Type)
@@ -704,7 +704,7 @@ public partial class Interpreter
         object? newValue = newRV.ToObject();
         if (!TrySetProperty(obj, logical.Name, newValue))
         {
-            throw new InterpreterException("Only instances and objects have fields.");
+            throw new InterpreterException($"Only instances and objects have fields. Cannot logical-set '{logical.Name.Lexeme}' on {obj?.GetType().Name ?? "null"}.");
         }
         return newRV;
     }
