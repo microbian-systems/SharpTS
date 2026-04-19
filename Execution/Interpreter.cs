@@ -6,6 +6,7 @@ using SharpTS.Runtime;
 using SharpTS.Runtime.BuiltIns;
 using SharpTS.Runtime.BuiltIns.Modules;
 using SharpTS.Runtime.BuiltIns.Modules.Interpreter;
+using SharpTS.Runtime.DotNet;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
 using SharpTS.TypeSystem;
@@ -1810,6 +1811,14 @@ public partial class Interpreter : IDisposable
 
     internal ExecutionResult VisitClass(Stmt.Class classStmt)
     {
+        // @DotNetType declare class: bind a DotNet wrapper into the environment
+        // instead of creating an empty SharpTSClass. Non-DotNet declare classes still
+        // fall through and produce an empty SharpTSClass for type-only compatibility.
+        if (classStmt.IsDeclare)
+        {
+            if (TryRegisterDotNetType(classStmt)) return ExecutionResult.Success();
+        }
+
         object? superclass = null;
         if (classStmt.SuperclassExpr != null)
         {

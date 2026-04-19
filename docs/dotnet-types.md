@@ -16,7 +16,16 @@ This guide covers **inbound interop** - calling .NET code from TypeScript using 
 ## Prerequisites
 
 - .NET 10.0 SDK
-- Compilation mode (`--compile`) - this feature is available only in compiled execution
+- Decorators enabled (default, or pass `--experimentalDecorators` for Legacy mode)
+
+`@DotNetType` works in **both** execution modes:
+
+| Mode | Notes |
+|------|-------|
+| **Compiled** (`--compile`) | Overload resolution runs at compile time using TypeScript static types. IL-level `Callvirt`/`Newobj` directly invoke the resolved method. |
+| **Interpreted** (default) | Overload resolution runs per call against the actual runtime argument types. Resolved `MethodInfo`s are cached on the wrapper so repeated calls avoid reflection lookup. |
+
+Use `@DotNetOverload(...)` when runtime resolution can't pick the overload you want — see [Overload Hints](#overload-hints).
 
 > **Note:** Decorators are enabled by default (TC39 Stage 3). Use `--experimentalDecorators` for Legacy (Stage 2) decorators, or `--noDecorators` to disable decorator support.
 
@@ -145,6 +154,38 @@ sb.append(true);     // Calls Append(bool)
 2. Lossless conversion (e.g., `number` → `float`)
 3. Narrowing conversion (e.g., `number` → `int`)
 4. Object fallback (any → `object`)
+
+The same cost scale is used in both compiled and interpreted modes, so an overload
+that resolves in one mode resolves the same way in the other — as long as the
+argument types are unambiguous.
+
+### Overload Hints
+
+When a method has multiple overloads that a TypeScript call can't distinguish
+(e.g., you want `ToInt32(int)` instead of the default `ToInt32(double)`), use
+`@DotNetOverload("<signature>")` to pin the target signature:
+
+```typescript
+@DotNetType("System.Convert")
+declare class Convert {
+    // Without the hint, runtime picks ToInt32(double) for a TS number.
+    // The hint narrows to ToInt32(int) — truncates 3.7 to 3 instead of
+    // rounding to 4.
+    @DotNetOverload("int")
+    static toInt32(value: number): number;
+}
+
+console.log(Convert.toInt32(3.7)); // 3
+```
+
+The hint value is a comma-separated list of parameter types matching the
+overload's signature. Recognized aliases: `int`, `long`, `short`, `byte`, `sbyte`,
+`uint`, `ulong`, `ushort`, `float`/`single`, `double`, `decimal`, `bool`/`boolean`,
+`char`, `string`, `object`, plus their `System.*` equivalents. Other types can
+be named by their fully-qualified CLR name.
+
+Use `@DotNetOverload("constructor-sig")` on a declared constructor to pin the
+constructor overload similarly.
 
 ---
 
@@ -458,6 +499,49 @@ For unsupported features, consider:
 
 ---
 
+## Exception Mapping
+
+When a .NET method called through `@DotNetType` throws, SharpTS translates the
+exception to a JavaScript-style error so `try`/`catch` in TypeScript works naturally.
+The original `.NET` exception is preserved on `e.cause` for diagnostics.
+
+| .NET exception | JS error (`e.name`) |
+|----------------|---------------------|
+| `ArgumentNullException` | `TypeError` |
+| `ArgumentException` | `TypeError` |
+| `InvalidCastException` | `TypeError` |
+| `NullReferenceException` | `TypeError` |
+| `ArgumentOutOfRangeException` | `RangeError` |
+| `IndexOutOfRangeException` | `RangeError` |
+| `OverflowException` | `RangeError` |
+| `DivideByZeroException` | `RangeError` |
+| `FormatException` | `SyntaxError` |
+| *(everything else)* | `Error` |
+
+`TargetInvocationException` is unwrapped before classification, so the mapped
+error reflects the actual failure, not the reflection wrapper.
+
+```typescript
+@DotNetType("System.Guid")
+declare class Guid {
+    static parse(input: string): Guid;
+}
+
+try {
+    Guid.parse("not-a-guid");
+} catch (e) {
+    console.log(e.name);     // "SyntaxError" (FormatException → SyntaxError)
+    console.log(e.message);  // .NET's original message
+    // e.cause holds the original System.FormatException
+}
+```
+
+Currently the mapping is applied in interpreter mode. Compiled mode propagates
+the raw .NET exception — `DotNetExceptionMapper.ClassifyAsJsErrorName` is a
+public entry point so compiled-mode callers can opt into the same classification.
+
+---
+
 ## Troubleshooting
 
 ### Type Not Found
@@ -482,12 +566,15 @@ For unsupported features, consider:
 - Decorators are enabled by default. If you used `--noDecorators`, remove that flag.
 - `@DotNetType` is a built-in compiler decorator, not a user-defined one
 
-### Compilation Only
+### Type Not Found at Runtime
 
-**Error:** Feature not available in interpreted mode
+**Error:** `@DotNetType: .NET type '…' not found in any loaded assembly.`
 
-- The `@DotNetType` feature requires compilation (`--compile` flag)
-- Interpreted mode does not support external .NET type bindings
+In interpreted mode the type is resolved at the point the `declare class`
+statement executes, from the set of assemblies currently loaded into the
+process. If your type lives in a third-party assembly, make sure it's
+loaded before the script runs — e.g., reference it from the host app or
+`Assembly.LoadFrom` it up front.
 
 ---
 
