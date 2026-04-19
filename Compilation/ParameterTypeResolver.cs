@@ -32,6 +32,10 @@ public static class ParameterTypeResolver
         // Map each parameter type, but use 'object' for:
         // 1. Optional parameters without explicit defaults (preserves null-checking)
         // 2. BigInteger parameters (operations expect boxed values)
+        // 3. Rest parameters — `$TSFunction.Invoke` / `AdjustArgs` only recognize
+        //    `List<object>` when packing trailing args; using a typed list like
+        //    `List<string>` for `...parts: string[]` breaks the dispatch path
+        //    (method gets invoked without rest packing, trailing args are dropped).
         return funcType.ParamTypes
             .Select((pt, i) =>
             {
@@ -49,6 +53,21 @@ public static class ParameterTypeResolver
                 if (i < parameters.Count &&
                     parameters[i].DefaultValue == null &&
                     parameters[i].IsOptional)
+                {
+                    return typeof(object);
+                }
+
+                // Rest parameter — dispatch helper expects List<object> as the marker.
+                if (i < parameters.Count && parameters[i].IsRest)
+                {
+                    return typeof(List<object>);
+                }
+
+                // Function-typed params: runtime values are $TSFunction or other
+                // callable classes (e.g. PromisifyCallback), not .NET Delegate
+                // subclasses. Signatures that demand Delegate reject them at
+                // MethodInfo.Invoke time.
+                if (mappedType == typeof(Delegate) || mappedType.IsSubclassOf(typeof(Delegate)))
                 {
                     return typeof(object);
                 }

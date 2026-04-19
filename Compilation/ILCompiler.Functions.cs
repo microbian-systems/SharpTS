@@ -47,8 +47,12 @@ public partial class ILCompiler
             _modules.FunctionToModule[funcStmt.Name.Lexeme] = _modules.CurrentPath;
         }
 
-        // Resolve typed parameters and return type from TypeMap
-        var funcType = _typeMap?.GetFunctionType(qualifiedFunctionName);
+        // Resolve typed parameters and return type from TypeMap. The TypeMap is
+        // keyed by simple name (the type checker doesn't see module qualification);
+        // try both so cross-module definitions recover the right param types
+        // (otherwise `...parts: string[]` degrades to `object`, breaking rest dispatch).
+        var funcType = _typeMap?.GetFunctionType(qualifiedFunctionName)
+                    ?? _typeMap?.GetFunctionType(funcStmt.Name.Lexeme);
         var paramTypes = ParameterTypeResolver.ResolveParameters(
             funcStmt.Parameters, _typeMapper, funcType);
 
