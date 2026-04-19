@@ -98,10 +98,27 @@ public partial class ILCompiler
 
         // Entry-point display class for captured top-level variables
         // When a top-level variable is captured by a closure, it's stored here
-        // so modifications in the closure are visible to the outer code
+        // so modifications in the closure are visible to the outer code.
+        // The display class is shared across modules, but each module gets its
+        // own fields (qualified by module path) to avoid two modules that both
+        // declare `const foo` from clobbering each other.
         public TypeBuilder? EntryPointDisplayClass { get; set; }
         public ConstructorBuilder? EntryPointDisplayClassCtor { get; set; }
-        public Dictionary<string, FieldBuilder> EntryPointDisplayClassFields { get; } = [];
+
+        // Per-module: which captured top-level var names belong to this module,
+        // and which fields on the shared display class store them. Module mode
+        // keys by module path; single-file/script mode uses the SingleFile
+        // sentinel (Dictionary<string,...> rejects null keys).
+        public Dictionary<string, HashSet<string>> ModuleCapturedTopLevelVars { get; } = [];
+        public Dictionary<string, Dictionary<string, FieldBuilder>> ModuleEntryPointDisplayClassFields { get; } = [];
+
+        // Sentinel key for single-file / script mode, where there's no module path.
+        // Chosen so it can't clash with any real module path.
+        public const string SingleFileKey = "<single-file>";
+
+        // Flat union used only for cross-module decisions — e.g., "is this name
+        // captured by SOMETHING so non-captured-var emission should skip it?"
+        // Not consumed by emitters; those see module-scoped dicts.
         public HashSet<string> CapturedTopLevelVars { get; } = [];
 
         // Static field on $Program that holds the entry-point display class instance

@@ -141,7 +141,15 @@ public partial class ILCompiler
         il.Emit(OpCodes.Stsfld, exportsField);
 
         // Build the compilation context for this module's body.
+        // Set _modules.CurrentPath first so BuildTopLevelStaticVarsForModule /
+        // BuildEntryPointDisplayClassFieldsForModule scope to this module —
+        // otherwise they'd fall through to the SingleFile bucket and miss
+        // this module's captured-top-level-var fields. (EmitModuleInit for
+        // ESM does the same dance.)
+        var savedPath = _modules.CurrentPath;
+        _modules.CurrentPath = module.Path;
         var ctx = CreateCompilationContext(il);
+        _modules.CurrentPath = savedPath;
         ctx.CurrentModulePath = module.Path;
         ctx.ModuleExportFields = _modules.ExportFields;
         ctx.ModuleTypes = _modules.Types;

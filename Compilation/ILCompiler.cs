@@ -94,6 +94,39 @@ public partial class ILCompiler
     // into lib.ts's resolver.
     private readonly Dictionary<string, Dictionary<string, FieldBuilder>> _moduleTopLevelStaticVars = [];
 
+    // Simple function name -> owning module path. Populated in DefineFunction
+    // for every top-level function (including async/generator). Used to
+    // restore _modules.CurrentPath during Phase-7 body emission so per-module
+    // lookups resolve against the right module's storage. Distinct from
+    // _modules.FunctionToModule, which ResolveFunctionName treats as "qualify
+    // the method name" — async stubs don't use qualified names, so they
+    // mustn't be added there.
+    //
+    // For script files (which share global scope), the stored path IS the
+    // script's own path; <see cref="NormalizeToEmissionPath"/> translates it
+    // back to <c>null</c> before use so captured-var lookups land in the
+    // SingleFile bucket that registration used.
+    private readonly Dictionary<string, string> _functionDefinitionModule = [];
+
+    // Tracks which module paths belong to script files. Kept as a set so
+    // NormalizeToEmissionPath can fold script paths back to null when
+    // restoring _modules.CurrentPath.
+    private readonly HashSet<string> _scriptModulePaths = [];
+
+    /// <summary>
+    /// Folds script module paths back to <c>null</c> so emission-time lookups
+    /// match the registration-time key used in script mode (captures,
+    /// top-level static vars, etc. all share the SingleFile bucket for scripts).
+    /// </summary>
+    private string? NormalizeToEmissionPath(string? path)
+    {
+        if (path != null && _scriptModulePaths.Contains(path))
+        {
+            return null;
+        }
+        return path;
+    }
+
     // Entry point
     private MethodBuilder? _entryPoint;
 
@@ -738,9 +771,10 @@ public partial class ILCompiler
         PreScanBuiltInModuleImports(allStatements);
         ModulePhase4_DefineModuleTypes(modules);
         // Captured top-level vars continue to share the entry-point display class
-        // (script-compatible closure semantics). Non-captured vars are per-module
-        // so ordinary import/export name collisions no longer leak scope.
-        AnalyzeCapturedTopLevelVars(allStatements);
+        // (script-compatible closure semantics), but each module gets its own
+        // FIELD on that class. Two modules that both declare `const x` no longer
+        // clobber each other.
+        AnalyzeCapturedTopLevelVarsAcrossModules(modules);
         foreach (var m in modules)
         {
             DefineModuleScopedTopLevelStaticFields(m.Statements, m.Path);
@@ -748,7 +782,7 @@ public partial class ILCompiler
         ModulePhase5_DefineDeclarations(modules);
         InitializeTypedInterop();
         InitializeTypeEmitterRegistries();
-        ModulePhase6_CollectArrowFunctions(allStatements);
+        ModulePhase6_CollectArrowFunctions(modules);
         ModulePhase7_EmitArrowBodies();
         ModulePhase8_EmitMethodBodies(modules);
         ModulePhase9_EmitModuleInits(modules);
@@ -834,9 +868,22 @@ public partial class ILCompiler
     /// <summary>
     /// Module Phase 6: Collect all arrow functions and define class expressions.
     /// </summary>
-    private void ModulePhase6_CollectArrowFunctions(List<Stmt> allStatements)
+    private void ModulePhase6_CollectArrowFunctions(List<ParsedModule> modules)
     {
-        CollectAndDefineArrowFunctions(allStatements);
+        // Walk per module with _modules.CurrentPath set, so arrow collection
+        // records each arrow's owning module for later body emission to restore
+        // the right per-module state.
+        foreach (var module in modules)
+        {
+            _modules.CurrentPath = module.IsScript ? null : module.Path;
+            CollectArrowsFromStatementsInCurrentModule(module.Statements);
+        }
+        _modules.CurrentPath = null;
+
+        // These steps don't depend on per-module scope yet — they see all
+        // collected arrows and operate cross-module.
+        FinalizeArrowFunctionCollection();
+
         DefineInnerFunctions();
         DefineTopLevelAsyncArrows(); // Define state machines for top-level async arrows
         DefineClassExpressionTypes();
@@ -1079,21 +1126,60 @@ public partial class ILCompiler
     private void DefineTopLevelCapturedVariables(List<Stmt> statements)
     {
         // Single-file compile path — treat the statements as one "module" with no path.
-        AnalyzeCapturedTopLevelVars(statements);
+        // The display class is created lazily by RegisterCapturedTopLevelVarsForModule
+        // only when there's at least one captured top-level var to register on it;
+        // creating it unconditionally would emit an unused `<>c__EntryPointDisplayClass`
+        // type into every compiled DLL.
+        RegisterCapturedTopLevelVarsForModule(statements, modulePath: null);
         DefineModuleScopedTopLevelStaticFields(statements, modulePath: null);
     }
 
     /// <summary>
-    /// Cross-module pass: populates <see cref="_ClosureState.CapturedTopLevelVars"/>
-    /// and defines the shared entry-point display class. Captured top-level vars
-    /// are kept in a single cross-module set by design — closures in one module
-    /// may capture vars from another during script-style scope merging; two
-    /// modules are not expected to capture identically-named locals.
+    /// Cross-module pass: populates per-module captured-top-level-var maps and
+    /// defines one field per (module, varName) pair on the shared
+    /// <c>&lt;&gt;c__EntryPointDisplayClass</c>. This prevents two modules that both
+    /// declare <c>const x</c> from sharing storage — each module's <c>x</c> lives
+    /// in its own qualified field (e.g. <c>a_ts__x</c>, <c>b_ts__x</c>).
     /// </summary>
-    private void AnalyzeCapturedTopLevelVars(List<Stmt> allStatements)
+    /// <remarks>
+    /// Captures are still analyzed against the flat union AST (closures may refer
+    /// across script-merged scopes), so <see cref="ClosureAnalyzer.IsVariableCaptured"/>
+    /// sees names globally. But field allocation and context views are
+    /// module-scoped so emissions route through the right storage.
+    /// </remarks>
+    private void AnalyzeCapturedTopLevelVarsAcrossModules(List<ParsedModule> modules)
     {
-        var allTopLevelVars = new HashSet<string>();
-        foreach (var stmt in allStatements)
+        foreach (var module in modules)
+        {
+            if (module.IsScript)
+            {
+                _scriptModulePaths.Add(module.Path);
+            }
+            // Scripts share global scope — register under null so they all land in
+            // the SingleFile bucket, matching what EmitScriptInit looks up at
+            // emission time (it sets _modules.CurrentPath = null before emission).
+            string? registrationPath = module.IsScript ? null : module.Path;
+            RegisterCapturedTopLevelVarsForModule(module.Statements, registrationPath);
+        }
+        // The display class is created lazily inside RegisterCapturedTopLevelVarsForModule
+        // when there are captured vars to register. Don't force-create it here, or we
+        // emit an unused `<>c__EntryPointDisplayClass` type into every compiled output.
+    }
+
+    /// <summary>
+    /// For a single module (or the whole program in single-file mode), records which
+    /// of its top-level var/const declarations are captured by any closure, and
+    /// defines a uniquely-named field on the shared entry-point display class for
+    /// each one. Field names are qualified by module path to keep same-named
+    /// bindings in different modules independent.
+    /// </summary>
+    private void RegisterCapturedTopLevelVarsForModule(List<Stmt> statements, string? modulePath)
+    {
+        string key = modulePath ?? ClosureCompilationState.SingleFileKey;
+        HashSet<string>? moduleVars = null;
+        Dictionary<string, FieldBuilder>? moduleFields = null;
+
+        foreach (var stmt in statements)
         {
             string? varName = stmt switch
             {
@@ -1101,61 +1187,80 @@ public partial class ILCompiler
                 Stmt.Const c => c.Name.Lexeme,
                 _ => null
             };
-            if (varName != null)
+            if (varName == null || !_closures.Analyzer.IsVariableCaptured(varName)) continue;
+
+            // Lazily ensure the display class exists so we can allocate fields on it.
+            var displayClass = EnsureEntryPointDisplayClass();
+
+            moduleVars ??= GetOrCreate(_closures.ModuleCapturedTopLevelVars, key);
+            moduleFields ??= GetOrCreate(_closures.ModuleEntryPointDisplayClassFields, key);
+
+            if (moduleVars.Add(varName))
             {
-                allTopLevelVars.Add(varName);
+                string fieldName = modulePath == null
+                    ? varName
+                    : $"{SanitizeModuleForField(modulePath)}__{varName}";
+                var field = displayClass.DefineField(fieldName, _types.Object, FieldAttributes.Public);
+                moduleFields[varName] = field;
             }
+
+            _closures.CapturedTopLevelVars.Add(varName);
         }
 
-        foreach (var varName in allTopLevelVars)
+        static TValue GetOrCreate<TValue>(Dictionary<string, TValue> dict, string key)
+            where TValue : new()
         {
-            if (_closures.Analyzer.IsVariableCaptured(varName))
+            if (!dict.TryGetValue(key, out var v))
             {
-                _closures.CapturedTopLevelVars.Add(varName);
+                v = new TValue();
+                dict[key] = v;
             }
+            return v;
         }
+    }
 
-        if (_closures.CapturedTopLevelVars.Count > 0 && _closures.EntryPointDisplayClass == null)
+    /// <summary>
+    /// Lazily defines the shared <c>&lt;&gt;c__EntryPointDisplayClass</c> type, its default
+    /// constructor, and the static <c>$entryPointDC</c> field that holds the instance.
+    /// Returns the display class builder so callers can add fields to it.
+    /// </summary>
+    private TypeBuilder EnsureEntryPointDisplayClass()
+    {
+        if (_closures.EntryPointDisplayClass != null)
         {
-            var displayClass = _moduleBuilder.DefineType(
-                "<>c__EntryPointDisplayClass",
-                TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
-                _types.Object);
-
-            foreach (var varName in _closures.CapturedTopLevelVars)
-            {
-                var field = displayClass.DefineField(
-                    varName,
-                    _types.Object,
-                    FieldAttributes.Public);
-                _closures.EntryPointDisplayClassFields[varName] = field;
-            }
-
-            var ctor = displayClass.DefineConstructor(
-                MethodAttributes.Public,
-                CallingConventions.Standard,
-                Type.EmptyTypes);
-            var ctorIl = ctor.GetILGenerator();
-            ctorIl.Emit(OpCodes.Ldarg_0);
-            ctorIl.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
-            ctorIl.Emit(OpCodes.Ret);
-
-            _closures.EntryPointDisplayClass = displayClass;
-            _closures.EntryPointDisplayClassCtor = ctor;
-
-            _closures.EntryPointDisplayClassStaticField = _programType.DefineField(
-                "$entryPointDC",
-                displayClass,
-                FieldAttributes.Public | FieldAttributes.Static);
+            return _closures.EntryPointDisplayClass;
         }
+
+        var displayClass = _moduleBuilder.DefineType(
+            "<>c__EntryPointDisplayClass",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.Object);
+
+        var ctor = displayClass.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            Type.EmptyTypes);
+        var ctorIl = ctor.GetILGenerator();
+        ctorIl.Emit(OpCodes.Ldarg_0);
+        ctorIl.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+        ctorIl.Emit(OpCodes.Ret);
+
+        _closures.EntryPointDisplayClass = displayClass;
+        _closures.EntryPointDisplayClassCtor = ctor;
+        _closures.EntryPointDisplayClassStaticField = _programType.DefineField(
+            "$entryPointDC",
+            displayClass,
+            FieldAttributes.Public | FieldAttributes.Static);
+
+        return displayClass;
     }
 
     /// <summary>
     /// Per-module pass: defines static fields for non-captured top-level
     /// var/const declarations and records them in
     /// <see cref="_moduleTopLevelStaticVars"/>. Captured vars are handled by
-    /// <see cref="AnalyzeCapturedTopLevelVars"/> and live on the shared
-    /// entry-point display class.
+    /// <see cref="AnalyzeCapturedTopLevelVarsAcrossModules"/> and live on
+    /// per-module fields of the shared entry-point display class.
     /// </summary>
     /// <param name="modulePath">The module this statement set belongs to, or
     /// <c>null</c> for single-file compilation (which shares a global scope).</param>
@@ -1262,5 +1367,42 @@ public partial class ILCompiler
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Returns the captured-top-level-var names visible to code emitted for the
+    /// given module, or <c>null</c> if none. Mirrors <see cref="BuildTopLevelStaticVarsForModule"/>.
+    /// </summary>
+    /// <remarks>
+    /// Two modules that both declare <c>const x</c> (with at least one module's
+    /// closures capturing <c>x</c>) see only their own <c>x</c> here — the set is
+    /// filtered by module so each module's emissions resolve to that module's
+    /// field on the shared display class, not the other module's.
+    /// </remarks>
+    private HashSet<string>? BuildCapturedTopLevelVarsForModule(string? modulePath)
+    {
+        string key = modulePath ?? ClosureCompilationState.SingleFileKey;
+        if (_closures.ModuleCapturedTopLevelVars.TryGetValue(key, out var vars) && vars.Count > 0)
+        {
+            return vars;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Returns the entry-point display class field map visible to code emitted
+    /// for the given module — a fresh dict so downstream mutation can't leak into
+    /// other modules' views. Keys are bare var names (e.g. <c>"x"</c>); values
+    /// resolve to this module's qualified field (e.g. <c>a_ts__x</c>) on the
+    /// shared display class.
+    /// </summary>
+    private Dictionary<string, FieldBuilder>? BuildEntryPointDisplayClassFieldsForModule(string? modulePath)
+    {
+        string key = modulePath ?? ClosureCompilationState.SingleFileKey;
+        if (_closures.ModuleEntryPointDisplayClassFields.TryGetValue(key, out var fields) && fields.Count > 0)
+        {
+            return new Dictionary<string, FieldBuilder>(fields);
+        }
+        return null;
     }
 }

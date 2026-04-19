@@ -42,7 +42,7 @@ public class StreamsWebSemanticTests
     /// <c>done:true</c> immediately. Fixing requires async state machine
     /// emission.</para>
     /// </remarks>
-    [Theory(Skip = "INTERPRETER ARCHITECTURAL ISSUE: ExecuteScriptFile uses Task.GetAwaiter().GetResult() to wait for top-level async expressions, which blocks the interpreter thread. The timer-driven enqueue cannot fire because RunEventLoop hasn't started yet. Fixing requires either (a) driving the event loop during the wait — but that causes reentrant scope corruption because the interpreter's _environment field isn't saved across async boundaries — or (b) a full rework of the top-level async execution model. Deferred as separate engineering work orthogonal to Web Streams. Compiled mode has a pure-IL variant below.")]
+    [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void ReadableStream_PendingReadResolvedByLaterEnqueue(ExecutionMode mode)
     {

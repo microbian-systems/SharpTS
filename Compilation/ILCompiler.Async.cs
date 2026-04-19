@@ -456,8 +456,13 @@ public partial class ILCompiler
 
     private void EmitAsyncStateMachineBodies()
     {
+        var savedPath = _modules.CurrentPath;
         foreach (var (funcName, smBuilder) in _async.StateMachines)
         {
+            if (_functionDefinitionModule.TryGetValue(funcName, out var fnModule))
+            {
+                _modules.CurrentPath = NormalizeToEmissionPath(fnModule);
+            }
             var func = _async.Functions[funcName];
             var stubMethod = _functions.Builders[funcName];
             var analysis = _async.Analyzer.Analyze(func);
@@ -509,8 +514,8 @@ public partial class ILCompiler
                 // Registry services
                 ClassRegistry = GetClassRegistry(),
                 // Entry-point display class for captured top-level variables
-                EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
-                CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
+                EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+                CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
                 ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
                 EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
                 // Function display class for captured locals (closure mutation sharing with arrows)
@@ -541,6 +546,7 @@ public partial class ILCompiler
             // Finalize state machine type
             smBuilder.CreateType();
         }
+        _modules.CurrentPath = savedPath;
 
         // Finalize all async arrow state machine types
         foreach (var (_, arrowBuilder) in _async.ArrowBuilders)
@@ -892,8 +898,8 @@ public partial class ILCompiler
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Entry-point display class for captured top-level variables
-            EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
-            CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
         };
@@ -999,12 +1005,18 @@ public partial class ILCompiler
     /// </summary>
     private void EmitTopLevelAsyncArrowBodies()
     {
+        var savedPath = _modules.CurrentPath;
         foreach (var (arrow, arrowBuilder) in _async.ArrowBuilders)
         {
             // Only process standalone arrows (not nested in async functions)
             if (!arrowBuilder.IsStandalone)
             {
                 continue;
+            }
+
+            if (_arrowToModule.TryGetValue(arrow, out var arrowModule))
+            {
+                _modules.CurrentPath = NormalizeToEmissionPath(arrowModule);
             }
 
             // Create IL generator for the arrow's MoveNext
@@ -1075,8 +1087,8 @@ public partial class ILCompiler
                 CurrentClassName = enclosingClassName,
                 CurrentClassBuilder = enclosingClassBuilder,
                 ClassRegistry = GetClassRegistry(),
-                EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
-                CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
+                EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+                CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
                 ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
                 EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
             };
@@ -1106,5 +1118,6 @@ public partial class ILCompiler
             // Finalize the type
             arrowBuilder.CreateType();
         }
+        _modules.CurrentPath = savedPath;
     }
 }

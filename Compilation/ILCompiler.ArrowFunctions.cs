@@ -10,6 +10,12 @@ namespace SharpTS.Compilation;
 public partial class ILCompiler
 {
     private readonly List<(Expr.ArrowFunction Arrow, HashSet<string> Captures)> _collectedArrows = [];
+    // Maps each collected arrow to the module path that owns it (null = script/single-file
+    // scope). Set during collection so body emission can restore the correct
+    // per-module view of TopLevelStaticVars / captured-top-level-var fields —
+    // body emission otherwise runs with a stale _modules.CurrentPath and
+    // resolves against the wrong module's storage.
+    private readonly Dictionary<Expr.ArrowFunction, string?> _arrowToModule = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Expr.ArrowFunction, Expr.ArrowFunction?> _arrowParent = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrowFunction> _arrowsNeedingFunctionDC = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrowFunction> _arrowsNeedingArrowDC = new(ReferenceEqualityComparer.Instance);
@@ -34,12 +40,32 @@ public partial class ILCompiler
 
     private void CollectAndDefineArrowFunctions(List<Stmt> statements)
     {
-        // Walk the AST and collect all arrow functions
+        CollectArrowsFromStatementsInCurrentModule(statements);
+        FinalizeArrowFunctionCollection();
+    }
+
+    /// <summary>
+    /// Walks statements under the current module context to populate
+    /// <see cref="_collectedArrows"/> and the arrow→module map. Module compilation
+    /// calls this once per module (with <c>_modules.CurrentPath</c> set);
+    /// single-file compilation calls it once with the path unset.
+    /// </summary>
+    private void CollectArrowsFromStatementsInCurrentModule(List<Stmt> statements)
+    {
         foreach (var stmt in statements)
         {
             CollectArrowsFromStmt(stmt);
         }
+    }
 
+    /// <summary>
+    /// Runs the cross-module finalization pass — propagates DC requirements,
+    /// defines scope display classes, and defines per-arrow methods/display classes.
+    /// Must run AFTER every module has been walked via
+    /// <see cref="CollectArrowsFromStatementsInCurrentModule"/>.
+    /// </summary>
+    private void FinalizeArrowFunctionCollection()
+    {
         // Propagate function DC requirements through arrow nesting
         // If an inner arrow needs $functionDC, parent arrows also need it
         PropagateFunctionDCRequirements();
@@ -442,6 +468,15 @@ public partial class ILCompiler
             case Expr.ArrowFunction af:
                 var captures = _closures.Analyzer.GetCaptures(af);
                 _collectedArrows.Add((af, captures));
+                // Only record a module mapping when collection is under a real
+                // module context. Single-file compile runs without setting
+                // _modules.CurrentPath, and entering a null key would cause
+                // body emission to overwrite the path with null, dropping any
+                // outer context the caller set up.
+                if (_modules.CurrentPath != null)
+                {
+                    _arrowToModule[af] = _modules.CurrentPath;
+                }
 
                 // Track enclosing class name for async arrows that need private field access
                 if (af.IsAsync && _currentCollectClassName != null)
@@ -766,6 +801,7 @@ public partial class ILCompiler
 
     private void EmitArrowFunctionBodies()
     {
+        var savedPath = _modules.CurrentPath;
         foreach (var (arrow, captures) in _collectedArrows)
         {
             // Skip async arrows - they're handled separately via AsyncArrowMoveNextEmitter
@@ -773,6 +809,11 @@ public partial class ILCompiler
             if (arrow.IsAsync)
             {
                 continue;
+            }
+
+            if (_arrowToModule.TryGetValue(arrow, out var arrowModule))
+            {
+                _modules.CurrentPath = NormalizeToEmissionPath(arrowModule);
             }
 
             var methodBuilder = _closures.ArrowMethods[arrow];
@@ -794,6 +835,7 @@ public partial class ILCompiler
                 EmitArrowBody(arrow, methodBuilder, displayClass);
             }
         }
+        _modules.CurrentPath = savedPath;
     }
 
     private void EmitArrowBody(Expr.ArrowFunction arrow, MethodBuilder method, TypeBuilder? displayClass)
@@ -840,8 +882,8 @@ public partial class ILCompiler
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Entry-point display class for accessing captured top-level variables
-            EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
-            CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
             // Function-level display class for nested arrow functions

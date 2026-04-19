@@ -90,6 +90,55 @@ public class CliCommonJsCompiledTests
         Assert.Contains("Hello, compiled!", output);
     }
 
+    /// <summary>
+    /// Regression: a CJS module whose exported function captures top-level
+    /// consts must see those consts at runtime. This pattern is common in
+    /// real packages (e.g. <c>ms</c> defines <c>s, m, h, d, w, y</c> at module
+    /// scope and references them from the exported function).
+    ///
+    /// <para>The original bug: <c>EmitCommonJsModuleInit</c> built its
+    /// <c>CompilationContext</c> without setting <c>_modules.CurrentPath</c>
+    /// first, so the per-module captured-var field lookups fell through to the
+    /// SingleFile bucket (empty) and returned <c>null</c>. The emitted IL then
+    /// loaded <c>null</c> for each constant, producing <c>0</c> / <c>NaN</c> /
+    /// <c>Infinity</c> instead of the real values.</para>
+    /// </summary>
+    [Fact]
+    public void Compiled_CjsFile_TopLevelConstsCapturedByExportedFunction()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        tempDir.CreateFile("units.cjs", """
+            const s = 1000;
+            const m = s * 60;
+            const h = m * 60;
+            const d = h * 24;
+            function toMs(val) {
+                if (val === 'd') return d;
+                if (val === 'h') return h;
+                if (val === 'm') return m;
+                if (val === 's') return s;
+                return 0;
+            }
+            module.exports = toMs;
+            """);
+        var entry = tempDir.CreateFile("main.cjs", """
+            const toMs = require("./units.cjs");
+            console.log(toMs('s'));
+            console.log(toMs('m'));
+            console.log(toMs('h'));
+            console.log(toMs('d'));
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        // Expected values: 1_000, 60_000, 3_600_000, 86_400_000.
+        // The pre-fix output was 0\n0\n0\n0 because the captured fields were null.
+        Assert.Contains("1000", output);
+        Assert.Contains("60000", output);
+        Assert.Contains("3600000", output);
+        Assert.Contains("86400000", output);
+    }
+
     [Fact]
     public void Compiled_CjsFile_CircularRequire_PartialExportsVisible()
     {
