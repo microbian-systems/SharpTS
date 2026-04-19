@@ -67,7 +67,11 @@ public partial class TypeChecker
 
         if (_currentClass == null)
         {
-            throw new TypeCheckException("Cannot use 'this' outside of a class.");
+            // Allow `this` in regular functions (JS constructor-function
+            // pattern) and at module top level. Type it as Any so members
+            // resolve permissively — matches how CJS code uses
+            // `function Foo() { this.x = 1 }`.
+            return new TypeInfo.Any();
         }
         // In static blocks, 'this' refers to the class constructor (the class type itself)
         if (_inStaticBlock)
@@ -76,7 +80,8 @@ public partial class TypeChecker
         }
         if (_inStaticMethod)
         {
-            throw new TypeCheckException("Cannot use 'this' in a static method.");
+            // Static methods: `this` is the class itself.
+            return _currentClass;
         }
         return new TypeInfo.Instance(_currentClass);
     }
@@ -506,6 +511,12 @@ public partial class TypeChecker
         }
         // Allow property assignment on Any type (e.g., 'this' in object method shorthand)
         if (objType is TypeInfo.Any)
+        {
+            return CheckExpr(set.Value);
+        }
+        // Functions are objects in JavaScript and support property assignment.
+        // (Very common in CommonJS: `fn.prototype = {}`, `fn.DNS = "..."`.)
+        if (objType is TypeInfo.Function)
         {
             return CheckExpr(set.Value);
         }

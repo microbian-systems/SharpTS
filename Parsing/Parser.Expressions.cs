@@ -25,10 +25,16 @@ public partial class Parser
 
     private Expr Assignment()
     {
-        // Check for single-parameter arrow function without parentheses: x => expr
-        if (Check(TokenType.IDENTIFIER) && CheckNext(TokenType.ARROW))
+        // Check for single-parameter arrow function without parentheses: x => expr.
+        // Also accept TS contextual keywords as the param name (e.g.
+        // `namespace => …`, `type => …`), since they are valid JS identifiers.
+        if ((Check(TokenType.IDENTIFIER) || IsContextualKeyword(Peek().Type))
+            && CheckNext(TokenType.ARROW))
         {
-            Token paramName = Advance(); // consume identifier
+            Token raw = Advance(); // consume identifier/contextual keyword
+            Token paramName = raw.Type == TokenType.IDENTIFIER
+                ? raw
+                : new Token(TokenType.IDENTIFIER, raw.Lexeme, null, raw.Line);
             Advance(); // consume '=>'
 
             // Parse the body - either block or expression
@@ -329,7 +335,8 @@ public partial class Parser
             return new Expr.PrefixIncrement(op, operand);
         }
 
-        if (Match(TokenType.BANG, TokenType.MINUS, TokenType.TYPEOF, TokenType.TILDE, TokenType.VOID))
+        if (Match(TokenType.BANG, TokenType.PLUS, TokenType.MINUS,
+                  TokenType.TYPEOF, TokenType.TILDE, TokenType.VOID))
         {
             Token op = Previous();
             Expr right = Unary();
@@ -380,17 +387,20 @@ public partial class Parser
             // Parse optional type arguments: new Class<T>()
             List<string>? typeArgs = TryParseTypeArguments();
 
-            // Parse arguments
-            Consume(TokenType.LEFT_PAREN, "Expect '(' after new expression callee.");
+            // Parse arguments. `new X` without parens is valid JS —
+            // equivalent to `new X()`.
             List<Expr> arguments = [];
-            if (!Check(TokenType.RIGHT_PAREN))
+            if (Match(TokenType.LEFT_PAREN))
             {
-                do
+                if (!Check(TokenType.RIGHT_PAREN))
                 {
-                    arguments.Add(Expression());
-                } while (Match(TokenType.COMMA));
+                    do
+                    {
+                        arguments.Add(Expression());
+                    } while (Match(TokenType.COMMA));
+                }
+                Consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments.");
             }
-            Consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments.");
 
             // Allow operations on new expressions
             // Examples: new Date().toISOString()
@@ -592,14 +602,24 @@ public partial class Parser
             return callee;
         }
 
-        // Otherwise expect an identifier (class name or start of namespace path)
-        Token firstIdent = Consume(TokenType.IDENTIFIER, "Expect class name after 'new'.");
-        callee = new Expr.Variable(firstIdent);
+        // `new this(...)` — subclass-creating static method pattern used in
+        // yaml's `YAMLMap.from(...)` etc. Treat `this` as the callee expr.
+        if (Match(TokenType.THIS))
+        {
+            callee = new Expr.This(Previous());
+        }
+        else
+        {
+            // Otherwise expect an identifier (class name or start of namespace path)
+            Token firstIdent = ConsumeIdentifierName("Expect class name after 'new'.");
+            callee = new Expr.Variable(firstIdent);
+        }
 
-        // Handle member access chain: Namespace.SubNamespace.ClassName
+        // Handle member access chain: Namespace.SubNamespace.ClassName.
+        // Property-name position after `.` accepts any keyword (JS semantics).
         while (Match(TokenType.DOT))
         {
-            Token name = Consume(TokenType.IDENTIFIER, "Expect identifier after '.' in new expression.");
+            Token name = ConsumePropertyName("Expect identifier after '.' in new expression.");
             callee = new Expr.Get(callee, name);
         }
 
@@ -690,22 +710,29 @@ public partial class Parser
         if (Match(TokenType.LEFT_BRACKET))
         {
             List<Expr> elements = [];
-            if (!Check(TokenType.RIGHT_BRACKET))
+            // Array literal supports holes (elisions): [,,1] or [,-0].
+            // Leading/interior commas without a preceding element produce
+            // `undefined` holes; a trailing comma does not.
+            while (!Check(TokenType.RIGHT_BRACKET))
             {
-                do
+                if (Match(TokenType.COMMA))
                 {
-                    // Handle trailing comma: [1, 2, 3,]
-                    if (Check(TokenType.RIGHT_BRACKET)) break;
+                    // Elided slot before anything — push undefined.
+                    elements.Add(new Expr.Literal(SharpTS.Runtime.Types.SharpTSUndefined.Instance));
+                    continue;
+                }
 
-                    if (Match(TokenType.DOT_DOT_DOT))
-                    {
-                        elements.Add(new Expr.Spread(Expression()));
-                    }
-                    else
-                    {
-                        elements.Add(Expression());
-                    }
-                } while (Match(TokenType.COMMA));
+                if (Match(TokenType.DOT_DOT_DOT))
+                {
+                    elements.Add(new Expr.Spread(Expression()));
+                }
+                else
+                {
+                    elements.Add(Expression());
+                }
+
+                // If next is `,`, consume and continue (may be trailing).
+                if (!Match(TokenType.COMMA)) break;
             }
             Consume(TokenType.RIGHT_BRACKET, "Expect ']' after array elements.");
             return new Expr.ArrayLiteral(elements);
@@ -929,6 +956,7 @@ public partial class Parser
                         // Method shorthand: { fn() {} }
                         string? thisType = null;
                         List<Stmt.Parameter> parameters = [];
+                        List<(Token SynthName, DestructurePattern Pattern)> destructuredParams = [];
 
                         // Check for 'this' parameter in object method
                         if (Check(TokenType.THIS))
@@ -946,6 +974,33 @@ public partial class Parser
                         {
                             do
                             {
+                                // Destructuring patterns in object-method parameters
+                                // (used by e.g. yaml's `stringify({source, value}, ctx) {...}`).
+                                if (Check(TokenType.LEFT_BRACKET))
+                                {
+                                    int line = Peek().Line;
+                                    Consume(TokenType.LEFT_BRACKET, "");
+                                    var pattern = ParseArrayPattern();
+                                    Token synthName = new Token(TokenType.IDENTIFIER, $"_param{parameters.Count}", null, line);
+                                    string? pType = Match(TokenType.COLON) ? ParseTypeAnnotation() : null;
+                                    Expr? pDefault = Match(TokenType.EQUAL) ? Expression() : null;
+                                    parameters.Add(new Stmt.Parameter(synthName, pType, pDefault));
+                                    destructuredParams.Add((synthName, pattern));
+                                    continue;
+                                }
+                                if (Check(TokenType.LEFT_BRACE))
+                                {
+                                    int line = Peek().Line;
+                                    Consume(TokenType.LEFT_BRACE, "");
+                                    var pattern = ParseObjectPattern();
+                                    Token synthName = new Token(TokenType.IDENTIFIER, $"_param{parameters.Count}", null, line);
+                                    string? pType = Match(TokenType.COLON) ? ParseTypeAnnotation() : null;
+                                    Expr? pDefault = Match(TokenType.EQUAL) ? Expression() : null;
+                                    parameters.Add(new Stmt.Parameter(synthName, pType, pDefault));
+                                    destructuredParams.Add((synthName, pattern));
+                                    continue;
+                                }
+
                                 // Check for rest parameter
                                 bool isRest = Match(TokenType.DOT_DOT_DOT);
                                 Token paramName = ConsumeIdentifierName("Expect parameter name.");
@@ -979,6 +1034,25 @@ public partial class Parser
 
                         Consume(TokenType.LEFT_BRACE, "Expect '{' before method body.");
                         List<Stmt> body = Block();
+
+                        // Prepend destructuring desugar statements.
+                        if (destructuredParams.Count > 0)
+                        {
+                            var prologue = new List<Stmt>();
+                            foreach (var (synthName, pattern) in destructuredParams)
+                            {
+                                var paramVar = new Expr.Variable(synthName);
+                                Stmt desugar = pattern switch
+                                {
+                                    ArrayPattern ap => DesugarArrayPattern(ap, paramVar),
+                                    ObjectPattern op => DesugarObjectPattern(op, paramVar),
+                                    _ => throw new Exception("Unknown pattern type")
+                                };
+                                prologue.Add(desugar);
+                            }
+                            body = prologue.Concat(body).ToList();
+                        }
+
                         body = VarHoister.Hoist(body);
                         value = new Expr.ArrowFunction(Name: null, TypeParams: null, ThisType: thisType, Parameters: parameters, ExpressionBody: null, BlockBody: body, ReturnType: returnType, HasOwnThis: true);
                     }

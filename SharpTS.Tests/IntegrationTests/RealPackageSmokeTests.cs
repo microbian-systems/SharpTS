@@ -208,7 +208,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // uuid — UUID generation, tests crypto interop
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "Runtime ThrowException in uuid package (type checker forward var refs fixed)")]
+    [SkippableFact]
     public void Uuid_Interpreter()
     {
         SkipIfNoNpm();
@@ -246,7 +246,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // debug — logging utility (depends on ms)
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "debug package source uses unsupported syntax (parse error at line 168)")]
+    [SkippableFact]
     public void Debug_Interpreter()
     {
         SkipIfNoNpm();
@@ -282,7 +282,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // semver — semantic version parsing
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "ASI resolved; now blocked on other parse errors in semver source")]
+    [SkippableFact]
     public void Semver_Interpreter()
     {
         SkipIfNoNpm();

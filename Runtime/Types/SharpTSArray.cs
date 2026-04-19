@@ -75,9 +75,11 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
 
     public object? Get(int index)
     {
+        // JS semantics: out-of-range index access returns `undefined`
+        // rather than throwing.
         if (index < 0 || index >= Elements.Count)
         {
-            throw new Exception("RangeError: Index out of bounds.");
+            return SharpTSUndefined.Instance;
         }
         return Elements[index];
     }
@@ -92,12 +94,23 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
             return;
         }
 
-        if (index < 0 || index >= Elements.Count)
+        if (index < 0)
         {
-            // Simplified: TS usually expands array, but let's be strict or expandable?
-            // List<T> supports expansion via Add, but index access throws if OOB.
-            // Let's allow strict bounds for now.
             throw new Exception("RangeError: Index out of bounds.");
+        }
+
+        // JS semantics: assigning to an index >= length extends the array,
+        // padding intermediate slots with undefined.
+        if (index >= Elements.Count)
+        {
+            if (!IsExtensible && index >= Elements.Count)
+            {
+                return;
+            }
+            while (Elements.Count <= index)
+            {
+                Elements.Add(SharpTSUndefined.Instance);
+            }
         }
         Elements[index] = value;
     }
@@ -117,9 +130,23 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
             return;
         }
 
-        if (index < 0 || index >= Elements.Count)
+        if (index < 0)
         {
             throw new Exception("RangeError: Index out of bounds.");
+        }
+
+        if (index >= Elements.Count)
+        {
+            if (!IsExtensible)
+            {
+                if (strictMode)
+                    throw new Exception($"TypeError: Cannot add property {index}, object is not extensible");
+                return;
+            }
+            while (Elements.Count <= index)
+            {
+                Elements.Add(SharpTSUndefined.Instance);
+            }
         }
         Elements[index] = value;
     }

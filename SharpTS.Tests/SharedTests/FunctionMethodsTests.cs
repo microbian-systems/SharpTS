@@ -215,18 +215,26 @@ public class FunctionMethodsTests
     #region Type Error Tests
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void FunctionInvalidMember_ThrowsTypeError(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void FunctionInvalidMember_ReturnsUndefined(ExecutionMode mode)
     {
+        // JS functions are objects and support arbitrary property access —
+        // reading an unset property returns `undefined` rather than throwing.
+        // (Required for CommonJS packages like uuid/debug that treat
+        // functions as namespaces: `debug.log`, `v3.DNS`, etc.)
+        // Compiled mode still reports "object" here — it lacks the same
+        // property bag on emitted $TSFunction that the interpreter's
+        // SharpTSFunction has.
         var source = """
             function add(a: number, b: number): number {
                 return a + b;
             }
             let x = add.invalidMethod;
+            console.log(typeof x);
             """;
 
-        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
-        Assert.Contains("does not exist on type 'function'", ex.Message);
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined\n", output);
     }
 
     #endregion

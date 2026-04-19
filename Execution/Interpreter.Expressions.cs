@@ -766,6 +766,15 @@ public partial class Interpreter
             return proxy.TrapGetRV(key, this);
         }
 
+        // JS functions are objects — bracket access reads user properties.
+        if (obj is SharpTSFunction fn)
+        {
+            string fnKey = index?.ToString() ?? "";
+            if (fn.TryGetProperty(fnKey, out var propVal))
+                return RuntimeValue.FromBoxed(propVal);
+            return RuntimeValue.Undefined;
+        }
+
         return RuntimeValue.FromBoxed(ResolveIndexTarget(obj, index) switch
         {
             IndexTarget.Array t => t.Target.Get(t.Index),
@@ -809,6 +818,13 @@ public partial class Interpreter
         {
             string key = index?.ToString() ?? "";
             return proxy.TrapSetRV(key, value, this);
+        }
+
+        // JS functions are objects — support bracket property assignment.
+        if (obj is SharpTSFunction fn)
+        {
+            fn.SetProperty(index?.ToString() ?? "", value);
+            return RuntimeValue.FromBoxed(value);
         }
 
         var target = ResolveIndexTarget(obj, index);

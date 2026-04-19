@@ -242,8 +242,19 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         TokenType.OUT or TokenType.UNIQUE or TokenType.UNKNOWN or
         TokenType.NEVER or TokenType.INFER or TokenType.KEYOF or
         TokenType.ASSERTS or TokenType.IS or
+        // TypeScript primitive-type keywords are contextual — valid
+        // identifiers outside of type-position (e.g. `function f(string) {}`,
+        // `var number = 1`, `{ namespace: name } = obj`).
+        TokenType.TYPE_STRING or TokenType.TYPE_NUMBER or
+        TokenType.TYPE_BOOLEAN or TokenType.TYPE_SYMBOL or
+        TokenType.TYPE_BIGINT or
+        // `get` and `set` are contextual keywords (only meaningful at
+        // class/object member positions). Freely usable as identifiers
+        // elsewhere — e.g. `function setToArray(set) {}` in lodash.
+        TokenType.GET or TokenType.SET or
         // JavaScript globals that are not reserved words (can be shadowed)
-        TokenType.UNDEFINED or TokenType.CONSTRUCTOR => true,
+        TokenType.UNDEFINED or TokenType.CONSTRUCTOR or
+        TokenType.SYMBOL or TokenType.BIGINT => true,
         _ => false,
     };
 
@@ -263,6 +274,21 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         TokenType.SEMICOLON => true,     // get; — field
         TokenType.QUESTION => true,      // get?: T — optional field
         TokenType.BANG => true,          // get!: T — definite-assign field
+        _ => false,
+    };
+
+    /// <summary>
+    /// Token types that, following an identifier in a class body, mark
+    /// the declaration as a field (not a method). Includes `;` (bare ES
+    /// class field), `=` (initialized field), `:` (typed field), `?`/`!`
+    /// (optional / definite-assign) and `}` (last field in class body
+    /// with ASI terminating `name`).
+    /// </summary>
+    private static bool IsFieldDeclarationOpener(TokenType type) => type switch
+    {
+        TokenType.COLON or TokenType.QUESTION or TokenType.BANG or
+        TokenType.EQUAL or TokenType.SEMICOLON or
+        TokenType.RIGHT_BRACE => true,
         _ => false,
     };
 
@@ -297,7 +323,7 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
 
         // Accept keywords that can be used as property names
         // In JavaScript/TypeScript, all keywords are valid property names
-        if (IsKeyword(current.Type))
+        if (IsKeyword(current.Type) || IsContextualKeyword(current.Type))
         {
             Advance();
             // Convert keyword token to identifier token for AST consistency

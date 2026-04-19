@@ -27,7 +27,8 @@ public static class ArrayBuiltIns
             .MethodV2("includes", 1, IncludesV2)
             .MethodV2("indexOf", 1, IndexOfV2)
             .MethodV2("join", 0, 1, JoinV2)
-            .MethodV2("concat", 1, ConcatV2)
+            // Array.prototype.concat accepts any number of args (variadic).
+            .MethodV2("concat", 0, int.MaxValue, ConcatV2)
             .MethodV2("reverse", 0, ReverseV2)
             .MethodV2("flat", 0, 1, FlatV2)
             .MethodV2("flatMap", 1, FlatMapV2)

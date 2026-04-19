@@ -598,6 +598,18 @@ public class StateMachineEmitHelpers
     }
 
     /// <summary>
+    /// Emit unary plus (+operand) — numeric coercion.
+    /// </summary>
+    public void EmitUnaryPlus(Action emitOperand)
+    {
+        emitOperand();
+        EnsureBoxed();
+        _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
+        _il.Emit(OpCodes.Box, _types.Double);
+        SetStackUnknown();
+    }
+
+    /// <summary>
     /// Emit logical NOT (!operand).
     /// </summary>
     public void EmitUnaryNot(Action emitOperand, MethodInfo isTruthyMethod)

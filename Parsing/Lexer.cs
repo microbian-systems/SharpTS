@@ -1007,17 +1007,37 @@ public class Lexer(string source)
                     if (!IsAtEnd())
                     {
                         char next = Peek();
-                        raw.Append(Advance()); // add escaped char to raw
 
-                        // Process escape for cooked string
-                        var processed = ProcessTemplateEscape(next);
-                        if (processed == null)
+                        // \uXXXX or \u{XXXXXX} — Unicode escape
+                        if (next == 'u')
                         {
-                            hasInvalidEscape = true;
+                            raw.Append(Advance()); // consume 'u'
+                            var unicode = ProcessUnicodeEscape(raw);
+                            if (unicode == null) hasInvalidEscape = true;
+                            else cooked.Append(unicode);
+                        }
+                        // \xXX — hex byte escape
+                        else if (next == 'x')
+                        {
+                            raw.Append(Advance()); // consume 'x'
+                            var hex = ProcessHexEscape(raw);
+                            if (hex == null) hasInvalidEscape = true;
+                            else cooked.Append(hex);
                         }
                         else
                         {
-                            cooked.Append(processed);
+                            raw.Append(Advance()); // add escaped char to raw
+
+                            // Process escape for cooked string
+                            var processed = ProcessTemplateEscape(next);
+                            if (processed == null)
+                            {
+                                hasInvalidEscape = true;
+                            }
+                            else
+                            {
+                                cooked.Append(processed);
+                            }
                         }
                     }
                 }
@@ -1053,10 +1073,80 @@ public class Lexer(string source)
             'v' => "\v",
             '\n' => "", // line continuation
             '\r' => "", // line continuation
-            // For now, treat hex/unicode and unknown escapes as invalid
-            _ when char.IsDigit(escaped) && escaped != '0' => null, // \1-\9 invalid
-            _ => null // unknown escape = invalid
+            // Digits \1-\9 are invalid in template literals (NotEscapeSequence)
+            _ when char.IsDigit(escaped) && escaped != '0' => null,
+            // Any other char (including letters) is an identity escape per spec:
+            // the backslash is dropped and the char appears as-is in cooked.
+            _ => escaped.ToString()
         };
+    }
+
+    /// <summary>
+    /// Process \uXXXX or \u{X...} Unicode escape after the lexer has consumed
+    /// backslash and 'u'. Appends consumed chars to <paramref name="raw"/>.
+    /// Returns the decoded string (may be a surrogate pair) or null if malformed.
+    /// </summary>
+    private string? ProcessUnicodeEscape(System.Text.StringBuilder raw)
+    {
+        // \u{HEX...} — ES6 code point escape
+        if (!IsAtEnd() && Peek() == '{')
+        {
+            raw.Append(Advance()); // {
+            int value = 0;
+            int digits = 0;
+            while (!IsAtEnd() && Peek() != '}')
+            {
+                char d = Peek();
+                int dv = HexDigitValue(d);
+                if (dv < 0) return null;
+                value = (value << 4) | dv;
+                if (value > 0x10FFFF) return null;
+                raw.Append(Advance());
+                digits++;
+            }
+            if (digits == 0 || IsAtEnd() || Peek() != '}') return null;
+            raw.Append(Advance()); // }
+            return char.ConvertFromUtf32(value);
+        }
+
+        // \uXXXX — four hex digits
+        if (_current + 3 >= _source.Length) return null;
+        int cp = 0;
+        for (int i = 0; i < 4; i++)
+        {
+            char d = Peek();
+            int dv = HexDigitValue(d);
+            if (dv < 0) return null;
+            cp = (cp << 4) | dv;
+            raw.Append(Advance());
+        }
+        return ((char)cp).ToString();
+    }
+
+    /// <summary>
+    /// Process \xHH hex byte escape after lexer has consumed backslash and 'x'.
+    /// </summary>
+    private string? ProcessHexEscape(System.Text.StringBuilder raw)
+    {
+        if (_current + 1 >= _source.Length) return null;
+        int cp = 0;
+        for (int i = 0; i < 2; i++)
+        {
+            char d = Peek();
+            int dv = HexDigitValue(d);
+            if (dv < 0) return null;
+            cp = (cp << 4) | dv;
+            raw.Append(Advance());
+        }
+        return ((char)cp).ToString();
+    }
+
+    private static int HexDigitValue(char c)
+    {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+        if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+        return -1;
     }
 
     private bool Match(char expected)

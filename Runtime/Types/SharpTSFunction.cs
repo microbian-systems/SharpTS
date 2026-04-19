@@ -39,12 +39,66 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    // JS-spec: functions are objects and support arbitrary property
+    // assignment (e.g. `fn.DNS = "..."`). Lazily allocated.
+    private Dictionary<string, object?>? _properties;
+    // Accessor properties defined via Object.defineProperty(fn, name, {get, set}).
+    // When present, dispatch through the getter/setter instead of _properties.
+    private Dictionary<string, (ISharpTSCallable? Get, ISharpTSCallable? Set)>? _accessors;
 
     public SharpTSFunction(Stmt.Function declaration, RuntimeEnvironment closure)
     {
         _declaration = declaration;
         _closure = closure;
         _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
+    }
+
+    /// <summary>JS function-as-object property access.</summary>
+    public bool TryGetProperty(string name, out object? value)
+    {
+        if (_properties != null && _properties.TryGetValue(name, out value))
+            return true;
+        value = null;
+        return false;
+    }
+
+    /// <summary>Sets a JS-object property on this function.</summary>
+    public void SetProperty(string name, object? value)
+    {
+        _properties ??= [];
+        _properties[name] = value;
+    }
+
+    /// <summary>Removes a JS-object property from this function.</summary>
+    public bool DeleteProperty(string name)
+    {
+        bool removed = _properties?.Remove(name) ?? false;
+        removed |= _accessors?.Remove(name) ?? false;
+        return removed;
+    }
+
+    /// <summary>
+    /// Defines a property with a getter and/or setter on this function.
+    /// Supports <c>Object.defineProperty(fn, 'name', { get, set })</c>.
+    /// </summary>
+    public void DefineAccessor(string name, ISharpTSCallable? getter, ISharpTSCallable? setter)
+    {
+        _accessors ??= [];
+        _accessors[name] = (getter, setter);
+    }
+
+    /// <summary>Returns the accessor pair for <paramref name="name"/> if defined.</summary>
+    public bool TryGetAccessor(string name, out ISharpTSCallable? getter, out ISharpTSCallable? setter)
+    {
+        if (_accessors != null && _accessors.TryGetValue(name, out var pair))
+        {
+            getter = pair.Get;
+            setter = pair.Set;
+            return true;
+        }
+        getter = null;
+        setter = null;
+        return false;
     }
 
     public int Arity() => _arity;
@@ -62,6 +116,17 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
         RuntimeEnvironment environment = functionStrict
             ? new RuntimeEnvironment(_closure, strictMode: true)
             : new RuntimeEnvironment(_closure);
+
+        // JS calling convention: if `this` isn't bound by a receiver
+        // (bare call `foo()`), it defaults to the global object in
+        // sloppy mode and to `undefined` in strict mode. Only default
+        // if the closure doesn't already supply `this` (e.g. from Bind*
+        // or a method call via `obj.foo()`).
+        if (!_closure.TryGet("this", out _))
+        {
+            environment.Define("this",
+                functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
+        }
 
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
         // Bind the JS-spec `arguments` array-like to the current call's args.
@@ -125,6 +190,32 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
     }
 
     /// <summary>
+    /// Binds this function to a class receiver (for static methods and static
+    /// accessors, where `this` should refer to the class itself).
+    /// </summary>
+    public SharpTSFunction BindStatic(SharpTSClass klass)
+    {
+        RuntimeEnvironment environment = new(_closure);
+        environment.Define("this", klass);
+        if (klass.Superclass != null)
+        {
+            environment.Define("super", klass.Superclass);
+        }
+        return new SharpTSFunction(_declaration, environment);
+    }
+
+    /// <summary>
+    /// Binds this function to an arbitrary `this` value. Used by `new Func()`
+    /// to bind the fresh instance, and by `Function.prototype.call/apply`.
+    /// </summary>
+    public SharpTSFunction BindThis(object? thisValue)
+    {
+        RuntimeEnvironment environment = new(_closure);
+        environment.Define("this", thisValue);
+        return new SharpTSFunction(_declaration, environment);
+    }
+
+    /// <summary>
     /// V2 call path — avoids boxing at parameter and return boundaries.
     /// </summary>
     public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
@@ -138,6 +229,14 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
         RuntimeEnvironment environment = functionStrict
             ? new RuntimeEnvironment(_closure, strictMode: true)
             : new RuntimeEnvironment(_closure);
+
+        // See Call() for rationale: default `this` to globalThis in sloppy
+        // mode / undefined in strict mode for bare calls.
+        if (!_closure.TryGet("this", out _))
+        {
+            environment.Define("this",
+                functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
+        }
 
         ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
         // See Call for the JS-spec rationale; materialize the args span into a

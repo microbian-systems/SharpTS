@@ -35,6 +35,9 @@ public class SharpTSStderr : SharpTSWritable
         return name switch
         {
             "isTTY" => IsTTY,
+            // Node exposes stderr's file descriptor as `fd === 2`. Packages
+            // like `debug` read it to test `tty.isatty(process.stderr.fd)`.
+            "fd" => 2.0,
             // process.stderr never ends or destroys — no-op to protect singleton state
             "end" => new BuiltInMethod("end", 0, 3, (_, _, _) => this),
             "destroy" => new BuiltInMethod("destroy", 0, 1, (_, _, _) => this),

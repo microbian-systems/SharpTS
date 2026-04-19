@@ -70,6 +70,33 @@ public partial class Interpreter
             return proxy.TrapConstruct(proxyArgs, this);
         }
 
+        // Constructor-function pattern: `function Foo() { if (!(this instanceof Foo)) return new Foo(); this.x = 1; }`.
+        // Node's CJS packages (e.g. yallist) rely on JS `new` semantics
+        // binding `this` to a fresh object whose prototype is Foo.prototype.
+        // Without this, `self instanceof Yallist` is false and packages
+        // recurse infinitely.
+        if (klass is SharpTSFunction userFn)
+        {
+            List<object?> fnArgs = await ctx.EvaluateAllAsync(newExpr.Arguments);
+            // Build a new `this` object backed by the function's prototype.
+            if (!userFn.TryGetProperty("prototype", out var protoObj))
+            {
+                protoObj = new SharpTSObject(new Dictionary<string, object?>());
+                userFn.SetProperty("prototype", protoObj);
+            }
+            var newThis = new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["__proto__"] = protoObj,
+                ["constructor"] = userFn,
+            });
+            var bound = userFn.BindThis(newThis);
+            var result = bound.Call(this, fnArgs);
+            // JS spec: if constructor returns an object, use it; otherwise use the new `this`.
+            return result is SharpTSObject or SharpTSInstance or SharpTSArray
+                ? result
+                : newThis;
+        }
+
         // Handle callable constructors (like SharpTSEventEmitterConstructor)
         // These implement ISharpTSCallable and are used for module-imported types
         if (klass is ISharpTSCallable callable && klass is not SharpTSClass && klass is not BoundFunction)
@@ -154,6 +181,34 @@ public partial class Interpreter
                 proxyArgs.Add(Evaluate(arg));
             }
             return proxy.TrapConstructRV(proxyArgs, this);
+        }
+
+        // Constructor-function pattern: `function Foo() { this.x = 1 }` called with `new`.
+        // Build a fresh `this` with prototype linkage, bind it, then call —
+        // so `this instanceof Foo` returns true (Node CJS pattern used by
+        // e.g. yallist, EventEmitter sub-classes).
+        if (klass is SharpTSFunction userFn)
+        {
+            List<object?> fnArgs = [];
+            foreach (var arg in newExpr.Arguments)
+            {
+                fnArgs.Add(Evaluate(arg));
+            }
+            if (!userFn.TryGetProperty("prototype", out var protoObj))
+            {
+                protoObj = new SharpTSObject(new Dictionary<string, object?>());
+                userFn.SetProperty("prototype", protoObj);
+            }
+            var newThis = new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["__proto__"] = protoObj,
+                ["constructor"] = userFn,
+            });
+            var bound = userFn.BindThis(newThis);
+            var result = bound.Call(this, fnArgs);
+            return RuntimeValue.FromBoxed(result is SharpTSObject or SharpTSInstance or SharpTSArray
+                ? result
+                : newThis);
         }
 
         // Handle callable constructors (like SharpTSEventEmitterConstructor)
@@ -303,7 +358,7 @@ public partial class Interpreter
     /// <summary>
     /// Evaluates property access on a class (static members).
     /// </summary>
-    private static RuntimeValue EvaluateGetOnClassRV(SharpTSClass klass, string memberName)
+    private RuntimeValue EvaluateGetOnClassRV(SharpTSClass klass, string memberName)
         => RuntimeValue.FromBoxed(EvaluateGetOnClass(klass, memberName));
 
     private static RuntimeValue EvaluateGetOnNamespaceRV(SharpTSNamespace nsObj, string memberName)
@@ -313,8 +368,30 @@ public partial class Interpreter
     /// Fast path for property access on built-in types (string, number, map, set, etc.).
     /// Uses TypeCategory-indexed array dispatch instead of GetType() + Dictionary lookup.
     /// </summary>
-    private static RuntimeValue EvaluateGetOnBuiltInRV(TypeCategory category, object obj, string memberName)
+    private RuntimeValue EvaluateGetOnBuiltInRV(TypeCategory category, object obj, string memberName)
     {
+        // JS functions are objects — surface user-set properties before
+        // falling through to built-in members (e.g. `bind`, `call`).
+        if (obj is SharpTSFunction fn)
+        {
+            // Accessor defined via Object.defineProperty(fn, name, {get, set}).
+            if (fn.TryGetAccessor(memberName, out var getter, out _) && getter != null)
+            {
+                return RuntimeValue.FromBoxed(getter.Call(this, []));
+            }
+            if (fn.TryGetProperty(memberName, out var userProp))
+                return RuntimeValue.FromBoxed(userProp);
+            // Lazy-init `fn.prototype` on first access (JS semantics).
+            if (memberName == "prototype")
+            {
+                var proto = new SharpTSObject(new Dictionary<string, object?>());
+                fn.SetProperty("prototype", proto);
+                return RuntimeValue.FromBoxed(proto);
+            }
+        }
+        if (obj is SharpTSAsyncFunction asyncFn && asyncFn.TryGetProperty(memberName, out var asyncProp))
+            return RuntimeValue.FromBoxed(asyncProp);
+
         var member = BuiltInRegistry.Instance.GetMemberByCategory(category, obj, memberName);
         if (member != null)
             return RuntimeValue.FromBoxed(BindBuiltInMember(member, obj));
@@ -357,12 +434,19 @@ public partial class Interpreter
         return member;
     }
 
-    private static object? EvaluateGetOnClass(SharpTSClass klass, string memberName)
+    private object? EvaluateGetOnClass(SharpTSClass klass, string memberName)
     {
         // Try static auto-accessor first (TypeScript 4.9+)
         if (klass.HasStaticAutoAccessor(memberName))
         {
             return klass.GetStaticAutoAccessorValue(memberName);
+        }
+
+        // Try static getter (`static get name() { ... }`).
+        var staticGetter = klass.FindStaticGetter(memberName);
+        if (staticGetter != null)
+        {
+            return staticGetter.BindStatic(klass).Call(this, []);
         }
 
         // Try static method
@@ -474,6 +558,33 @@ public partial class Interpreter
     /// </summary>
     private object? EvaluateGetOnFallback(object? obj, string memberName)
     {
+        // JS functions are objects — support arbitrary property access on
+        // user-defined functions. Built-in keys (`name`, `length`) come
+        // from the function itself; user keys come from the property bag.
+        if (obj is SharpTSFunction fn)
+        {
+            if (fn.TryGetAccessor(memberName, out var getter, out _) && getter != null)
+                return getter.Call(this, []);
+            if (fn.TryGetProperty(memberName, out var v)) return v;
+            if (memberName == "name") return fn.TryGetProperty("name", out var n) ? n : "";
+            if (memberName == "length") return (double)fn.Arity();
+            if (memberName == "prototype")
+            {
+                if (!fn.TryGetProperty("prototype", out var proto))
+                {
+                    proto = new SharpTSObject(new Dictionary<string, object?>());
+                    fn.SetProperty("prototype", proto);
+                }
+                return proto;
+            }
+            return SharpTSUndefined.Instance;
+        }
+        if (obj is SharpTSAsyncFunction asyncFn2)
+        {
+            if (asyncFn2.TryGetProperty(memberName, out var asyncProp2)) return asyncProp2;
+            return SharpTSUndefined.Instance;
+        }
+
         // Handle plain Dictionary<string, object?> objects (e.g., segment items from Intl.Segments)
         if (obj is IDictionary<string, object?> dict)
         {
@@ -574,6 +685,24 @@ public partial class Interpreter
             return value;
         }
 
+        // JS functions are objects — allow property assignment on them.
+        if (obj is SharpTSFunction userFn)
+        {
+            // Accessor set path (Object.defineProperty setter).
+            if (userFn.TryGetAccessor(set.Name.Lexeme, out _, out var setter) && setter != null)
+            {
+                setter.Call(this, [value]);
+                return value;
+            }
+            userFn.SetProperty(set.Name.Lexeme, value);
+            return value;
+        }
+        if (obj is SharpTSAsyncFunction asyncFn)
+        {
+            asyncFn.SetProperty(set.Name.Lexeme, value);
+            return value;
+        }
+
         var category = TypeCategoryResolver.ClassifyRuntime(obj);
         string memberName = set.Name.Lexeme;
         bool strictMode = _environment.IsStrictMode;
@@ -592,6 +721,12 @@ public partial class Interpreter
                 if (klass.HasStaticAutoAccessor(memberName))
                 {
                     klass.SetStaticAutoAccessorValue(memberName, value);
+                    return value;
+                }
+                var staticSetterClass = klass.FindStaticSetter(memberName);
+                if (staticSetterClass != null)
+                {
+                    staticSetterClass.BindStatic(klass).Call(this, [value]);
                     return value;
                 }
                 klass.SetStaticProperty(memberName, value);

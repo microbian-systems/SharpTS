@@ -39,6 +39,8 @@ public class SharpTSStdout : SharpTSWritable
             "isTTY" => IsTTY,
             "columns" => IsTTY ? (double)Console.WindowWidth : null,
             "rows" => IsTTY ? (double)Console.WindowHeight : null,
+            // Node exposes stdout's file descriptor as `fd === 1`.
+            "fd" => 1.0,
             // process.stdout never ends or destroys — no-op to protect singleton state
             "end" => new BuiltInMethod("end", 0, 3, (_, _, _) => this),
             "destroy" => new BuiltInMethod("destroy", 0, 1, (_, _, _) => this),

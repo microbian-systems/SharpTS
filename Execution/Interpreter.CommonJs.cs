@@ -128,7 +128,13 @@ public partial class Interpreter
         var moduleEnv = new RuntimeEnvironment(_environment);
         moduleEnv.Define("module", moduleObj);
         moduleEnv.Define("exports", exportsObj);
-        moduleEnv.Define("global", _environment); // alias-ish; users typically read globalThis instead
+        // `global` in Node is a reference to the global object (same as
+        // `globalThis`). Expose it as the property-accessor singleton so
+        // `global.Object`, `global.process`, etc. resolve correctly.
+        moduleEnv.Define("global", Runtime.Types.SharpTSGlobalThis.Instance);
+        // In Node CommonJS, top-level `this` === `module.exports` (initially
+        // an empty object). UMD wrappers depend on this.
+        moduleEnv.Define("this", exportsObj);
         // __filename and __dirname are resolved via _currentModule in the variable lookup path,
         // and `require` is a registered global function — both are available without local bindings.
 

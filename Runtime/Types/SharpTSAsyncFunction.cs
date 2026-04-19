@@ -33,12 +33,28 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    // JS: functions (including async) are objects and support property assignment.
+    private Dictionary<string, object?>? _properties;
 
     public SharpTSAsyncFunction(Stmt.Function declaration, RuntimeEnvironment closure)
     {
         _declaration = declaration;
         _closure = closure;
         _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
+    }
+
+    public bool TryGetProperty(string name, out object? value)
+    {
+        if (_properties != null && _properties.TryGetValue(name, out value))
+            return true;
+        value = null;
+        return false;
+    }
+
+    public void SetProperty(string name, object? value)
+    {
+        _properties ??= [];
+        _properties[name] = value;
     }
 
     public int Arity() => _arity;

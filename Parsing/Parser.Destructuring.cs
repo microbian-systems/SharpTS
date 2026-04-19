@@ -12,11 +12,11 @@ public partial class Parser
             return ParseObjectPattern();
         if (Match(TokenType.DOT_DOT_DOT))
         {
-            Token restName = Consume(TokenType.IDENTIFIER, "Expect identifier after '...'.");
+            Token restName = ConsumeIdentifierName("Expect identifier after '...'.");
             return new RestPattern(restName);
         }
 
-        Token patternName = Consume(TokenType.IDENTIFIER, "Expect identifier in pattern.");
+        Token patternName = ConsumeIdentifierName("Expect identifier in pattern.");
         Expr? defaultValue = Match(TokenType.EQUAL) ? Expression() : null;
         return new IdentifierPattern(patternName, defaultValue);
     }
@@ -58,13 +58,14 @@ public partial class Parser
             // Handle rest pattern: { ...rest }
             if (Match(TokenType.DOT_DOT_DOT))
             {
-                Token restName = Consume(TokenType.IDENTIFIER, "Expect identifier after '...'.");
+                Token restName = ConsumeIdentifierName("Expect identifier after '...'.");
                 properties.Add(new ObjectPatternProperty(restName, new RestPattern(restName), null));
                 // Rest must be last, so break out of loop
                 break;
             }
 
-            Token key = Consume(TokenType.IDENTIFIER, "Expect property name.");
+            // Property-key position accepts any keyword (JS semantics).
+            Token key = ConsumePropertyName("Expect property name.");
             DestructurePattern value;
             Expr? defaultValue = null;
 
@@ -77,7 +78,7 @@ public partial class Parser
                 }
                 else
                 {
-                    Token rename = Consume(TokenType.IDENTIFIER, "Expect identifier after ':'.");
+                    Token rename = ConsumeIdentifierName("Expect identifier after ':'.");
                     if (Match(TokenType.EQUAL))
                         defaultValue = Expression();
                     value = new IdentifierPattern(rename, defaultValue);

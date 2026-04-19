@@ -33,7 +33,9 @@ public class SharpTSClass(
     Dictionary<string, object?>? staticPrivateFields = null,
     Dictionary<string, ISharpTSCallable>? staticPrivateMethods = null,
     List<Stmt.AutoAccessor>? instanceAutoAccessors = null,
-    Dictionary<string, object?>? staticAutoAccessors = null) : ISharpTSCallable, ITypeCategorized
+    Dictionary<string, object?>? staticAutoAccessors = null,
+    Dictionary<string, SharpTSFunction>? staticGetters = null,
+    Dictionary<string, SharpTSFunction>? staticSetters = null) : ISharpTSCallable, ITypeCategorized
 {
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Class;
@@ -46,6 +48,8 @@ public class SharpTSClass(
     private readonly Dictionary<string, object?> _staticProperties = staticProperties;
     private readonly FrozenDictionary<string, SharpTSFunction> _getters = getters?.ToFrozenDictionary() ?? FrozenDictionary<string, SharpTSFunction>.Empty;
     private readonly FrozenDictionary<string, SharpTSFunction> _setters = setters?.ToFrozenDictionary() ?? FrozenDictionary<string, SharpTSFunction>.Empty;
+    private readonly FrozenDictionary<string, SharpTSFunction> _staticGetters = staticGetters?.ToFrozenDictionary() ?? FrozenDictionary<string, SharpTSFunction>.Empty;
+    private readonly FrozenDictionary<string, SharpTSFunction> _staticSetters = staticSetters?.ToFrozenDictionary() ?? FrozenDictionary<string, SharpTSFunction>.Empty;
     private readonly List<Stmt.Field> _instanceFields = instanceFields ?? [];
 
     // Method lookup cache - avoids repeated inheritance chain walks
@@ -268,6 +272,21 @@ public class SharpTSClass(
 
     public bool HasGetter(string name) => _getters.ContainsKey(name) || (Superclass?.HasGetter(name) ?? false);
     public bool HasSetter(string name) => _setters.ContainsKey(name) || (Superclass?.HasSetter(name) ?? false);
+
+    public SharpTSFunction? FindStaticGetter(string name)
+    {
+        if (_staticGetters.TryGetValue(name, out var getter)) return getter;
+        return Superclass?.FindStaticGetter(name);
+    }
+
+    public SharpTSFunction? FindStaticSetter(string name)
+    {
+        if (_staticSetters.TryGetValue(name, out var setter)) return setter;
+        return Superclass?.FindStaticSetter(name);
+    }
+
+    public bool HasStaticGetter(string name) => _staticGetters.ContainsKey(name) || (Superclass?.HasStaticGetter(name) ?? false);
+    public bool HasStaticSetter(string name) => _staticSetters.ContainsKey(name) || (Superclass?.HasStaticSetter(name) ?? false);
 
     #region ES2022 Private Class Elements
 

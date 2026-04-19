@@ -367,6 +367,19 @@ public static class ObjectBuiltIns
                 var compiledDesc = CompiledPropertyDescriptor.FromAny(descriptorArg);
                 success = PropertyDescriptorStore.DefineProperty(dict, propertyKey, compiledDesc);
                 break;
+            case SharpTSFunction fn:
+                // JS functions are objects — store accessor (get/set) or value
+                // descriptors directly on the function.
+                if (descriptor.Get != null || descriptor.Set != null)
+                {
+                    fn.DefineAccessor(propertyKey, descriptor.Get, descriptor.Set);
+                }
+                else
+                {
+                    fn.SetProperty(propertyKey, descriptor.Value);
+                }
+                success = true;
+                break;
             default:
                 throw new Exception("TypeError: Object.defineProperty called on non-object");
         }

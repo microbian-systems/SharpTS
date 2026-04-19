@@ -116,6 +116,28 @@ public partial class Interpreter : IDisposable
                 globals[name] = new SharpTSBuiltInConstructor(name, factory);
         }
 
+        // Expose global functions (parseFloat, parseInt, isNaN, isFinite,
+        // structuredClone, setTimeout/clearTimeout, etc.) as first-class
+        // callable values so they can be referenced by name — not just
+        // invoked directly. CommonJS packages (lodash) alias `var
+        // freeParseFloat = parseFloat`, and user code may do
+        // `typeof parseFloat === 'function'`.
+        string[] globalFunctionNames =
+        [
+            BuiltInNames.ParseInt, BuiltInNames.ParseFloat,
+            BuiltInNames.IsNaN, BuiltInNames.IsFinite,
+            BuiltInNames.StructuredClone,
+            BuiltInNames.EncodeURIComponent, BuiltInNames.DecodeURIComponent,
+            BuiltInNames.SetTimeout, BuiltInNames.ClearTimeout,
+            BuiltInNames.SetInterval, BuiltInNames.ClearInterval,
+            BuiltInNames.QueueMicrotask,
+        ];
+        foreach (var name in globalFunctionNames)
+        {
+            if (!globals.ContainsKey(name))
+                globals[name] = new SharpTSGlobalFunction(name);
+        }
+
         // Promise needs a bare-reference global so `x instanceof Promise`,
         // `typeof Promise === 'function'`, and stdlib modules that carry
         // Promise as a value can type-check/run. Its namespace is registered
@@ -1934,6 +1956,8 @@ public partial class Interpreter : IDisposable
         // Create accessor functions
         Dictionary<string, SharpTSFunction> getters = [];
         Dictionary<string, SharpTSFunction> setters = [];
+        Dictionary<string, SharpTSFunction> staticGetters = [];
+        Dictionary<string, SharpTSFunction> staticSetters = [];
 
         if (classStmt.Accessors != null)
         {
@@ -1950,13 +1974,16 @@ public partial class Interpreter : IDisposable
 
                 SharpTSFunction func = new(funcStmt, _environment);
 
+                var targetGet = accessor.IsStatic ? staticGetters : getters;
+                var targetSet = accessor.IsStatic ? staticSetters : setters;
+
                 if (accessor.Kind.Type == TokenType.GET)
                 {
-                    getters[accessor.Name.Lexeme] = func;
+                    targetGet[accessor.Name.Lexeme] = func;
                 }
                 else
                 {
-                    setters[accessor.Name.Lexeme] = func;
+                    targetSet[accessor.Name.Lexeme] = func;
                 }
             }
         }
@@ -2003,7 +2030,9 @@ public partial class Interpreter : IDisposable
                 staticPrivateFields,
                 staticPrivateMethods,
                 instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
-                staticAutoAccessors.Count > 0 ? staticAutoAccessors : null)
+                staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
+                staticGetters.Count > 0 ? staticGetters : null,
+                staticSetters.Count > 0 ? staticSetters : null)
             : new SharpTSClass(
                 classStmt.Name.Lexeme,
                 (SharpTSClass?)superclass,
@@ -2019,7 +2048,9 @@ public partial class Interpreter : IDisposable
                 staticPrivateFields,
                 staticPrivateMethods,
                 instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
-                staticAutoAccessors.Count > 0 ? staticAutoAccessors : null);
+                staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
+                staticGetters.Count > 0 ? staticGetters : null,
+                staticSetters.Count > 0 ? staticSetters : null);
 
         // Execute static initializers in declaration order (if present)
         if (hasStaticInitializers)

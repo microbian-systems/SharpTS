@@ -1326,8 +1326,10 @@ public partial class TypeChecker
         // Generate name for anonymous classes
         string className = classExpr.Name?.Lexeme ?? $"$ClassExpr_{++_classExprCounter}";
 
-        // Resolve superclass if present
-        TypeInfo.Class? superclass = null;
+        // Resolve superclass if present. Stored as TypeInfo so a MutableClass
+        // placeholder (for `any`-typed supers like CJS-imported classes) can
+        // also sit in this slot — CheckSuper special-cases MutableClass.
+        TypeInfo? superclass = null;
         if (classExpr.SuperclassExpr != null)
         {
             TypeInfo superType = CheckExpr(classExpr.SuperclassExpr);
@@ -1337,7 +1339,12 @@ public partial class TypeChecker
                 superclass = sc;
             else if (superType is TypeInfo.Any)
             {
-                // Allow extending Any-typed globals (e.g. Error, TypeError)
+                // Extending an `any`-typed expression (e.g. CJS-imported
+                // class `orig.Minimatch`). Use a placeholder MutableClass as
+                // the superclass so that `super(...)` calls inside this
+                // class body type-check as `any` instead of erroring with
+                // "does not have a superclass".
+                superclass = new TypeInfo.MutableClass("$AnySuperclass");
             }
             else
                 throw new TypeCheckException("Superclass must be a class");

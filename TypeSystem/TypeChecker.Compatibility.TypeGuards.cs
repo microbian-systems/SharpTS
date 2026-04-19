@@ -313,7 +313,14 @@ public partial class TypeChecker
         "number" => new TypeInfo.Primitive(TokenType.TYPE_NUMBER),
         "boolean" => new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN),
         "bigint" => new TypeInfo.BigInt(),
-        "function" => new TypeInfo.Function([], new TypeInfo.Any(), 0, false),
+        // Narrow to a permissive function type: accepts any args, returns any.
+        // Without a rest param the type would constrain callers to 0 args,
+        // breaking common patterns like `if (typeof cb === 'function') cb(err, val)`.
+        "function" => new TypeInfo.Function(
+            [new TypeInfo.Array(new TypeInfo.Any())],
+            new TypeInfo.Any(),
+            RequiredParams: 0,
+            HasRestParam: true),
         "object" => new TypeInfo.Object(),
         "symbol" => new TypeInfo.Symbol(),
         "undefined" => new TypeInfo.Undefined(),

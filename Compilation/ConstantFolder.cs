@@ -87,6 +87,10 @@ public static class ConstantFolder
                 result = -d;
                 return true;
 
+            case TokenType.PLUS when lit.Value is double dp:
+                result = dp;
+                return true;
+
             case TokenType.BANG:
                 result = !IsTruthy(lit.Value);
                 return true;

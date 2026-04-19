@@ -674,6 +674,29 @@ public partial class Interpreter
         if (right is SharpTSBufferConstructor)
             return left is SharpTSBuffer;
 
+        // Constructor-function instanceof (JS `new Func()` pattern).
+        // An object is `instanceof Func` when any link in its prototype
+        // chain === Func.prototype.
+        if (right is SharpTSFunction ctorFn)
+        {
+            if (!ctorFn.TryGetProperty("prototype", out var protoObj))
+                return false;
+            object? current = left;
+            // Walk __proto__ chain; cap at a sensible depth to avoid cycles.
+            for (int i = 0; i < 64 && current is SharpTSObject curObj; i++)
+            {
+                if (curObj.HasProperty("__proto__")
+                    && curObj.GetProperty("__proto__") is var p
+                    && ReferenceEquals(p, protoObj))
+                {
+                    return true;
+                }
+                current = curObj.HasProperty("__proto__") ? curObj.GetProperty("__proto__") : null;
+                if (ReferenceEquals(current, curObj)) break;
+            }
+            return false;
+        }
+
         if (right is not SharpTSClass targetClass)
             return false;
 

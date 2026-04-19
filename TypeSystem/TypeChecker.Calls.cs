@@ -459,8 +459,15 @@ public partial class TypeChecker
             bool hasSpread = call.Arguments.Any(a => a is Expr.Spread);
             int nonSpreadCount = call.Arguments.Count(a => a is not Expr.Spread);
 
+            // If all declared params are `any`, treat as a loose JS function
+            // and skip min-arity checks — JS calls are always variadic by
+            // spec (missing args become `undefined`), and untyped CJS
+            // functions shouldn't be held to stricter TS rules.
+            bool allParamsAny = funcType.ParamTypes.Count > 0
+                && funcType.ParamTypes.All(p => p is TypeInfo.Any);
+
             // Only check min arity if no spreads (spreads can expand to any count)
-            if (!hasSpread && nonSpreadCount < funcType.MinArity)
+            if (!hasSpread && !allParamsAny && nonSpreadCount < funcType.MinArity)
             {
                 throw new TypeCheckException($"Expected at least {funcType.MinArity} arguments but got {nonSpreadCount}.");
             }

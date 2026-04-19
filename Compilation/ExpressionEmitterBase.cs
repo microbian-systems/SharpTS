@@ -1566,6 +1566,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case TokenType.MINUS:
                 _helpers.EmitUnaryMinus(() => EmitExpression(u.Right));
                 break;
+            case TokenType.PLUS:
+                _helpers.EmitUnaryPlus(() => EmitExpression(u.Right));
+                break;
             case TokenType.BANG:
                 _helpers.EmitUnaryNot(() => EmitExpression(u.Right), Ctx.Runtime!.IsTruthy);
                 break;

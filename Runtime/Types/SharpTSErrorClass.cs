@@ -59,7 +59,9 @@ public class SharpTSErrorClass : SharpTSClass
         Dictionary<string, object?>? staticPrivateFields = null,
         Dictionary<string, ISharpTSCallable>? staticPrivateMethods = null,
         List<Stmt.AutoAccessor>? instanceAutoAccessors = null,
-        Dictionary<string, object?>? staticAutoAccessors = null)
+        Dictionary<string, object?>? staticAutoAccessors = null,
+        Dictionary<string, SharpTSFunction>? staticGetters = null,
+        Dictionary<string, SharpTSFunction>? staticSetters = null)
         : base(
             name,
             superclass,
@@ -75,7 +77,9 @@ public class SharpTSErrorClass : SharpTSClass
             staticPrivateFields,
             staticPrivateMethods,
             instanceAutoAccessors,
-            staticAutoAccessors)
+            staticAutoAccessors,
+            staticGetters,
+            staticSetters)
     {
         _errorTypeName = name;
     }

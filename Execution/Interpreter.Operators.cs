@@ -276,12 +276,19 @@ public partial class Interpreter
         {
             case TokenType.BANG:
                 return RuntimeValue.FromBoolean(!rv.IsTruthy());
+            case TokenType.PLUS when rv.IsNumber:
+                return rv;
+            case TokenType.PLUS when rv.IsBigInt:
+                // Unary `+` on BigInt throws TypeError in JS.
+                throw new InterpreterException("TypeError: Cannot convert a BigInt value to a number");
+            case TokenType.PLUS:
+                return RuntimeValue.FromNumber(CoerceToNumber(rv));
             case TokenType.MINUS when rv.IsNumber:
                 return RuntimeValue.FromNumber(-rv.AsNumber());
             case TokenType.MINUS when rv.IsBigInt:
                 return RuntimeValue.FromBigInt(new SharpTSBigInt(-rv.AsBigInt().Value));
             case TokenType.MINUS:
-                return RuntimeValue.FromNumber(-(double)rv.ToObject()!);
+                return RuntimeValue.FromNumber(-CoerceToNumber(rv));
             case TokenType.TYPEOF:
                 return RuntimeValue.FromString(rv.TypeofString());
             case TokenType.VOID:
@@ -291,10 +298,34 @@ public partial class Interpreter
             case TokenType.TILDE when rv.IsBigInt:
                 return RuntimeValue.FromBigInt(new SharpTSBigInt(~rv.AsBigInt().Value));
             case TokenType.TILDE:
-                return RuntimeValue.FromNumber(~(int)(double)rv.ToObject()!);
+                return RuntimeValue.FromNumber(~(int)CoerceToNumber(rv));
             default:
                 return RuntimeValue.Undefined;
         }
+    }
+
+    /// <summary>
+    /// JS ToNumber coercion for a RuntimeValue. Mirrors the ECMAScript
+    /// abstract operation: null→0, undefined→NaN, true→1, false→0,
+    /// strings parsed (empty/whitespace→0, otherwise NaN on parse failure).
+    /// Numbers pass through unchanged.
+    /// </summary>
+    private static double CoerceToNumber(RuntimeValue rv)
+    {
+        if (rv.IsNumber) return rv.AsNumber();
+        if (rv.IsBoolean) return rv.AsBoolean() ? 1.0 : 0.0;
+        if (rv.Kind == ValueKind.Null) return 0.0;
+        if (rv.Kind == ValueKind.Undefined) return double.NaN;
+        if (rv.IsString)
+        {
+            var s = rv.AsString().Trim();
+            if (s.Length == 0) return 0.0;
+            if (double.TryParse(s, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var d))
+                return d;
+            return double.NaN;
+        }
+        return double.NaN;
     }
 
     /// <summary>
@@ -470,6 +501,11 @@ public partial class Interpreter
         return op.Type switch
         {
             TokenType.BANG => !IsTruthy(right),
+            TokenType.PLUS when right is SharpTSBigInt =>
+                throw new InterpreterException("TypeError: Cannot convert a BigInt value to a number"),
+            TokenType.PLUS when right is System.Numerics.BigInteger =>
+                throw new InterpreterException("TypeError: Cannot convert a BigInt value to a number"),
+            TokenType.PLUS => CoerceToNumber(RuntimeValue.FromBoxed(right)),
             TokenType.MINUS when right is SharpTSBigInt bi => new SharpTSBigInt(-bi.Value),
             TokenType.MINUS when right is System.Numerics.BigInteger biVal => new SharpTSBigInt(-biVal),
             TokenType.MINUS => -(double)right!,

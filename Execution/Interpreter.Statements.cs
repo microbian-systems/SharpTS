@@ -232,6 +232,11 @@ public partial class Interpreter
         {
             using (PushScope(environment))
             {
+                // JS hoists function declarations to the top of their
+                // enclosing function/module scope. This lets lodash-style
+                // IIFEs use mutually-recursive helpers declared in any order.
+                HoistFunctionDeclarations(statements);
+
                 foreach (Stmt statement in statements)
                 {
                     // Check vm timeout token before each statement in a block

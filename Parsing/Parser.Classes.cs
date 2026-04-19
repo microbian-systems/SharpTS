@@ -234,7 +234,7 @@ public partial class Parser
                     body = Block();
                 }
 
-                accessors.Add(new Stmt.Accessor(accessorName, kind, setterParam, body, returnType, access, isMemberAbstract, isOverride, memberDecorators));
+                accessors.Add(new Stmt.Accessor(accessorName, kind, setterParam, body, returnType, access, isMemberAbstract, isOverride, memberDecorators, isStatic));
             }
             // Check for private field: #name...
             else if (Peek().Type == TokenType.PRIVATE_IDENTIFIER)
@@ -338,10 +338,15 @@ public partial class Parser
                     staticInitializers.Add(field);
                 }
             }
-            else if (Peek().Type == TokenType.IDENTIFIER && (PeekNext().Type == TokenType.COLON || PeekNext().Type == TokenType.QUESTION || PeekNext().Type == TokenType.BANG))
+            else if ((Peek().Type == TokenType.IDENTIFIER || IsContextualKeyword(Peek().Type)) &&
+                     IsFieldDeclarationOpener(PeekNext().Type))
             {
-                // Field declaration
-                Token fieldName = Consume(TokenType.IDENTIFIER, "Expect field name.");
+                // Field declaration. Supports TS (`name: T`, `name?: T`,
+                // `name!: T`, `name: T = value`) and ES (`name`, `name = value`,
+                // `name;`) forms.
+                Token fieldName = Peek().Type == TokenType.IDENTIFIER
+                    ? Consume(TokenType.IDENTIFIER, "Expect field name.")
+                    : ConsumeIdentifierName("Expect field name.");
                 bool isOptional = Match(TokenType.QUESTION);
                 bool hasDefiniteAssignment = Match(TokenType.BANG);
 
@@ -351,8 +356,13 @@ public partial class Parser
                     throw new Exception($"Parse Error at line {fieldName.Line}: A property cannot be both optional and have a definite assignment assertion.");
                 }
 
-                Consume(TokenType.COLON, "Expect ':' after field name.");
-                string typeAnnotation = ParseTypeAnnotation();
+                // Type annotation is optional (ES class fields).
+                string? typeAnnotation = null;
+                if (Match(TokenType.COLON))
+                {
+                    typeAnnotation = ParseTypeAnnotation();
+                }
+
                 Expr? initializer = null;
                 if (Match(TokenType.EQUAL))
                 {
@@ -702,7 +712,7 @@ public partial class Parser
                 Consume(TokenType.LEFT_BRACE, "Expect '{' before accessor body.");
                 List<Stmt> body = Block();
 
-                accessors.Add(new Stmt.Accessor(accessorName, kind, setterParam, body, returnType, access));
+                accessors.Add(new Stmt.Accessor(accessorName, kind, setterParam, body, returnType, access, IsStatic: isStatic));
             }
             // Check for private field/method: #name...
             else if (Peek().Type == TokenType.PRIVATE_IDENTIFIER)
@@ -771,10 +781,14 @@ public partial class Parser
                     }
                 }
             }
-            else if (Peek().Type == TokenType.IDENTIFIER && (PeekNext().Type == TokenType.COLON || PeekNext().Type == TokenType.QUESTION || PeekNext().Type == TokenType.BANG))
+            else if ((Peek().Type == TokenType.IDENTIFIER || IsContextualKeyword(Peek().Type)) &&
+                     IsFieldDeclarationOpener(PeekNext().Type))
             {
-                // Field declaration
-                Token fieldName = Consume(TokenType.IDENTIFIER, "Expect field name.");
+                // Field declaration. Supports TS and ES class-field forms,
+                // including bare `name;` and `name = value;`.
+                Token fieldName = Peek().Type == TokenType.IDENTIFIER
+                    ? Consume(TokenType.IDENTIFIER, "Expect field name.")
+                    : ConsumeIdentifierName("Expect field name.");
                 bool isOptional = Match(TokenType.QUESTION);
                 bool hasDefiniteAssignment = Match(TokenType.BANG);
 
@@ -784,8 +798,12 @@ public partial class Parser
                     throw new Exception($"Parse Error at line {fieldName.Line}: A property cannot be both optional and have a definite assignment assertion.");
                 }
 
-                Consume(TokenType.COLON, "Expect ':' after field name.");
-                string typeAnnotation = ParseTypeAnnotation();
+                string? typeAnnotation = null;
+                if (Match(TokenType.COLON))
+                {
+                    typeAnnotation = ParseTypeAnnotation();
+                }
+
                 Expr? initializer = null;
                 if (Match(TokenType.EQUAL))
                 {

@@ -650,7 +650,10 @@ public static class BuiltInTypes
                 [AnyType, new TypeInfo.Union([new TypeInfo.Array(AnyType), new TypeInfo.Null()])],
                 returnType,              // Returns the function's return type
                 RequiredParams: 0),
-            _ => null
+            // JS functions are objects — any arbitrary property is legal at
+            // runtime (common in CommonJS: `fn.DNS = "..."`). Fall back to
+            // Any for unknown names rather than erroring.
+            _ => AnyType
         };
     }
 

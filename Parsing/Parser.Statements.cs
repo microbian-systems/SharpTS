@@ -124,9 +124,31 @@ public partial class Parser
             {
                 initValue = Expression();
             }
-            Consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.");
 
-            Stmt initializer = new Stmt.Var(varName, typeAnnotation, initValue, IsVar: initIsVar);
+            Stmt initializer;
+            Stmt firstDecl = new Stmt.Var(varName, typeAnnotation, initValue, IsVar: initIsVar);
+
+            // Multi-declarator support: `for (var i = 0, j = 10; ...; ...)`
+            if (Check(TokenType.COMMA))
+            {
+                var decls = new List<Stmt> { firstDecl };
+                while (Match(TokenType.COMMA))
+                {
+                    Token extraName = ConsumeIdentifierName("Expect variable name.");
+                    string? extraType = null;
+                    if (Match(TokenType.COLON)) extraType = ParseTypeAnnotation();
+                    Expr? extraInit = null;
+                    if (Match(TokenType.EQUAL)) extraInit = Expression();
+                    decls.Add(new Stmt.Var(extraName, extraType, extraInit, IsVar: initIsVar));
+                }
+                initializer = new Stmt.Sequence(decls);
+            }
+            else
+            {
+                initializer = firstDecl;
+            }
+
+            Consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.");
             return FinishTraditionalFor(initializer);
         }
 

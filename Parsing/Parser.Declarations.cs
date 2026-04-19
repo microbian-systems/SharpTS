@@ -73,7 +73,16 @@ public partial class Parser
             return VarDeclaration(isConst: true);
         }
         if (Match(TokenType.ENUM)) return EnumDeclaration(isConst: false);
-        if (Match(TokenType.NAMESPACE)) return NamespaceDeclaration();
+        // `namespace` is a contextual keyword. Treat it as a namespace
+        // declaration only when followed by an identifier (the namespace
+        // name). Otherwise fall through — e.g. `namespace = value` or
+        // `typeof namespace` uses it as a plain variable name.
+        if (Check(TokenType.NAMESPACE) &&
+            (PeekNext().Type == TokenType.IDENTIFIER || IsContextualKeyword(PeekNext().Type)))
+        {
+            Advance(); // consume NAMESPACE
+            return NamespaceDeclaration();
+        }
         if (Match(TokenType.INTERFACE)) return InterfaceDeclaration();
         // 'type' is a contextual keyword — only treat as type alias when followed by an identifier
         // (e.g. `type Foo = string`), not when used as a variable name (e.g. `var type = "x"`).
