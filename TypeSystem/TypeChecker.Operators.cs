@@ -65,12 +65,15 @@ public partial class TypeChecker
         // Any bypasses type checking
         if (left is TypeInfo.Any || right is TypeInfo.Any)
             return new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
-        // Allow number vs number OR bigint vs bigint
-        if ((IsBigInt(left) && IsBigInt(right)) || (IsNumber(left) && IsNumber(right)))
+        // Allow number vs number, bigint vs bigint, or string vs string
+        // (JS AbstractRelationalComparison: both strings → lexicographic).
+        if ((IsBigInt(left) && IsBigInt(right))
+            || (IsNumber(left) && IsNumber(right))
+            || (IsString(left) && IsString(right)))
             return new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
         if ((IsBigInt(left) && IsNumber(right)) || (IsNumber(left) && IsBigInt(right)))
             throw new TypeCheckException("Cannot compare bigint and number directly. Use explicit conversion.");
-        throw new TypeCheckException("Comparison operands must be numbers or bigints of the same type.");
+        throw new TypeCheckException("Comparison operands must be numbers, bigints, or strings of the same type.");
     }
 
     private TypeInfo CheckBitwiseBinary(TypeInfo left, TypeInfo right)

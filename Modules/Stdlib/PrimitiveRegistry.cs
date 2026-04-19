@@ -28,6 +28,7 @@ public static class PrimitiveRegistry
         Prefix + "async_hooks",
         Prefix + "timers",
         Prefix + "timers/promises",
+        Prefix + "readline",
     };
 
     /// <summary>

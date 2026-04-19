@@ -1131,7 +1131,8 @@ public static class BuiltInModuleTypes
             // "process" — migrated to stdlib/node/process.ts; types flow from the TS source.
             //   Primitive-layer types for primitive:process reuse GetProcessModuleTypes via GetPrimitiveTypes.
             "crypto" => GetCryptoModuleTypes(),
-            "readline" => GetReadlineModuleTypes(),
+            // "readline" — migrated to stdlib/node/readline.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:readline reuse GetReadlineModuleTypes via GetPrimitiveTypes.
             "child_process" => GetChildProcessModuleTypes(),
             "buffer" => GetBufferModuleTypes(),
             "zlib" => GetZlibModuleTypes(),
@@ -1183,6 +1184,9 @@ public static class BuiltInModuleTypes
             // arity-dispatches around the spread-compiler gap.
             "timers" => GetTimersModuleTypes(),
             "timers/promises" => GetTimersPromisesModuleTypes(),
+            // Readline's primitive surface is the full module surface — the TS
+            // facade wraps the returned Interface and forwards calls dynamically.
+            "readline" => GetReadlineModuleTypes(),
             _ => null
         };
     }

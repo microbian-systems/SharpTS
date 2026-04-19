@@ -4,11 +4,15 @@ using SharpTS.Parsing;
 namespace SharpTS.Compilation.Emitters.Modules;
 
 /// <summary>
-/// Emits IL code for the Node.js 'readline' module.
+/// Emits IL for <c>primitive:readline</c>. Exposes <c>questionSync(query)</c>
+/// and <c>createInterface(options)</c> via the existing <c>$Runtime</c> helpers
+/// and the <c>$ReadlineInterface</c> emitted class. The user-facing readline
+/// module is implemented in <c>stdlib/node/readline.ts</c>, which wraps the
+/// returned Interface instance and forwards method calls dynamically.
 /// </summary>
-public sealed class ReadlineModuleEmitter : IBuiltInModuleEmitter
+public sealed class ReadlinePrimitiveEmitter : IBuiltInModuleEmitter
 {
-    public string ModuleName => "readline";
+    public string ModuleName => "primitive:readline";
 
     private static readonly string[] _exportedMembers =
     [
@@ -37,7 +41,6 @@ public sealed class ReadlineModuleEmitter : IBuiltInModuleEmitter
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Emit query string
         if (arguments.Count > 0)
         {
             emitter.EmitExpression(arguments[0]);
@@ -49,7 +52,6 @@ public sealed class ReadlineModuleEmitter : IBuiltInModuleEmitter
             il.Emit(OpCodes.Ldstr, "");
         }
 
-        // Call runtime helper
         il.Emit(OpCodes.Call, ctx.Runtime!.ReadlineQuestionSync);
         return true;
     }
@@ -59,7 +61,6 @@ public sealed class ReadlineModuleEmitter : IBuiltInModuleEmitter
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Emit options (or null)
         if (arguments.Count > 0)
         {
             emitter.EmitExpression(arguments[0]);
@@ -70,7 +71,6 @@ public sealed class ReadlineModuleEmitter : IBuiltInModuleEmitter
             il.Emit(OpCodes.Ldnull);
         }
 
-        // Call runtime helper
         il.Emit(OpCodes.Call, ctx.Runtime!.ReadlineCreateInterface);
         return true;
     }

@@ -677,7 +677,8 @@ public partial class ILCompiler
         _builtInModuleEmitterRegistry.RegisterAlias("primitive:process", processEmitter);
         _builtInModuleEmitterRegistry.Register(new CryptoModuleEmitter());
         // "util" — migrated to stdlib/node/util.ts (pure-TS port).
-        _builtInModuleEmitterRegistry.Register(new ReadlineModuleEmitter());
+        // "readline" — migrated to stdlib/node/readline.ts; emitter registered under primitive:readline only.
+        _builtInModuleEmitterRegistry.Register(new ReadlinePrimitiveEmitter());
         _builtInModuleEmitterRegistry.Register(new ChildProcessModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new BufferModuleEmitter());
         _builtInModuleEmitterRegistry.Register(new ZlibModuleEmitter());

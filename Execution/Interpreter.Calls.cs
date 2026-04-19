@@ -459,7 +459,11 @@ public partial class Interpreter
             OperatorDescriptor.Plus => RuntimeValue.FromNumber((double)left! + (double)right!),
             OperatorDescriptor.Arithmetic => RuntimeValue.FromNumber(EvaluateArithmetic(op.Type, (double)left!, (double)right!)),
             OperatorDescriptor.Power => RuntimeValue.FromNumber(Math.Pow((double)left!, (double)right!)),
-            OperatorDescriptor.Comparison => RuntimeValue.FromBoolean(EvaluateComparison(op.Type, (double)left!, (double)right!)),
+            // JS AbstractRelationalComparison: string vs string → lexicographic.
+            OperatorDescriptor.Comparison =>
+                left is string ls && right is string rs
+                    ? RuntimeValue.FromBoolean(EvaluateStringComparison(op.Type, ls, rs))
+                    : RuntimeValue.FromBoolean(EvaluateComparison(op.Type, (double)left!, (double)right!)),
             OperatorDescriptor.Equality eq => RuntimeValue.FromBoolean(EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated)),
             OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
                 RuntimeValue.FromNumber(EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right))),
@@ -492,7 +496,12 @@ public partial class Interpreter
             OperatorDescriptor.Plus => EvaluatePlus(left, right),
             OperatorDescriptor.Arithmetic => EvaluateArithmetic(op.Type, (double)left!, (double)right!),
             OperatorDescriptor.Power => Math.Pow((double)left!, (double)right!),
-            OperatorDescriptor.Comparison => EvaluateComparison(op.Type, (double)left!, (double)right!),
+            // JS AbstractRelationalComparison: if both are strings, compare
+            // lexicographically; otherwise coerce to number.
+            OperatorDescriptor.Comparison =>
+                left is string ls && right is string rs
+                    ? EvaluateStringComparison(op.Type, ls, rs)
+                    : EvaluateComparison(op.Type, (double)left!, (double)right!),
             OperatorDescriptor.Equality eq => EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated),
             OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
                 EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right)),
@@ -526,6 +535,23 @@ public partial class Interpreter
         TokenType.GREATER_EQUAL => left >= right,
         _ => throw new InterpreterException($"Unknown comparison operator: {op}")
     };
+
+    /// <summary>
+    /// Evaluates string relational comparison using lexicographic ordering
+    /// (JS AbstractRelationalComparison when both operands are strings).
+    /// </summary>
+    private static bool EvaluateStringComparison(TokenType op, string left, string right)
+    {
+        int cmp = string.CompareOrdinal(left, right);
+        return op switch
+        {
+            TokenType.LESS => cmp < 0,
+            TokenType.GREATER => cmp > 0,
+            TokenType.LESS_EQUAL => cmp <= 0,
+            TokenType.GREATER_EQUAL => cmp >= 0,
+            _ => throw new InterpreterException($"Unknown comparison operator: {op}")
+        };
+    }
 
     /// <summary>
     /// Evaluates equality operators (==, ===, !=, !==).

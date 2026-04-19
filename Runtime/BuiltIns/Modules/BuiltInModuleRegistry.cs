@@ -23,7 +23,8 @@ public static class BuiltInModuleRegistry
         //   in BuiltInRegistry as a singleton namespace.
         "crypto",
         // "util" — migrated to stdlib/node/util.ts (embedded stdlib, pure-TS port).
-        "readline",
+        // "readline" — migrated to stdlib/node/readline.ts (TS wrapper over primitive:readline,
+        //   class-instance-via-primitive pattern like async_hooks).
         "child_process",
         "buffer",
         "zlib",

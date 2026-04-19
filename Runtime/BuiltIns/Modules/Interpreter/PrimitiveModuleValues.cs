@@ -29,6 +29,7 @@ public static class PrimitiveModuleValues
             "async_hooks" => AsyncHooksPrimitiveInterpreter.GetExports(),
             "timers" => TimersPrimitiveInterpreter.GetExports(),
             "timers/promises" => TimersPrimitiveInterpreter.GetPromisesExports(),
+            "readline" => ReadlinePrimitiveInterpreter.GetExports(),
             _ => throw new Exception($"Unknown primitive module: primitive:{primitiveName}")
         };
     }
@@ -39,6 +40,6 @@ public static class PrimitiveModuleValues
     public static bool HasInterpreterSupport(string primitiveName)
     {
         return primitiveName is "os" or "process" or "perf" or "tty" or "async_hooks"
-            or "timers" or "timers/promises";
+            or "timers" or "timers/promises" or "readline";
     }
 }

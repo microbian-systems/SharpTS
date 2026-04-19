@@ -248,6 +248,25 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
     };
 
     /// <summary>
+    /// Returns true if the token type opens a class method signature
+    /// (<c>(</c>, <c>&lt;</c>) or a class field declaration
+    /// (<c>:</c>, <c>=</c>, <c>;</c>, <c>?</c>, <c>!</c>). Used to
+    /// disambiguate <c>get</c> / <c>set</c> as regular method/field names
+    /// versus accessor keywords in class bodies.
+    /// </summary>
+    private static bool IsMethodOrFieldOpener(TokenType type) => type switch
+    {
+        TokenType.LEFT_PAREN => true,   // get() { ... }  — method
+        TokenType.LESS => true,          // get<T>() { ... } — generic method
+        TokenType.COLON => true,         // get: T — field
+        TokenType.EQUAL => true,         // get = 1 — field
+        TokenType.SEMICOLON => true,     // get; — field
+        TokenType.QUESTION => true,      // get?: T — optional field
+        TokenType.BANG => true,          // get!: T — definite-assign field
+        _ => false,
+    };
+
+    /// <summary>
     /// Consumes a token that can be used as a variable or parameter name.
     /// Accepts identifiers and TypeScript contextual keywords (which are valid JS identifiers).
     /// </summary>

@@ -521,7 +521,21 @@ public partial class TypeChecker
                     }
                     else
                     {
-                        TypeInfo argType = CheckExpr(arg);
+                        // Contextual typing: when an arrow is passed where a function
+                        // type is expected, flow the expected signature into the arrow
+                        // so its untyped parameters get the proper types (e.g.
+                        // `arr.sort((a, b) => ...)` infers a, b as number).
+                        TypeInfo argType;
+                        if (arg is Expr.ArrowFunction arrowArg &&
+                            (expectedParamType is TypeInfo.Function or TypeInfo.GenericFunction))
+                        {
+                            argType = CheckArrowFunction(arrowArg, expectedParamType);
+                            _typeMap.Set(arg, argType);
+                        }
+                        else
+                        {
+                            argType = CheckExpr(arg);
+                        }
                         if (paramIndex < regularParamCount)
                         {
                             // Check against regular parameter

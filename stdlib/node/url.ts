@@ -1265,39 +1265,21 @@ export class URL {
 // ─── URLSearchParams ────────────────────────────────────────────────
 
 export class URLSearchParams {
-    // Parallel arrays — SharpTS codegen currently has a nested-array push
-    // regression where `this._pairs.push([k, v])` on a `string[][]` field
-    // wraps the inner array as an extra element. Until that's fixed, store
-    // keys and values in two parallel arrays and index them together.
-    private _keys: string[];
-    private _values: string[];
+    // Internal representation: list of [key, value] pairs. Matches the
+    // WHATWG spec's "list of name-value pairs" more literally than parallel
+    // arrays did, and exercises nested-array push on class fields — a path
+    // that had a codegen gap earlier in SharpTS's development.
+    private _pairs: string[][];
     private _owner: URL | null;
 
     constructor(init?: any) {
-        this._keys = [];
-        this._values = [];
+        this._pairs = [];
         this._owner = null;
-        // SharpTS parser gap: `get`, `set`, `delete` as class method names
-        // confuse the parser (get/set get read as accessor keywords; delete
-        // as a reserved word). Assign these via per-instance properties as a
-        // workaround. When the parser accepts these as method names the
-        // assignments can become normal method declarations.
-        const self = this;
-        (this as any).get = function (name: string): string | null {
-            return self._getFirst(String(name));
-        };
-        (this as any).set = function (name: string, value: string): void {
-            self._setKey(String(name), String(value));
-        };
-        (this as any).delete = function (name: string): void {
-            self._deleteKey(String(name));
-        };
         if (init == null) return;
         if (init instanceof URLSearchParams) {
             const src = init as any;
-            for (let i = 0; i < src._keys.length; i++) {
-                this._keys.push(src._keys[i]);
-                this._values.push(src._values[i]);
+            for (let i = 0; i < src._pairs.length; i++) {
+                this._pairs.push([src._pairs[i][0], src._pairs[i][1]]);
             }
             return;
         }
@@ -1313,16 +1295,14 @@ export class URLSearchParams {
                 if (!Array.isArray(pair) || pair.length !== 2) {
                     throw new TypeError('URLSearchParams: each sequence item must be a 2-tuple');
                 }
-                this._keys.push(String(pair[0]));
-                this._values.push(String(pair[1]));
+                this._pairs.push([String(pair[0]), String(pair[1])]);
             }
             return;
         }
         if (typeof init === 'object') {
             const keys = Object.keys(init);
             for (const k of keys) {
-                this._keys.push(k);
-                this._values.push(String(init[k]));
+                this._pairs.push([k, String(init[k])]);
             }
             return;
         }
@@ -1342,14 +1322,12 @@ export class URLSearchParams {
             else { name = p.substring(0, eq); value = p.substring(eq + 1); }
             name = percentDecode(name.split('+').join(' '));
             value = percentDecode(value.split('+').join(' '));
-            this._keys.push(name);
-            this._values.push(value);
+            this._pairs.push([name, value]);
         }
     }
 
     private _update(query: string | null): void {
-        this._keys = [];
-        this._values = [];
+        this._pairs = [];
         if (query != null && query.length > 0) this._parseFromString(query);
     }
 
@@ -1359,31 +1337,37 @@ export class URLSearchParams {
         (this._owner as any)._record.query = serialized.length === 0 ? null : serialized;
     }
 
-    get size(): number { return this._keys.length; }
+    get size(): number { return this._pairs.length; }
 
     append(name: string, value: string): void {
-        this._keys.push(String(name));
-        this._values.push(String(value));
+        this._pairs.push([String(name), String(value)]);
         this._notifyOwner();
     }
 
+    get(name: string): string | null {
+        return this._getFirst(String(name));
+    }
+
+    set(name: string, value: string): void {
+        this._setKey(String(name), String(value));
+    }
+
+    delete(name: string): void {
+        this._deleteKey(String(name));
+    }
+
     private _deleteKey(key: string): void {
-        const nextK: string[] = [];
-        const nextV: string[] = [];
-        for (let i = 0; i < this._keys.length; i++) {
-            if (this._keys[i] !== key) {
-                nextK.push(this._keys[i]);
-                nextV.push(this._values[i]);
-            }
+        const next: string[][] = [];
+        for (let i = 0; i < this._pairs.length; i++) {
+            if (this._pairs[i][0] !== key) next.push(this._pairs[i]);
         }
-        this._keys = nextK;
-        this._values = nextV;
+        this._pairs = next;
         this._notifyOwner();
     }
 
     private _getFirst(key: string): string | null {
-        for (let i = 0; i < this._keys.length; i++) {
-            if (this._keys[i] === key) return this._values[i];
+        for (let i = 0; i < this._pairs.length; i++) {
+            if (this._pairs[i][0] === key) return this._pairs[i][1];
         }
         return null;
     }
@@ -1391,94 +1375,85 @@ export class URLSearchParams {
     getAll(name: string): string[] {
         const key = String(name);
         const out: string[] = [];
-        for (let i = 0; i < this._keys.length; i++) {
-            if (this._keys[i] === key) out.push(this._values[i]);
+        for (let i = 0; i < this._pairs.length; i++) {
+            if (this._pairs[i][0] === key) out.push(this._pairs[i][1]);
         }
         return out;
     }
 
     has(name: string): boolean {
         const key = String(name);
-        for (let i = 0; i < this._keys.length; i++) {
-            if (this._keys[i] === key) return true;
+        for (let i = 0; i < this._pairs.length; i++) {
+            if (this._pairs[i][0] === key) return true;
         }
         return false;
     }
 
     private _setKey(key: string, val: string): void {
         let found = false;
-        const nextK: string[] = [];
-        const nextV: string[] = [];
-        for (let i = 0; i < this._keys.length; i++) {
-            if (this._keys[i] === key) {
-                if (!found) { nextK.push(key); nextV.push(val); found = true; }
+        const next: string[][] = [];
+        for (let i = 0; i < this._pairs.length; i++) {
+            if (this._pairs[i][0] === key) {
+                if (!found) { next.push([key, val]); found = true; }
             } else {
-                nextK.push(this._keys[i]);
-                nextV.push(this._values[i]);
+                next.push(this._pairs[i]);
             }
         }
-        if (!found) { nextK.push(key); nextV.push(val); }
-        this._keys = nextK;
-        this._values = nextV;
+        if (!found) next.push([key, val]);
+        this._pairs = next;
         this._notifyOwner();
     }
 
     sort(): void {
-        // Stable insertion sort by key. Parallel arrays are simpler than
-        // putting a comparator over indices through Array.sort, which
-        // currently has closure issues with `this` captures. Use
-        // localeCompare for string comparison — relational operators on
-        // strings get numeric coercion in compiled mode today.
-        const n = this._keys.length;
-        for (let i = 1; i < n; i++) {
-            const k = this._keys[i];
-            const v = this._values[i];
-            let j = i - 1;
-            while (j >= 0 && this._keys[j].localeCompare(k) > 0) {
-                this._keys[j + 1] = this._keys[j];
-                this._values[j + 1] = this._values[j];
-                j--;
-            }
-            this._keys[j + 1] = k;
-            this._values[j + 1] = v;
-        }
+        // Stable sort by key via an index array (Array.sort is stable).
+        // The comparator captures `this` lexically from the enclosing method.
+        const n = this._pairs.length;
+        const indices: number[] = [];
+        for (let i = 0; i < n; i++) indices.push(i);
+        indices.sort((a: number, b: number): number => {
+            if (this._pairs[a][0] < this._pairs[b][0]) return -1;
+            if (this._pairs[a][0] > this._pairs[b][0]) return 1;
+            return 0;
+        });
+        const next: string[][] = [];
+        for (let i = 0; i < n; i++) next.push(this._pairs[indices[i]]);
+        this._pairs = next;
         this._notifyOwner();
     }
 
     forEach(callback: Function, thisArg?: any): void {
-        for (let i = 0; i < this._keys.length; i++) {
-            callback.call(thisArg, this._values[i], this._keys[i], this);
+        for (let i = 0; i < this._pairs.length; i++) {
+            callback.call(thisArg, this._pairs[i][1], this._pairs[i][0], this);
         }
     }
 
     keys(): string[] {
         const out: string[] = [];
-        for (let i = 0; i < this._keys.length; i++) out.push(this._keys[i]);
+        for (let i = 0; i < this._pairs.length; i++) out.push(this._pairs[i][0]);
         return out;
     }
 
     values(): string[] {
         const out: string[] = [];
-        for (let i = 0; i < this._values.length; i++) out.push(this._values[i]);
+        for (let i = 0; i < this._pairs.length; i++) out.push(this._pairs[i][1]);
         return out;
     }
 
     entries(): string[][] {
         const out: string[][] = [];
-        for (let i = 0; i < this._keys.length; i++) {
-            const pair: string[] = [this._keys[i], this._values[i]];
-            out.push(pair);
+        for (let i = 0; i < this._pairs.length; i++) {
+            out.push([this._pairs[i][0], this._pairs[i][1]]);
         }
         return out;
     }
 
     toString(): string {
         let out = '';
-        for (let i = 0; i < this._keys.length; i++) {
+        for (let i = 0; i < this._pairs.length; i++) {
             if (i > 0) out += '&';
-            out += percentEncodeString(this._keys[i], isFormUrlencodedPercentEncode).split('%20').join('+');
+            out += percentEncodeString(this._pairs[i][0], isFormUrlencodedPercentEncode).split('%20').join('+');
             out += '=';
-            out += percentEncodeString(this._values[i], isFormUrlencodedPercentEncode).split('%20').join('+');
+            out += percentEncodeString(this._pairs[i][1], isFormUrlencodedPercentEncode).split('%20').join('+');
         }
         return out;
     }

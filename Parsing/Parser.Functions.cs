@@ -9,6 +9,14 @@ public partial class Parser
         {
             name = Previous();
         }
+        else if (kind == "method")
+        {
+            // ES2015+ class MethodDefinition accepts any PropertyName —
+            // including reserved words like `delete`, `class`, `if`, etc.
+            // (e.g. Map has a `delete` method). ConsumePropertyName handles
+            // the identifier-from-keyword conversion for AST consistency.
+            name = ConsumePropertyName($"Expect {kind} name.");
+        }
         else
         {
             name = ConsumeIdentifierName($"Expect {kind} name.");
