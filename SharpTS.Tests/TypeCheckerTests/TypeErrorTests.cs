@@ -488,9 +488,12 @@ public class TypeErrorTests
         TestHarness.RunInterpreted(source);
     }
 
-    [Fact(Skip = "Behavior changed: `this` in static methods now refers to the class itself per JS spec (required for packages like semver that use `static get ANY()`).")]
-    public void ThisInStaticMethod_Fails()
+    [Fact]
+    public void ThisInStaticMethod_TypeChecks()
     {
+        // Per JS spec, `this` inside a static method refers to the class constructor,
+        // so `this.staticField` is valid. Required for patterns like semver's
+        // `static get ANY()` that use `new this(...)`.
         var source = """
             class Counter {
                 static count: number = 0;
@@ -498,10 +501,9 @@ public class TypeErrorTests
                     this.count++;
                 }
             }
+            Counter.increment();
             """;
-
-        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
-        Assert.Contains("Type Error", ex.Message);
+        TestHarness.RunInterpreted(source);
     }
 
     #endregion

@@ -502,4 +502,96 @@ public class ClassTests
             () => TestHarness.Run(source, mode));
         Assert.Contains("expected type 'string'", ex.Message);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticMethod_ThisBindsToClass(ExecutionMode mode)
+    {
+        var source = """
+            class Counter {
+                static count: number = 0;
+                static increment(): void {
+                    this.count++;
+                }
+                static addVia(n: number): void {
+                    for (let i = 0; i < n; i++) this.increment();
+                }
+            }
+            Counter.addVia(3);
+            console.log(Counter.count);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticGetter_ReturnsLiteral(ExecutionMode mode)
+    {
+        var source = """
+            class Foo {
+                static get bar(): number { return 42; }
+            }
+            console.log(Foo.bar);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticGetter_CanReadStaticField(ExecutionMode mode)
+    {
+        var source = """
+            class Counter {
+                static count: number = 7;
+                static get total(): number { return this.count; }
+            }
+            console.log(Counter.total);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("7\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticSetter_MutatesStaticField(ExecutionMode mode)
+    {
+        var source = """
+            class Counter {
+                static count: number = 0;
+                static set bump(n: number) { this.count += n; }
+                static get total(): number { return this.count; }
+            }
+            Counter.bump = 5;
+            Counter.bump = 7;
+            console.log(Counter.total);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("12\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticGetter_NewThisConstructsClass(ExecutionMode mode)
+    {
+        // Canonical semver pattern: `static get ANY() { return new this("any"); }`
+        var source = """
+            class Range {
+                raw: string;
+                constructor(r: string) { this.raw = r; }
+                static get ANY(): Range { return new this("any"); }
+            }
+            const a = Range.ANY;
+            console.log(a.raw);
+            console.log(a instanceof Range);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("any\ntrue\n", output);
+    }
 }

@@ -33,7 +33,8 @@ public partial class ILCompiler
                 ? [typeof(object)]
                 : [];
 
-            MethodAttributes methodAttrs = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig | MethodAttributes.Virtual;
+            MethodAttributes methodAttrs = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig;
+            methodAttrs |= accessor.IsStatic ? MethodAttributes.Static : MethodAttributes.Virtual;
             if (accessor.IsAbstract)
             {
                 methodAttrs |= MethodAttributes.Abstract;
@@ -46,24 +47,50 @@ public partial class ILCompiler
                 paramTypes
             );
 
-            // Track getter/setter for direct dispatch (using PascalCase key)
+            // Static accessors register in StaticGetters/StaticSetters keyed by the original
+            // (camelCase) name so ClassRegistry lookups match. Instance accessors register in
+            // InstanceGetters/Setters keyed by PascalCase, preserving existing convention.
             if (accessor.Kind.Type == TokenType.GET)
             {
-                if (!_classes.InstanceGetters.TryGetValue(className, out var classGetters))
+                if (accessor.IsStatic)
                 {
-                    classGetters = [];
-                    _classes.InstanceGetters[className] = classGetters;
+                    if (!_classes.StaticGetters.TryGetValue(className, out var classStaticGetters))
+                    {
+                        classStaticGetters = [];
+                        _classes.StaticGetters[className] = classStaticGetters;
+                    }
+                    classStaticGetters[accessor.Name.Lexeme] = methodBuilder;
                 }
-                classGetters[pascalName] = methodBuilder;
+                else
+                {
+                    if (!_classes.InstanceGetters.TryGetValue(className, out var classGetters))
+                    {
+                        classGetters = [];
+                        _classes.InstanceGetters[className] = classGetters;
+                    }
+                    classGetters[pascalName] = methodBuilder;
+                }
             }
             else
             {
-                if (!_classes.InstanceSetters.TryGetValue(className, out var classSetters))
+                if (accessor.IsStatic)
                 {
-                    classSetters = [];
-                    _classes.InstanceSetters[className] = classSetters;
+                    if (!_classes.StaticSetters.TryGetValue(className, out var classStaticSetters))
+                    {
+                        classStaticSetters = [];
+                        _classes.StaticSetters[className] = classStaticSetters;
+                    }
+                    classStaticSetters[accessor.Name.Lexeme] = methodBuilder;
                 }
-                classSetters[pascalName] = methodBuilder;
+                else
+                {
+                    if (!_classes.InstanceSetters.TryGetValue(className, out var classSetters))
+                    {
+                        classSetters = [];
+                        _classes.InstanceSetters[className] = classSetters;
+                    }
+                    classSetters[pascalName] = methodBuilder;
+                }
             }
         }
 
@@ -83,7 +110,9 @@ public partial class ILCompiler
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
         {
             FieldsField = fieldsField,
-            IsInstanceMethod = true,
+            IsInstanceMethod = !accessor.IsStatic,
+            CurrentClassName = className,
+            CurrentClassBuilder = typeBuilder,
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
             DisplayClasses = _closures.DisplayClasses,
@@ -123,12 +152,15 @@ public partial class ILCompiler
                 ctx.GenericTypeParameters[gp.Name] = gp;
         }
 
-        // Define setter parameter if applicable with typed parameter type
+        // Define setter parameter if applicable with typed parameter type.
+        // For instance setters, arg0 is `this` and the value is at index 1.
+        // For static setters, the value is at index 0 (no implicit receiver).
         if (accessor.Kind.Type == TokenType.SET && accessor.SetterParam != null)
         {
             var accessorParams = methodBuilder.GetParameters();
             Type? paramType = accessorParams.Length > 0 ? accessorParams[0].ParameterType : null;
-            ctx.DefineParameter(accessor.SetterParam.Name.Lexeme, 1, paramType);
+            int paramIndex = accessor.IsStatic ? 0 : 1;
+            ctx.DefineParameter(accessor.SetterParam.Name.Lexeme, paramIndex, paramType);
         }
 
         var emitter = new ILEmitter(ctx);

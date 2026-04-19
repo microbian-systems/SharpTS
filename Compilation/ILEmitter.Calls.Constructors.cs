@@ -14,6 +14,15 @@ public partial class ILEmitter
 {
     protected override void EmitNew(Expr.New n)
     {
+        // `new this(...)` inside a static method/accessor constructs the enclosing class.
+        // The callee is Expr.This, which doesn't resolve to a class name via the normal
+        // Variable/Get chain extraction — rewrite as Expr.Variable(CurrentClassName).
+        if (n.Callee is Expr.This && !_ctx.IsInstanceMethod && _ctx.CurrentClassName != null)
+        {
+            var synthName = new Token(TokenType.IDENTIFIER, _ctx.CurrentClassName, null, 0);
+            n = n with { Callee = new Expr.Variable(synthName) };
+        }
+
         var (namespaceParts, className) = ExtractQualifiedNameFromCallee(n.Callee);
 
         // 1. Built-in constructors (Date, Map, Set, Promise, Headers, etc.) - handled by base

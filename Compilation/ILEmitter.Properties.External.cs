@@ -56,6 +56,27 @@ public partial class ILEmitter
     }
 
     /// <summary>
+    /// Returns true if the expression is <c>this.name</c> inside a static method/block context
+    /// and a matching static field exists on the current class, and outputs the resolved
+    /// class name and FieldBuilder. Used by postfix/prefix/compound operators to bypass
+    /// runtime GetProperty/SetProperty and emit direct static-field IL.
+    /// </summary>
+    private bool TryResolveStaticThisField(Expr.Get get, out string className, out System.Reflection.Emit.FieldBuilder field)
+    {
+        className = null!;
+        field = null!;
+        if (get.Object is not Expr.This) return false;
+        if (_ctx.IsInstanceMethod || _ctx.CurrentClassBuilder == null) return false;
+        var name = _ctx.CurrentClassName;
+        if (name == null) return false;
+        if (!_ctx.ClassRegistry!.TryGetStaticField(name, get.Name.Lexeme, out var fb) || fb == null)
+            return false;
+        className = name;
+        field = fb;
+        return true;
+    }
+
+    /// <summary>
     /// Emits static member access on a class (used for both ClassName.property and this.property in static context).
     /// Returns true if successful, false if property not found.
     /// </summary>
@@ -125,30 +146,10 @@ public partial class ILEmitter
         // Try static setter first (for auto-accessors and explicit static accessors)
         if (_ctx.ClassRegistry!.TryGetStaticSetter(className, propertyName, out var staticSetter))
         {
-            // Get the property type from PropertyTypes dictionary
-            Type propertyType = _ctx.Types.Object;
-            string pascalPropName = NamingConventions.ToPascalCase(propertyName);
-
-            if (_ctx.PropertyTypes != null &&
-                _ctx.PropertyTypes.TryGetValue(className, out var propTypes) &&
-                propTypes.TryGetValue(pascalPropName, out var propType))
-            {
-                propertyType = propType;
-            }
-            else
-            {
-                TypeInfo? valueType = _ctx.TypeMap?.Get(value);
-                if (valueType is TypeInfo.Primitive prim)
-                {
-                    propertyType = prim.Type switch
-                    {
-                        TokenType.TYPE_NUMBER => _ctx.Types.Double,
-                        TokenType.TYPE_BOOLEAN => _ctx.Types.Boolean,
-                        TokenType.TYPE_STRING => _ctx.Types.String,
-                        _ => _ctx.Types.Object
-                    };
-                }
-            }
+            // The setter's parameter type is authoritative — auto-accessors use typed params
+            // (Double/Boolean/String), explicit accessors use Object. Either way this matches
+            // the IL signature, avoiding stack/arg mismatches on the Call below.
+            Type propertyType = staticSetter!.GetParameters()[0].ParameterType;
 
             EmitExpression(value);
             EmitBoxIfNeeded(value);
@@ -166,6 +167,13 @@ public partial class ILEmitter
             }
 
             IL.Emit(OpCodes.Call, staticSetter!);
+
+            // Auto-accessor setters return void; explicit accessor setters return object.
+            // Pop the setter's return value to keep the stack balanced.
+            if (staticSetter!.ReturnType != typeof(void))
+            {
+                IL.Emit(OpCodes.Pop);
+            }
 
             IL.Emit(OpCodes.Ldloc, staticSetterResultTemp);
             return true;

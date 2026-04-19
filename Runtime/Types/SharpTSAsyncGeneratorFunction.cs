@@ -50,5 +50,14 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable
         return new SharpTSAsyncGeneratorFunction(_declaration, boundEnv);
     }
 
+    public SharpTSAsyncGeneratorFunction BindStatic(SharpTSClass klass)
+    {
+        RuntimeEnvironment boundEnv = new(_closure);
+        boundEnv.Define("this", klass);
+        if (klass.Superclass != null)
+            boundEnv.Define("super", klass.Superclass);
+        return new SharpTSAsyncGeneratorFunction(_declaration, boundEnv);
+    }
+
     public override string ToString() => $"[async function* {_declaration.Name?.Lexeme ?? "anonymous"}]";
 }

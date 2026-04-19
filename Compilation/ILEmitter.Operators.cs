@@ -876,6 +876,20 @@ public partial class ILEmitter
 
         if (pi.Operand is Expr.Get get)
         {
+            // Static field fast path: ++this.staticField inside a static method/block
+            if (TryResolveStaticThisField(get, out _, out var staticFieldPre))
+            {
+                IL.Emit(OpCodes.Ldsfld, staticFieldPre);
+                EmitUnboxToDouble();
+                IL.Emit(OpCodes.Ldc_R8, 1.0);
+                IL.Emit(pi.Operator.Type == TokenType.PLUS_PLUS ? OpCodes.Add : OpCodes.Sub);
+                IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Stsfld, staticFieldPre);
+                SetStackUnknown();
+                return;
+            }
+
             // Prefix increment on property: ++obj.prop
             // Get current value
             EmitExpression(get.Object);
@@ -1112,6 +1126,28 @@ public partial class ILEmitter
 
         if (pi.Operand is Expr.Get get)
         {
+            // Static field fast path: this.staticField++ inside a static method/block
+            if (TryResolveStaticThisField(get, out _, out var staticFieldPost))
+            {
+                IL.Emit(OpCodes.Ldsfld, staticFieldPost);
+                EmitUnboxToDouble();
+
+                var oldValueStatic = IL.DeclareLocal(_ctx.Types.Double);
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Stloc, oldValueStatic);
+
+                IL.Emit(OpCodes.Ldc_R8, 1.0);
+                IL.Emit(pi.Operator.Type == TokenType.PLUS_PLUS ? OpCodes.Add : OpCodes.Sub);
+
+                IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                IL.Emit(OpCodes.Stsfld, staticFieldPost);
+
+                IL.Emit(OpCodes.Ldloc, oldValueStatic);
+                IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                SetStackUnknown();
+                return;
+            }
+
             // Postfix increment on property: obj.prop++
             // Get current value
             EmitExpression(get.Object);
@@ -1197,6 +1233,21 @@ public partial class ILEmitter
 
     protected override void EmitCompoundSet(Expr.CompoundSet cs)
     {
+        // Static field fast path: this.staticField op= value inside a static method/block
+        if (cs.Object is Expr.This &&
+            TryResolveStaticThisField(new Expr.Get(cs.Object, cs.Name), out _, out var staticFieldCS))
+        {
+            IL.Emit(OpCodes.Ldsfld, staticFieldCS);
+            EmitCompoundOperation(cs.Operator.Type, cs.Value);
+            var csResult = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, csResult);
+            IL.Emit(OpCodes.Ldloc, csResult);
+            IL.Emit(OpCodes.Stsfld, staticFieldCS);
+            IL.Emit(OpCodes.Ldloc, csResult);
+            SetStackUnknown();
+            return;
+        }
+
         // Compound assignment on object property: obj.prop += x
         // 1. Get current value
         // 2. Apply operation

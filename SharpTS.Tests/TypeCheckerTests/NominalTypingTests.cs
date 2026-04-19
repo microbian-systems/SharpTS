@@ -650,10 +650,48 @@ public class NominalTypingTests
         Assert.Equal("6\n", result);
     }
 
-    [Fact(Skip = "Behavior changed: type checker no longer rejects `this` in static methods (required for patterns like semver's `static get ANY()`). Runtime `this` binding to class in static methods is pre-existing work not tackled here.")]
+    [Fact]
     public void This_InStaticMethod_ResolvesToClass()
     {
-        // Intentionally skipped — see attribute comment.
+        // Per JS spec, `this` inside a static method is the class constructor.
+        // Verifies that this.staticField reads/writes the class's static slot and
+        // that this.staticMethod() dispatches to sibling static methods.
+        var source = """
+            class Counter {
+                static count: number = 0;
+                static increment(): void {
+                    this.count++;
+                }
+                static addVia(n: number): void {
+                    for (let i = 0; i < n; i++) this.increment();
+                }
+            }
+            Counter.addVia(3);
+            console.log(Counter.count);
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("3\n", result);
+    }
+
+    [Fact]
+    public void This_InStaticAccessor_ResolvesToClassConstructor()
+    {
+        // Per JS spec, `this` inside a static getter/setter is the class constructor,
+        // so `new this(...)` is valid — the canonical semver `static get ANY()` pattern.
+        var source = """
+            class Range {
+                raw: string;
+                constructor(r: string) { this.raw = r; }
+                static get ANY(): Range { return new this("any"); }
+            }
+            const a = Range.ANY;
+            console.log(a.raw);
+            console.log(a instanceof Range);
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("any\ntrue\n", result);
     }
 
     #endregion

@@ -439,7 +439,8 @@ public partial class ILCompiler
                     ? [typeof(object)]
                     : [];
 
-                MethodAttributes methodAttrs = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig | MethodAttributes.Virtual;
+                MethodAttributes methodAttrs = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig;
+                methodAttrs |= accessor.IsStatic ? MethodAttributes.Static : MethodAttributes.Virtual;
                 if (accessor.IsAbstract)
                 {
                     methodAttrs |= MethodAttributes.Abstract;
@@ -452,24 +453,51 @@ public partial class ILCompiler
                     paramTypes
                 );
 
-                // Track getter/setter using PascalCase key
+                // Track getter/setter. Static accessors register in StaticGetters/StaticSetters
+                // keyed by original (camelCase) name, matching the auto-accessor convention and
+                // ClassRegistry.TryGetStaticGetter/Setter lookups. Instance accessors keep the
+                // existing PascalCase key convention.
                 if (accessor.Kind.Type == TokenType.GET)
                 {
-                    if (!_classes.InstanceGetters.TryGetValue(className, out var classGetters))
+                    if (accessor.IsStatic)
                     {
-                        classGetters = [];
-                        _classes.InstanceGetters[className] = classGetters;
+                        if (!_classes.StaticGetters.TryGetValue(className, out var classStaticGetters))
+                        {
+                            classStaticGetters = [];
+                            _classes.StaticGetters[className] = classStaticGetters;
+                        }
+                        classStaticGetters[accessorName] = methodBuilder;
                     }
-                    classGetters[pascalName] = methodBuilder;
+                    else
+                    {
+                        if (!_classes.InstanceGetters.TryGetValue(className, out var classGetters))
+                        {
+                            classGetters = [];
+                            _classes.InstanceGetters[className] = classGetters;
+                        }
+                        classGetters[pascalName] = methodBuilder;
+                    }
                 }
                 else
                 {
-                    if (!_classes.InstanceSetters.TryGetValue(className, out var classSetters))
+                    if (accessor.IsStatic)
                     {
-                        classSetters = [];
-                        _classes.InstanceSetters[className] = classSetters;
+                        if (!_classes.StaticSetters.TryGetValue(className, out var classStaticSetters))
+                        {
+                            classStaticSetters = [];
+                            _classes.StaticSetters[className] = classStaticSetters;
+                        }
+                        classStaticSetters[accessorName] = methodBuilder;
                     }
-                    classSetters[pascalName] = methodBuilder;
+                    else
+                    {
+                        if (!_classes.InstanceSetters.TryGetValue(className, out var classSetters))
+                        {
+                            classSetters = [];
+                            _classes.InstanceSetters[className] = classSetters;
+                        }
+                        classSetters[pascalName] = methodBuilder;
+                    }
                 }
 
                 // Store for body emission

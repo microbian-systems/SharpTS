@@ -52,6 +52,15 @@ public class SharpTSGeneratorFunction : ISharpTSCallable
         return new SharpTSGeneratorFunction(_declaration, boundEnv);
     }
 
+    public SharpTSGeneratorFunction BindStatic(SharpTSClass klass)
+    {
+        RuntimeEnvironment boundEnv = new(_closure);
+        boundEnv.Define("this", klass);
+        if (klass.Superclass != null)
+            boundEnv.Define("super", klass.Superclass);
+        return new SharpTSGeneratorFunction(_declaration, boundEnv);
+    }
+
     public override string ToString() => $"<generator fn {_declaration.Name.Lexeme}>";
 }
 

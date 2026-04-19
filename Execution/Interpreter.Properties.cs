@@ -460,7 +460,14 @@ public partial class Interpreter
 
         // Try static method
         ISharpTSCallable? staticMethod = klass.FindStaticMethod(memberName);
-        if (staticMethod != null) return staticMethod;
+        if (staticMethod != null) return staticMethod switch
+        {
+            SharpTSFunction fn => fn.BindStatic(klass),
+            SharpTSAsyncFunction afn => afn.BindStatic(klass),
+            SharpTSGeneratorFunction gfn => gfn.BindStatic(klass),
+            SharpTSAsyncGeneratorFunction agfn => agfn.BindStatic(klass),
+            _ => staticMethod,
+        };
 
         // Try static property
         if (klass.HasStaticProperty(memberName))

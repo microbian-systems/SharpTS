@@ -1653,12 +1653,14 @@ public partial class TypeChecker
                     int previousLoopDepthAcc = _loopDepth;
                     int previousSwitchDepthAcc = _switchDepth;
                     var previousActiveLabelsAcc = new Dictionary<string, bool>(_activeLabels);
+                    bool previousInStaticAcc = _inStaticMethod;
 
                     _environment = accessorEnv;
                     _currentFunctionReturnType = accessorReturnType;
                     _loopDepth = 0;
                     _switchDepth = 0;
                     _activeLabels.Clear();
+                    _inStaticMethod = accessor.IsStatic;
 
                     try
                     {
@@ -1674,6 +1676,7 @@ public partial class TypeChecker
                         _activeLabels.Clear();
                         foreach (var kvp in previousActiveLabelsAcc)
                             _activeLabels[kvp.Key] = kvp.Value;
+                        _inStaticMethod = previousInStaticAcc;
                     }
                 }
             }

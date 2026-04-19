@@ -117,6 +117,15 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable
         return new SharpTSAsyncFunction(_declaration, environment);
     }
 
+    public SharpTSAsyncFunction BindStatic(SharpTSClass klass)
+    {
+        RuntimeEnvironment environment = new(_closure);
+        environment.Define("this", klass);
+        if (klass.Superclass != null)
+            environment.Define("super", klass.Superclass);
+        return new SharpTSAsyncFunction(_declaration, environment);
+    }
+
     public override string ToString() => $"<async fn {_declaration.Name.Lexeme}>";
 }
 
