@@ -44,7 +44,7 @@ internal sealed class DotNetMethod : ISharpTSCallable
         var method = (MethodInfo)candidate.Method;
         var parameters = method.GetParameters();
 
-        object?[] invokeArgs = BuildInvokeArgs(parameters, arguments, candidate);
+        object?[] invokeArgs = BuildInvokeArgs(parameters, arguments, candidate, interpreter);
 
         return DotNetInstance.InvokeWithMapping(() =>
         {
@@ -55,19 +55,21 @@ internal sealed class DotNetMethod : ISharpTSCallable
 
     /// <summary>
     /// Marshals TS arguments into a .NET argument array matching the resolved parameter list,
-    /// honoring params-array semantics and default values.
+    /// honoring params-array semantics and default values. The interpreter reference is
+    /// forwarded to the marshaller so TS callables can be wrapped in delegate shims.
     /// </summary>
     internal static object?[] BuildInvokeArgs(
         ParameterInfo[] parameters,
         IReadOnlyList<object?> arguments,
-        RuntimeMethodCandidate candidate)
+        RuntimeMethodCandidate candidate,
+        Interpreter interpreter)
     {
         if (candidate.ParamsStartIndex < 0)
         {
             var result = new object?[parameters.Length];
             for (int i = 0; i < arguments.Count; i++)
             {
-                result[i] = DotNetMarshaller.Convert(arguments[i], parameters[i].ParameterType);
+                result[i] = DotNetMarshaller.Convert(arguments[i], parameters[i].ParameterType, interpreter);
             }
             for (int i = arguments.Count; i < parameters.Length; i++)
             {
@@ -85,13 +87,13 @@ internal sealed class DotNetMethod : ISharpTSCallable
         var result2 = new object?[parameters.Length];
         for (int i = 0; i < fixedCount; i++)
         {
-            result2[i] = DotNetMarshaller.Convert(arguments[i], parameters[i].ParameterType);
+            result2[i] = DotNetMarshaller.Convert(arguments[i], parameters[i].ParameterType, interpreter);
         }
 
         var variadic = Array.CreateInstance(elementType, Math.Max(0, variadicCount));
         for (int i = 0; i < variadicCount; i++)
         {
-            variadic.SetValue(DotNetMarshaller.Convert(arguments[fixedCount + i], elementType), i);
+            variadic.SetValue(DotNetMarshaller.Convert(arguments[fixedCount + i], elementType, interpreter), i);
         }
         result2[^1] = variadic;
         return result2;

@@ -474,13 +474,27 @@ public partial class ILCompiler
         // Try TypeProvider (BCL types)
         try
         {
-            return _types.Resolve(clrTypeName);
+            var provided = _types.Resolve(clrTypeName);
+            if (provided != null) return provided;
         }
         catch
         {
-            // Not found in TypeProvider, try Type.GetType
-            return Type.GetType(clrTypeName, throwOnError: false);
+            // Fall through to broader lookup below.
         }
+
+        // Type.GetType only searches the executing assembly + mscorlib by default.
+        // Search all currently loaded assemblies too, so types in referencing projects
+        // (e.g., a host app with its own .NET domain model) are resolvable just like in
+        // interpreter mode via DotNetTypeRegistry.
+        var byGetType = Type.GetType(clrTypeName, throwOnError: false);
+        if (byGetType != null) return byGetType;
+
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var t = assembly.GetType(clrTypeName, throwOnError: false);
+            if (t != null) return t;
+        }
+        return null;
     }
 
     /// <summary>

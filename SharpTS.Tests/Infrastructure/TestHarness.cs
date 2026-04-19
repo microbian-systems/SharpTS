@@ -213,6 +213,16 @@ public static class TestHarness
     }
 
     /// <summary>
+    /// Compiles and runs with <c>SharpTS.Tests.dll</c> copied alongside the compiled
+    /// output so <c>@DotNetType</c> can resolve test fixture types at runtime (e.g.,
+    /// <c>SharpTS.Tests.Infrastructure.CallbackFixture</c>).
+    /// </summary>
+    public static string RunCompiledWithTestFixtures(string source, DecoratorMode decoratorMode = DecoratorMode.Legacy)
+    {
+        return RunCompiled(source, decoratorMode, DefaultTimeout, scriptArgs: null, includeTestsAssembly: true);
+    }
+
+    /// <summary>
     /// Compiles TypeScript source to a .NET DLL with decorator support and timeout, executes it, and captures output.
     /// </summary>
     /// <param name="source">TypeScript source code</param>
@@ -220,7 +230,7 @@ public static class TestHarness
     /// <param name="timeout">Maximum execution time before throwing TimeoutException</param>
     /// <returns>Captured console output from the compiled executable</returns>
     /// <exception cref="TimeoutException">Thrown if execution exceeds the timeout (likely an infinite loop bug)</exception>
-    public static string RunCompiled(string source, DecoratorMode decoratorMode, TimeSpan timeout, string[]? scriptArgs = null)
+    public static string RunCompiled(string source, DecoratorMode decoratorMode, TimeSpan timeout, string[]? scriptArgs = null, bool includeTestsAssembly = false)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempDir);
@@ -258,6 +268,17 @@ public static class TestHarness
                 if (File.Exists(zstdDll))
                 {
                     File.Copy(zstdDll, Path.Combine(tempDir, "ZstdSharp.dll"), overwrite: true);
+                }
+            }
+
+            // Optionally copy SharpTS.Tests.dll so `@DotNetType` fixture types (e.g.,
+            // CallbackFixture) are loadable by the compiled-out-of-process executable.
+            if (includeTestsAssembly)
+            {
+                var testsDll = typeof(TestHarness).Assembly.Location;
+                if (!string.IsNullOrEmpty(testsDll) && File.Exists(testsDll))
+                {
+                    File.Copy(testsDll, Path.Combine(tempDir, Path.GetFileName(testsDll)), overwrite: true);
                 }
             }
 

@@ -15,6 +15,14 @@ public partial class ILEmitter
     /// </summary>
     private void EmitExternalInstanceMethodCall(Expr receiver, Type externalType, string methodName, List<Expr> arguments)
     {
+        // Special-case event subscription: these names are reserved on @DotNetType
+        // instances and route to DotNetEventBinder.Compiled(Add|Remove)EventListener.
+        if (methodName == "addEventListener" || methodName == "removeEventListener")
+        {
+            EmitExternalEventSubscription(receiver, externalType, methodName, arguments, isStatic: false);
+            return;
+        }
+
         // Try to find the instance method - first with original name, then with PascalCase
         string pascalMethodName = NamingConventions.ToPascalCase(methodName);
         var methods = externalType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
@@ -85,6 +93,13 @@ public partial class ILEmitter
     /// </summary>
     private void EmitExternalStaticMethodCall(Type externalType, string methodName, List<Expr> arguments)
     {
+        // Special-case static event subscription.
+        if (methodName == "addEventListener" || methodName == "removeEventListener")
+        {
+            EmitExternalEventSubscription(receiver: null, externalType, methodName, arguments, isStatic: true);
+            return;
+        }
+
         // Try to find the static method - first with original name, then with PascalCase
         string pascalMethodName = NamingConventions.ToPascalCase(methodName);
         var methods = externalType.GetMethods(BindingFlags.Public | BindingFlags.Static)
@@ -343,6 +358,13 @@ public partial class ILEmitter
                 return;
             IL.Emit(OpCodes.Castclass, _ctx.Types.String);
         }
+        else if (typeof(Delegate).IsAssignableFrom(targetType))
+        {
+            // TS function ($TSFunction on stack) → .NET Delegate. Emits a call to
+            // DotNetDelegateShim.CreateForTSFunction(Type, object) via the late-binding
+            // reflection pattern so the compiled DLL doesn't hard-reference SharpTS.dll.
+            EmitDelegateConversion(targetType);
+        }
         else if (targetType.IsValueType)
         {
             IL.Emit(OpCodes.Unbox_Any, targetType);
@@ -366,5 +388,155 @@ public partial class ILEmitter
             }
             // Reference types are already objects, no conversion needed
         }
+    }
+
+    /// <summary>
+    /// Emits a reflection-dispatched call to
+    /// <see cref="Runtime.DotNet.DotNetEventBinder.CompiledAddEventListener"/> or
+    /// <c>CompiledRemoveEventListener</c>. Pushes <c>null</c> on the stack (the
+    /// JS-level <c>undefined</c>) matching the void-return convention for other
+    /// external method calls.
+    /// </summary>
+    /// <param name="receiver">Receiver expression for instance events, or null for static.</param>
+    /// <param name="externalType">The <c>@DotNetType</c> target (used for event lookup).</param>
+    /// <param name="methodName">Either <c>addEventListener</c> or <c>removeEventListener</c>.</param>
+    /// <param name="arguments">The TS arguments — expected: (name: string, handler: function).</param>
+    /// <param name="isStatic">True when emitted from a static-method-call dispatch.</param>
+    private void EmitExternalEventSubscription(
+        Expr? receiver,
+        Type externalType,
+        string methodName,
+        List<Expr> arguments,
+        bool isStatic)
+    {
+        if (arguments.Count < 2)
+        {
+            throw new CompileException(
+                $"'{methodName}' on '@DotNetType {externalType.FullName}' requires (eventName, handler) — got {arguments.Count} argument(s).");
+        }
+
+        string helperMethod = methodName == "addEventListener"
+            ? "CompiledAddEventListener"
+            : "CompiledRemoveEventListener";
+
+        // Locals: object receiver, object[] args
+        var receiverLocal = IL.DeclareLocal(_ctx.Types.Object);
+        if (isStatic || receiver == null)
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+        else
+        {
+            EmitExpression(receiver);
+            EmitBoxIfNeeded(receiver);
+        }
+        IL.Emit(OpCodes.Stloc, receiverLocal);
+
+        // args = new object[4]
+        IL.Emit(OpCodes.Ldc_I4_4);
+        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+        var argsLocal = IL.DeclareLocal(_ctx.Types.ObjectArray);
+        IL.Emit(OpCodes.Stloc, argsLocal);
+
+        // args[0] = receiver
+        IL.Emit(OpCodes.Ldloc, argsLocal);
+        IL.Emit(OpCodes.Ldc_I4_0);
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Stelem_Ref);
+
+        // args[1] = typeof(externalType)
+        IL.Emit(OpCodes.Ldloc, argsLocal);
+        IL.Emit(OpCodes.Ldc_I4_1);
+        IL.Emit(OpCodes.Ldtoken, externalType);
+        IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Stelem_Ref);
+
+        // args[2] = eventName (first TS arg)
+        IL.Emit(OpCodes.Ldloc, argsLocal);
+        IL.Emit(OpCodes.Ldc_I4_2);
+        EmitExpression(arguments[0]);
+        EmitBoxIfNeeded(arguments[0]);
+        IL.Emit(OpCodes.Stelem_Ref);
+
+        // args[3] = tsFunction (second TS arg)
+        IL.Emit(OpCodes.Ldloc, argsLocal);
+        IL.Emit(OpCodes.Ldc_I4_3);
+        EmitExpression(arguments[1]);
+        EmitBoxIfNeeded(arguments[1]);
+        IL.Emit(OpCodes.Stelem_Ref);
+
+        // Type t = Type.GetType("SharpTS.Runtime.DotNet.DotNetEventBinder, SharpTS");
+        IL.Emit(OpCodes.Ldstr, "SharpTS.Runtime.DotNet.DotNetEventBinder, SharpTS");
+        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Type, "GetType", _ctx.Types.String));
+
+        // MethodInfo m = t.GetMethod(helperMethod);
+        IL.Emit(OpCodes.Ldstr, helperMethod);
+        IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.Type, "GetMethod", _ctx.Types.String));
+
+        // m.Invoke(null, args)
+        IL.Emit(OpCodes.Ldnull);
+        IL.Emit(OpCodes.Ldloc, argsLocal);
+        IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(
+            _ctx.Types.MethodInfo, "Invoke", _ctx.Types.Object, _ctx.Types.ObjectArray));
+
+        // Discard the helper's return (null) and push JS undefined (null) for the
+        // external call convention.
+        IL.Emit(OpCodes.Pop);
+        IL.Emit(OpCodes.Ldnull);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits IL that converts a <c>$TSFunction</c> reference on the stack into a
+    /// <see cref="Delegate"/> of <paramref name="delegateType"/> by calling
+    /// <see cref="Runtime.DotNet.DotNetDelegateShim.CreateForTSFunction"/> via reflection.
+    /// Late-bound so the compiled DLL doesn't hard-reference SharpTS.dll.
+    /// </summary>
+    /// <remarks>
+    /// Stack in:  [object] — the <c>$TSFunction</c> reference.<br/>
+    /// Stack out: [delegateType] — the compiled shim, castclassed to the target.
+    /// </remarks>
+    private void EmitDelegateConversion(Type delegateType)
+    {
+        // Save $TSFunction from stack into a local.
+        var tsFuncLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, tsFuncLocal);
+
+        // object[] invokeArgs = new object[2];
+        IL.Emit(OpCodes.Ldc_I4_2);
+        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+        var invokeArgsLocal = IL.DeclareLocal(_ctx.Types.ObjectArray);
+        IL.Emit(OpCodes.Stloc, invokeArgsLocal);
+
+        // invokeArgs[0] = typeof(delegateType)
+        IL.Emit(OpCodes.Ldloc, invokeArgsLocal);
+        IL.Emit(OpCodes.Ldc_I4_0);
+        IL.Emit(OpCodes.Ldtoken, delegateType);
+        IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Stelem_Ref);
+
+        // invokeArgs[1] = tsFunc
+        IL.Emit(OpCodes.Ldloc, invokeArgsLocal);
+        IL.Emit(OpCodes.Ldc_I4_1);
+        IL.Emit(OpCodes.Ldloc, tsFuncLocal);
+        IL.Emit(OpCodes.Stelem_Ref);
+
+        // Type shimType = Type.GetType("SharpTS.Runtime.DotNet.DotNetDelegateShim, SharpTS");
+        IL.Emit(OpCodes.Ldstr, "SharpTS.Runtime.DotNet.DotNetDelegateShim, SharpTS");
+        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Type, "GetType", _ctx.Types.String));
+
+        // MethodInfo m = shimType.GetMethod("CreateForTSFunction");
+        IL.Emit(OpCodes.Ldstr, "CreateForTSFunction");
+        IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.Type, "GetMethod", _ctx.Types.String));
+
+        // object result = m.Invoke(null, invokeArgs);
+        IL.Emit(OpCodes.Ldnull);
+        IL.Emit(OpCodes.Ldloc, invokeArgsLocal);
+        IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(
+            _ctx.Types.MethodInfo, "Invoke", _ctx.Types.Object, _ctx.Types.ObjectArray));
+
+        // Cast result to the target delegate type.
+        IL.Emit(OpCodes.Castclass, delegateType);
+        SetStackUnknown();
     }
 }

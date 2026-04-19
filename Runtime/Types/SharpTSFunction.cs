@@ -76,7 +76,12 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
         }
         if (result.Type == ExecutionResult.ResultType.Throw)
         {
-            throw new Exception(interpreter.Stringify(result.Value.ToObject()));
+            // Preserve the original thrown value so the outer catch receives the actual
+            // Error/object. Wrapping in `new Exception(Stringify(...))` flattens it to a
+            // string, which breaks `e.message`/`e.name` at any .NET-interop boundary
+            // (delegate callbacks, reflected calls) where the error can't round-trip
+            // through ExecutionResult.
+            throw new ThrowException(result.Value.ToObject());
         }
 
         return null;
@@ -227,7 +232,8 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
             }
             if (result.Type == ExecutionResult.ResultType.Throw)
             {
-                throw new Exception(interpreter.Stringify(result.Value.ToObject()));
+                // See SharpTSFunction.Call — preserve original thrown value.
+                throw new ThrowException(result.Value.ToObject());
             }
         }
 

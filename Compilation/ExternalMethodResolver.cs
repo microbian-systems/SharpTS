@@ -280,9 +280,22 @@ public class ExternalMethodResolver(TypeMap? typeMap, TypeProvider types)
                 return ConversionCost.Narrowing;
         }
 
+        // TypeScript function -> .NET delegate: built as a runtime shim via
+        // DotNetDelegateShim.CreateForTSFunction. Lossless so delegate-typed overloads
+        // beat `object` overloads for the same call.
+        if (tsType is TSTypeInfo.Function && typeof(Delegate).IsAssignableFrom(targetType))
+            return ConversionCost.Lossless;
+
         // TypeScript any/unknown -> object fallback
         if (tsType is TSTypeInfo.Any or TSTypeInfo.Unknown)
+        {
+            // any/unknown still need delegate routing when the target is Delegate — the
+            // runtime value will be a $TSFunction, so the shim can bind it. Cost is
+            // ObjectFallback to defer to more specific Function-typed candidates.
+            if (typeof(Delegate).IsAssignableFrom(targetType))
+                return ConversionCost.ObjectFallback;
             return ConversionCost.ObjectFallback;
+        }
 
         // TypeScript null -> reference types or Nullable<T>
         if (tsType is TSTypeInfo.Null)

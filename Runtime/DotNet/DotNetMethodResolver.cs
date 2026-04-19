@@ -238,6 +238,13 @@ internal static class DotNetMethodResolver
             return RuntimeConversionCost.Incompatible;
         }
 
+        // TS callable → .NET delegate: lossless (shim built at invoke time).
+        // Ranks above `object` so an `Action` overload wins over an `object` overload.
+        if (arg is ISharpTSCallable && typeof(Delegate).IsAssignableFrom(target))
+        {
+            return RuntimeConversionCost.Lossless;
+        }
+
         // Anything else: accept via object fallback if assignable
         return target.IsInstanceOfType(arg)
             ? RuntimeConversionCost.Lossless

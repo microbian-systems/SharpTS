@@ -1,4 +1,5 @@
 using System.Numerics;
+using SharpTS.Execution;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Runtime.DotNet;
@@ -16,10 +17,14 @@ internal static class DotNetMarshaller
     /// Returns null when conversion is not possible and <paramref name="targetType"/>
     /// is a reference or Nullable type.
     /// </summary>
+    /// <param name="interpreter">
+    /// Optional interpreter reference, required only when <paramref name="targetType"/> is a
+    /// delegate type and <paramref name="value"/> is an <see cref="ISharpTSCallable"/>.
+    /// </param>
     /// <exception cref="InvalidCastException">
     /// When the value cannot be converted and the target is a non-nullable value type.
     /// </exception>
-    public static object? Convert(object? value, Type targetType)
+    public static object? Convert(object? value, Type targetType, Interpreter? interpreter = null)
     {
         // Unwrap TS undefined
         if (value is SharpTSUndefined) value = null;
@@ -35,6 +40,17 @@ internal static class DotNetMarshaller
         // Unwrap Nullable<T>
         var underlying = Nullable.GetUnderlyingType(targetType);
         if (underlying != null) targetType = underlying;
+
+        // TS callable → .NET delegate: build a shim (requires an interpreter reference).
+        if (value is ISharpTSCallable callable && typeof(Delegate).IsAssignableFrom(targetType))
+        {
+            if (interpreter == null)
+            {
+                throw new InvalidCastException(
+                    $"Cannot convert TS function to delegate '{targetType.FullName}' without an interpreter context.");
+            }
+            return DotNetDelegateShim.Create(targetType, callable, interpreter);
+        }
 
         // Fast path: already the right type
         if (targetType.IsInstanceOfType(value)) return value;
@@ -82,6 +98,19 @@ internal static class DotNetMarshaller
             if (targetType.IsInstanceOfType(unwrapped)) return unwrapped;
             throw new InvalidCastException(
                 $"Cannot convert .NET instance of '{unwrapped?.GetType().FullName}' to '{targetType.FullName}'.");
+        }
+
+        // TS array → .NET array (T[]): convert each element recursively.
+        if (value is SharpTSArray tsArray && targetType.IsArray)
+        {
+            var elementType = targetType.GetElementType()!;
+            var array = Array.CreateInstance(elementType, tsArray.Elements.Count);
+            int idx = 0;
+            foreach (var el in tsArray.Elements)
+            {
+                array.SetValue(Convert(el, elementType, interpreter), idx++);
+            }
+            return array;
         }
 
         // Object fallback

@@ -38,6 +38,7 @@ public class StandaloneDllTests
         "Compilation/RuntimeEmitter.VmHelpers.cs",             // vm module delegation to interpreter via reflection
         "Compilation/RuntimeEmitter.DnsPromises.cs",           // dns/promises delegation to RuntimeTypes via reflection
         "Compilation/RuntimeEmitter.DnsResolver.cs",           // dns.Resolver factory via RuntimeTypes
+        "Compilation/ILEmitter.Calls.ExternalInterop.cs",      // @DotNetType delegate shim + event subscription via DotNetDelegateShim/DotNetEventBinder
     };
 
     /// <summary>

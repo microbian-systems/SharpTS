@@ -831,4 +831,131 @@ public class DotNetTypeTests
     }
 
     #endregion
+
+    #region Delegate / callback parameters (compile mode)
+
+    [Fact]
+    public void CompiledFixture_NoDelegate_Smoke()
+    {
+        // Sanity check: can compile-mode even see the test fixture type?
+        var source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                fireStringEvent(payload: string): void;
+                readonly lastReceived: string;
+            }
+            let fx: CallbackFixture = new CallbackFixture();
+            fx.fireStringEvent("probe");
+            console.log(fx.lastReceived);
+            """;
+
+        var output = TestHarness.RunCompiledWithTestFixtures(source);
+        Assert.Equal("probe\n", output);
+    }
+
+    [Fact]
+    public void CompiledDelegate_ActionOfString_Invokes()
+    {
+        var source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                invokeWithGreeting(callback: (s: string) => void): void;
+            }
+            let fx: CallbackFixture = new CallbackFixture();
+            fx.invokeWithGreeting((s) => console.log(s));
+            """;
+
+        var output = TestHarness.RunCompiledWithTestFixtures(source);
+        Assert.Equal("hello\n", output);
+    }
+
+    [Fact]
+    public void CompiledDelegate_FuncReturnsValue()
+    {
+        var source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                doubleOf(callback: (n: number) => number, input: number): number;
+            }
+            let fx: CallbackFixture = new CallbackFixture();
+            console.log(fx.doubleOf((n) => n + 1, 10));
+            """;
+
+        // (10 + 1) * 2 = 22
+        var output = TestHarness.RunCompiledWithTestFixtures(source);
+        Assert.Equal("22\n", output);
+    }
+
+    [Fact]
+    public void CompiledDelegate_ZeroArgAction_Works()
+    {
+        var source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                invokeNoArgs(callback: () => void): void;
+            }
+            let fx: CallbackFixture = new CallbackFixture();
+            let counter: number = 0;
+            fx.invokeNoArgs(() => { counter = counter + 1; });
+            fx.invokeNoArgs(() => { counter = counter + 1; });
+            console.log(counter);
+            """;
+
+        var output = TestHarness.RunCompiledWithTestFixtures(source);
+        Assert.Equal("2\n", output);
+    }
+
+    #endregion
+
+    #region Event subscription (compile mode)
+
+    [Fact]
+    public void CompiledEvent_AddEventListener_InvokesHandler()
+    {
+        var source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                fireStringEvent(payload: string): void;
+                addEventListener(name: string, handler: (sender: any, payload: string) => void): void;
+            }
+            let fx: CallbackFixture = new CallbackFixture();
+            fx.addEventListener("StringReceived", (sender, payload) => console.log(payload));
+            fx.fireStringEvent("alpha");
+            fx.fireStringEvent("beta");
+            """;
+
+        var output = TestHarness.RunCompiledWithTestFixtures(source);
+        Assert.Equal("alpha\nbeta\n", output);
+    }
+
+    [Fact]
+    public void CompiledEvent_RemoveEventListener_StopsInvocation()
+    {
+        var source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                fireStringEvent(payload: string): void;
+                addEventListener(name: string, handler: (sender: any, payload: string) => void): void;
+                removeEventListener(name: string, handler: (sender: any, payload: string) => void): void;
+            }
+            let fx: CallbackFixture = new CallbackFixture();
+            let handler = (sender: any, payload: string) => console.log(payload);
+            fx.addEventListener("StringReceived", handler);
+            fx.fireStringEvent("first");
+            fx.removeEventListener("StringReceived", handler);
+            fx.fireStringEvent("second");
+            console.log("done");
+            """;
+
+        var output = TestHarness.RunCompiledWithTestFixtures(source);
+        Assert.Equal("first\ndone\n", output);
+    }
+
+    #endregion
 }

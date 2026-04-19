@@ -22,6 +22,9 @@ public sealed class DotNetClass : ISharpTSCallable, ITypeCategorized
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.External;
 
+    // Lazily created for static event subscriptions.
+    private Dictionary<(string, ISharpTSCallable), Delegate>? _eventSubscriptions;
+
     public DotNetClass(string typeScriptName, Type type, IReadOnlyDictionary<string, string>? overloadHints = null)
     {
         TypeScriptName = typeScriptName;
@@ -62,7 +65,7 @@ public sealed class DotNetClass : ISharpTSCallable, ITypeCategorized
             OverloadHints.TryGetValue("constructor", out var hint) ? hint : null);
         var ctor = (ConstructorInfo)candidate.Method;
 
-        var invokeArgs = DotNetMethod.BuildInvokeArgs(ctor.GetParameters(), arguments, candidate);
+        var invokeArgs = DotNetMethod.BuildInvokeArgs(ctor.GetParameters(), arguments, candidate, interpreter);
         return DotNetInstance.InvokeWithMapping(() =>
         {
             var obj = ctor.Invoke(invokeArgs);
@@ -75,6 +78,16 @@ public sealed class DotNetClass : ISharpTSCallable, ITypeCategorized
     /// </summary>
     public object? GetStaticMember(string name)
     {
+        // Static event subscription API.
+        if (name == "addEventListener")
+        {
+            return new DotNetEventBinder(Type, receiver: null, GetOrCreateSubscriptions(), isAdd: true);
+        }
+        if (name == "removeEventListener")
+        {
+            return new DotNetEventBinder(Type, receiver: null, GetOrCreateSubscriptions(), isAdd: false);
+        }
+
         OverloadHints.TryGetValue(name, out var hint);
 
         var methods = DotNetTypeRegistry.GetMethods(Type, name, isStatic: true);
@@ -93,22 +106,27 @@ public sealed class DotNetClass : ISharpTSCallable, ITypeCategorized
         };
     }
 
-    public void SetStaticMember(string name, object? value)
+    public void SetStaticMember(string name, object? value, Interpreter? interpreter = null)
     {
         var member = DotNetTypeRegistry.GetPropertyOrField(Type, name, isStatic: true);
         switch (member)
         {
             case PropertyInfo pi when pi.CanWrite:
-                DotNetInstance.InvokeWithMapping(() => pi.SetValue(null, DotNetMarshaller.Convert(value, pi.PropertyType)));
+                DotNetInstance.InvokeWithMapping(() => pi.SetValue(null, DotNetMarshaller.Convert(value, pi.PropertyType, interpreter)));
                 return;
             case FieldInfo fi when !fi.IsInitOnly:
-                fi.SetValue(null, DotNetMarshaller.Convert(value, fi.FieldType));
+                fi.SetValue(null, DotNetMarshaller.Convert(value, fi.FieldType, interpreter));
                 return;
             default:
                 throw new Runtime.Exceptions.ThrowException(DotNetExceptionMapper.Map(
                     new MissingMemberException(
                         $"Static property or field '{name}' not found (or is read-only) on '{Type.FullName}'.")));
         }
+    }
+
+    private Dictionary<(string, ISharpTSCallable), Delegate> GetOrCreateSubscriptions()
+    {
+        return _eventSubscriptions ??= new Dictionary<(string, ISharpTSCallable), Delegate>();
     }
 
     public override string ToString() => $"[DotNetType {TypeScriptName} → {Type.FullName}]";

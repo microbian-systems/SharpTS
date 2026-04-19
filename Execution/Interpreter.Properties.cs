@@ -581,11 +581,11 @@ public partial class Interpreter
         switch (category)
         {
             case TypeCategory.External when obj is DotNetInstance dotNetInstance:
-                dotNetInstance.SetMember(memberName, value);
+                dotNetInstance.SetMember(memberName, value, this);
                 return value;
 
             case TypeCategory.External when obj is DotNetClass dotNetClass:
-                dotNetClass.SetStaticMember(memberName, value);
+                dotNetClass.SetStaticMember(memberName, value, this);
                 return value;
 
             case TypeCategory.Class when obj is SharpTSClass klass:

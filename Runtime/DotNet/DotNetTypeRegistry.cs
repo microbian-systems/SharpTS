@@ -83,6 +83,17 @@ public static class DotNetTypeRegistry
     }
 
     /// <summary>
+    /// Returns the first matching <see cref="EventInfo"/> for the given JS-facing name,
+    /// or null if no event is found. Used by <c>addEventListener</c>/<c>removeEventListener</c>.
+    /// </summary>
+    public static EventInfo? GetEvent(Type type, string jsName, bool isStatic)
+    {
+        string pascal = ToPascalCase(jsName);
+        var flags = BindingFlags.Public | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
+        return type.GetEvent(pascal, flags) ?? type.GetEvent(jsName, flags);
+    }
+
+    /// <summary>
     /// Converts a camelCase name to PascalCase (first character uppercased).
     /// Matches <c>NamingConventions.ToPascalCase</c> semantics but lives here to avoid
     /// a Compilation namespace dependency.
