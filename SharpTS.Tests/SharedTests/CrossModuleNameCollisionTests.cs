@@ -58,10 +58,7 @@ public class CrossModuleNameCollisionTests
         Assert.Equal("lib: function\nmain: ok\n", output);
     }
 
-    [Theory(Skip = "Known limitation: two modules both declaring a same-named top-level " +
-        "const that gets captured by same-module functions still collide on the shared " +
-        "entry-point display class. The common import/export case (tests above) is fixed; " +
-        "this rarer capture-collision case needs per-module DC fields, out of scope here.")]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TwoModulesDeclaringSameConstName(ExecutionMode mode)
     {

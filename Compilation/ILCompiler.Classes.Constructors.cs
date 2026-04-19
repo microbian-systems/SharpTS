@@ -90,8 +90,8 @@ public partial class ILCompiler
             ClassRegistry = GetClassRegistry(),
             // Module-level variable access
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
-            CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
-            EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
             // Constructors have a void signature; without this the `return;`
             // inside a ctor body defaults to object and emits `ldnull` before

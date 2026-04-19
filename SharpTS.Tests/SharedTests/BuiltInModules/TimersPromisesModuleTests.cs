@@ -446,7 +446,7 @@ public class TimersPromisesModuleTests
         Assert.Equal("AbortError: The operation was aborted\n", output);
     }
 
-    [Theory(Skip = "Phase 3n regression: primitive's sync throw on pre-aborted AbortSignal loses Error identity at the SharpTSFunction boundary in interpreter mode (e becomes a string instead of a SharpTSError, so e.message is undefined). The compiled-mode path works. Fix belongs in the interpreter's function-boundary exception handling, not the stdlib layer — see docs/plans/embedded-stdlib.md Phase 3n.")]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TimersPromises_SetInterval_AbortSignal_PreAborted(ExecutionMode mode)
     {

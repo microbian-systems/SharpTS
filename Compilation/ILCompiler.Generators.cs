@@ -55,8 +55,13 @@ public partial class ILCompiler
     /// </summary>
     private void EmitGeneratorStateMachineBodies()
     {
+        var savedPath = _modules.CurrentPath;
         foreach (var (funcName, smBuilder) in _generators.StateMachines)
         {
+            if (_functionDefinitionModule.TryGetValue(funcName, out var fnModule))
+            {
+                _modules.CurrentPath = NormalizeToEmissionPath(fnModule);
+            }
             var funcStmt = _generators.Functions[funcName];
             var methodBuilder = _functions.Builders[funcName];
             var analysis = _generators.Analyzer.Analyze(funcStmt);
@@ -70,6 +75,7 @@ public partial class ILCompiler
             // Finalize the state machine type
             smBuilder.CreateType();
         }
+        _modules.CurrentPath = savedPath;
     }
 
     /// <summary>
@@ -100,14 +106,16 @@ public partial class ILCompiler
         }
 
         // Copy captured outer scope variables to state machine fields
+        var moduleCapturedVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath);
+        var moduleEntryPointFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath);
         foreach (var capturedVar in analysis.CapturedVariables)
         {
             var capturedField = smBuilder.CapturedVariables.GetValueOrDefault(capturedVar);
             if (capturedField == null) continue;
 
             // Try to load from entry-point display class (captured top-level variables)
-            if (_closures.CapturedTopLevelVars.Contains(capturedVar) &&
-                _closures.EntryPointDisplayClassFields.TryGetValue(capturedVar, out var entryPointField))
+            if (moduleCapturedVars?.Contains(capturedVar) == true &&
+                moduleEntryPointFields?.TryGetValue(capturedVar, out var entryPointField) == true)
             {
                 il.Emit(OpCodes.Dup);  // Keep state machine reference on stack
                 if (_closures.EntryPointDisplayClassStaticField != null)
@@ -245,8 +253,8 @@ public partial class ILCompiler
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Entry-point display class for captured top-level variables
-            EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
-            CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
         };
 
@@ -310,14 +318,16 @@ public partial class ILCompiler
         }
 
         // Copy captured outer scope variables to state machine fields
+        var moduleCapturedVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath);
+        var moduleEntryPointFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath);
         foreach (var capturedVar in analysis.CapturedVariables)
         {
             var capturedField = smBuilder.CapturedVariables.GetValueOrDefault(capturedVar);
             if (capturedField == null) continue;
 
             // Try to load from entry-point display class (captured top-level variables)
-            if (_closures.CapturedTopLevelVars.Contains(capturedVar) &&
-                _closures.EntryPointDisplayClassFields.TryGetValue(capturedVar, out var entryPointField))
+            if (moduleCapturedVars?.Contains(capturedVar) == true &&
+                moduleEntryPointFields?.TryGetValue(capturedVar, out var entryPointField) == true)
             {
                 il.Emit(OpCodes.Dup);  // Keep state machine reference on stack
                 if (_closures.EntryPointDisplayClassStaticField != null)

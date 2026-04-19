@@ -179,8 +179,13 @@ public partial class ILCompiler
     /// </summary>
     private void EmitInnerFunctionBodies()
     {
+        var savedPath = _modules.CurrentPath;
         foreach (var (func, captures, enclosingFuncName) in _collectedInnerFunctions)
         {
+            if (_functionDefinitionModule.TryGetValue(enclosingFuncName, out var fnModule))
+            {
+                _modules.CurrentPath = NormalizeToEmissionPath(fnModule);
+            }
             var method = _innerFunctionMethods[func];
             var hasDisplayClass = _innerFunctionDisplayClasses.TryGetValue(func, out var displayClass);
 
@@ -219,8 +224,8 @@ public partial class ILCompiler
                 ClassExprBuilders = _classExprs.Builders,
                 IsStrictMode = _isStrictMode,
                 ClassRegistry = GetClassRegistry(),
-                EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
-                CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
+                EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+                CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
                 ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
                 EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
                 ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
@@ -327,6 +332,7 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Ret);
             }
         }
+        _modules.CurrentPath = savedPath;
     }
 
     /// <summary>

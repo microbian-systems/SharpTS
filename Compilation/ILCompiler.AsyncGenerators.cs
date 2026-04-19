@@ -54,8 +54,13 @@ public partial class ILCompiler
     /// </summary>
     private void EmitAsyncGeneratorStateMachineBodies()
     {
+        var savedPath = _modules.CurrentPath;
         foreach (var (funcName, smBuilder) in _asyncGenerators.StateMachines)
         {
+            if (_functionDefinitionModule.TryGetValue(funcName, out var fnModule))
+            {
+                _modules.CurrentPath = NormalizeToEmissionPath(fnModule);
+            }
             var funcStmt = _asyncGenerators.Functions[funcName];
             var methodBuilder = _functions.Builders[funcName];
 
@@ -68,6 +73,7 @@ public partial class ILCompiler
             // Finalize the state machine type
             smBuilder.CreateType();
         }
+        _modules.CurrentPath = savedPath;
     }
 
     /// <summary>
@@ -140,8 +146,8 @@ public partial class ILCompiler
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Captured top-level variables (entry-point display class)
-            EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
-            CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath)
         };
@@ -212,8 +218,8 @@ public partial class ILCompiler
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Entry-point display class for captured top-level variables
-            EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
-            CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath)
         };

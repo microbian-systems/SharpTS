@@ -18,6 +18,9 @@ public partial class ILCompiler
         // Must check this FIRST since it has both IsAsync and IsGenerator true
         if (funcStmt.IsAsync && funcStmt.IsGenerator)
         {
+            // Record mapping for Phase-7 state-machine emission (see _functionDefinitionModule).
+            if (_modules.CurrentPath != null)
+                _functionDefinitionModule[funcStmt.Name.Lexeme] = _modules.CurrentPath;
             DefineAsyncGeneratorFunction(funcStmt);
             return;
         }
@@ -25,6 +28,8 @@ public partial class ILCompiler
         // Check if this is an async function - use native IL state machine
         if (funcStmt.IsAsync)
         {
+            if (_modules.CurrentPath != null)
+                _functionDefinitionModule[funcStmt.Name.Lexeme] = _modules.CurrentPath;
             DefineAsyncFunction(funcStmt);
             return;
         }
@@ -32,6 +37,8 @@ public partial class ILCompiler
         // Check if this is a generator function - use generator state machine
         if (funcStmt.IsGenerator)
         {
+            if (_modules.CurrentPath != null)
+                _functionDefinitionModule[funcStmt.Name.Lexeme] = _modules.CurrentPath;
             DefineGeneratorFunction(funcStmt);
             return;
         }
@@ -45,6 +52,7 @@ public partial class ILCompiler
         if (_modules.CurrentPath != null)
         {
             _modules.FunctionToModule[funcStmt.Name.Lexeme] = _modules.CurrentPath;
+            _functionDefinitionModule[funcStmt.Name.Lexeme] = _modules.CurrentPath;
         }
 
         // Resolve typed parameters and return type from TypeMap. The TypeMap is
@@ -242,8 +250,8 @@ public partial class ILCompiler
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Entry-point display class for captured top-level variables
-            EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
-            CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
             ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
             // Function-level display class for captured function-local variables
@@ -707,8 +715,8 @@ public partial class ILCompiler
             // Entry-point display class for captured top-level variables
             EntryPointDisplayClass = _closures.EntryPointDisplayClass,
             EntryPointDisplayClassCtor = _closures.EntryPointDisplayClassCtor,
-            EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
-            CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
             // Program type for GetMethodFromHandle resolution
@@ -930,8 +938,8 @@ public partial class ILCompiler
             // Entry-point display class for captured top-level variables
             EntryPointDisplayClass = _closures.EntryPointDisplayClass,
             EntryPointDisplayClassCtor = _closures.EntryPointDisplayClassCtor,
-            EntryPointDisplayClassFields = _closures.EntryPointDisplayClassFields.Count > 0 ? _closures.EntryPointDisplayClassFields : null,
-            CapturedTopLevelVars = _closures.CapturedTopLevelVars.Count > 0 ? _closures.CapturedTopLevelVars : null,
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
         };
