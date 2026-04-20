@@ -262,7 +262,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
         Assert.Contains("function", result.StandardOutput);
     }
 
-    [SkippableFact(Skip = "Blocked on interpreter issues")]
+    [SkippableFact]
     public void Debug_Compiled()
     {
         SkipIfNoNpm();
@@ -299,7 +299,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
         Assert.Contains("true", result.StandardOutput);
     }
 
-    [SkippableFact(Skip = "Blocked on interpreter issues")]
+    [SkippableFact(Skip = "Compile error: 'Yield not supported in this context' — compiled IL emitter doesn't support a generator form used somewhere in semver's sources. Interpreter handles it; compile-time path needs generator-in-context support.")]
     public void Semver_Compiled()
     {
         SkipIfNoNpm();
@@ -336,7 +336,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
         Assert.Contains("false", result.StandardOutput);
     }
 
-    [SkippableFact(Skip = "Blocked on interpreter issues")]
+    [SkippableFact]
     public void Minimatch_Compiled()
     {
         SkipIfNoNpm();

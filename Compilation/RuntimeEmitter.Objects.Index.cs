@@ -158,15 +158,46 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
         il.Emit(OpCodes.Ret);
 
-        // Descriptor-driven: emit get handler for each backing type
+        // Descriptor-driven: emit get handler for each backing type.
+        // Bounds-checks to match JS array-indexing semantics — out-of-range reads
+        // (including negative indices) yield `undefined` rather than an IndexOutOfRangeException.
+        // Surfaced by real-package testing: minimatch's `set[set.length - 1]` on an
+        // empty array blew up with ArgumentOutOfRangeException before this guard.
         foreach (var (desc, label) in listGetLabels)
         {
             var listType = desc.GetListType(_types);
             il.MarkLabel(label);
+
+            var listLocal = il.DeclareLocal(listType);
+            var idxLocal = il.DeclareLocal(_types.Int32);
+            var inRangeLabel = il.DefineLabel();
+            var oobLabel = il.DefineLabel();
+
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Castclass, listType);
+            il.Emit(OpCodes.Stloc, listLocal);
+
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+            il.Emit(OpCodes.Stloc, idxLocal);
+
+            // if (idx < 0) goto oob;
+            il.Emit(OpCodes.Ldloc, idxLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Blt, oobLabel);
+            // if (idx < list.Count) goto inRange;
+            il.Emit(OpCodes.Ldloc, idxLocal);
+            il.Emit(OpCodes.Ldloc, listLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(listType, "get_Count"));
+            il.Emit(OpCodes.Blt, inRangeLabel);
+
+            il.MarkLabel(oobLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(inRangeLabel);
+            il.Emit(OpCodes.Ldloc, listLocal);
+            il.Emit(OpCodes.Ldloc, idxLocal);
             il.Emit(OpCodes.Callvirt, _types.GetMethod(listType, "get_Item", _types.Int32));
             desc.EmitBoxElement(il, _types);
             il.Emit(OpCodes.Ret);

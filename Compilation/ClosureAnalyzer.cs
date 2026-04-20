@@ -97,9 +97,28 @@ public class ClosureAnalyzer : AstVisitorBase
     public void Analyze(List<Stmt> statements)
     {
         _scopeStack.Push([]);
+        HoistFunctionDeclarations(statements);
         foreach (var stmt in statements)
             Visit(stmt);
         _scopeStack.Pop();
+    }
+
+    /// <summary>
+    /// Pre-declares function declaration names in the current scope so that forward
+    /// references to sibling functions resolve as outer-scope references (and therefore
+    /// as captures) when those siblings' bodies are analyzed before the declarations
+    /// are reached in source order. Matches the interpreter's block-level hoisting
+    /// (see <c>Interpreter.Statements.cs</c> and <c>Interpreter.HoistFunctionDeclarations</c>).
+    /// </summary>
+    private void HoistFunctionDeclarations(IEnumerable<Stmt> statements)
+    {
+        foreach (var stmt in statements)
+        {
+            if (stmt is Stmt.Function f && f.Body != null)
+                DeclareVariable(f.Name.Lexeme);
+            else if (stmt is Stmt.Export export && export.Declaration is Stmt.Function ef && ef.Body != null)
+                DeclareVariable(ef.Name.Lexeme);
+        }
     }
 
     #region Scope management
@@ -259,6 +278,7 @@ public class ClosureAnalyzer : AstVisitorBase
     protected override void VisitBlock(Stmt.Block stmt)
     {
         EnterScope();
+        HoistFunctionDeclarations(stmt.Statements);
         base.VisitBlock(stmt);
         ExitScope();
     }
@@ -353,12 +373,23 @@ public class ClosureAnalyzer : AstVisitorBase
 
     protected override void VisitThis(Expr.This expr)
     {
-        // Arrow functions capture 'this' from their lexical scope
-        // Track this as a captured variable so display classes include a field for it
-        // EXCEPT for function expressions (HasOwnThis=true) which receive 'this' via the __this parameter
-        if (_currentFunction != null && _currentFunction is Expr.ArrowFunction arrowFunc && !arrowFunc.HasOwnThis)
+        // Arrow functions capture 'this' from their lexical scope. Also propagate the
+        // capture up the arrow chain — every enclosing arrow (up to the first non-arrow
+        // or `function(){}`-expression boundary) needs `this` in its display class so
+        // the inner arrow can read it via the outer DC field during construction. Without
+        // this, the arrow-construction emitter fell through to bare `Ldarg_0` in arrow-body
+        // context (which is the outer DC, not the class's `this`), causing NREs or
+        // InvalidCastExceptions when the captured `this` was then used.
+        if (_currentFunction == null) return;
+
+        foreach (var frame in _functionStack)
         {
-            _captures[_currentFunction].Add("this");
+            if (frame is not Expr.ArrowFunction arrow)
+                break; // hit a non-arrow scope — `this` is bound there, stop propagating
+            if (arrow.HasOwnThis)
+                break; // function-expression arrow with explicit __this — stop propagating
+
+            _captures[arrow].Add("this");
             _allCapturedVariables.Add("this"); // O(1) inverse index
         }
     }
@@ -395,6 +426,10 @@ public class ClosureAnalyzer : AstVisitorBase
             if (param.DefaultValue != null)
                 Visit(param.DefaultValue);
         }
+
+        // Hoist sibling function declarations so forward references in one sibling's
+        // body resolve to another sibling declared later in source order.
+        HoistFunctionDeclarations(body);
 
         // Analyze body
         foreach (var stmt in body)
@@ -457,8 +492,11 @@ public class ClosureAnalyzer : AstVisitorBase
         if (af.ExpressionBody != null)
             Visit(af.ExpressionBody);
         else if (af.BlockBody != null)
+        {
+            HoistFunctionDeclarations(af.BlockBody);
             foreach (var stmt in af.BlockBody)
                 Visit(stmt);
+        }
 
         ExitScope();
 

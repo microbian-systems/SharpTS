@@ -747,6 +747,19 @@ public partial class ILCompiler
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+            // CJS resolution — needed so `exports`, `module.exports`, and `require(...)`
+            // work inside class method bodies nested in a CJS module.
+            ModuleResolver = _modules.Resolver,
+            ModuleExportFields = _modules.ExportFields,
+            ModuleInitMethods = _modules.InitMethods,
+            ModuleImportFields = _modules.ImportFields,
+            ModuleTypes = _modules.Types,
+            CommonJsExportFields = _modules.CommonJsExportFields,
+            CommonJsGetExportsMethods = _modules.CommonJsGetExportsMethods,
+            CurrentCjsExportsField = _modules.CurrentPath != null
+                && _modules.CommonJsExportFields.TryGetValue(_modules.CurrentPath, out var cjsExportsStatic)
+                ? cjsExportsStatic
+                : null,
         };
 
         // Define parameters with typed parameter types from method signature
@@ -912,13 +925,29 @@ public partial class ILCompiler
             CurrentClassBuilder = typeBuilder,
             // Registry services
             ClassRegistry = GetClassRegistry(),
-            // Module-level variable access
-            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
+            // Module-level variable access. For class method bodies we augment
+            // TopLevelStaticVars with this module's ESM export fields so bare
+            // identifiers like `braceExpand` inside a class method resolve to
+            // the module-level `export const braceExpand = ...`. Scoped to the
+            // class-method context to avoid perturbing imports/module-init paths.
+            TopLevelStaticVars = BuildClassMethodTopLevelStaticVarsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+            // CJS resolution — needed so `exports`, `module.exports`, and `require(...)`
+            // work inside class method bodies nested in a CJS module.
+            ModuleResolver = _modules.Resolver,
+            ModuleExportFields = _modules.ExportFields,
+            ModuleInitMethods = _modules.InitMethods,
+            ModuleImportFields = _modules.ImportFields,
+            ModuleTypes = _modules.Types,
+            CommonJsExportFields = _modules.CommonJsExportFields,
+            CommonJsGetExportsMethods = _modules.CommonJsGetExportsMethods,
+            CurrentCjsExportsField = _modules.CurrentPath != null
+                && _modules.CommonJsExportFields.TryGetValue(_modules.CurrentPath, out var cjsExportsInst)
+                ? cjsExportsInst
+                : null,
         };
-
         // Add class generic type parameters to context
         if (_classes.GenericParams.TryGetValue(typeBuilder.Name, out var classGenericParams))
         {

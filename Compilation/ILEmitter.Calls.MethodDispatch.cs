@@ -226,32 +226,64 @@ public partial class ILEmitter
         var targetParams = methodBuilder.GetParameters();
         int expectedParamCount = targetParams.Length;
 
+        // Detect rest parameter: the ParameterTypeResolver compiles rest params to a
+        // single trailing List<object>, so a final parameter of that type is a rest
+        // marker. Without this, calling e.g. `this.debug("a", "b")` on a method
+        // declared `debug(..._)` would push 2 object args for a method expecting 1
+        // List<object> argument — the CLR rejects the resulting IL as an invalid
+        // program. (Matches the loose function-call dispatch in
+        // ExpressionEmitterBase.CallHelpers.cs / EmitRestParameterCall.)
+        bool hasRestParam = expectedParamCount > 0 &&
+            targetParams[expectedParamCount - 1].ParameterType == typeof(List<object>);
+        int regularParamCount = hasRestParam ? expectedParamCount - 1 : expectedParamCount;
+
         // Emit: ((ClassName)receiver).method(args)
         EmitExpression(receiver);
         EmitBoxIfNeeded(receiver);
         IL.Emit(OpCodes.Castclass, classType);
 
-        // Emit arguments with proper type conversions
-        for (int i = 0; i < arguments.Count; i++)
+        // Emit leading regular arguments with type conversion.
+        int regularArgsToEmit = Math.Min(arguments.Count, regularParamCount);
+        for (int i = 0; i < regularArgsToEmit; i++)
         {
             var arg = arguments[i];
             EmitExpression(arg);
-            // Convert to target parameter type
-            if (i < targetParams.Length)
-            {
-                EmitConversionForParameter(arg, targetParams[i].ParameterType);
-            }
-            else
-            {
-                EmitBoxIfNeeded(arg);
-            }
+            EmitConversionForParameter(arg, targetParams[i].ParameterType);
         }
 
-        // Pad missing optional arguments with appropriate default values
-        for (int i = arguments.Count; i < expectedParamCount; i++)
+        // Pad missing required-position arguments with defaults.
+        for (int i = regularArgsToEmit; i < regularParamCount; i++)
         {
-            var paramType = targetParams[i].ParameterType;
-            EmitDefaultForType(paramType);
+            EmitDefaultForType(targetParams[i].ParameterType);
+        }
+
+        if (hasRestParam)
+        {
+            // Collect all trailing args into a List<object> via the runtime CreateArray
+            // helper (which wraps an object[] into the List<object> rest marker type).
+            int restArgsCount = Math.Max(0, arguments.Count - regularParamCount);
+            IL.Emit(OpCodes.Ldc_I4, restArgsCount);
+            IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+            for (int i = 0; i < restArgsCount; i++)
+            {
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldc_I4, i);
+                var arg = arguments[regularParamCount + i];
+                EmitExpression(arg);
+                EmitBoxIfNeeded(arg);
+                IL.Emit(OpCodes.Stelem_Ref);
+            }
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateArray);
+        }
+        else
+        {
+            // Extra arguments beyond declared parameters — JS semantics drop them,
+            // but preserve evaluation order by emitting+popping the extras.
+            for (int i = regularParamCount; i < arguments.Count; i++)
+            {
+                EmitExpression(arguments[i]);
+                IL.Emit(OpCodes.Pop);
+            }
         }
 
         // Emit the virtual call

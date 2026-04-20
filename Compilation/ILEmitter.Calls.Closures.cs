@@ -259,10 +259,24 @@ public partial class ILEmitter
             // Load the captured variable's current value
             if (capturedVar == "this")
             {
-                // 'this' is captured - load the enclosing instance
-                if (_ctx.IsInstanceMethod)
+                // Arrow-spec semantics: `this` is lexically captured from the enclosing
+                // non-arrow scope. When THIS arrow's own display class already has a
+                // captured `this` field (i.e. we're inside a parent arrow's body and the
+                // parent captured the class's `this`), propagate it from there. Don't use
+                // bare Ldarg_0 in that case — inside an arrow-body the arg0 slot is the
+                // display class instance itself, not the enclosing class's `this`, and
+                // passing the DC into a nested arrow caused InvalidCastException /
+                // NullReferenceException at use sites (minimatch's
+                // `.map(s => s.map(ss => this.parse(ss)))` hit this).
+                if (_ctx.CapturedFields != null && _ctx.CapturedFields.TryGetValue("this", out var outerThisField))
                 {
-                    IL.Emit(OpCodes.Ldarg_0);  // Load 'this' from enclosing method
+                    IL.Emit(OpCodes.Ldarg_0);
+                    IL.Emit(OpCodes.Ldfld, outerThisField);
+                }
+                else if (_ctx.IsInstanceMethod)
+                {
+                    // Direct class-method body: Ldarg_0 IS the enclosing instance.
+                    IL.Emit(OpCodes.Ldarg_0);
                 }
                 else
                 {

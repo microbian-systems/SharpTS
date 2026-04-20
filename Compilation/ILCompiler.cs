@@ -543,9 +543,14 @@ public partial class ILCompiler
     /// </summary>
     private void Phase6_EmitArrowAndStateMachineBodies(List<Stmt> statements)
     {
+        // Pre-define class methods (including constructors) BEFORE arrow bodies so that
+        // `new Foo(...)` inside an arrow can resolve to the typed ctor path. Otherwise
+        // the arrow emitter falls through to the fallback and silently emits ldnull
+        // because ClassRegistry.GetConstructorByQualifiedName hasn't been populated yet.
+        DefineAllClassMethods(statements);
+
         EmitArrowFunctionBodies();
         EmitInnerFunctionBodies();
-        DefineAllClassMethods(statements);
 
         // Emit $IHasFields interface method bodies now that method definitions are available
         // This uses compile-time dispatch (no runtime reflection)
@@ -783,7 +788,7 @@ public partial class ILCompiler
         InitializeTypedInterop();
         InitializeTypeEmitterRegistries();
         ModulePhase6_CollectArrowFunctions(modules);
-        ModulePhase7_EmitArrowBodies();
+        ModulePhase7_EmitArrowBodies(modules);
         ModulePhase8_EmitMethodBodies(modules);
         ModulePhase9_EmitModuleInits(modules);
         ModulePhase10_EmitEntryPoint(modules);
@@ -892,9 +897,20 @@ public partial class ILCompiler
 
     /// <summary>
     /// Module Phase 7: Emit arrow function bodies and async/generator state machine bodies.
+    /// Pre-defines class methods (incl. constructors) across all modules first so arrow
+    /// bodies that contain <c>new Foo(...)</c> can resolve the typed ctor — otherwise
+    /// ClassRegistry.GetConstructorByQualifiedName is empty and EmitNew falls through to
+    /// the null fallback (silent miscompile).
     /// </summary>
-    private void ModulePhase7_EmitArrowBodies()
+    private void ModulePhase7_EmitArrowBodies(List<ParsedModule> modules)
     {
+        foreach (var module in modules)
+        {
+            _modules.CurrentPath = module.Path;
+            DefineAllClassMethods(module.Statements);
+        }
+        _modules.CurrentPath = null;
+
         EmitArrowFunctionBodies();
         EmitInnerFunctionBodies();
         EmitAsyncStateMachineBodies();
@@ -908,9 +924,9 @@ public partial class ILCompiler
     /// </summary>
     private void ModulePhase8_EmitMethodBodies(List<ParsedModule> modules)
     {
-        // First, define all class methods (populate InstanceMethods dictionary)
-        // This is required before EmitAllHasFieldsInterfaceMethodBodies since GetProperty
-        // uses compile-time dispatch based on registered instance methods
+        // Class methods (signatures) were pre-defined in Phase7 so arrow bodies could see
+        // them; DefineAllClassMethods is idempotent and safely re-enters here as a no-op
+        // for classes whose methods were already registered.
         foreach (var module in modules)
         {
             _modules.CurrentPath = module.Path;
@@ -1364,6 +1380,38 @@ public partial class ILCompiler
         {
             // Single-file / script-style: no per-module scoping — expose the global union.
             result = new Dictionary<string, FieldBuilder>(_topLevelStaticVars);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Builds a class-method-scoped top-level static var map that augments the base
+    /// <see cref="BuildTopLevelStaticVarsForModule"/> with this module's own ESM export
+    /// fields. A method body like
+    ///   <c>braceExpand() { return braceExpand(this.x, this.y); }</c>
+    /// references the same-module export by bare identifier — that reference has to
+    /// resolve to the export's static field or the runtime throws a <c>ReferenceError</c>.
+    /// Deliberately scoped to class methods because other emission sites (module init,
+    /// imported-function calls, __dirname resolution) already rely on their existing
+    /// view and adding ESM exports there broke 280+ tests when tried.
+    /// </summary>
+    private Dictionary<string, FieldBuilder>? BuildClassMethodTopLevelStaticVarsForModule(string? modulePath)
+    {
+        var result = BuildTopLevelStaticVarsForModule(modulePath);
+        if (modulePath == null || !_modules.ExportFields.TryGetValue(modulePath, out var exports))
+            return result;
+
+        foreach (var (name, field) in exports)
+        {
+            if (name == "$default" || name == "$exportAssignment") continue;
+            result ??= new Dictionary<string, FieldBuilder>();
+            // Don't overwrite a same-named module-scoped static or import — those
+            // take precedence. ESM `export const X` without an accompanying
+            // `_moduleTopLevelStaticVars` entry reaches this fallback and binds X
+            // to the export field.
+            if (!result.ContainsKey(name))
+                result[name] = field;
         }
 
         return result;

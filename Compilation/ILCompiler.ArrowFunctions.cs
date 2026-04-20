@@ -478,10 +478,16 @@ public partial class ILCompiler
                     _arrowToModule[af] = _modules.CurrentPath;
                 }
 
-                // Track enclosing class name for async arrows that need private field access
-                if (af.IsAsync && _currentCollectClassName != null)
+                // Track enclosing class name for arrows that need class-scoped dispatch:
+                // private method / private field access, `super` calls, etc. Recorded for
+                // every arrow (sync + async) so EmitArrowBody can propagate it to the
+                // compilation context — without this, a private method call inside an
+                // arrow throws "class context not available" at runtime. Stored as the
+                // QUALIFIED class name because the ClassRegistry keys private methods
+                // by qualified name (simple names like "AST" miss the `$M_index_AST` key).
+                if (_currentCollectClassName != null)
                 {
-                    _async.ArrowEnclosingClassNames[af] = _currentCollectClassName;
+                    _async.ArrowEnclosingClassNames[af] = GetDefinitionContext().GetQualifiedClassName(_currentCollectClassName);
                 }
 
                 // Track the immediately enclosing top-level function so we can
@@ -881,6 +887,13 @@ public partial class ILCompiler
             IsStrictMode = _isStrictMode,
             // Registry services
             ClassRegistry = GetClassRegistry(),
+            // Propagate the enclosing class name so private-member dispatch (#field / #method
+            // access, `super` lookups) works inside arrow bodies nested in class methods.
+            // Without this, `this.#parseGlob()` inside an arrow throws "class context not
+            // available" at runtime.
+            CurrentClassName = _async.ArrowEnclosingClassNames.TryGetValue(arrow, out var enclosingClassName)
+                ? enclosingClassName
+                : null,
             // Entry-point display class for accessing captured top-level variables
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
