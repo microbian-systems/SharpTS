@@ -379,7 +379,6 @@ public static class ObjectBuiltIns
     private static object? DefineProperty(Interpreter _, List<object?> args)
     {
         var target = args[0];
-        var propertyKey = args[1]?.ToString() ?? "";
         var descriptorArg = args[2];
 
         if (target == null)
@@ -394,6 +393,24 @@ public static class ObjectBuiltIns
 
         // Parse descriptor from object - use FromAnyObject to handle any object type
         SharpTSPropertyDescriptor descriptor = SharpTSPropertyDescriptor.FromAnyObject(descriptorArg);
+
+        // Handle Symbol-keyed property definition — route through Symbol storage.
+        if (args[1] is SharpTSSymbol symKey)
+        {
+            switch (target)
+            {
+                case SharpTSObject symObj:
+                    symObj.SetBySymbol(symKey, descriptor.Value);
+                    return target;
+                case SharpTSInstance symInst:
+                    symInst.SetBySymbol(symKey, descriptor.Value);
+                    return target;
+                default:
+                    break;
+            }
+        }
+
+        var propertyKey = args[1]?.ToString() ?? "";
 
         bool success;
         switch (target)

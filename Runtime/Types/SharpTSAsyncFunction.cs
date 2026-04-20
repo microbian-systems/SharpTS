@@ -191,6 +191,11 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable
     public async Task<object?> CallAsync(Interpreter interpreter, List<object?> arguments)
     {
         RuntimeEnvironment environment = new(_closure);
+        // Named async function expression: bind self-reference alongside params.
+        if (_declaration.Name != null)
+        {
+            environment.Define(_declaration.Name.Lexeme, this);
+        }
         await ParameterBinder.BindAsync(_declaration.Parameters, arguments, environment, interpreter);
 
         if (_declaration.ExpressionBody != null)

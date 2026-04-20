@@ -89,7 +89,10 @@ public class SharpTSRegExp : ITypeCategorized
 
         // Named groups ((?<name>...)) are not supported in ECMAScript mode in .NET.
         // Detect them and fall back to non-ECMAScript mode.
-        var options = HasNamedGroups(pattern) ? RegexOptions.None : RegexOptions.ECMAScript;
+        // .NET also rejects combining ECMAScript with Singleline, so drop ECMAScript
+        // whenever the 's' (dotAll) flag is set.
+        bool useEcmaScript = !HasNamedGroups(pattern) && !_flags.Contains('s');
+        var options = useEcmaScript ? RegexOptions.ECMAScript : RegexOptions.None;
         if (_ignoreCase) options |= RegexOptions.IgnoreCase;
         if (_multiline) options |= RegexOptions.Multiline;
         if (_flags.Contains('s')) options |= RegexOptions.Singleline;

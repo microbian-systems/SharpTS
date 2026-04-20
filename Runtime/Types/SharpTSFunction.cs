@@ -354,6 +354,14 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
             ? new RuntimeEnvironment(_closure, strictMode: true)
             : new RuntimeEnvironment(_closure);
 
+        // Named function expression: bind the self-reference in the same scope
+        // as parameters so recursion works (`function f(n) { return f(n-1); }`)
+        // while keeping outer-variable distances consistent with the resolver.
+        if (_declaration.Name != null)
+        {
+            environment.Define(_declaration.Name.Lexeme, this);
+        }
+
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         if (_declaration.ExpressionBody != null)
@@ -397,6 +405,14 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
         RuntimeEnvironment environment = functionStrict
             ? new RuntimeEnvironment(_closure, strictMode: true)
             : new RuntimeEnvironment(_closure);
+
+        // Named function expression: bind the self-reference in the same scope as
+        // parameters so recursion works (`function f(n) { return f(n-1); }`) while
+        // keeping outer-variable distances consistent with the resolver.
+        if (_declaration.Name != null)
+        {
+            environment.Define(_declaration.Name.Lexeme, this);
+        }
 
         ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
 

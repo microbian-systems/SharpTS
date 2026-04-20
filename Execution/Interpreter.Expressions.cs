@@ -181,8 +181,8 @@ public partial class Interpreter
         // the interpreter's call stack, preserving environment state.
         if (YieldCallback != null)
         {
-            YieldCallback(value, yieldExpr.IsDelegating);
-            return RuntimeValue.Undefined;
+            var result = YieldCallback(value, yieldExpr.IsDelegating);
+            return RuntimeValue.FromBoxed(result ?? SharpTSUndefined.Instance);
         }
 
         throw new YieldException(value, yieldExpr.IsDelegating);
@@ -350,16 +350,13 @@ public partial class Interpreter
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/functions.html#arrow-functions">TypeScript Arrow Functions</seealso>
     private RuntimeValue EvaluateArrowFunction(Expr.ArrowFunction arrow)
     {
+        // Named function expressions (e.g. `var f = function myFn(n) { return myFn(n-1); }`)
+        // bind the self-reference inside the function's own call environment (alongside
+        // parameters), not in an enclosing wrapper scope. This matches how the resolver
+        // tracks the name — pushing ONE scope that contains the name plus params — so
+        // the locals cache's distance values remain correct for outer-variable captures.
+        // See SharpTSArrowFunction.Call for where the self-binding is installed.
         RuntimeEnvironment closure = _environment;
-
-        // For named function expressions, create a child environment for self-reference
-        // This enables recursion: const f = function myFunc(n) { return myFunc(n-1); }
-        if (arrow.Name != null)
-        {
-            closure = new RuntimeEnvironment(_environment);
-            closure.Define(arrow.Name.Lexeme, null);  // Placeholder, will be assigned after function creation
-            closure.MarkAsReadOnly(arrow.Name.Lexeme); // Function name is read-only in strict mode
-        }
 
         ISharpTSCallable func;
         if (arrow.IsAsync)
@@ -375,12 +372,6 @@ public partial class Interpreter
         else
         {
             func = new SharpTSArrowFunction(arrow, closure, arrow.HasOwnThis);
-        }
-
-        // Complete the self-reference for named function expressions
-        if (arrow.Name != null)
-        {
-            closure.Assign(arrow.Name, func);
         }
 
         return RuntimeValue.FromObject(func);

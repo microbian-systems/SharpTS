@@ -344,7 +344,7 @@ public class StreamsWebSemanticTests
     /// hangs. Compiled-mode $ReadableStream.PipeTo doesn't extract the signal
     /// from opts at all (not implemented). Both deferred.
     /// </remarks>
-    [Theory(Skip = "Same interpreter architectural issue as PendingReadResolvedByLaterEnqueue: timer-driven ac.abort() can't fire because the top-level GetResult blocks the event loop. Compiled-mode pure-IL variant covers this case below.")]
+    [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void ReadableStream_PipeTo_AbortSignalCancelsSourceAndAbortsDest(ExecutionMode mode)
     {

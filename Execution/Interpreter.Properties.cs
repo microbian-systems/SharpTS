@@ -614,6 +614,49 @@ public partial class Interpreter
             return SharpTSUndefined.Instance;
         }
 
+        // Array global constructor: resolves `Array.prototype`, `Array.from`, etc.
+        if (obj is SharpTSArrayGlobal arrGlobal)
+        {
+            return arrGlobal.GetMember(memberName) ?? SharpTSUndefined.Instance;
+        }
+        if (obj is SharpTSArrayPrototype arrProto)
+        {
+            return arrProto.GetMember(memberName) ?? SharpTSUndefined.Instance;
+        }
+        if (obj is SharpTSArrayUnboundMethod unbound)
+        {
+            // call/apply/bind on unbound prototype methods go through FunctionBuiltIns.
+            var fnMember = FunctionBuiltIns.GetMember(unbound, memberName);
+            if (fnMember != null) return fnMember;
+            return SharpTSUndefined.Instance;
+        }
+        if (obj is SharpTSFunctionGlobal fnGlobal)
+        {
+            return fnGlobal.GetMember(memberName) ?? SharpTSUndefined.Instance;
+        }
+        if (obj is SharpTSFunctionPrototype fnProto)
+        {
+            return fnProto.GetMember(memberName) ?? SharpTSUndefined.Instance;
+        }
+        if (obj is SharpTSFunctionProtoToString fnToStr)
+        {
+            var fnMember = FunctionBuiltIns.GetMember(fnToStr, memberName);
+            if (fnMember != null) return fnMember;
+            return SharpTSUndefined.Instance;
+        }
+        if (obj is SharpTSObjectUnboundMethod objUnbound)
+        {
+            var fnMember = FunctionBuiltIns.GetMember(objUnbound, memberName);
+            if (fnMember != null) return fnMember;
+            return SharpTSUndefined.Instance;
+        }
+        // Built-in constructor passed through a variable (e.g. `var D = Date; D.now()`).
+        // Resolve static methods via the constructor's own GetMember.
+        if (obj is SharpTSBuiltInConstructor ctor)
+        {
+            return ctor.GetMember(memberName) ?? SharpTSUndefined.Instance;
+        }
+
         // Handle plain Dictionary<string, object?> objects (e.g., segment items from Intl.Segments)
         if (obj is IDictionary<string, object?> dict)
         {

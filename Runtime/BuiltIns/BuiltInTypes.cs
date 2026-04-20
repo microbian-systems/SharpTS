@@ -53,7 +53,7 @@ public static class BuiltInTypes
             "length" => NumberType,
             "charAt" => new TypeInfo.Function([NumberType], StringType),
             "substring" => new TypeInfo.Function([NumberType, NumberType], StringType, RequiredParams: 1), // end is optional
-            "indexOf" => new TypeInfo.Function([StringType], NumberType),
+            "indexOf" => new TypeInfo.Function([StringType, NumberType], NumberType, RequiredParams: 1),
             "toUpperCase" => new TypeInfo.Function([], StringType),
             "toLowerCase" => new TypeInfo.Function([], StringType),
             "trim" => new TypeInfo.Function([], StringType),
@@ -68,6 +68,7 @@ public static class BuiltInTypes
             "startsWith" => new TypeInfo.Function([StringType], BooleanType),
             "endsWith" => new TypeInfo.Function([StringType], BooleanType),
             "slice" => new TypeInfo.Function([NumberType, NumberType], StringType, RequiredParams: 1), // end is optional
+            "substr" => new TypeInfo.Function([NumberType, NumberType], StringType, RequiredParams: 1), // length is optional (legacy, Annex B)
             "repeat" => new TypeInfo.Function([NumberType], StringType),
             "padStart" => new TypeInfo.Function([NumberType, StringType], StringType, RequiredParams: 1), // padString is optional
             "padEnd" => new TypeInfo.Function([NumberType, StringType], StringType, RequiredParams: 1), // padString is optional

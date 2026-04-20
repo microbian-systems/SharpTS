@@ -12,7 +12,7 @@ public static class StringBuiltIns
             .Property("length", s => (double)s.Length)
             .MethodV2("charAt", 1, CharAtV2)
             .MethodV2("substring", 1, 2, SubstringV2)
-            .MethodV2("indexOf", 1, IndexOfV2)
+            .MethodV2("indexOf", 1, 2, IndexOfV2)
             .MethodV2("toUpperCase", 0, ToUpperCaseV2)
             .MethodV2("toLowerCase", 0, ToLowerCaseV2)
             .MethodV2("trim", 0, TrimV2)
@@ -25,6 +25,7 @@ public static class StringBuiltIns
             .MethodV2("startsWith", 1, StartsWithV2)
             .MethodV2("endsWith", 1, EndsWithV2)
             .MethodV2("slice", 1, 2, SliceV2)
+            .MethodV2("substr", 1, 2, SubstrV2)
             .MethodV2("repeat", 1, RepeatV2)
             .MethodV2("padStart", 1, 2, PadStartV2)
             .MethodV2("padEnd", 1, 2, PadEndV2)
@@ -258,7 +259,14 @@ public static class StringBuiltIns
     private static RuntimeValue IndexOfV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
     {
         var search = args[0].AsString();
-        return RuntimeValue.FromNumber(str.IndexOf(search));
+        // ECMA-262 §22.1.3.9: fromIndex is clamped to [0, length]
+        int fromIndex = 0;
+        if (args.Length >= 2 && !args[1].IsUndefined)
+        {
+            double n = args[1].AsNumber();
+            fromIndex = double.IsNaN(n) ? 0 : (int)Math.Max(0, Math.Min(n, str.Length));
+        }
+        return RuntimeValue.FromNumber(str.IndexOf(search, fromIndex));
     }
 
     private static RuntimeValue ToUpperCaseV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
@@ -289,6 +297,29 @@ public static class StringBuiltIns
         end = Math.Min(end, str.Length);
         if (end <= start) return RuntimeValue.EmptyString;
         return RuntimeValue.FromString(str.Substring(start, end - start));
+    }
+
+    // Legacy String.prototype.substr(start[, length]) — Annex B §B.2.2.1
+    private static RuntimeValue SubstrV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
+    {
+        double startArg = args[0].AsNumber();
+        int start = double.IsNaN(startArg) ? 0 : (int)startArg;
+        if (start < 0) start = Math.Max(0, str.Length + start);
+        if (start > str.Length) return RuntimeValue.EmptyString;
+
+        int length;
+        if (args.Length < 2 || args[1].IsUndefined)
+        {
+            length = str.Length - start;
+        }
+        else
+        {
+            double lenArg = args[1].AsNumber();
+            length = double.IsNaN(lenArg) ? 0 : (int)lenArg;
+        }
+        if (length <= 0) return RuntimeValue.EmptyString;
+        length = Math.Min(length, str.Length - start);
+        return RuntimeValue.FromString(str.Substring(start, length));
     }
 
     private static RuntimeValue RepeatV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)

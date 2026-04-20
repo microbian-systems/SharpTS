@@ -241,6 +241,14 @@ internal static class WebStreamsHelpers
             {
                 while (true)
                 {
+                    // When a signal is present, yield per iteration so timer
+                    // callbacks (e.g. setTimeout(() => ac.abort(), 0)) can
+                    // fire between reads — otherwise a synchronous-pull source
+                    // starves timers and mid-pipe aborts hang. Scoped to the
+                    // signal path so non-aborting pipes keep their existing
+                    // async ordering (pipeThrough/transform, etc.).
+                    if (signal != null) await Task.Yield();
+
                     if (signal != null && signal.Aborted)
                     {
                         if (!preventAbort) await dest.AbortInternal(signal.Reason).ConfigureAwait(false);

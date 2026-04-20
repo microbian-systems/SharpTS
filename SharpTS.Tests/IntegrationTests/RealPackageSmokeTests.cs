@@ -299,7 +299,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
         Assert.Contains("true", result.StandardOutput);
     }
 
-    [SkippableFact(Skip = "Compile error: 'Yield not supported in this context' — compiled IL emitter doesn't support a generator form used somewhere in semver's sources. Interpreter handles it; compile-time path needs generator-in-context support.")]
+    [SkippableFact(Skip = "Compile error: 'Yield not supported in this context'. Root cause: the dep `yallist/iterator.js` does `X.prototype[Symbol.iterator] = function*() { ... yield v }`, a generator arrow function expression. The IL pipeline has no EmitArrowFunction generator branch — it would need an arrow-expression counterpart to GeneratorMoveNextEmitter. Tracked separately as a compiler feature; interpreter handles it.")]
     public void Semver_Compiled()
     {
         SkipIfNoNpm();
@@ -356,7 +356,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // yaml — YAML parser
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "Blocked on CJS cross-module class resolution (yaml internal 'Pair' class)")]
+    [SkippableFact]
     public void Yaml_Interpreter()
     {
         SkipIfNoNpm();
@@ -375,7 +375,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
         Assert.Contains("function", result.StandardOutput);
     }
 
-    [SkippableFact(Skip = "Blocked on interpreter issues")]
+    [SkippableFact(Skip = "Compile-time IL error 'Label N has not been marked' — branching/label emission bug in yaml's compiled code path. Interpreter path works; compiled path needs a labels/branches audit separate from the runtime fixes.")]
     public void Yaml_Compiled()
     {
         SkipIfNoNpm();
@@ -398,7 +398,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
     // lodash — utility kitchen sink
     // ──────────────────────────────────────────────────────────────
 
-    [SkippableFact(Skip = "ASI resolved; now blocked on other parse errors in lodash source")]
+    [SkippableFact(Skip = "Lodash exercises a long tail of JS globals (Object.prototype.hasOwnProperty, Function.prototype.toString, Date.now through a local alias, Symbol.iterator on globalThis, etc.) plus `Object()` coercion and `Function('return this')()` dynamic evaluation. Enough of the chain has been fixed that yaml/debug/uuid/minimatch/semver/ms now pass — lodash needs a dedicated polyfill pass for Object.prototype, dynamic Function(), and Symbol.iterator plumbing.")]
     public void Lodash_Interpreter()
     {
         SkipIfNoNpm();

@@ -138,6 +138,23 @@ public static class FunctionBuiltIns
             return bound.Call(interp, args);
         }
 
+        // Array.prototype methods rebind their receiver via BindTo so that
+        // Array.prototype.push.apply(target, items) pushes onto `target`.
+        if (callable is SharpTSArrayUnboundMethod unbound)
+        {
+            return unbound.BindTo(thisArg).Call(interp, args);
+        }
+        // Function.prototype.toString rebinds so that funcToString.call(fn) works.
+        if (callable is SharpTSFunctionProtoToString fnToStr)
+        {
+            return fnToStr.BindTo(thisArg).Call(interp, args);
+        }
+        // Object.prototype methods rebind to support hasOwnProperty.call(obj, key).
+        if (callable is SharpTSObjectUnboundMethod objUnbound)
+        {
+            return objUnbound.BindTo(thisArg).Call(interp, args);
+        }
+
         // For built-in methods and other callables, just call directly
         return callable.Call(interp, args);
     }

@@ -142,8 +142,10 @@ public partial class Interpreter
 
         object? callee = (await ctx.EvaluateExprAsync(call.Callee)).ToObject();
 
-        // Optional call: return undefined if callee is nullish
-        if (call.Optional && (callee == null || callee is Runtime.Types.SharpTSUndefined))
+        // Optional call: return undefined if callee is nullish.
+        // Per ECMA-262 §13.3.9, the short-circuit extends to the entire chain.
+        if ((call.Optional || HasOptionalInChain(call.Callee))
+            && (callee == null || callee is Runtime.Types.SharpTSUndefined))
         {
             return SharpTSUndefined.Instance;
         }
@@ -167,19 +169,51 @@ public partial class Interpreter
 
             if (callee is not ISharpTSCallable function)
             {
+                if ((call.Optional || HasOptionalInChain(call.Callee))
+                    && (callee == null || callee is Runtime.Types.SharpTSUndefined))
+                {
+                    return Runtime.Types.SharpTSUndefined.Instance;
+                }
                 throw new InterpreterException("Can only call functions and classes.");
             }
 
-            if (argumentsList.Count < function.Arity())
-            {
-                throw new InterpreterException($"Expected at least {function.Arity()} arguments but got {argumentsList.Count}.");
-            }
-
+            // Per ECMA-262 §10.2.1: missing arguments become undefined; do not
+            // reject calls for user-defined functions. Built-in methods enforce
+            // their own min-arity in BuiltInMethod.Call.
             return function.Call(this, argumentsList);
         }
         finally
         {
             ArgumentListPool.Return(argumentsList);
+        }
+    }
+
+    /// <summary>
+    /// Walks the expression to determine whether any <c>?.</c> in its postfix
+    /// chain could have short-circuited. Per ECMA-262 §13.3.9 OptionalExpression,
+    /// the entire chain short-circuits if any optional step returns null/undefined.
+    /// </summary>
+    private static bool HasOptionalInChain(Expr expr)
+    {
+        while (true)
+        {
+            switch (expr)
+            {
+                case Expr.Get g:
+                    if (g.Optional) return true;
+                    expr = g.Object;
+                    continue;
+                case Expr.GetIndex gi:
+                    if (gi.Optional) return true;
+                    expr = gi.Object;
+                    continue;
+                case Expr.Call c:
+                    if (c.Optional) return true;
+                    expr = c.Callee;
+                    continue;
+                default:
+                    return false;
+            }
         }
     }
 
@@ -311,8 +345,12 @@ public partial class Interpreter
 
         object? callee = Evaluate(call.Callee);
 
-        // Optional call: return undefined if callee is nullish
-        if (call.Optional && (callee == null || callee is Runtime.Types.SharpTSUndefined))
+        // Optional call: return undefined if callee is nullish.
+        // Per ECMA-262 §13.3.9, the short-circuit extends to the entire chain:
+        // if any `?.` earlier in the callee expression returned null/undefined,
+        // this call must also short-circuit.
+        if ((call.Optional || HasOptionalInChain(call.Callee))
+            && (callee == null || callee is Runtime.Types.SharpTSUndefined))
         {
             return RuntimeValue.Undefined;
         }
@@ -356,14 +394,16 @@ public partial class Interpreter
 
             if (callee is not ISharpTSCallable function)
             {
+                if ((call.Optional || HasOptionalInChain(call.Callee))
+                    && (callee == null || callee is Runtime.Types.SharpTSUndefined))
+                {
+                    return RuntimeValue.Undefined;
+                }
                 throw new InterpreterException("Can only call functions and classes.");
             }
 
-            if (argumentsList.Count < function.Arity())
-            {
-                throw new InterpreterException($"Expected at least {function.Arity()} arguments but got {argumentsList.Count}.");
-            }
-
+            // Per ECMA-262 §10.2.1: missing arguments become undefined; do not
+            // reject calls for user-defined functions.
             return RuntimeValue.FromBoxed(function.Call(this, argumentsList));
         }
         finally

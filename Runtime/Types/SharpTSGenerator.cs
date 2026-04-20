@@ -42,7 +42,7 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
 
     // Caller state save/restore across yield points
     private RuntimeEnvironment? _callerEnv;
-    private Action<object?, bool>? _callerYieldCallback;
+    private Func<object?, bool, object?>? _callerYieldCallback;
 
     public SharpTSGenerator(Stmt.Function declaration, RuntimeEnvironment environment, Interpreter interpreter)
     {
@@ -168,22 +168,51 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     /// <summary>
     /// Yield callback invoked by the interpreter when a yield expression is evaluated.
     /// Suspends the worker thread until the next Next() call.
+    /// For <c>yield*</c>, iterates the delegated iterable lazily and returns its
+    /// completion value per ECMA-262 §14.4.14.
     /// </summary>
-    private void HandleYieldCallback(object? value, bool isDelegating)
+    private object? HandleYieldCallback(object? value, bool isDelegating)
     {
         if (isDelegating)
         {
-            // yield* — iterate the delegated iterable, yielding each value
-            var elements = _interpreter.GetIterableElements(value);
-            foreach (var element in elements)
-            {
-                if (_closed) return;
-                SuspendWithValue(element);
-            }
+            return DelegateYieldStar(_interpreter, this, value, v => SuspendWithValue(v), () => _closed);
         }
-        else
+        SuspendWithValue(value);
+        return null;
+    }
+
+    /// <summary>
+    /// Shared <c>yield*</c> delegation loop used by both generator types.
+    /// For inner generators, iterates via <c>Next()</c> and captures the
+    /// completion value. For other iterables, iterates lazily with no return value.
+    /// </summary>
+    internal static object? DelegateYieldStar(Interpreter interpreter, object? outerGen, object? iterable, Action<object?> suspend, Func<bool> isClosed)
+    {
+        switch (iterable)
         {
-            SuspendWithValue(value);
+            case SharpTSGenerator gen:
+                while (true)
+                {
+                    if (isClosed()) return null;
+                    var r = gen.Next();
+                    if (r.Done) return r.Value;
+                    suspend(r.Value);
+                }
+            case SharpTSArrowGenerator agen:
+                while (true)
+                {
+                    if (isClosed()) return null;
+                    var r = agen.Next();
+                    if (r.Done) return r.Value;
+                    suspend(r.Value);
+                }
+            default:
+                foreach (var element in interpreter.GetIterableElements(iterable))
+                {
+                    if (isClosed()) return null;
+                    suspend(element);
+                }
+                return null;
         }
     }
 
@@ -265,7 +294,7 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
     private Exception? _workerException;
 
     private RuntimeEnvironment? _callerEnv;
-    private Action<object?, bool>? _callerYieldCallback;
+    private Func<object?, bool, object?>? _callerYieldCallback;
 
     public SharpTSArrowGenerator(Expr.ArrowFunction declaration, RuntimeEnvironment environment, Interpreter interpreter)
     {
@@ -362,21 +391,14 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
         }
     }
 
-    private void HandleYieldCallback(object? value, bool isDelegating)
+    private object? HandleYieldCallback(object? value, bool isDelegating)
     {
         if (isDelegating)
         {
-            var elements = _interpreter.GetIterableElements(value);
-            foreach (var element in elements)
-            {
-                if (_closed) return;
-                SuspendWithValue(element);
-            }
+            return SharpTSGenerator.DelegateYieldStar(_interpreter, this, value, v => SuspendWithValue(v), () => _closed);
         }
-        else
-        {
-            SuspendWithValue(value);
-        }
+        SuspendWithValue(value);
+        return null;
     }
 
     private void SuspendWithValue(object? value)

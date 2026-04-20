@@ -99,6 +99,11 @@ public class SharpTSArrowGeneratorFunction : ISharpTSCallable
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
         RuntimeEnvironment environment = new(_closure);
+        // Named generator function expression: bind self-reference alongside params.
+        if (_declaration.Name != null)
+        {
+            environment.Define(_declaration.Name.Lexeme, this);
+        }
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         return new SharpTSArrowGenerator(_declaration, environment, interpreter);

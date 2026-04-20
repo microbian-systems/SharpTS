@@ -68,6 +68,41 @@ public sealed class SharpTSGlobalThis : ISharpTSPropertyAccessor
             return SharpTSBufferConstructor.Instance;
         }
 
+        // Array: the bare-reference global constructor (not a singleton namespace).
+        if (name == "Array")
+        {
+            return SharpTSArrayGlobal.Instance;
+        }
+
+        // Error class hierarchy — exposed as globals so that CommonJS packages
+        // can look up `global.Error`, `global.TypeError`, etc.
+        foreach (var errTypeName in BuiltInNames.ErrorTypeNames)
+        {
+            if (errTypeName == name)
+            {
+                return new SharpTSErrorClass(errTypeName, null);
+            }
+        }
+
+        // Constructor-like globals surfaced through BuiltInConstructorFactory so that
+        // `globalThis.Map`, `globalThis.Date`, etc. resolve for CommonJS packages
+        // (lodash aliases all constructors from the context object).
+        foreach (var (ctorName, factory) in BuiltInConstructorFactory.GetConstructors())
+        {
+            if (ctorName == name)
+            {
+                return new SharpTSBuiltInConstructor(ctorName, factory);
+            }
+        }
+
+        // Function constructor placeholder — lodash uses this only for `.prototype`
+        // access via `funcProto = Function.prototype` and `funcToString = funcProto.toString`.
+        // Returns a minimal constructor that satisfies these lookups.
+        if (name == "Function")
+        {
+            return SharpTSFunctionGlobal.Instance;
+        }
+
         // Global async functions
         if (name == "fetch")
         {

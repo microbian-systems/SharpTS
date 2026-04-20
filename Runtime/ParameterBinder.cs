@@ -36,13 +36,15 @@ internal static class ParameterBinder
             }
 
             object? value;
-            if (i < arguments.Count)
+            bool hasArg = i < arguments.Count;
+            bool argIsUndefined = hasArg && arguments[i] is SharpTSUndefined;
+            if (hasArg && !argIsUndefined)
             {
                 value = arguments[i];
             }
             else if (param.DefaultValue is { } defaultExpr)
             {
-                // Evaluate default value in the function's environment
+                // Per ECMA-262: default value applies when argument is missing OR explicitly undefined.
                 RuntimeEnvironment previous = interpreter.Environment;
                 try
                 {
@@ -57,7 +59,6 @@ internal static class ParameterBinder
             else
             {
                 // Missing argument with no default — use undefined (JavaScript semantics).
-                // In JS, calling f(a, b) with one arg sets b = undefined.
                 value = SharpTSUndefined.Instance;
             }
             environment.Define(param.Name.Lexeme, value);
@@ -89,13 +90,15 @@ internal static class ParameterBinder
             }
 
             RuntimeValue value;
-            if (i < arguments.Length)
+            bool hasArg = i < arguments.Length;
+            bool argIsUndefined = hasArg && arguments[i].IsUndefined;
+            if (hasArg && !argIsUndefined)
             {
                 value = arguments[i];
             }
             else if (param.DefaultValue is { } defaultExpr)
             {
-                // Evaluate default value in the function's environment
+                // Per ECMA-262: default value applies when argument is missing OR explicitly undefined.
                 RuntimeEnvironment previous = interpreter.Environment;
                 try
                 {
@@ -142,13 +145,15 @@ internal static class ParameterBinder
             }
 
             object? value;
-            if (i < arguments.Count)
+            bool hasArg = i < arguments.Count;
+            bool argIsUndefined = hasArg && arguments[i] is SharpTSUndefined;
+            if (hasArg && !argIsUndefined)
             {
                 value = arguments[i];
             }
             else if (param.DefaultValue is { } defaultExpr)
             {
-                // Evaluate default value in the function's environment
+                // Per ECMA-262: default value applies when argument is missing OR explicitly undefined.
                 RuntimeEnvironment previous = interpreter.Environment;
                 try
                 {

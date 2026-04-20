@@ -89,11 +89,24 @@ public partial class Interpreter : IDisposable
                 globals[errorTypeName] = new Runtime.Types.SharpTSErrorClass(errorTypeName, errorClass);
         }
 
+        // Bare `Array` reference — needed for Array.prototype.X.apply() patterns
+        // that real-world CJS packages (yaml, lodash internals) rely on.
+        globals[BuiltInNames.Array] = Runtime.Types.SharpTSArrayGlobal.Instance;
+
+        // Node-style `global` alias for globalThis. CJS packages (lodash)
+        // detect the global object via `typeof global == 'object'` and alias
+        // its Array/Object/Date/etc. into a local scope.
+        var gtSingleton = BuiltInRegistry.Instance.GetSingleton(BuiltInNames.GlobalThis);
+        if (gtSingleton != null)
+        {
+            globals["global"] = gtSingleton;
+        }
+
         // Add built-in singletons (Math, JSON, Object, etc.)
         // These are namespaces that resolve to singleton instances when accessed as variables
         string[] singletonNames =
         [
-            BuiltInNames.Math, BuiltInNames.JSON, BuiltInNames.Object, BuiltInNames.Array,
+            BuiltInNames.Math, BuiltInNames.JSON, BuiltInNames.Object,
             BuiltInNames.Number, BuiltInNames.String, BuiltInNames.Boolean, BuiltInNames.Symbol,
             BuiltInNames.Console, BuiltInNames.Process, BuiltInNames.GlobalThis,
             BuiltInNames.Reflect, BuiltInNames.Promise, BuiltInNames.Atomics,
@@ -338,8 +351,11 @@ public partial class Interpreter : IDisposable
     /// When set, yield expressions call this delegate instead of throwing YieldException.
     /// Used by the coroutine-based generator to suspend the worker thread at yield points
     /// without unwinding the call stack.
+    /// Returns the value of the yield expression: for plain <c>yield</c>, the value sent
+    /// via <c>g.next(v)</c> (currently always undefined); for <c>yield*</c>, the delegated
+    /// iterator's return value per ECMA-262 §14.4.14.
     /// </summary>
-    internal Action<object?, bool>? YieldCallback { get; set; }
+    internal Func<object?, bool, object?>? YieldCallback { get; set; }
 
     /// <summary>
     /// Registers a timer for tracking. Called by TimerBuiltIns when creating setTimeout/setInterval.
