@@ -1008,6 +1008,12 @@ public partial class ILCompiler
     /// </summary>
     private void ModulePhase11_FinalizeTypes()
     {
+        // Run label validation BEFORE finalizing types — ILGenerator branch/label state is cleared
+        // once CreateType() is called, so we need to catch unmarked-and-branched labels here.
+        var allTypes = ILLabelValidator.AllTypesFromModule(_moduleBuilder).ToList();
+        ILLabelValidator.SweepAllTypes(allTypes);
+        ILLabelValidator.SweepConstructors(allTypes);
+
         _unionGenerator?.FinalizeAllUnionTypes();
 
         // Finalize entry-point display class first (needed by closures)
@@ -1051,6 +1057,7 @@ public partial class ILCompiler
 
     public void Save(string outputPath)
     {
+
         // Generate metadata for the assembly
         MetadataBuilder metadataBuilder = _assemblyBuilder.GenerateMetadata(
             out BlobBuilder ilStream,
@@ -1197,41 +1204,65 @@ public partial class ILCompiler
 
         foreach (var stmt in statements)
         {
+            RegisterCapturedStmt(stmt, key, modulePath, ref moduleVars, ref moduleFields);
+        }
+
+        static TValue GetOrCreate<TValue>(Dictionary<string, TValue> dict, string k)
+            where TValue : new()
+        {
+            if (!dict.TryGetValue(k, out var v))
+            {
+                v = new TValue();
+                dict[k] = v;
+            }
+            return v;
+        }
+
+        // Local function, recurses into Stmt.Sequence so destructuring-produced var decls
+        // (desugared into a sequence of Stmt.Vars) participate in capture registration.
+        // Without the recursion, `const { x } = require(...)` at module scope would leave
+        // `x` neither in TopLevelStaticVars nor in the captured-DC fields, and any class
+        // method referencing `x` (common in semver, where re/t/etc. are destructured after
+        // class declarations) would throw ReferenceError at runtime.
+        void RegisterCapturedStmt(
+            Stmt stmt,
+            string captureKey,
+            string? path,
+            ref HashSet<string>? mv,
+            ref Dictionary<string, FieldBuilder>? mf)
+        {
+            if (stmt is Stmt.Sequence seq)
+            {
+                foreach (var inner in seq.Statements)
+                {
+                    RegisterCapturedStmt(inner, captureKey, path, ref mv, ref mf);
+                }
+                return;
+            }
+
             string? varName = stmt switch
             {
                 Stmt.Var v => v.Name.Lexeme,
                 Stmt.Const c => c.Name.Lexeme,
                 _ => null
             };
-            if (varName == null || !_closures.Analyzer.IsVariableCaptured(varName)) continue;
+            if (varName == null || !_closures.Analyzer.IsVariableCaptured(varName)) return;
 
-            // Lazily ensure the display class exists so we can allocate fields on it.
             var displayClass = EnsureEntryPointDisplayClass();
 
-            moduleVars ??= GetOrCreate(_closures.ModuleCapturedTopLevelVars, key);
-            moduleFields ??= GetOrCreate(_closures.ModuleEntryPointDisplayClassFields, key);
+            mv ??= GetOrCreate(_closures.ModuleCapturedTopLevelVars, captureKey);
+            mf ??= GetOrCreate(_closures.ModuleEntryPointDisplayClassFields, captureKey);
 
-            if (moduleVars.Add(varName))
+            if (mv.Add(varName))
             {
-                string fieldName = modulePath == null
+                string fieldName = path == null
                     ? varName
-                    : $"{SanitizeModuleForField(modulePath)}__{varName}";
+                    : $"{SanitizeModuleForField(path)}__{varName}";
                 var field = displayClass.DefineField(fieldName, _types.Object, FieldAttributes.Public);
-                moduleFields[varName] = field;
+                mf[varName] = field;
             }
 
             _closures.CapturedTopLevelVars.Add(varName);
-        }
-
-        static TValue GetOrCreate<TValue>(Dictionary<string, TValue> dict, string key)
-            where TValue : new()
-        {
-            if (!dict.TryGetValue(key, out var v))
-            {
-                v = new TValue();
-                dict[key] = v;
-            }
-            return v;
         }
     }
 
@@ -1294,36 +1325,62 @@ public partial class ILCompiler
 
         foreach (var stmt in statements)
         {
-            string? varName = stmt switch
+            DefineModuleScopedTopLevelStaticField(stmt, modulePath, moduleDict);
+        }
+    }
+
+    /// <summary>
+    /// Handles a single top-level statement, recursing into <see cref="Stmt.Sequence"/>
+    /// so destructuring declarations (which the parser desugars into a sequence of
+    /// <c>Stmt.Var</c>s) register their named bindings as top-level statics rather than
+    /// falling back to per-init-method locals.
+    /// </summary>
+    /// <remarks>
+    /// Without this, <c>const { x, y } = require('...')</c> at module scope would register
+    /// neither <c>x</c> nor <c>y</c> as static fields, so class methods in the same module
+    /// couldn't access them (the reference would throw "Undefined variable 'x'" at runtime).
+    /// Semver's classes/comparator.js destructures re and t this way and fails without it.
+    /// </remarks>
+    private void DefineModuleScopedTopLevelStaticField(Stmt stmt, string? modulePath, Dictionary<string, FieldBuilder>? moduleDict)
+    {
+        if (stmt is Stmt.Sequence seq)
+        {
+            foreach (var inner in seq.Statements)
             {
-                Stmt.Var v => v.Name.Lexeme,
-                Stmt.Const c => c.Name.Lexeme,
-                _ => null
-            };
-            if (varName == null || _closures.CapturedTopLevelVars.Contains(varName)) continue;
-
-            // Each module gets its own field, so two modules that both declare
-            // `const foo` have independent storage. Field names are qualified
-            // by module when a path is present; script mode keeps unqualified
-            // names since scripts intentionally share global scope.
-            string fieldName = modulePath == null
-                ? $"$topLevel_{varName}"
-                : $"$topLevel_{SanitizeModuleForField(modulePath)}_{varName}";
-
-            var field = _programType.DefineField(
-                fieldName,
-                _types.Object,
-                FieldAttributes.Public | FieldAttributes.Static);
-
-            // The global dict (_topLevelStaticVars) is last-write-wins by name. That's
-            // only consulted for captured-var dispatch via name, which this path skips
-            // (we `continue` above when the var is captured). For non-captured vars,
-            // resolution goes through ctx.TopLevelStaticVars which is module-scoped.
-            _topLevelStaticVars[varName] = field;
-            if (moduleDict != null)
-            {
-                moduleDict[varName] = field;
+                DefineModuleScopedTopLevelStaticField(inner, modulePath, moduleDict);
             }
+            return;
+        }
+
+        string? varName = stmt switch
+        {
+            Stmt.Var v => v.Name.Lexeme,
+            Stmt.Const c => c.Name.Lexeme,
+            _ => null
+        };
+        if (varName == null || _closures.CapturedTopLevelVars.Contains(varName)) return;
+
+        // Each module gets its own field, so two modules that both declare
+        // `const foo` have independent storage. Field names are qualified
+        // by module when a path is present; script mode keeps unqualified
+        // names since scripts intentionally share global scope.
+        string fieldName = modulePath == null
+            ? $"$topLevel_{varName}"
+            : $"$topLevel_{SanitizeModuleForField(modulePath)}_{varName}";
+
+        var field = _programType.DefineField(
+            fieldName,
+            _types.Object,
+            FieldAttributes.Public | FieldAttributes.Static);
+
+        // The global dict (_topLevelStaticVars) is last-write-wins by name. That's
+        // only consulted for captured-var dispatch via name, which this path skips
+        // (we `continue` above when the var is captured). For non-captured vars,
+        // resolution goes through ctx.TopLevelStaticVars which is module-scoped.
+        _topLevelStaticVars[varName] = field;
+        if (moduleDict != null)
+        {
+            moduleDict[varName] = field;
         }
     }
 

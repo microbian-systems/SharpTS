@@ -953,6 +953,10 @@ public partial class RuntimeEmitter
         EmitNoArgCase("pop", runtime.ArrayPop);
         EmitNoArgCase("shift", runtime.ArrayShift);
         EmitNoArgCase("reverse", runtime.ArrayReverse);
+        EmitNoArgCase("toReversed", runtime.ArrayToReversed);
+        EmitNoArgCase("entries", runtime.ArrayEntries);
+        EmitNoArgCase("keys", runtime.ArrayKeys);
+        EmitNoArgCase("values", runtime.ArrayValues);
 
         // JS-variadic methods — loop through args, calling the single-element helper
         // for each. Matches JS semantics: `arr.push(1, 2, 3)` pushes three elements.
@@ -971,12 +975,25 @@ public partial class RuntimeEmitter
         EmitSingleArgCase("forEach", runtime.ArrayForEach);
         EmitSingleArgCase("find", runtime.ArrayFind);
         EmitSingleArgCase("findIndex", runtime.ArrayFindIndex);
+        EmitSingleArgCase("findLast", runtime.ArrayFindLast);
+        EmitSingleArgCase("findLastIndex", runtime.ArrayFindLastIndex);
         EmitSingleArgCase("some", runtime.ArraySome);
         EmitSingleArgCase("every", runtime.ArrayEvery);
+        EmitSingleArgCase("sort", runtime.ArraySort);
+        EmitSingleArgCase("toSorted", runtime.ArrayToSorted);
+        EmitSingleArgCase("flat", runtime.ArrayFlat);
+        EmitSingleArgCase("flatMap", runtime.ArrayFlatMap);
+        EmitSingleArgCase("at", runtime.ArrayAt);
 
         // object[]-args methods (runtime helper takes the whole object[] args).
         EmitArgsArrayCase("slice", runtime.ArraySlice);
         EmitArgsArrayCase("reduce", runtime.ArrayReduce);
+        EmitArgsArrayCase("reduceRight", runtime.ArrayReduceRight);
+        EmitArgsArrayCase("splice", runtime.ArraySplice);
+        EmitArgsArrayCase("toSpliced", runtime.ArrayToSpliced);
+        EmitArgsArrayCase("with", runtime.ArrayWith);
+        EmitArgsArrayCase("fill", runtime.ArrayFill);
+        EmitArgsArrayCase("copyWithin", runtime.ArrayCopyWithin);
 
         // Default: return null
         il.Emit(OpCodes.Ldnull);

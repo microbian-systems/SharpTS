@@ -292,6 +292,26 @@ public partial class ILEmitter
                 }
                 break;
 
+            case TokenType.PLUS:
+                // Unary plus: numeric coercion (ToNumber per ECMA-262). This override was
+                // previously missing a PLUS case, so the switch fell through silently and
+                // `+x` emitted zero bytes — whoever was waiting on the result (e.g. a
+                // subsequent `dup`/`stloc`/SetProperty) got a stack underflow and the JIT
+                // rejected the method as InvalidProgram. Real impact: semver's SemVer ctor
+                // does `this.major = +m[1]` which was unreachable.
+                EmitExpression(u.Right);
+                if (u.Right is Expr.Literal { Value: double })
+                {
+                    EmitBoxDouble();
+                }
+                else
+                {
+                    EmitBoxIfNeeded(u.Right);
+                    IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Convert, "ToDouble", _ctx.Types.Object));
+                    EmitBoxDouble();
+                }
+                break;
+
             case TokenType.BANG:
                 EmitExpression(u.Right);
                 EmitBoxIfNeeded(u.Right);

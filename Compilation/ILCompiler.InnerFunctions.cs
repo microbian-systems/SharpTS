@@ -38,7 +38,12 @@ public partial class ILCompiler
         // Remove self-reference: the function's own name is not a true capture.
         // Self-calls are handled via InnerFunctionMethodsByName direct dispatch.
         captures.Remove(funcStmt.Name.Lexeme);
-        _collectedInnerFunctions.Add((funcStmt, captures, _currentEnclosingFunctionName!));
+        // _currentEnclosingFunctionName is null when the enclosing callable is an arrow
+        // function (Expr.ArrowFunction) rather than a named Stmt.Function — there's no
+        // qualified name to key a function-level display class on. Empty string is used
+        // as a sentinel so downstream dict lookups return "no match" instead of throwing
+        // ArgumentNullException.
+        _collectedInnerFunctions.Add((funcStmt, captures, _currentEnclosingFunctionName ?? ""));
     }
 
     /// <summary>
@@ -331,6 +336,8 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Ldnull);
                 il.Emit(OpCodes.Ret);
             }
+
+            ILLabelValidator.Validate(il, $"inner fn {enclosingFuncName}::{func.Name.Lexeme}");
         }
         _modules.CurrentPath = savedPath;
     }

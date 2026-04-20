@@ -37,6 +37,27 @@ public class GeneratorStateMachineBuilder
     // Delegated enumerator field for yield* expressions
     public FieldBuilder? DelegatedEnumeratorField { get; private set; }
 
+    // Stack-spill fields for yield*'s that appear in expression contexts with pre-existing
+    // stack items. A yield*'s resume label is the target of both fall-through (stack=N) and
+    // state-dispatch (stack=0), which CLR rejects as a stack-imbalance. We spill pre-yield*
+    // stack items into these fields, run setup/resume with an empty stack, and restore them
+    // at loop-end so callers observe the expected stack shape.
+    private readonly Dictionary<(int StateNumber, int Slot), FieldBuilder> _yieldStarSpillFields = new();
+
+    public FieldBuilder GetOrDefineYieldStarSpillField(int stateNumber, int slot)
+    {
+        var key = (stateNumber, slot);
+        if (!_yieldStarSpillFields.TryGetValue(key, out var f))
+        {
+            f = _stateMachineType.DefineField(
+                $"<>s__{stateNumber}_{slot}",
+                _types.Object,
+                FieldAttributes.Private);
+            _yieldStarSpillFields[key] = f;
+        }
+        return f;
+    }
+
     // Constructor
     public ConstructorBuilder Constructor { get; private set; } = null!;
 
@@ -351,6 +372,8 @@ public class GeneratorStateMachineBuilder
     /// </summary>
     public Type CreateType()
     {
+        ILLabelValidator.SweepAllTypes(new[] { _stateMachineType });
+        ILLabelValidator.SweepConstructors(new[] { _stateMachineType });
         return _stateMachineType.CreateType()!;
     }
 
@@ -394,12 +417,15 @@ public class GeneratorStateMachineBuilder
         nextIL.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object));
         nextIL.Emit(OpCodes.Br, endLabel);
 
-        // Done: create { value: undefined, done: true }
+        // Done: create { value: <completion>, done: true }
+        // ECMA-262 27.3.2: the completion value is the generator's return expression result,
+        // stored in CurrentField by EmitReturn. Emit `this.CurrentField` instead of `null`.
         nextIL.MarkLabel(doneLabel);
         nextIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         nextIL.Emit(OpCodes.Dup);
         nextIL.Emit(OpCodes.Ldstr, "value");
-        nextIL.Emit(OpCodes.Ldnull);
+        nextIL.Emit(OpCodes.Ldarg_0);
+        nextIL.Emit(OpCodes.Ldfld, CurrentField);
         nextIL.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object));
         nextIL.Emit(OpCodes.Dup);
         nextIL.Emit(OpCodes.Ldstr, "done");

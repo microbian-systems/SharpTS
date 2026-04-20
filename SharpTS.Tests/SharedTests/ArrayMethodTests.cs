@@ -27,16 +27,17 @@ public class ArrayMethodTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void Array_Find_ReturnsNullWhenNotFound(ExecutionMode mode)
+    public void Array_Find_ReturnsUndefinedWhenNotFound(ExecutionMode mode)
     {
+        // ECMA-262 23.1.3.10: Array.prototype.find returns undefined when no element matches.
         var source = """
             let nums: number[] = [1, 2, 3];
-            let result: number | null = nums.find((n: number): boolean => n > 10);
+            let result = nums.find((n: number): boolean => n > 10);
             console.log(result);
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("null\n", output);
+        Assert.Equal("undefined\n", output);
     }
 
     #endregion
@@ -407,30 +408,31 @@ public class ArrayMethodTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void Array_FindLast_ReturnsNullWhenNotFound(ExecutionMode mode)
+    public void Array_FindLast_ReturnsUndefinedWhenNotFound(ExecutionMode mode)
     {
+        // ECMA-262 23.1.3.11: Array.prototype.findLast returns undefined when no element matches.
         var source = """
             let nums: number[] = [1, 2, 3];
-            let result: number | null = nums.findLast((n: number): boolean => n > 10);
+            let result = nums.findLast((n: number): boolean => n > 10);
             console.log(result);
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("null\n", output);
+        Assert.Equal("undefined\n", output);
     }
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void Array_FindLast_EmptyArrayReturnsNull(ExecutionMode mode)
+    public void Array_FindLast_EmptyArrayReturnsUndefined(ExecutionMode mode)
     {
         var source = """
             let nums: number[] = [];
-            let result: number | null = nums.findLast((n: number): boolean => n > 0);
+            let result = nums.findLast((n: number): boolean => n > 0);
             console.log(result);
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("null\n", output);
+        Assert.Equal("undefined\n", output);
     }
 
     [Theory]

@@ -85,6 +85,15 @@ public partial class ILEmitter
             return;
         }
 
+        // `global` is a Node.js alias for globalThis. Mirror globalThis resolution so CJS
+        // packages (lodash) that sniff for `typeof global === 'object'` to find their
+        // ambient scope don't crash.
+        if (name == "global")
+        {
+            EmitNullConstant();
+            return;
+        }
+
         if (name == "Symbol")
         {
             EmitNullConstant(); // Symbol is handled specially in property access via SymbolStaticEmitter
@@ -114,6 +123,20 @@ public partial class ILEmitter
         if (name == "fetch")
         {
             IL.Emit(OpCodes.Ldstr, "fetch");
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GlobalThisGetProperty);
+            SetStackUnknown();
+            return;
+        }
+
+        // Other global functions routable through globalThis (they have fast-path call handlers
+        // but must ALSO be addressable as values — lodash caches them: `var freeParseFloat = parseFloat`
+        // then calls the alias later). Matches how `fetch` resolves the bare reference above.
+        if (name is "parseFloat" or "parseInt" or "isNaN" or "isFinite"
+            or "encodeURIComponent" or "decodeURIComponent"
+            or "setTimeout" or "clearTimeout" or "setInterval" or "clearInterval"
+            or "queueMicrotask" or "structuredClone")
+        {
+            IL.Emit(OpCodes.Ldstr, name);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GlobalThisGetProperty);
             SetStackUnknown();
             return;
@@ -249,6 +272,19 @@ public partial class ILEmitter
         if (TryEmitBuiltInClassType(name))
             return;
 
+        // Last resort for JS globals (Object, globalThis, etc.): fall through to
+        // globalThis.<name>. Positioned AFTER TryEmitBuiltInClassType so existing
+        // IsAssignableFrom-based instanceof checks keep their Type-token emissions.
+        // Runs for `Object` (coercion/identity — lodash `root.Object === Object`),
+        // `Function`, and anything else the resolver/classes/functions paths didn't claim.
+        if (name is "Object" or "Function")
+        {
+            IL.Emit(OpCodes.Ldstr, name);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GlobalThisGetProperty);
+            SetStackUnknown();
+            return;
+        }
+
         // Unknown variable - throw ReferenceError at runtime
         IL.Emit(OpCodes.Ldstr, name);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.ThrowUndefinedVariable);
@@ -292,6 +328,13 @@ public partial class ILEmitter
 
     protected override void EmitAssign(Expr.Assign a)
     {
+        // CommonJS: `exports = X` → stsfld $exports (mirrors TryEmitCjsSet for module.exports).
+        // Must run before EmitExpression(a.Value) so we can own the box+dup+stsfld sequence
+        // cleanly — otherwise the generic "Unknown target" fallback at the bottom of this method
+        // emits Box+Dup and leaves a dangling value on the stack, which propagates through the
+        // rest of the module body and ultimately trips PathStackDepth at the final ret.
+        if (TryEmitCjsAssign(a)) return;
+
         EmitExpression(a.Value);
 
         // 1. Function display class fields (captured function-local vars)

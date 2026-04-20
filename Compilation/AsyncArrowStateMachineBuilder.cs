@@ -512,6 +512,8 @@ public class AsyncArrowStateMachineBuilder
     /// </summary>
     public Type CreateType()
     {
+        ILLabelValidator.SweepAllTypes(new[] { _stateMachineType });
+        ILLabelValidator.SweepConstructors(new[] { _stateMachineType });
         return _stateMachineType.CreateType()!;
     }
 

@@ -503,12 +503,22 @@ public partial class ILCompiler
                 var previousParent = _currentParentArrow;
                 _currentParentArrow = af;
 
-                // Also collect arrows inside this arrow's body
+                // Entering an arrow body is the same as entering a function body for the
+                // purpose of "inner function declaration" classification: `function X() {}`
+                // inside an arrow is a nested declaration that should be hoisted into the
+                // arrow's scope. Without incrementing the depth, CollectArrowsFromStmt's
+                // `Stmt.Function f` case skips `CollectInnerFunction` (it only fires when
+                // depth > 0), and the declaration never gets a MethodBuilder — references
+                // to it inside the arrow then fall through to "Undefined variable" at
+                // runtime. Real-world case: lodash's IIFE `(function() { ... })()` wraps
+                // ~5000 lines of nested `function basePropertyOf(...)` declarations.
+                _functionNestingDepth++;
                 if (af.ExpressionBody != null)
                     CollectArrowsFromExpr(af.ExpressionBody);
                 if (af.BlockBody != null)
                     foreach (var s in af.BlockBody)
                         CollectArrowsFromStmt(s);
+                _functionNestingDepth--;
 
                 _currentParentArrow = previousParent;
                 break;
@@ -903,6 +913,31 @@ public partial class ILCompiler
             ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
             // Arrow scope display class for nested arrow functions
             ArrowScopeDCFields = _closures.ArrowScopeDCFields.Count > 0 ? _closures.ArrowScopeDCFields : null,
+            // Inner function metadata — required for any `function X() {}` declared INSIDE this
+            // arrow body to be reachable from sibling statements. Without this, IIFE-style
+            // wrappers that declare nested functions (lodash's `(function() { function basePropertyOf() {...} }())`)
+            // crash at runtime with "Undefined variable" when earlier statements reference them.
+            InnerFunctionMethods = _innerFunctionMethods,
+            InnerFunctionDisplayClasses = _innerFunctionDisplayClasses,
+            InnerFunctionDCFields = _innerFunctionDCFields,
+            InnerFunctionDCCtors = _innerFunctionDCCtors,
+            InnerFunctionEntryPointDCFields = _innerFunctionEntryPointDCFields,
+            InnerFunctionFunctionDCFields = _innerFunctionFunctionDCFields,
+            // CJS-context propagation — arrow bodies nested in a CJS module must see the
+            // same `exports` binding and require() resolution as the enclosing module init.
+            // Without this, bare `exports` inside an IIFE resolves to null and the lodash-
+            // style feature detection `typeof exports == 'object' && exports && ...` fails.
+            CurrentCjsExportsField = _modules.CurrentPath != null
+                && _modules.CommonJsExportFields.TryGetValue(_modules.CurrentPath, out var cjsArrowExports)
+                ? cjsArrowExports
+                : null,
+            ModuleResolver = _modules.Resolver,
+            ModuleExportFields = _modules.ExportFields,
+            ModuleInitMethods = _modules.InitMethods,
+            ModuleImportFields = _modules.ImportFields,
+            ModuleTypes = _modules.Types,
+            CommonJsExportFields = _modules.CommonJsExportFields,
+            CommonJsGetExportsMethods = _modules.CommonJsGetExportsMethods,
             // Typed return optimization - set return type so EmitReturn knows whether to box
             CurrentMethodReturnType = arrowReturnType
         };
@@ -1055,6 +1090,27 @@ public partial class ILCompiler
         // Emit default parameter checks
         emitter.EmitDefaultParameters(arrow.Parameters, displayClass != null, arrow.HasOwnThis);
 
+        // Bind the `arguments` array-like for function expressions (HasOwnThis=true).
+        // True arrows don't get their own `arguments` per ECMA-262. Matches the same
+        // prologue used by Stmt.Function compilation and fixes lodash-style wrappers
+        // like `function() { return fn.apply(this, arguments); }` emitted as arrows.
+        if (arrow.HasOwnThis && arrow.BlockBody != null && ReferencesArgumentsIdentifier(arrow.BlockBody))
+        {
+            // argBase aligns with the parameter-index layout above:
+            //   displayClass != null + HasOwnThis → params start at 2 (display, __this, params...)
+            //   displayClass != null + !HasOwnThis → params start at 1 (display, params...)
+            //   displayClass == null + HasOwnThis → params start at 1 (__this, params...)
+            //   displayClass == null + !HasOwnThis → params start at 0
+            int paramArgBase = (displayClass != null ? 1 : 0) + (arrow.HasOwnThis ? 1 : 0);
+            _closures.ArrowParameterTypes.TryGetValue(arrow, out var resolvedArrowParamTypes);
+            var argParamTypes = new Type[arrow.Parameters.Count];
+            for (int i = 0; i < argParamTypes.Length; i++)
+                argParamTypes[i] = resolvedArrowParamTypes != null && i < resolvedArrowParamTypes.Length
+                    ? resolvedArrowParamTypes[i] ?? _types.Object
+                    : _types.Object;
+            EmitArgumentsLocalPrologueCore(il, ctx, arrow.Parameters, argParamTypes, paramArgBase);
+        }
+
         if (arrow.ExpressionBody != null)
         {
             // Expression body: emit expression and return
@@ -1082,6 +1138,12 @@ public partial class ILCompiler
         }
         else if (arrow.BlockBody != null)
         {
+            // Hoist nested `function X() {}` declarations into the arrow's scope. Creates
+            // TSFunction locals before any body statement runs, mirroring top-level function
+            // compilation at ILCompiler.Functions.cs. Without this, IIFE bodies that reference
+            // nested function declarations before those declarations appear lexically (the
+            // classic hoisting idiom lodash relies on) get "Undefined variable" at runtime.
+            EmitInnerFunctionHoisting(il, ctx, arrow.BlockBody);
             // Block body: emit statements
             foreach (var stmt in arrow.BlockBody)
             {
@@ -1104,5 +1166,14 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ret);
         }
+
+        // Include source line + module path in diagnostic so unmarked labels are actionable.
+        var arrowLine = arrow.Parameters.FirstOrDefault()?.Name.Line
+                        ?? arrow.Name?.Line;
+        _arrowToModule.TryGetValue(arrow, out var arrowModulePath);
+        var locHint = (arrowModulePath is not null || arrowLine is not null)
+            ? $" [{arrowModulePath ?? "?"}:{arrowLine?.ToString() ?? "?"}]"
+            : "";
+        ILLabelValidator.Validate(il, $"arrow {method.DeclaringType?.FullName}::{method.Name}{locHint}");
     }
 }

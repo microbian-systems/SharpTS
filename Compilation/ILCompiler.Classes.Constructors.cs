@@ -93,6 +93,14 @@ public partial class ILCompiler
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+            // Arrow-closure DC field maps — without these, arrow closures created inside
+            // the constructor (e.g. `arr.map(v => v < MAX)` referencing a module-level
+            // captured var) won't populate their `$entryPointDC`/`$functionDC`/`$arrowDC`
+            // fields on the newobj'd display class, and the arrow body's `ldfld $entryPointDC`
+            // dereferences null at runtime.
+            ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
+            ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
+            ArrowScopeDCFields = _closures.ArrowScopeDCFields.Count > 0 ? _closures.ArrowScopeDCFields : null,
             // Constructors have a void signature; without this the `return;`
             // inside a ctor body defaults to object and emits `ldnull` before
             // the `ret`, producing an invalid method.

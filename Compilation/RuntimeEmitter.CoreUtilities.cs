@@ -2047,6 +2047,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Brtrue, functionLabel);
 
+        // $CJSModule => "object" (falls through naturally, but explicit null-isinst checks
+        // above might have short-circuited — this branch ensures consistent routing).
+        // No early return needed; falls through to the generic "object" default at the end.
+
         // BigInteger => "bigint"
         var bigintLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -2354,6 +2358,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var stringConcatLabel = il.DefineLabel();
+        var undefinedNanLabel = il.DefineLabel();
 
         // if (left is string || right is string) string concat
         il.Emit(OpCodes.Ldarg_0);
@@ -2363,12 +2368,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, stringConcatLabel);
 
+        // Either operand $Undefined → NaN (ECMA-262 12.8.3: ToNumber(undefined) = NaN,
+        // and any arithmetic with NaN yields NaN). Convert.ToDouble($Undefined) throws
+        // because $Undefined isn't IConvertible; short-circuit here.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, undefinedNanLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, undefinedNanLabel);
+
         // Numeric addition
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
         il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(undefinedNanLabel);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
 

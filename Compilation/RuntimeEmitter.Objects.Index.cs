@@ -248,14 +248,35 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(stringLabel);
         var charLocal = il.DeclareLocal(_types.Char);
+        var strLocal = il.DeclareLocal(_types.String);
+        var intIdxLocal = il.DeclareLocal(_types.Int32);
+        var strOobLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, strLocal);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+        il.Emit(OpCodes.Stloc, intIdxLocal);
+        // Bounds check: if idx < 0 || idx >= length, return undefined (JS semantics)
+        il.Emit(OpCodes.Ldloc, intIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, strOobLabel);
+        il.Emit(OpCodes.Ldloc, intIdxLocal);
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.String, "get_Length"));
+        il.Emit(OpCodes.Bge, strOobLabel);
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldloc, intIdxLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
         il.Emit(OpCodes.Stloc, charLocal);
         il.Emit(OpCodes.Ldloca, charLocal);
         il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Char, "ToString"));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(strOobLabel);
+        // JS: str[n] for out-of-bounds n returns undefined (not null). Returning null would
+        // make `case undefined:` switches fall through to default, breaking loops that
+        // terminate on undefined char reads (e.g. yaml's lexer).
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(dictLabel);
@@ -429,12 +450,17 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Ldloca, listFrozenCheckLocal);
                 il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
                 il.Emit(OpCodes.Brtrue, nullLabel); // Frozen - silently return
+                // Use SetArrayElement for JS-spec auto-extend semantics (list[N] = v on
+                // an array with length < N must zero-pad up to N). Matches the typed-list
+                // branch below — direct set_Item throws ArgumentOutOfRangeException for
+                // out-of-bounds writes, which real npm packages hit (e.g., semver re.js
+                // `src[index] = value` where `index = R++` runs past the initial empty list).
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Castclass, listType);
                 il.Emit(OpCodes.Ldarg_1);
                 il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
                 il.Emit(OpCodes.Ldarg_2);
-                il.Emit(OpCodes.Callvirt, _types.GetMethod(listType, "set_Item", _types.Int32, _types.Object));
+                il.Emit(OpCodes.Call, desc.GetSetArrayElementMethod(runtime));
             }
             else
             {

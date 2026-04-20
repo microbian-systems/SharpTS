@@ -175,7 +175,9 @@ public class EmittedRuntime
     // String methods
     public MethodBuilder StringCharAt { get; set; } = null!;
     public MethodBuilder StringSubstring { get; set; } = null!;
+    public MethodBuilder StringSubstr { get; set; } = null!;
     public MethodBuilder StringIndexOf { get; set; } = null!;
+    public MethodBuilder StringIndexOfFrom { get; set; } = null!;
     public MethodBuilder StringToUpperCase { get; set; } = null!;
     public MethodBuilder StringToLowerCase { get; set; } = null!;
     public MethodBuilder StringTrim { get; set; } = null!;
@@ -578,6 +580,14 @@ public class EmittedRuntime
     public MethodBuilder ValidateWeakMapKey { get; set; } = null!;
     public MethodBuilder ValidateWeakSetValue { get; set; } = null!;
     public MethodBuilder ValidateWeakRefTarget { get; set; } = null!;
+
+    // The emitted $CJSModule class — backs the `module` binding inside compiled CJS
+    // module bodies. Exports property write-through via FieldInfo references the
+    // module-specific static $exports field so require() always sees the latest value.
+    public Type CjsModuleType { get; set; } = null!;
+    public ConstructorInfo CjsModuleCtor { get; set; } = null!;
+    public MethodInfo CjsModuleExportsGetter { get; set; } = null!;
+    public MethodInfo CjsModuleExportsSetter { get; set; } = null!;
 
     // The emitted TSDate class
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSDate

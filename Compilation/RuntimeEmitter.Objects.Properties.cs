@@ -886,9 +886,18 @@ public partial class RuntimeEmitter
 
         // Check for known array method names
         // For each method name, if match, create $BoundArrayMethod
-        string[] methodNames = ["join", "push", "pop", "shift", "unshift", "slice", "indexOf",
-            "includes", "concat", "reverse", "map", "filter", "forEach", "find",
-            "findIndex", "some", "every", "reduce"];
+        // Must stay in sync with EmitBoundArrayMethodFinalize's dispatch switch
+        // (RuntimeEmitter.Arrays.cs) and ArrayEmitter.cs static dispatch.
+        string[] methodNames = [
+            "join", "push", "pop", "shift", "unshift", "slice", "splice",
+            "indexOf", "includes", "concat", "reverse", "sort", "map", "filter", "forEach",
+            "find", "findIndex", "findLast", "findLastIndex", "some", "every",
+            "reduce", "reduceRight",
+            "flat", "flatMap", "at",
+            "toSorted", "toSpliced", "toReversed", "with",
+            "fill", "copyWithin",
+            "entries", "keys", "values"
+        ];
 
         foreach (var methodName in methodNames)
         {
@@ -1146,6 +1155,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
         il.Emit(OpCodes.Brtrue, boundFunctionLabel);
 
+        // $CJSModule - route to the module's GetMember(name) for exports/id/filename/etc.
+        var cjsModuleGetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.CjsModuleType);
+        il.Emit(OpCodes.Brtrue, cjsModuleGetLabel);
+
         // Task<object?> (Promise) - check for then/catch/finally
         var promiseLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -1200,6 +1215,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.BoundAnyFunctionType);
         il.Emit(OpCodes.Brtrue, callableWrapperLabel);
 
+        // System.Type (a class reference used as a value, e.g. `Scalar.PLAIN = 'x'` then
+        // reading `Scalar.PLAIN`). JS allows arbitrary static property assignment on classes;
+        // we store them in $PropertyDescriptorStore. Check PDS first; if no descriptor, fall
+        // through to class-instance resolver (which on a Type will read its .NET members).
+        var typeGetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, typeGetLabel);
+
         // Default - try class-instance fields/property resolution helper
         var classInstanceLabel = il.DefineLabel();
         il.Emit(OpCodes.Br, classInstanceLabel);
@@ -1211,6 +1235,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
         il.Emit(OpCodes.Ret);
+
+        // System.Type handler: check PropertyDescriptorStore first for user-added static
+        // properties (`ClassName.foo = 'bar'`). If not found, fall through to default class
+        // handler which reads .NET Type members via reflection.
+        il.MarkLabel(typeGetLabel);
+        {
+            var typePdsDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, typePdsDescLocal);
+            il.Emit(OpCodes.Ldloc, typePdsDescLocal);
+            var noTypePdsLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, noTypePdsLabel);
+            il.Emit(OpCodes.Ldloc, typePdsDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(noTypePdsLabel);
+            // No PDS entry — fall through to GetFieldsProperty to read .NET Type members
+            il.Emit(OpCodes.Br, classInstanceLabel);
+        }
 
         // Callable wrapper handler: route .bind/.call/.apply/.length/.name through
         // GetFunctionMethod. Also handles .name specially for $BoundArrayMethod /
@@ -1390,6 +1435,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.GetFunctionMethod);
+        il.Emit(OpCodes.Ret);
+
+        // $CJSModule handler - call module.GetMember(name)
+        il.MarkLabel(cjsModuleGetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.CjsModuleType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.CjsModuleType.GetMethod("GetMember", [_types.String])!);
         il.Emit(OpCodes.Ret);
 
         // Promise (Task<object?> or $Promise) handler - return TSFunction wrappers for then/catch/finally
@@ -1846,12 +1899,93 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
-        // Not a dict or $Object - try SetFieldsProperty for class instances
+        // $TSFunction — JS functions are objects and support arbitrary property assignment
+        // (`fn.x = 42`, `lodash.chunk = function(...){}`). Store as a data descriptor in
+        // $PropertyDescriptorStore; GetFunctionMethod's fallback path reads it back. Without
+        // this, the assignment would fall through to SetFieldsProperty which is a
+        // class-instance path that doesn't match $TSFunction.
+        var tsFunctionSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, tsFunctionSetLabel);
+
+        // $CJSModule — `module.exports = X` (or any aliased write) goes through here.
+        // The exports setter writes through to the module's static $exports field via
+        // reflection so require() sees the update. Other property writes are silently
+        // ignored (spec: id/filename/loaded are informational and not writable from userland).
+        var cjsModuleSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.CjsModuleType);
+        il.Emit(OpCodes.Brtrue, cjsModuleSetLabel);
+
+        // System.Type (class reference used as value, e.g. `Scalar.PLAIN = 'x'`). JS allows
+        // arbitrary static property assignment on classes; we store them in PropertyDescriptorStore.
+        var typeSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, typeSetLabel);
+
+        // Not a dict or $Object or $TSFunction or $CJSModule or Type - try SetFieldsProperty for class instances
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetFieldsProperty);
         il.Emit(OpCodes.Ret);
+
+        // System.Type handler: store as data descriptor in PropertyDescriptorStore.
+        // Read path (EmitGetProperty) looks it up before falling through to .NET member
+        // resolution, so writes become visible as reads.
+        il.MarkLabel(typeSetLabel);
+        {
+            var typeDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, typeDescLocal);
+            il.Emit(OpCodes.Ldloc, typeDescLocal);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloc, typeDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // $CJSModule handler — only "exports" is writable; others are no-ops (spec behavior).
+        il.MarkLabel(cjsModuleSetLabel);
+        {
+            var notExportsLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "exports");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, notExportsLabel);
+            // module.exports = value
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.CjsModuleType);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Callvirt, runtime.CjsModuleExportsSetter);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notExportsLabel);
+            // Silently ignore writes to other module properties
+            il.Emit(OpCodes.Ret);
+        }
+
+        // $TSFunction handler: create data descriptor with the value, store via PDSDefineProperty
+        il.MarkLabel(tsFunctionSetLabel);
+        {
+            var descLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, descLocal);
+            il.Emit(OpCodes.Ldloc, descLocal);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloc, descLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop); // discard bool return
+            il.Emit(OpCodes.Ret);
+        }
 
         // $Object handler - call obj.SetProperty(name, value) which handles setters
         il.MarkLabel(tsObjectLabel);
@@ -1977,13 +2111,60 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
-        // Not a dict or $Object - fall back to SetFieldsPropertyStrict
+        // $TSFunction — mirror the non-strict SetProperty branch (functions as objects carry
+        // user-assigned properties through PDSDefineProperty).
+        var tsFunctionSetStrictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, tsFunctionSetStrictLabel);
+
+        // $CJSModule — mirror the non-strict branch.
+        var cjsModuleSetStrictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.CjsModuleType);
+        il.Emit(OpCodes.Brtrue, cjsModuleSetStrictLabel);
+
+        // Not a dict or $Object or $TSFunction or $CJSModule - fall back to SetFieldsPropertyStrict
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldarg_3); // strictMode
         il.Emit(OpCodes.Call, runtime.SetFieldsPropertyStrict);
         il.Emit(OpCodes.Ret);
+
+        // $CJSModule strict handler — same as non-strict for now.
+        il.MarkLabel(cjsModuleSetStrictLabel);
+        {
+            var notExportsLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "exports");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, notExportsLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.CjsModuleType);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Callvirt, runtime.CjsModuleExportsSetter);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notExportsLabel);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // $TSFunction handler: create data descriptor with the value, store via PDSDefineProperty
+        il.MarkLabel(tsFunctionSetStrictLabel);
+        {
+            var descStrictLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, descStrictLocal);
+            il.Emit(OpCodes.Ldloc, descStrictLocal);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloc, descStrictLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ret);
+        }
 
         // $Object - call SetPropertyStrict
         il.MarkLabel(sharpTSObjectLabel);

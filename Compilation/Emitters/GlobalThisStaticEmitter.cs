@@ -75,6 +75,14 @@ public sealed class GlobalThisStaticEmitter : IStaticTypeEmitterStrategy
             return true;
         }
 
+        // Built-in class constructors — emit the actual .NET Type so identity and
+        // typeof work (`typeof globalThis.Array === "function"`, `globalThis.Array === Array`).
+        // Must come before the static-emitter fallback because some built-in names
+        // (Array, Map, Set) have both a static emitter (for Array.from, Map.groupBy,
+        // etc.) and a Type identity — the Type identity wins when used as a value.
+        if (TryEmitBuiltInClassType(il, ctx, propertyName))
+            return true;
+
         // Check if this is a known built-in that has its own static emitter
         var staticEmitter = _registry.GetStaticStrategy(propertyName);
         if (staticEmitter != null)
@@ -90,13 +98,6 @@ public sealed class GlobalThisStaticEmitter : IStaticTypeEmitterStrategy
         {
             case "console":
             case "Object":
-            case "Array":
-            case "Date":
-            case "RegExp":
-            case "Map":
-            case "Set":
-            case "WeakMap":
-            case "WeakSet":
             case "Error":
             case "Reflect":
                 // These are accessed through property access chains
@@ -148,6 +149,37 @@ public sealed class GlobalThisStaticEmitter : IStaticTypeEmitterStrategy
         // For user-assigned properties, use runtime helper
         il.Emit(OpCodes.Ldstr, propertyName);
         il.Emit(OpCodes.Call, ctx.Runtime!.GlobalThisGetProperty);
+        return true;
+    }
+
+    /// <summary>
+    /// Emits `Ldtoken T; call GetTypeFromHandle` for built-in class constructor names
+    /// so `globalThis.Array`, `globalThis.Date`, etc. match the identity emitted by a
+    /// bare reference to the same name (<see cref="ILEmitter.TryEmitBuiltInClassType"/>).
+    /// Matters for lodash-style feature detection: <c>root.Object === Object</c>,
+    /// <c>typeof root.Array === "function"</c>.
+    /// </summary>
+    private static bool TryEmitBuiltInClassType(ILGenerator il, CompilationContext ctx, string name)
+    {
+        Type? t = name switch
+        {
+            "Array" => ctx.Types.IListOfObject,
+            "Date" => ctx.Runtime!.TSDateType,
+            "RegExp" => ctx.Runtime!.TSRegExpType,
+            "Map" => ctx.Types.DictionaryObjectObject,
+            "Set" => ctx.Types.HashSetOfObject,
+            "WeakMap" => ctx.Types.ConditionalWeakTableObjectObject,
+            "WeakSet" => ctx.Types.ConditionalWeakTableObjectObject,
+            "Promise" => ctx.Types.TaskOfObject,
+            "Buffer" => ctx.Runtime!.TSBufferType,
+            "Function" => ctx.Runtime!.TSFunctionType,
+            "TextEncoder" => ctx.Runtime!.TSTextEncoderType,
+            "TextDecoder" => ctx.Runtime!.TSTextDecoderType,
+            _ => null
+        };
+        if (t == null) return false;
+        il.Emit(OpCodes.Ldtoken, t);
+        il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Type, "GetTypeFromHandle", ctx.Types.RuntimeTypeHandle));
         return true;
     }
 }

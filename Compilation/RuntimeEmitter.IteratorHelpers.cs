@@ -1164,14 +1164,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ret);
 
-        // MoveNext returned false — build { value: null, done: true }
+        // MoveNext returned false — build { value: <completion>, done: true }
+        // ECMA-262 27.3.2: the completion value is the generator's return expression
+        // result. SharpTS-emitted generators preserve it in Current even after MoveNext
+        // returns false (see EmitReturn in GeneratorMoveNextEmitter.Statements.cs). Native
+        // IEnumerators may throw on Current after done; swallow the exception to null.
         il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, dictLocal);
 
+        var completionLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, completionLocal);
+        il.BeginExceptionBlock();
+        il.Emit(OpCodes.Ldloc, enumLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.IEnumeratorOfObject, "Current"));
+        il.Emit(OpCodes.Stloc, completionLocal);
+        il.BeginCatchBlock(typeof(Exception));
+        il.Emit(OpCodes.Pop);
+        il.EndExceptionBlock();
+
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ldstr, "value");
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, completionLocal);
         il.Emit(OpCodes.Callvirt, _types.DictionaryStringObjectSetItem);
 
         il.Emit(OpCodes.Ldloc, dictLocal);

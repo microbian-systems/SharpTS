@@ -34,6 +34,48 @@ public partial class RuntimeEmitter
         var notDictLabel = il.DefineLabel();
         var setDescriptorDoneLabel = il.DefineLabel();
 
+        // Symbol-keyed path: Object.defineProperty(obj, symbol, {value:X}) must store X
+        // in the object's symbol dict so `obj[symbol]` can retrieve it. Without this,
+        // a later `obj[symbol]` read routes through EmitGetIndex's symbol-key handler
+        // which only consults the symbol dict (not the string-keyed PDS), and the
+        // value is silently invisible. yaml's Schema constructor depends on this for
+        // schema[SCALAR] = strTag.
+        var notSymbolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
+        il.Emit(OpCodes.Brfalse, notSymbolLabel);
+
+        // Extract value from descriptor dictionary (if it's a dict)
+        var symbolValueLocal = il.DeclareLocal(_types.Object);
+        var symbolDescDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var symbolDictWriteLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Stloc, symbolValueLocal);
+
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, symbolDescDictLocal);
+        il.Emit(OpCodes.Ldloc, symbolDescDictLocal);
+        il.Emit(OpCodes.Brfalse, symbolDictWriteLabel);
+        il.Emit(OpCodes.Ldloc, symbolDescDictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldloca, symbolValueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue", _types.String, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(symbolDictWriteLabel);
+        // GetSymbolDict(obj)[symbol] = value
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, symbolValueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item", _types.Object, _types.Object));
+        // Return the target object
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notSymbolLabel);
+
         // propName = prop.ToString()
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
@@ -78,6 +120,20 @@ public partial class RuntimeEmitter
         // Create new $CompiledPropertyDescriptor
         il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
         il.Emit(OpCodes.Stloc, descriptorLocal);
+
+        // ECMA-262 6.2.5.1 CompletePropertyDescriptor: when Object.defineProperty receives
+        // a partial descriptor, unspecified writable/enumerable/configurable default to FALSE.
+        // The ctor sets them to true (used by CreateDataProperty for `obj.foo = X`);
+        // we reset them here to match the spec for the defineProperty path.
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetSetMethod()!);
 
         // Check if descriptor is Dictionary<string, object?>
         il.Emit(OpCodes.Ldarg_2);

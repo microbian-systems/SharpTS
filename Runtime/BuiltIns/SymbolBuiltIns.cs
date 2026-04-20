@@ -24,17 +24,21 @@ public static class SymbolBuiltIns
     {
         return name switch
         {
-            // Well-known symbols - wrapped as zero-arity methods for registry consistency
-            "iterator" => new BuiltInMethod("iterator", 0, 0, (_, _, _) => SharpTSSymbol.Iterator),
-            "asyncIterator" => new BuiltInMethod("asyncIterator", 0, 0, (_, _, _) => SharpTSSymbol.AsyncIterator),
-            "toStringTag" => new BuiltInMethod("toStringTag", 0, 0, (_, _, _) => SharpTSSymbol.ToStringTag),
-            "hasInstance" => new BuiltInMethod("hasInstance", 0, 0, (_, _, _) => SharpTSSymbol.HasInstance),
-            "isConcatSpreadable" => new BuiltInMethod("isConcatSpreadable", 0, 0, (_, _, _) => SharpTSSymbol.IsConcatSpreadable),
-            "toPrimitive" => new BuiltInMethod("toPrimitive", 0, 0, (_, _, _) => SharpTSSymbol.ToPrimitive),
-            "species" => new BuiltInMethod("species", 0, 0, (_, _, _) => SharpTSSymbol.Species),
-            "unscopables" => new BuiltInMethod("unscopables", 0, 0, (_, _, _) => SharpTSSymbol.Unscopables),
-            "dispose" => new BuiltInMethod("dispose", 0, 0, (_, _, _) => SharpTSSymbol.Dispose),
-            "asyncDispose" => new BuiltInMethod("asyncDispose", 0, 0, (_, _, _) => SharpTSSymbol.AsyncDispose),
+            // Well-known symbols are PROPERTY-style constants (access returns the symbol
+            // value), not methods. Use CreateConstant so the IsConstant flag is set and
+            // the interpreter's Get fast-path materializes them on access — otherwise
+            // `Symbol.iterator` returns the wrapper method instead of the symbol itself
+            // and `typeof Symbol.iterator === 'symbol'` fails.
+            "iterator" => BuiltInMethod.CreateConstant("iterator", SharpTSSymbol.Iterator),
+            "asyncIterator" => BuiltInMethod.CreateConstant("asyncIterator", SharpTSSymbol.AsyncIterator),
+            "toStringTag" => BuiltInMethod.CreateConstant("toStringTag", SharpTSSymbol.ToStringTag),
+            "hasInstance" => BuiltInMethod.CreateConstant("hasInstance", SharpTSSymbol.HasInstance),
+            "isConcatSpreadable" => BuiltInMethod.CreateConstant("isConcatSpreadable", SharpTSSymbol.IsConcatSpreadable),
+            "toPrimitive" => BuiltInMethod.CreateConstant("toPrimitive", SharpTSSymbol.ToPrimitive),
+            "species" => BuiltInMethod.CreateConstant("species", SharpTSSymbol.Species),
+            "unscopables" => BuiltInMethod.CreateConstant("unscopables", SharpTSSymbol.Unscopables),
+            "dispose" => BuiltInMethod.CreateConstant("dispose", SharpTSSymbol.Dispose),
+            "asyncDispose" => BuiltInMethod.CreateConstant("asyncDispose", SharpTSSymbol.AsyncDispose),
 
             // Symbol.for() - returns a shared symbol from the global symbol registry
             "for" => new BuiltInMethod("for", 1, (_, _, args) =>

@@ -500,11 +500,16 @@ public partial class ILCompiler
                     }
                 }
 
-                // Store for body emission
-                if (!_classes.PreDefinedAccessors.TryGetValue(classStmt.Name.Lexeme, out var preDefinedAcc))
+                // Store for body emission. Key by typeBuilder.Name (matches EmitAccessor's lookup
+                // which uses typeBuilder.Name). The user-facing classStmt.Name.Lexeme (e.g. "Parser")
+                // can differ from the emitted type name (e.g. "$M_parser_Parser") in multi-module
+                // CJS compilation — keying by Lexeme caused EmitAccessor's TryGetValue to miss,
+                // leading it to define a second (empty) method with the same name and crash at
+                // class-load time with BadImageFormatException.
+                if (!_classes.PreDefinedAccessors.TryGetValue(className, out var preDefinedAcc))
                 {
                     preDefinedAcc = [];
-                    _classes.PreDefinedAccessors[classStmt.Name.Lexeme] = preDefinedAcc;
+                    _classes.PreDefinedAccessors[className] = preDefinedAcc;
                 }
                 preDefinedAcc[methodName] = methodBuilder;
 
@@ -747,6 +752,11 @@ public partial class ILCompiler
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+            // Arrow-closure DC field maps — required so arrow closures created inside
+            // this method populate their captured-DC fields at newobj time.
+            ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
+            ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
+            ArrowScopeDCFields = _closures.ArrowScopeDCFields.Count > 0 ? _closures.ArrowScopeDCFields : null,
             // CJS resolution — needed so `exports`, `module.exports`, and `require(...)`
             // work inside class method bodies nested in a CJS module.
             ModuleResolver = _modules.Resolver,
@@ -1095,5 +1105,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ret);
         }
+
+        ILLabelValidator.Validate(il, $"method {typeBuilder.Name}::{method.Name.Lexeme}");
     }
 }

@@ -15,14 +15,20 @@ public class SharpTSPropertyDescriptor
     /// <summary>Setter function for accessor properties</summary>
     public ISharpTSCallable? Set { get; set; }
 
-    /// <summary>Whether the property value can be changed</summary>
-    public bool Writable { get; set; } = true;
+    /// <summary>Whether the property value can be changed.</summary>
+    /// <remarks>
+    /// Default is false to match ECMA-262 6.2.5.1 CompletePropertyDescriptor, which
+    /// is the context used when parsing a user-supplied descriptor for
+    /// Object.defineProperty / Reflect.defineProperty. Sites that want "data
+    /// property" semantics (Writable=true, etc.) must pass the flag explicitly.
+    /// </remarks>
+    public bool Writable { get; set; } = false;
 
-    /// <summary>Whether the property shows up in enumeration</summary>
+    /// <summary>Whether the property shows up in enumeration.</summary>
     public bool Enumerable { get; set; } = false;
 
-    /// <summary>Whether the property can be deleted or changed</summary>
-    public bool Configurable { get; set; } = true;
+    /// <summary>Whether the property can be deleted or changed.</summary>
+    public bool Configurable { get; set; } = false;
 
     public SharpTSPropertyDescriptor() { }
 
@@ -30,9 +36,9 @@ public class SharpTSPropertyDescriptor
         object? value = null,
         ISharpTSCallable? getter = null,
         ISharpTSCallable? setter = null,
-        bool writable = true,
+        bool writable = false,
         bool enumerable = false,
-        bool configurable = true)
+        bool configurable = false)
     {
         Value = value;
         Get = getter;

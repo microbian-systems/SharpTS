@@ -107,6 +107,11 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         // and arrow function bodies are hoisted at their respective parse sites.
         statements = VarHoister.Hoist(statements);
 
+        // Lift generator function expressions to top-level function declarations so the
+        // existing generator-declaration IL pipeline handles them. No-op when the module
+        // contains no `function*() {...}` expressions.
+        statements = GeneratorArrowLifter.Lift(statements);
+
         return new ParseDiagnosticResult(statements, _diagnostics.Diagnostics);
     }
 

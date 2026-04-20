@@ -318,17 +318,94 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitBinary(Expr.Binary b)
     {
+        // Bitwise and shift operators need int32 coercion of both operands per ECMA-262 ToInt32.
+        if (IsBitwiseOrShiftOp(b.Operator.Type))
+        {
+            EmitBitwiseOrShiftBinary(b);
+            return;
+        }
+
         EmitExpression(b.Left);
         EnsureBoxed();
         EmitExpression(b.Right);
         EnsureBoxed();
 
+        // `in` and `instanceof` are binary operators not covered by TryEmitBinaryOperator.
+        switch (b.Operator.Type)
+        {
+            case TokenType.IN:
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.HasIn);
+                IL.Emit(OpCodes.Box, typeof(bool));
+                SetStackUnknown();
+                return;
+            case TokenType.INSTANCEOF:
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.InstanceOf);
+                IL.Emit(OpCodes.Box, typeof(bool));
+                SetStackUnknown();
+                return;
+        }
+
         if (!_helpers.TryEmitBinaryOperator(b.Operator.Type, Ctx.Runtime!.Add, Ctx.Runtime!.Equals))
         {
+            // Unsupported operator: pop both operands (stack must stay balanced for the verifier)
+            // and push a placeholder. Leaving one operand on the stack corrupts state-machine
+            // spill accounting for subsequent yields.
+            IL.Emit(OpCodes.Pop);
             IL.Emit(OpCodes.Pop);
             IL.Emit(OpCodes.Ldnull);
             SetStackUnknown();
         }
+    }
+
+    private static bool IsBitwiseOrShiftOp(TokenType op) => op is
+        TokenType.AMPERSAND or TokenType.PIPE or TokenType.CARET or
+        TokenType.LESS_LESS or TokenType.GREATER_GREATER or TokenType.GREATER_GREATER_GREATER;
+
+    /// <summary>
+    /// Emits a bitwise (&amp;, |, ^) or shift (&lt;&lt;, &gt;&gt;, &gt;&gt;&gt;) binary operator.
+    /// Per ECMA-262 ToInt32, both operands are coerced to int32, then the op applies.
+    /// Mirrors ILEmitter.EmitBitwiseBinary but without stack-type tracking.
+    /// </summary>
+    private void EmitBitwiseOrShiftBinary(Expr.Binary b)
+    {
+        EmitExpression(b.Left);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.JsToInt32);
+
+        EmitExpression(b.Right);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.JsToInt32);
+
+        switch (b.Operator.Type)
+        {
+            case TokenType.AMPERSAND: IL.Emit(OpCodes.And); break;
+            case TokenType.PIPE: IL.Emit(OpCodes.Or); break;
+            case TokenType.CARET: IL.Emit(OpCodes.Xor); break;
+            case TokenType.LESS_LESS:
+                IL.Emit(OpCodes.Ldc_I4, 0x1F);
+                IL.Emit(OpCodes.And);
+                IL.Emit(OpCodes.Shl);
+                break;
+            case TokenType.GREATER_GREATER:
+                IL.Emit(OpCodes.Ldc_I4, 0x1F);
+                IL.Emit(OpCodes.And);
+                IL.Emit(OpCodes.Shr);
+                break;
+            case TokenType.GREATER_GREATER_GREATER:
+                IL.Emit(OpCodes.Ldc_I4, 0x1F);
+                IL.Emit(OpCodes.And);
+                IL.Emit(OpCodes.Shr_Un);
+                IL.Emit(OpCodes.Conv_U8);
+                IL.Emit(OpCodes.Conv_R8);
+                IL.Emit(OpCodes.Box, typeof(double));
+                SetStackUnknown();
+                return;
+        }
+
+        // Integer-result ops: convert int32 result back to double and box to match JS number semantics.
+        IL.Emit(OpCodes.Conv_R8);
+        IL.Emit(OpCodes.Box, typeof(double));
+        SetStackUnknown();
     }
 
     /// <summary>
@@ -502,6 +579,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitAssign(Expr.Assign a)
     {
+        // CommonJS: `exports = X` → stsfld $exports (mirrors TryEmitCjsSet for module.exports).
+        if (TryEmitCjsAssign(a)) return;
+
         string name = a.Name.Lexeme;
 
         EmitExpression(a.Value);
@@ -1370,6 +1450,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         IL.Emit(OpCodes.Ldnull);
         IL.Emit(OpCodes.Ldtoken, method);
         IL.Emit(OpCodes.Call, Types.MethodBaseGetMethodFromHandle);
+        // GetMethodFromHandle returns MethodBase; $TSFunctionCtor expects MethodInfo.
+        // Without this Castclass, ILVerify rejects the stack type — the JIT has been
+        // tolerant so far, but a path leading here from a state-machine label with a
+        // different stack state trips PathStackDepth, which promotes the type error
+        // to an outright InvalidProgramException.
+        IL.Emit(OpCodes.Castclass, typeof(MethodInfo));
         IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSFunctionCtor);
         SetStackUnknown();
     }
@@ -1410,6 +1496,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             IL.Emit(OpCodes.Ldnull);
             IL.Emit(OpCodes.Ldtoken, funcMethod);
             IL.Emit(OpCodes.Call, Types.MethodBaseGetMethodFromHandle);
+            IL.Emit(OpCodes.Castclass, typeof(MethodInfo));
             IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSFunctionCtor);
             SetStackUnknown();
             return true;
@@ -1617,14 +1704,30 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // Check resolver (parameters, locals, captured variables, state machine fields)
         if (Resolver.HasVariable(name)) return true;
         // Check pseudo-variables and global constants
-        if (name is "Math" or "process" or "globalThis" or "Symbol" or "NaN" or "Infinity"
-            or "undefined" or "fetch" or "__filename" or "__dirname") return true;
+        if (name is "Math" or "process" or "globalThis" or "global" or "Symbol" or "NaN" or "Infinity"
+            or "undefined" or "fetch" or "__filename" or "__dirname"
+            or "parseFloat" or "parseInt" or "isNaN" or "isFinite"
+            or "encodeURIComponent" or "decodeURIComponent"
+            or "setTimeout" or "clearTimeout" or "setInterval" or "clearInterval"
+            or "queueMicrotask" or "structuredClone") return true;
         if (Ctx.TopLevelStaticVars?.ContainsKey(name) == true) return true;
         if (Ctx.Classes.ContainsKey(Ctx.ResolveClassName(name))) return true;
         if (Ctx.Functions.ContainsKey(Ctx.ResolveFunctionName(name))) return true;
         if (Ctx.InnerFunctionMethodsByName?.ContainsKey(name) == true) return true;
         if (Ctx.NamespaceFields?.ContainsKey(name) == true) return true;
         if (Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(name)) return true;
+        // Built-in constructor types (Array/Date/Map/Set/RegExp/Promise/Buffer/etc.) —
+        // without this, `typeof Array` returns `"undefined"` in compiled mode even though
+        // these names resolve fine everywhere else via TryEmitBuiltInClassType.
+        if (name is "Array" or "Date" or "RegExp" or "Map" or "Set"
+            or "WeakMap" or "WeakSet" or "Promise" or "Buffer" or "Function"
+            or "Object" or "String" or "Number" or "Boolean"
+            or "TextEncoder" or "TextDecoder") return true;
+        // CJS magic names visible in CJS bodies: `module` is registered in TopLevelStaticVars
+        // so the earlier check catches it; `exports` and `require` are handled by special
+        // emitter paths (TryEmitCjsVariable, TryEmitCjsRequireCall) — without this,
+        // `typeof exports === 'object'` short-circuits to `"undefined"`.
+        if (InCjsContext && (name is "exports" or "require")) return true;
         return false;
     }
 

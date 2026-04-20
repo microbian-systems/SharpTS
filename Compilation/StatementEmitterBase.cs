@@ -561,10 +561,20 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// </summary>
     protected virtual void EmitBlock(Stmt.Block b)
     {
-        if (b.Statements != null)
+        if (b.Statements == null) return;
+
+        // ES6 block scoping: let/const declared in the block are scoped to the block.
+        // Without this, an inner `const x = ...` registers a local that shadows the
+        // outer `let x` for the rest of the method — even after the block exits.
+        Ctx.Locals.EnterScope();
+        try
         {
             foreach (var stmt in b.Statements)
                 EmitStatement(stmt);
+        }
+        finally
+        {
+            Ctx.Locals.ExitScope();
         }
     }
 
@@ -646,30 +656,42 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         else
             IL.Emit(OpCodes.Br, defaultLabel);
 
-        // Emit case bodies
-        for (int i = 0; i < s.Cases.Count; i++)
+        // Register the switch end as the current break target so nested breaks
+        // (inside blocks, if/else, try/catch, etc.) exit the switch. Preserve the
+        // outer loop's continue target so `continue;` still propagates outward.
+        var outerContinue = CurrentLoop?.ContinueLabel ?? endLabel;
+        EnterLoop(endLabel, outerContinue);
+        try
         {
-            IL.MarkLabel(caseLabels[i]);
-            foreach (var stmt in s.Cases[i].Body)
+            // Emit case bodies
+            for (int i = 0; i < s.Cases.Count; i++)
             {
-                if (stmt is Stmt.Break breakStmt && breakStmt.Label == null)
-                    IL.Emit(OpCodes.Br, endLabel);
-                else
-                    EmitStatement(stmt);
+                IL.MarkLabel(caseLabels[i]);
+                foreach (var stmt in s.Cases[i].Body)
+                {
+                    if (stmt is Stmt.Break breakStmt && breakStmt.Label == null)
+                        IL.Emit(OpCodes.Br, endLabel);
+                    else
+                        EmitStatement(stmt);
+                }
+            }
+
+            // Default case
+            if (s.DefaultBody != null)
+            {
+                IL.MarkLabel(defaultLabel);
+                foreach (var stmt in s.DefaultBody)
+                {
+                    if (stmt is Stmt.Break breakStmt && breakStmt.Label == null)
+                        IL.Emit(OpCodes.Br, endLabel);
+                    else
+                        EmitStatement(stmt);
+                }
             }
         }
-
-        // Default case
-        if (s.DefaultBody != null)
+        finally
         {
-            IL.MarkLabel(defaultLabel);
-            foreach (var stmt in s.DefaultBody)
-            {
-                if (stmt is Stmt.Break breakStmt && breakStmt.Label == null)
-                    IL.Emit(OpCodes.Br, endLabel);
-                else
-                    EmitStatement(stmt);
-            }
+            ExitLoop();
         }
 
         IL.MarkLabel(endLabel);

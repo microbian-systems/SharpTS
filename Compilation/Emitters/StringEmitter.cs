@@ -32,6 +32,10 @@ public sealed class StringEmitter : ITypeEmitterStrategy
                 EmitSubstring(emitter, arguments);
                 return true;
 
+            case "substr":
+                EmitSubstr(emitter, arguments);
+                return true;
+
             case "indexOf":
                 EmitIndexOf(emitter, arguments);
                 return true;
@@ -212,6 +216,24 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         il.Emit(OpCodes.Call, ctx.Runtime!.StringSubstring);
     }
 
+    private static void EmitSubstr(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        il.Emit(OpCodes.Ldc_I4, arguments.Count);
+        il.Emit(OpCodes.Newarr, ctx.Types.Object);
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4, i);
+            emitter.EmitExpression(arguments[i]);
+            emitter.EmitBoxIfNeeded(arguments[i]);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.StringSubstr);
+    }
+
     private static void EmitIndexOf(IEmitterContext emitter, List<Expr> arguments)
     {
         var ctx = emitter.Context;
@@ -227,7 +249,19 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         {
             il.Emit(OpCodes.Ldstr, "");
         }
-        il.Emit(OpCodes.Call, ctx.Runtime!.StringIndexOf);
+
+        // JS: str.indexOf(search, fromIndex). With fromIndex, use the from-variant.
+        if (arguments.Count >= 2)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+            il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Convert, "ToDouble", ctx.Types.Object));
+            il.Emit(OpCodes.Call, ctx.Runtime!.StringIndexOfFrom);
+        }
+        else
+        {
+            il.Emit(OpCodes.Call, ctx.Runtime!.StringIndexOf);
+        }
         il.Emit(OpCodes.Box, ctx.Types.Double);
     }
 

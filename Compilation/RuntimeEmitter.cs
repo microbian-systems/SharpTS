@@ -241,6 +241,11 @@ public partial class RuntimeEmitter
         // Must come before fs module methods which use it
         EmitStatsClass(moduleBuilder, runtime);
 
+        // Emit $CJSModule — backs the `module` local bound in every CJS module init.
+        // No ordering constraint relative to EmitRuntimeClass; placed here alongside
+        // other small emitted wrapper types.
+        EmitCjsModuleClass(moduleBuilder, runtime);
+
         // Emit $BoundArrayMethod type and constructor (Phase 1)
         // Must come before EmitRuntimeClass so GetListProperty can use the constructor
         EmitBoundArrayMethodTypeDefinition(moduleBuilder, runtime);

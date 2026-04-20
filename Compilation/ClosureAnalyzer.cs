@@ -118,6 +118,14 @@ public class ClosureAnalyzer : AstVisitorBase
                 DeclareVariable(f.Name.Lexeme);
             else if (stmt is Stmt.Export export && export.Declaration is Stmt.Function ef && ef.Body != null)
                 DeclareVariable(ef.Name.Lexeme);
+            // Also hoist `var X = ...` declarations so inner function declarations appearing
+            // earlier in source order see them as captured outer variables. JS spec hoists
+            // var declarations to the top of the enclosing function. Without this, lodash's
+            // pattern `function baseRest() { ... setToString(...) ... } ... var setToString
+            // = shortOut(baseSetToString);` makes baseRest treat setToString as undeclared,
+            // and the compiled inner function body emits a runtime ReferenceError fallback.
+            else if (stmt is Stmt.Var vr && vr.IsVar)
+                DeclareVariable(vr.Name.Lexeme);
         }
     }
 

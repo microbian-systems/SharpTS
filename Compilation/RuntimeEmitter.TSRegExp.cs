@@ -401,7 +401,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, optionsLocal);
         il.MarkLabel(skipMultilineLabel);
 
-        // if (_flags.Contains('s')) options |= RegexOptions.Singleline
+        // if (_flags.Contains('s')) options = (options & ~ECMAScript) | Singleline
+        // ECMAScript mode is mutually exclusive with Singleline in .NET, so clear it when 's' is requested.
         var skipSinglelineLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpFlagsField);
@@ -409,6 +410,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.String.GetMethod("Contains", [_types.Char])!);
         il.Emit(OpCodes.Brfalse, skipSinglelineLabel);
         il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Ldc_I4, ~(int)RegexOptions.ECMAScript);
+        il.Emit(OpCodes.And);
         il.Emit(OpCodes.Ldc_I4, (int)RegexOptions.Singleline);
         il.Emit(OpCodes.Or);
         il.Emit(OpCodes.Stloc, optionsLocal);
@@ -571,6 +574,20 @@ public partial class RuntimeEmitter
         var returnFalseLabel = il.DefineLabel();
         var matchLocal = il.DeclareLocal(typeof(Match));
         var startIndexLocal = il.DeclareLocal(_types.Int32);
+        var inputLocal = il.DeclareLocal(_types.String);
+
+        // input = input ?? "undefined" (JS: regex.test(undefined) tests against "undefined")
+        il.Emit(OpCodes.Ldarg_1);
+        var inputNotNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, inputNotNullLabel);
+        il.Emit(OpCodes.Ldstr, "undefined");
+        il.Emit(OpCodes.Stloc, inputLocal);
+        var inputAssignedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, inputAssignedLabel);
+        il.MarkLabel(inputNotNullLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stloc, inputLocal);
+        il.MarkLabel(inputAssignedLabel);
 
         // if (_global) goto globalLabel
         il.Emit(OpCodes.Ldarg_0);
@@ -581,7 +598,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(notGlobalLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpRegexField);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, inputLocal);
         il.Emit(OpCodes.Callvirt, typeof(Regex).GetMethod("IsMatch", [_types.String])!);
         il.Emit(OpCodes.Ret);
 
@@ -591,7 +608,7 @@ public partial class RuntimeEmitter
         // if (LastIndex > input.Length) { LastIndex = 0; return false; }
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpLastIndexField);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, inputLocal);
         il.Emit(OpCodes.Callvirt, _types.String.GetProperty("Length")!.GetGetMethod()!);
         il.Emit(OpCodes.Ble, returnFalseLabel);
 
@@ -606,7 +623,7 @@ public partial class RuntimeEmitter
         // var startIndex = Math.Min(LastIndex, input.Length)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpLastIndexField);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, inputLocal);
         il.Emit(OpCodes.Callvirt, _types.String.GetProperty("Length")!.GetGetMethod()!);
         il.Emit(OpCodes.Call, typeof(Math).GetMethod("Min", [_types.Int32, _types.Int32])!);
         il.Emit(OpCodes.Stloc, startIndexLocal);
@@ -614,7 +631,7 @@ public partial class RuntimeEmitter
         // var match = _regex.Match(input, startIndex)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpRegexField);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, inputLocal);
         il.Emit(OpCodes.Ldloc, startIndexLocal);
         il.Emit(OpCodes.Callvirt, _types.RegexMatchStringInt);
         il.Emit(OpCodes.Stloc, matchLocal);

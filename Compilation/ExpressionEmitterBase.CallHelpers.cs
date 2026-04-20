@@ -226,6 +226,133 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
+    /// Emits a method call whose name (e.g. <c>charAt</c>) collides with a built-in string
+    /// method, but whose static receiver type is <i>not</i> known to be a string. The
+    /// naive "fall back to the string strategy" path crashes at runtime with
+    /// <c>InvalidCastException</c> when the receiver is actually a user class with its
+    /// own <c>charAt</c> (e.g. yaml's Lexer). Instead, emit dynamic method lookup that
+    /// preserves <c>this</c>: <c>InvokeMethodValue(obj, GetProperty(obj, methodName), args)</c>.
+    /// String receivers still resolve correctly — <c>GetProperty</c> routes string method
+    /// lookups to the built-in string prototype, and <c>InvokeMethodValue</c> binds the
+    /// receiver so the built-in can read it back.
+    /// </summary>
+    private void EmitDynamicMethodCallPreservingThis(Expr obj, string methodName, List<Expr> arguments)
+    {
+        EmitExpression(obj);
+        EnsureBoxed();
+        var objLocal = IL.DeclareLocal(Types.Object);
+        IL.Emit(OpCodes.Stloc, objLocal);
+
+        // Fast path: if receiver is a string at runtime, dispatch to the string-strategy path
+        // directly. GetProperty(str, methodName) returns null for everything except "length",
+        // so the generic path below would produce null → InvokeMethodValue(_, null, _) → null.
+        // This matters in generator/async bodies where TypeMap typically can't prove the
+        // receiver is a string.
+        if (IsRuntimeDispatchableStringMethod(methodName))
+        {
+            var notStringLabel = IL.DefineLabel();
+            var endLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Isinst, Types.String);
+            IL.Emit(OpCodes.Brfalse, notStringLabel);
+
+            EmitRuntimeStringMethod(objLocal, methodName, arguments);
+            IL.Emit(OpCodes.Br, endLabel);
+
+            IL.MarkLabel(notStringLabel);
+            EmitGetPropertyAndInvoke(objLocal, methodName, arguments);
+            IL.MarkLabel(endLabel);
+            SetStackUnknown();
+            return;
+        }
+
+        EmitGetPropertyAndInvoke(objLocal, methodName, arguments);
+        SetStackUnknown();
+    }
+
+    private void EmitGetPropertyAndInvoke(LocalBuilder objLocal, string methodName, List<Expr> arguments)
+    {
+        IL.Emit(OpCodes.Ldloc, objLocal);                // receiver for Invoke
+        IL.Emit(OpCodes.Ldloc, objLocal);                // receiver for GetProperty
+        IL.Emit(OpCodes.Ldstr, methodName);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty); // → fn
+        IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+        IL.Emit(OpCodes.Newarr, Types.Object);
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldc_I4, i);
+            EmitExpression(arguments[i]);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Stelem_Ref);
+        }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
+    }
+
+    private static bool IsRuntimeDispatchableStringMethod(string methodName) => methodName is
+        "substring" or "substr" or "charAt" or "charCodeAt" or "toUpperCase" or "toLowerCase"
+        or "trim" or "trimStart" or "trimEnd" or "startsWith" or "endsWith"
+        or "repeat" or "padStart" or "padEnd" or "at";
+
+    private void EmitRuntimeStringMethod(LocalBuilder objLocal, string methodName, List<Expr> arguments)
+    {
+        // Stack entry: (nothing — objLocal is the receiver). Push the string, then args, then call.
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Castclass, Types.String);
+
+        switch (methodName)
+        {
+            case "substring":
+                // StringSubstring takes (string, object[]): pack args into object[].
+                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+                IL.Emit(OpCodes.Newarr, Types.Object);
+                for (int i = 0; i < arguments.Count; i++)
+                {
+                    IL.Emit(OpCodes.Dup);
+                    IL.Emit(OpCodes.Ldc_I4, i);
+                    EmitExpression(arguments[i]);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Stelem_Ref);
+                }
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.StringSubstring);
+                break;
+
+            case "substr":
+                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+                IL.Emit(OpCodes.Newarr, Types.Object);
+                for (int i = 0; i < arguments.Count; i++)
+                {
+                    IL.Emit(OpCodes.Dup);
+                    IL.Emit(OpCodes.Ldc_I4, i);
+                    EmitExpression(arguments[i]);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Stelem_Ref);
+                }
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.StringSubstr);
+                break;
+
+            case "toUpperCase":
+                IL.Emit(OpCodes.Callvirt, Types.GetMethodNoParams(Types.String, "ToUpper"));
+                break;
+
+            case "toLowerCase":
+                IL.Emit(OpCodes.Callvirt, Types.GetMethodNoParams(Types.String, "ToLower"));
+                break;
+
+            case "trim":
+                IL.Emit(OpCodes.Callvirt, Types.GetMethodNoParams(Types.String, "Trim"));
+                break;
+
+            default:
+                // Other known methods: fall back to GetProperty+Invoke; the caller still
+                // returns a value, just not via the direct runtime method.
+                IL.Emit(OpCodes.Pop); // pop the cast-to-string receiver we pushed
+                EmitGetPropertyAndInvoke(objLocal, methodName, arguments);
+                break;
+        }
+    }
+
+    /// <summary>
     /// Emits arguments for a function call with rest parameter, handling spreads.
     /// Emits regular args first, then builds an array for the rest parameter.
     /// </summary>
@@ -451,17 +578,48 @@ public abstract partial class ExpressionEmitterBase
             }
         }
 
-        // Fallback: method name-based dispatch for known built-in methods
-        if (Ctx.TypeEmitterRegistry != null)
+        // Fallback: method name-based dispatch for known built-in methods, BUT only when
+        // the receiver's static type doesn't already point to a user-defined class. A
+        // JS class can legitimately define its own `charAt`/`slice`/etc. (yaml's Lexer
+        // does exactly this: `charAt(n) { return this.buffer[this.pos + n]; }`); if we
+        // fell through to the string strategy for those, we'd emit `castclass string`
+        // on the Lexer instance and blow up at runtime with InvalidCastException.
+        // `null`/`Any`/`Unknown` still fall through — those are the genuinely-ambiguous
+        // callsites this fallback was added for.
+        bool receiverIsUserClassLike = objType is TypeSystem.TypeInfo.Instance
+            or TypeSystem.TypeInfo.Class
+            or TypeSystem.TypeInfo.GenericClass
+            or TypeSystem.TypeInfo.MutableClass
+            or TypeSystem.TypeInfo.Interface
+            or TypeSystem.TypeInfo.GenericInterface
+            or TypeSystem.TypeInfo.Record
+            or TypeSystem.TypeInfo.InstantiatedGeneric;
+
+        if (Ctx.TypeEmitterRegistry != null && !receiverIsUserClassLike)
         {
-            if (methodName is "charAt" or "substring" or "toUpperCase" or "toLowerCase"
+            if (methodName is "charAt" or "substring" or "substr" or "toUpperCase" or "toLowerCase"
                 or "trim" or "replace" or "split" or "startsWith" or "endsWith"
                 or "repeat" or "padStart" or "padEnd" or "charCodeAt" or "lastIndexOf"
                 or "trimStart" or "trimEnd" or "replaceAll" or "at" or "match" or "search")
             {
-                var stringStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.String());
-                if (stringStrategy != null && stringStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                // When the receiver's type is statically known to be a String (or a
+                // union/literal that resolves to string), use the direct string-strategy
+                // path. Otherwise — e.g., objType is null/Any/Unknown, which happens
+                // frequently for values flowing through CJS imports — emit a runtime
+                // `isinst string` dispatch so a user class with its own `charAt` is
+                // routed to dynamic method invocation instead of a cast-to-string crash.
+                bool receiverIsKnownString = objType is TypeSystem.TypeInfo.String or TypeSystem.TypeInfo.StringLiteral;
+                if (receiverIsKnownString)
+                {
+                    var stringStrategy = Ctx.TypeEmitterRegistry.GetStrategy(new TypeSystem.TypeInfo.String());
+                    if (stringStrategy != null && stringStrategy.TryEmitMethodCall(this, methodGet.Object, methodName, c.Arguments))
+                        return true;
+                }
+                else
+                {
+                    EmitDynamicMethodCallPreservingThis(methodGet.Object, methodName, c.Arguments);
                     return true;
+                }
             }
 
             if (methodName is "pop" or "shift" or "unshift" or "map" or "filter"
@@ -674,15 +832,34 @@ public abstract partial class ExpressionEmitterBase
 
     protected bool TryEmitDirectMethodCall(Expr receiver, string methodName, List<Expr> arguments)
     {
-        var receiverType = Ctx.TypeMap?.Get(receiver);
-        if (receiverType is not TypeSystem.TypeInfo.Instance instance)
-            return false;
+        string? simpleClassName = null;
 
-        string? simpleClassName = instance.ClassType switch
+        // Path A: TypeMap resolved the receiver to a class Instance — the normal case for
+        // ILEmitter and for user code whose types we fully inferred.
+        var receiverType = Ctx.TypeMap?.Get(receiver);
+        if (receiverType is TypeSystem.TypeInfo.Instance instance)
         {
-            TypeSystem.TypeInfo.Class classType => classType.Name,
-            _ => null
-        };
+            simpleClassName = instance.ClassType switch
+            {
+                TypeSystem.TypeInfo.Class classType => classType.Name,
+                _ => null
+            };
+        }
+
+        // Path B: `this` inside a state-machine body (generator/async `MoveNext`). The
+        // TypeMap entry for the original `Expr.This` node is often null here — the node
+        // was type-checked in the class-method body, then re-used verbatim inside the
+        // lowered state-machine body where no fresh type-check runs. CurrentClassName
+        // tells us which class we're lowering from, which is enough to route the call
+        // through the user's own method (e.g. yaml's `*end() { ...; yield* this.pop(); }`
+        // sees `pop` on Parser and would otherwise crash — "pop" in the array-method
+        // fallback list would send it through ArrayPop with the Parser receiver cast to
+        // a null `List<object>`).
+        if (simpleClassName is null && receiver is Expr.This && Ctx.CurrentClassName is { } className1)
+        {
+            simpleClassName = className1;
+        }
+
         if (simpleClassName == null)
             return false;
 

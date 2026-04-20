@@ -62,6 +62,12 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
         return false;
     }
 
+    /// <summary>Returns the names of JS user-assigned properties on this function
+    /// (not built-in members like name/length/bind). Used by for...in and Object.keys —
+    /// lodash enumerates its own utility map by iterating `for (var key in lodash)`.</summary>
+    public IEnumerable<string> PropertyKeys =>
+        _properties?.Keys ?? System.Linq.Enumerable.Empty<string>();
+
     /// <summary>Sets a JS-object property on this function.</summary>
     public void SetProperty(string name, object? value)
     {
@@ -307,6 +313,10 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
         return false;
     }
 
+    /// <summary>User-assigned property names on this arrow/function-expression.</summary>
+    public IEnumerable<string> PropertyKeys =>
+        _properties?.Keys ?? System.Linq.Enumerable.Empty<string>();
+
     /// <summary>Sets a JS-object property on this arrow function.</summary>
     public void SetProperty(string name, object? value)
     {
@@ -364,6 +374,16 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
 
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
+        // Function expressions (HasOwnThis) bind their own `arguments`; true arrows
+        // (HasOwnThis=false) inherit it from the enclosing scope per JS spec. Needed
+        // for lodash-style wrappers: `function outer() { return function() {
+        // return func.apply(this, arguments); }; }` — the returned function is a
+        // function expression, not an arrow, and must see its own `arguments`.
+        if (HasOwnThis)
+        {
+            environment.Define("arguments", new SharpTSArray(new List<object?>(arguments)));
+        }
+
         if (_declaration.ExpressionBody != null)
         {
             // Expression body - evaluate and return directly
@@ -415,6 +435,14 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
         }
 
         ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
+
+        // Function expressions (HasOwnThis) bind their own `arguments`; true arrows do not.
+        if (HasOwnThis)
+        {
+            var argsList = new List<object?>(arguments.Length);
+            for (int i = 0; i < arguments.Length; i++) argsList.Add(arguments[i].ToObject());
+            environment.Define("arguments", new SharpTSArray(argsList));
+        }
 
         if (_declaration.ExpressionBody != null)
         {

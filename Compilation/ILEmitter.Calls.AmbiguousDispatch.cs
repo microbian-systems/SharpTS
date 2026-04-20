@@ -63,7 +63,21 @@ public partial class ILEmitter
                 {
                     IL.Emit(OpCodes.Ldstr, "");
                 }
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.StringIndexOf);
+                // Optional 2nd arg: fromIndex. Use the from-variant when present; otherwise
+                // the single-arg helper. Previously ignored any second arg entirely, which
+                // silently produced wrong results for `str.indexOf(ch, pos)` (e.g. yaml's
+                // buffer.indexOf('\n', this.pos)).
+                if (arguments.Count >= 2)
+                {
+                    EmitExpression(arguments[1]);
+                    EmitBoxIfNeeded(arguments[1]);
+                    IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Convert, "ToDouble", _ctx.Types.Object));
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.StringIndexOfFrom);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.StringIndexOf);
+                }
                 IL.Emit(OpCodes.Box, _ctx.Types.Double);
                 break;
 

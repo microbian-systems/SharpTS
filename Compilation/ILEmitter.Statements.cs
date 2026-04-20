@@ -954,6 +954,20 @@ public partial class ILEmitter
             {
                 EmitBoxIfNeeded(r.Value);
             }
+            else if (returnType == typeof(void))
+            {
+                // Void method (most commonly a constructor) — discard the value to keep
+                // the stack balanced on ret. JS constructors can return a replacement
+                // object (spec: if the returned value is an object, it replaces `this`),
+                // but .NET ctors must return void with an empty stack. We fall back to
+                // ignoring the return value, matching the common case where ctors return
+                // primitives or `undefined`; spec-compliant object substitution would
+                // require rewriting the `new` call site and is out of scope here.
+                // Required for real npm packages that use this idiom (semver's Comparator
+                // ctor does `return comp` when the argument is already a Comparator).
+                EmitBoxIfNeeded(r.Value);
+                IL.Emit(OpCodes.Pop);
+            }
             else if (_ctx.Types.IsDouble(returnType))
             {
                 // Ensure we have an unboxed double for : number return type
@@ -1124,57 +1138,69 @@ public partial class ILEmitter
             builder.Emit_Br(defaultLabel);
         }
 
-        // Emit case bodies
-        for (int i = 0; i < s.Cases.Count; i++)
+        // Register the switch end as the current break target so nested breaks
+        // (inside blocks, if/else, try/catch, etc.) exit the switch. Preserve the
+        // outer loop's continue target so `continue;` still propagates outward.
+        var outerContinue = CurrentLoop?.ContinueLabel ?? endLabel;
+        EnterLoop(endLabel, outerContinue);
+        try
         {
-            builder.MarkLabel(caseLabels[i]);
-            foreach (var stmt in s.Cases[i].Body)
+            // Emit case bodies
+            for (int i = 0; i < s.Cases.Count; i++)
             {
-                if (stmt is Stmt.Break breakStmt)
+                builder.MarkLabel(caseLabels[i]);
+                foreach (var stmt in s.Cases[i].Body)
                 {
-                    if (breakStmt.Label != null)
+                    if (stmt is Stmt.Break breakStmt)
                     {
-                        // Labeled break - find and jump to the labeled target
-                        EmitBreak(breakStmt);
+                        if (breakStmt.Label != null)
+                        {
+                            // Labeled break - find and jump to the labeled target
+                            EmitBreak(breakStmt);
+                        }
+                        else
+                        {
+                            // Unlabeled break - exits switch only
+                            builder.Emit_Br(endLabel);
+                        }
                     }
                     else
                     {
-                        // Unlabeled break - exits switch only
-                        builder.Emit_Br(endLabel);
+                        EmitStatement(stmt);
                     }
                 }
-                else
-                {
-                    EmitStatement(stmt);
-                }
+                // Fall through if no break
             }
-            // Fall through if no break
-        }
 
-        // Default case (skip if unreachable)
-        if (s.DefaultBody != null && !skipDefault)
-        {
-            builder.MarkLabel(defaultLabel);
-            foreach (var stmt in s.DefaultBody)
+            // Default case (skip if unreachable)
+            if (s.DefaultBody != null && !skipDefault)
             {
-                if (stmt is Stmt.Break breakStmt)
+                builder.MarkLabel(defaultLabel);
+                foreach (var stmt in s.DefaultBody)
                 {
-                    if (breakStmt.Label != null)
+                    if (stmt is Stmt.Break breakStmt)
                     {
-                        // Labeled break - find and jump to the labeled target
-                        EmitBreak(breakStmt);
+                        if (breakStmt.Label != null)
+                        {
+                            // Labeled break - find and jump to the labeled target
+                            EmitBreak(breakStmt);
+                        }
+                        else
+                        {
+                            // Unlabeled break - exits switch only
+                            builder.Emit_Br(endLabel);
+                        }
                     }
                     else
                     {
-                        // Unlabeled break - exits switch only
-                        builder.Emit_Br(endLabel);
+                        EmitStatement(stmt);
                     }
                 }
-                else
-                {
-                    EmitStatement(stmt);
-                }
             }
+        }
+        finally
+        {
+            ExitLoop();
         }
 
         builder.MarkLabel(endLabel);

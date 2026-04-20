@@ -158,7 +158,11 @@ public sealed class BuiltInStaticBuilder
     /// </summary>
     public BuiltInStaticBuilder CallableConstant(string name, object? value)
     {
-        _methods[name] = new BuiltInMethod(name, 0, 0, (_, _, _) => value);
+        // Use CreateConstant so the built method carries IsConstant=true; the interpreter
+        // property-access shortcut uses that flag to decide whether to auto-invoke (constants
+        // materialize on read) vs. return the method reference (real zero-arity methods like
+        // Date.now must be aliasable: `const n = Date.now; n()`).
+        _methods[name] = BuiltInMethod.CreateConstant(name, value);
         return this;
     }
 

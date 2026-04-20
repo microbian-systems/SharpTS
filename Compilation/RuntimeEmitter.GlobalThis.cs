@@ -145,22 +145,57 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brtrue, isFiniteLabel);
 
-        // Check for known built-in namespaces — return null (namespace marker) for dynamic access
-        // These are normally resolved statically at compile time, but dynamic index access
-        // (e.g., globalThis["Math"]) needs runtime dispatch.
+        // Built-in class constructors — return the actual .NET Type (Ldtoken +
+        // GetTypeFromHandle) so `typeof globalThis.Array === "function"` and
+        // `globalThis.Array === Array` hold. Previously these all returned null
+        // as a "namespace marker," which broke lodash-style feature detection:
+        // `typeof root.Object === "object" && root.Object === Object` was false
+        // because root.Object was null.
         var strEquals = _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String);
-        string[] namespaces =
+        var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
+
+        void EmitTypeBranch(string name, Type t)
+        {
+            var notThisName = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, strEquals);
+            il.Emit(OpCodes.Brfalse, notThisName);
+            il.Emit(OpCodes.Ldtoken, t);
+            il.Emit(OpCodes.Call, getTypeFromHandle);
+            il.Emit(OpCodes.Br, returnLabel);
+            il.MarkLabel(notThisName);
+        }
+
+        EmitTypeBranch("Array", _types.IListOfObject);
+        EmitTypeBranch("Date", runtime.TSDateType);
+        EmitTypeBranch("RegExp", runtime.TSRegExpType);
+        EmitTypeBranch("Map", _types.DictionaryObjectObject);
+        EmitTypeBranch("Set", _types.HashSetOfObject);
+        EmitTypeBranch("WeakMap", _types.ConditionalWeakTableObjectObject);
+        EmitTypeBranch("WeakSet", _types.ConditionalWeakTableObjectObject);
+        EmitTypeBranch("Promise", _types.TaskOfObject);
+        EmitTypeBranch("Buffer", runtime.TSBufferType);
+        EmitTypeBranch("Function", runtime.TSFunctionType);
+        EmitTypeBranch("TextEncoder", runtime.TSTextEncoderType);
+        EmitTypeBranch("TextDecoder", runtime.TSTextDecoderType);
+
+        // Remaining named namespaces (Math, JSON, console, Object, Error, Reflect,
+        // process, Number, String, Boolean, Symbol) are represented as singletons
+        // in the runtime rather than .NET Type instances. Keep the null-marker
+        // behavior for those — compile-time static dispatch already routes through
+        // the dedicated namespace emitters (NumberStaticEmitter etc.).
+        string[] singletonNamespaces =
         [
-            "Math", "JSON", "console", "Object", "Array", "Date", "RegExp",
-            "Map", "Set", "WeakMap", "WeakSet", "Error", "Reflect",
-            "process", "Number", "String", "Boolean", "Symbol", "Promise", "Buffer"
+            "Math", "JSON", "console", "Object", "Error", "Reflect",
+            "process", "Number", "String", "Boolean", "Symbol"
         ];
-        foreach (var ns in namespaces)
+        foreach (var ns in singletonNamespaces)
         {
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldstr, ns);
             il.Emit(OpCodes.Call, strEquals);
-            il.Emit(OpCodes.Brtrue, selfRefLabel); // null marker, same as static namespace access
+            il.Emit(OpCodes.Brtrue, selfRefLabel); // null marker
         }
 
         // Default: return undefined

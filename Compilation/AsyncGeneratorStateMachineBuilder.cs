@@ -556,6 +556,8 @@ public class AsyncGeneratorStateMachineBuilder
     /// </summary>
     public Type CreateType()
     {
+        ILLabelValidator.SweepAllTypes(new[] { _stateMachineType });
+        ILLabelValidator.SweepConstructors(new[] { _stateMachineType });
         return _stateMachineType.CreateType()!;
     }
 }

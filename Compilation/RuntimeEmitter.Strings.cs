@@ -134,6 +134,103 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits StringSubstr: str.substr(start, length). JS Annex B (deprecated but widely used).
+    /// Negative start counts from end; length clamped. Returns substring of specified length.
+    /// Needed by yaml's lexer (pushCount uses `buffer.substr(pos, n)` to emit single-char tokens).
+    /// </summary>
+    private void EmitStringSubstr(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "StringSubstr",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.String, _types.ObjectArray]
+        );
+        runtime.StringSubstr = method;
+
+        var il = method.GetILGenerator();
+        var lenLocal = il.DeclareLocal(_types.Int32);
+        var startLocal = il.DeclareLocal(_types.Int32);
+        var lengthLocal = il.DeclareLocal(_types.Int32);
+
+        // int len = str.Length
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.String, "get_Length"));
+        il.Emit(OpCodes.Stloc, lenLocal);
+
+        // int start = (int)(double)args[0]; if (start < 0) start = max(0, len + start)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, startLocal);
+
+        var nonNegStart = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bge, nonNegStart);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Max", _types.Int32, _types.Int32));
+        il.Emit(OpCodes.Stloc, startLocal);
+        il.MarkLabel(nonNegStart);
+
+        // Clamp start to [0, len]
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Min", _types.Int32, _types.Int32));
+        il.Emit(OpCodes.Stloc, startLocal);
+
+        // int length = args.Length >= 2 ? (int)(double)args[1] : len - start
+        var hasLength = il.DefineLabel();
+        var afterLength = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Bgt, hasLength);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Br, afterLength);
+        il.MarkLabel(hasLength);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.MarkLabel(afterLength);
+        il.Emit(OpCodes.Stloc, lengthLocal);
+
+        // If length <= 0, return ""
+        var validLength = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, lengthLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bgt, validLength);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ret);
+
+        // Clamp length to [0, len - start]
+        il.MarkLabel(validLength);
+        il.Emit(OpCodes.Ldloc, lengthLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Min", _types.Int32, _types.Int32));
+        il.Emit(OpCodes.Stloc, lengthLocal);
+
+        // return str.Substring(start, length)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldloc, lengthLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Substring", _types.Int32, _types.Int32));
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitStringIndexOf(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
@@ -151,6 +248,62 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "IndexOf", _types.String));
         il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits StringIndexOfFrom: str.indexOf(search, fromIndex). JS-spec: fromIndex is clamped
+    /// to [0, length]; out-of-range returns -1. Needed by yaml's lexer (buffer.indexOf('\n', pos)).
+    /// </summary>
+    private void EmitStringIndexOfFrom(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "StringIndexOfFrom",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.String, _types.String, _types.Double]
+        );
+        runtime.StringIndexOfFrom = method;
+
+        var il = method.GetILGenerator();
+        var idxLocal = il.DeclareLocal(_types.Int32);
+        var lenLocal = il.DeclareLocal(_types.Int32);
+        var notFoundLabel = il.DefineLabel();
+        var clampMaxLabel = il.DefineLabel();
+
+        // int len = str.Length
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.String, "get_Length"));
+        il.Emit(OpCodes.Stloc, lenLocal);
+
+        // int idx = (int)fromIndex (NaN → 0 via Convert semantics; we rely on caller coercing)
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, idxLocal);
+
+        // if (idx < 0) idx = 0
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bge, clampMaxLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idxLocal);
+
+        // if (idx > len) return -1 (past end)
+        il.MarkLabel(clampMaxLabel);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bgt, notFoundLabel);
+
+        // return (double)str.IndexOf(search, idx)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "IndexOf", _types.String, _types.Int32));
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notFoundLabel);
+        il.Emit(OpCodes.Ldc_R8, -1.0);
         il.Emit(OpCodes.Ret);
     }
 

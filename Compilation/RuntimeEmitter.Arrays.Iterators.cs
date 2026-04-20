@@ -259,7 +259,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(loopEnd);
-        il.Emit(OpCodes.Ldnull);
+        // ECMA-262 23.1.3.10 Array.prototype.find: return undefined when no element matches.
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
     }
 
@@ -452,7 +453,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(loopEnd);
-        il.Emit(OpCodes.Ldnull);
+        // ECMA-262 23.1.3.11 Array.prototype.findLast: return undefined when no element matches.
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
     }
 

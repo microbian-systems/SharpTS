@@ -526,7 +526,8 @@ public static class ArrayBuiltIns
             if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
                 return RuntimeValue.FromBoxed(arr.Elements[i]);
         }
-        return RuntimeValue.Null;
+        // ECMA-262 23.1.3.10: return undefined when no element matches.
+        return RuntimeValue.Undefined;
     }
 
     private static RuntimeValue FindIndexV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
@@ -654,7 +655,8 @@ public static class ArrayBuiltIns
             if (iter.InvokeRV(interp, arr.Elements[i], i).IsTruthy())
                 return RuntimeValue.FromBoxed(arr.Elements[i]);
         }
-        return RuntimeValue.Null;
+        // ECMA-262 23.1.3.11: return undefined when no element matches.
+        return RuntimeValue.Undefined;
     }
 
     private static RuntimeValue FindLastIndexV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)

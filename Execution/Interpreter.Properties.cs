@@ -284,11 +284,13 @@ public partial class Interpreter
             var member = BuiltInRegistry.Instance.GetStaticMethod(nsVar.Name.Lexeme, get.Name.Lexeme);
             if (member != null)
             {
-                // If it's a constant (like Number.MAX_VALUE), it's wrapped in a BuiltInMethod
-                // that returns the value when invoked with no args
-                if (member is BuiltInMethod bm && bm.MinArity == 0 && bm.MaxArity == 0)
+                // Only invoke when the method is marked as wrapping a constant (e.g. Number.MAX_VALUE).
+                // Previously the check was `MinArity == 0 && MaxArity == 0`, which also matched real
+                // zero-arity methods like Date.now — breaking the `const nativeNow = Date.now;
+                // nativeNow()` aliasing idiom (used by lodash/minimatch/etc.). IsConstant is set
+                // by BuiltInMethod.CreateConstant / BuiltInStaticBuilder.CallableConstant.
+                if (member is BuiltInMethod bm && bm.IsConstant)
                 {
-                    // It's a constant property, invoke it to get the value
                     return RuntimeValue.FromBoxed(bm.Call(this, []));
                 }
                 return RuntimeValue.FromObject(member);
@@ -509,11 +511,13 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Evaluates property access on a record/object literal.
+    /// Evaluates property access on a record/object literal, walking the __proto__
+    /// chain when the property is not an own property. JS spec: property access
+    /// traverses the prototype chain until a match or null is reached.
     /// </summary>
     private object? EvaluateGetOnRecord(SharpTSObject simpleObj, string memberName)
     {
-        // Check for getter first
+        // Check for getter first on the own object
         var getter = simpleObj.GetGetter(memberName);
         if (getter != null)
         {
@@ -522,21 +526,56 @@ public partial class Interpreter
             return boundGetter.Call(this, []);
         }
 
-        var value = simpleObj.GetProperty(memberName);
-        // Bind 'this' for function expressions and object method shorthand (HasOwnThis=true)
-        if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
+        // Own property
+        if (simpleObj.HasProperty(memberName))
         {
-            return arrowFunc.Bind(simpleObj);
+            var value = simpleObj.GetProperty(memberName);
+            // Bind 'this' for function expressions and object method shorthand (HasOwnThis=true)
+            if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
+            {
+                return arrowFunc.Bind(simpleObj);
+            }
+            return value;
         }
-        return value;
+
+        // Walk __proto__ chain — JS constructor-function pattern relies on this so methods
+        // assigned via `Foo.prototype.x = ...` are reachable on `new Foo()` instances.
+        // Lodash's MapCache (lodash.js ~2177) does `this.clear()` in its ctor where `clear`
+        // lives on `MapCache.prototype`; without this walk it resolves to undefined.
+        object? current = simpleObj.HasProperty("__proto__") ? simpleObj.GetProperty("__proto__") : null;
+        for (int i = 0; i < 64 && current is SharpTSObject proto; i++)
+        {
+            var protoGetter = proto.GetGetter(memberName);
+            if (protoGetter != null)
+            {
+                var boundProtoGetter = BindAccessorToObject(protoGetter, simpleObj);
+                return boundProtoGetter.Call(this, []);
+            }
+            if (proto.HasProperty(memberName))
+            {
+                var value = proto.GetProperty(memberName);
+                if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
+                {
+                    return arrowFunc.Bind(simpleObj);
+                }
+                return value;
+            }
+            object? next = proto.HasProperty("__proto__") ? proto.GetProperty("__proto__") : null;
+            if (ReferenceEquals(next, proto)) break; // cycle guard
+            current = next;
+        }
+
+        return SharpTSUndefined.Instance;
     }
 
     /// <summary>
     /// Evaluates property access on a record/object literal, returning RuntimeValue directly.
+    /// Walks __proto__ on miss so constructor-function prototype methods are reachable
+    /// (see <see cref="EvaluateGetOnRecord"/> for full rationale).
     /// </summary>
     private RuntimeValue EvaluateGetOnRecordRV(SharpTSObject simpleObj, string memberName)
     {
-        // Check for getter first
+        // Check for getter first on the own object
         var getter = simpleObj.GetGetter(memberName);
         if (getter != null)
         {
@@ -547,13 +586,43 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(boundGetter.Call(this, []));
         }
 
-        // Check for arrow functions needing 'this' binding before returning RV
-        var value = simpleObj.GetProperty(memberName);
-        if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
+        if (simpleObj.HasProperty(memberName))
         {
-            return RuntimeValue.FromObject(arrowFunc.Bind(simpleObj));
+            var value = simpleObj.GetProperty(memberName);
+            if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
+            {
+                return RuntimeValue.FromObject(arrowFunc.Bind(simpleObj));
+            }
+            return RuntimeValue.FromBoxed(value);
         }
-        return RuntimeValue.FromBoxed(value);
+
+        // Prototype-chain fallback
+        object? current = simpleObj.HasProperty("__proto__") ? simpleObj.GetProperty("__proto__") : null;
+        for (int i = 0; i < 64 && current is SharpTSObject proto; i++)
+        {
+            var protoGetter = proto.GetGetter(memberName);
+            if (protoGetter != null)
+            {
+                var boundProtoGetter = BindAccessorToObject(protoGetter, simpleObj);
+                if (boundProtoGetter is ISharpTSCallableV2 v2Proto)
+                    return v2Proto.CallV2(this, ReadOnlySpan<RuntimeValue>.Empty);
+                return RuntimeValue.FromBoxed(boundProtoGetter.Call(this, []));
+            }
+            if (proto.HasProperty(memberName))
+            {
+                var value = proto.GetProperty(memberName);
+                if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
+                {
+                    return RuntimeValue.FromObject(arrowFunc.Bind(simpleObj));
+                }
+                return RuntimeValue.FromBoxed(value);
+            }
+            object? next = proto.HasProperty("__proto__") ? proto.GetProperty("__proto__") : null;
+            if (ReferenceEquals(next, proto)) break;
+            current = next;
+        }
+
+        return RuntimeValue.Undefined;
     }
 
     /// <summary>

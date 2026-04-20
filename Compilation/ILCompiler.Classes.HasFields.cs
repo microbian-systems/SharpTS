@@ -275,6 +275,35 @@ public partial class ILCompiler
             EmitErrorPropertyFallback(il, "stack", _runtime.ErrorGetStack);
         }
 
+        // 2c. Check instance getters (accessors with `get` keyword). JS semantics: reading
+        // `obj.foo` where `foo` is a getter must INVOKE the getter and return its result.
+        // Without this, dynamic property access (via Runtime.GetProperty, used in generator
+        // bodies and anywhere else the receiver type isn't statically known) would fall
+        // through to the method-wrapper path and return a $TSFunction instead of the value.
+        if (_classes.InstanceGetters.TryGetValue(className, out var instanceGetters))
+        {
+            foreach (var (getterPascalName, getterMethod) in instanceGetters)
+            {
+                // Getters are registered by PascalCase method-name convention (no "get_" prefix
+                // in InstanceGetters dict — the dict value keys match PascalCase property names).
+                // JS access is camelCase; accept both forms to match InstanceGetters' key style.
+                var camelName = NamingConventions.ToCamelCase(getterPascalName);
+                var nextLabel = il.DefineLabel();
+
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldstr, camelName);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+                il.Emit(OpCodes.Brfalse, nextLabel);
+
+                // return this.<getter>()
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Callvirt, getterMethod);
+                il.Emit(OpCodes.Ret);
+
+                il.MarkLabel(nextLabel);
+            }
+        }
+
         // 3. Check instance methods (compile-time dispatch)
         // (redefine label after error property fallback — previous tryMethodsLabel was already marked)
         if (_classes.InstanceMethods.TryGetValue(className, out var instanceMethods))

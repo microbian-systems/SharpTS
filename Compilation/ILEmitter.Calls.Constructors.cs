@@ -201,7 +201,33 @@ public partial class ILEmitter
             return;
         }
 
+        // The loaded value is statically typed as `object` (DC fields, top-level static vars,
+        // and captured fields are all object-typed). `EmitReflectionConstructFromType` expects
+        // a `System.Type` on the stack — passing an `object` directly trips an ILVerify
+        // `StackUnexpected` that the JIT sometimes tolerates and sometimes miscompiles into a
+        // 0xC0000005 access violation when the value happens to not be a Type (e.g. a cross-
+        // module CJS class reference loaded from the entry-point DC field as plain object).
+        // Runtime-check for Type and fall through to null for non-Type values — mirrors
+        // EmitCalleeExprConstruction's shape so both callee forms behave consistently.
+        var objTemp = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, objTemp);
+
+        var notTypeLabel = IL.DefineLabel();
+        var doneLabel = IL.DefineLabel();
+
+        IL.Emit(OpCodes.Ldloc, objTemp);
+        IL.Emit(OpCodes.Isinst, _ctx.Types.Type);
+        IL.Emit(OpCodes.Brfalse, notTypeLabel);
+
+        IL.Emit(OpCodes.Ldloc, objTemp);
+        IL.Emit(OpCodes.Castclass, _ctx.Types.Type);
         EmitReflectionConstructFromType(n);
+        IL.Emit(OpCodes.Br, doneLabel);
+
+        IL.MarkLabel(notTypeLabel);
+        IL.Emit(OpCodes.Ldnull);
+
+        IL.MarkLabel(doneLabel);
     }
 
     /// <summary>

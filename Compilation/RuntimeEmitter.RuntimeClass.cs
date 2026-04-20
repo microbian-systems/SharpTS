@@ -220,8 +220,11 @@ public partial class RuntimeEmitter
         EmitDisposeResource(typeBuilder, runtime);
         // HasIn operator depends on IsSymbol and GetSymbolDict
         EmitHasIn(typeBuilder, runtime);
-        // Typed array SetElement helpers - must come BEFORE GetIndex/SetIndex which reference them
-        foreach (var desc in ArrayElements.Typed)
+        // Array SetElement helpers - must come BEFORE GetIndex/SetIndex which reference them.
+        // Previously only Typed variants were emitted here; the Object variant was deferred to
+        // the Arrays section below. That left SetIndex's object-list branch unable to call it,
+        // so we emit all of them up front now (including Object) for JS-spec auto-extend semantics.
+        foreach (var desc in ArrayElements.All)
             EmitSetArrayElementFor(typeBuilder, runtime, desc);
         // Note: TypedArray detection helpers are emitted earlier (before GetProperty)
         EmitGetIndex(typeBuilder, runtime);
@@ -239,11 +242,9 @@ public partial class RuntimeEmitter
         EmitIteratorMethodsAdvanced(typeBuilder, runtime);
         // ES2025 Iterator Helper methods and lazy wrapper types
         EmitIteratorHelperMethods(typeBuilder, moduleBuilder, runtime);
-        // Arrays - must come AFTER iterator methods since ConcatArrays/ExpandCallArgs use IterateToList
-        // Note: SetArrayElement* helpers must be emitted BEFORE GetIndex/SetIndex (above)
-        // since SetIndex references SetArrayElementDouble/SetArrayElementBool.
-        // They were moved up before the Objects section to satisfy this dependency.
-        EmitSetArrayElementFor(typeBuilder, runtime, ArrayElements.Object);
+        // Arrays - must come AFTER iterator methods since ConcatArrays/ExpandCallArgs use IterateToList.
+        // SetArrayElement* helpers (including Object variant) are emitted earlier, BEFORE SetIndex,
+        // since SetIndex's object-list branch also calls SetArrayElement for auto-extend semantics.
         EmitCreateArray(typeBuilder, runtime);
         EmitGetLength(typeBuilder, runtime);
         EmitGetElement(typeBuilder, runtime);
@@ -323,7 +324,9 @@ public partial class RuntimeEmitter
         // String methods
         EmitStringCharAt(typeBuilder, runtime);
         EmitStringSubstring(typeBuilder, runtime);
+        EmitStringSubstr(typeBuilder, runtime);
         EmitStringIndexOf(typeBuilder, runtime);
+        EmitStringIndexOfFrom(typeBuilder, runtime);
         EmitStringReplace(typeBuilder, runtime);
         EmitStringSplit(typeBuilder, runtime);
         EmitStringIncludes(typeBuilder, runtime);

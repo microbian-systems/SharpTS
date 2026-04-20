@@ -462,9 +462,12 @@ public partial class TypeChecker
             // If all declared params are `any`, treat as a loose JS function
             // and skip min-arity checks — JS calls are always variadic by
             // spec (missing args become `undefined`), and untyped CJS
-            // functions shouldn't be held to stricter TS rules.
-            bool allParamsAny = funcType.ParamTypes.Count > 0
-                && funcType.ParamTypes.All(p => p is TypeInfo.Any);
+            // functions shouldn't be held to stricter TS rules. Zero-parameter
+            // untyped functions also count (the `.All` on an empty list is true
+            // but the old `Count > 0` guard excluded them; lodash `function
+            // shortOut() { return func.apply(undefined, arguments); }` falls here).
+            bool allParamsAny = funcType.ParamTypes.Count == 0
+                || funcType.ParamTypes.All(p => p is TypeInfo.Any);
 
             // Only check min arity if no spreads (spreads can expand to any count)
             if (!hasSpread && !allParamsAny && nonSpreadCount < funcType.MinArity)
@@ -472,8 +475,12 @@ public partial class TypeChecker
                 throw new TypeCheckException($"Expected at least {funcType.MinArity} arguments but got {nonSpreadCount}.");
             }
 
-            // Check for too many arguments (when there's no rest parameter)
-            if (!hasSpread && !funcType.HasRestParam && nonSpreadCount > funcType.ParamTypes.Count)
+            // Check for too many arguments (when there's no rest parameter).
+            // Skip when allParamsAny — JS never rejects extra args; they're reachable
+            // through the `arguments` object, which any untyped function body may use
+            // (lodash passes through `...arguments` in many places).
+            if (!hasSpread && !funcType.HasRestParam && !allParamsAny
+                && nonSpreadCount > funcType.ParamTypes.Count)
             {
                 throw new TypeCheckException($"Expected {funcType.ParamTypes.Count} arguments but got {nonSpreadCount}.");
             }

@@ -291,6 +291,11 @@ public class AsyncStateMachineBuilder
     /// </summary>
     public Type CreateType()
     {
+        // Validate labels on every method in this state-machine type before finalization —
+        // CreateType() clears the ILGenerator control-flow state, so a post-finalize sweep
+        // cannot see unmarked branched labels.
+        ILLabelValidator.SweepAllTypes(new[] { _stateMachineType });
+        ILLabelValidator.SweepConstructors(new[] { _stateMachineType });
         return _stateMachineType.CreateType()!;
     }
 

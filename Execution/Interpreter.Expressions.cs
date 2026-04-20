@@ -766,6 +766,21 @@ public partial class Interpreter
             return RuntimeValue.Undefined;
         }
 
+        // Built-in namespace singletons and prototype objects resolve dot-notation access via
+        // BuiltInRegistry.GetInstanceMember or hand-written fallbacks in EvaluateGetOnFallback
+        // (SharpTSArrayGlobal, SharpTSArrayPrototype, SharpTSBuiltInConstructor, etc.).
+        // ResolveIndexTarget has no switch cases for them, so bracket access
+        // (`Object['create']`, `Array.prototype['pop']`) would otherwise throw
+        // "Index access not supported". Lodash relies on these idioms when walking
+        // constructors through a lookup table. Mirror the dot-notation path by
+        // synthesizing a Get expression and reusing EvaluateGetOnObject.
+        if (obj != null && index is string strIndexKey)
+        {
+            var syntheticName = new Token(TokenType.IDENTIFIER, strIndexKey, null, 0);
+            var syntheticGet = new Expr.Get(getIndex.Object, syntheticName, Optional: false);
+            return EvaluateGetOnObject(syntheticGet, obj);
+        }
+
         return RuntimeValue.FromBoxed(ResolveIndexTarget(obj, index) switch
         {
             IndexTarget.Array t => t.Target.Get(t.Index),

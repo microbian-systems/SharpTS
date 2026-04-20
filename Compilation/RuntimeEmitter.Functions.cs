@@ -483,8 +483,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brtrue, nameLabel);
 
-        // Unknown method - return null
-        il.Emit(OpCodes.Br, nullLabel);
+        // Fallback: check for a user-assigned property via PropertyDescriptorStore.
+        // JS functions are objects and can carry arbitrary properties (`fn.x = 42`). Compiled
+        // SetProperty routes $TSFunction writes into PDS as data descriptors; we mirror that
+        // here on the read side. Returns descriptor.Value if present, otherwise falls through
+        // to null. Enables patterns like `lodash.chunk = fn; lodash.chunk(...)`.
+        var pdsDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, pdsDescLocal);
+        il.Emit(OpCodes.Ldloc, pdsDescLocal);
+        il.Emit(OpCodes.Brfalse, nullLabel);
+        il.Emit(OpCodes.Ldloc, pdsDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
 
         // bind: return new $FunctionBindWrapper(func)
         il.MarkLabel(bindLabel);

@@ -528,7 +528,9 @@ public class DeadCodeAnalyzer
     }
 
     /// <summary>
-    /// Analyze if a switch statement definitely terminates.
+    /// Analyze if a switch statement definitely terminates (i.e. leaves the enclosing function).
+    /// A case body that ends in `break` does NOT terminate — control continues after the switch —
+    /// so this uses <see cref="ContainsUnconditionalReturnOrThrow"/>, which ignores break/continue.
     /// </summary>
     private bool AnalyzeSwitchTermination(Stmt.Switch sw)
     {
@@ -537,12 +539,13 @@ public class DeadCodeAnalyzer
         // If exhaustive (all union members covered), default is unreachable
         bool hasUnreachableDefault = analysis?.IsExhaustive == true;
 
-        // All reachable cases must terminate
-        bool allCasesTerminate = sw.Cases.All(c => c.Body.Any(DefinitelyTerminates));
+        // All reachable cases must terminate with return/throw (not break, which exits the switch
+        // but leaves the enclosing block reachable).
+        bool allCasesTerminate = sw.Cases.All(c => c.Body.Any(ContainsUnconditionalReturnOrThrow));
 
         // Default must terminate (unless unreachable)
         bool defaultTerminates = hasUnreachableDefault ||
-            (sw.DefaultBody != null && sw.DefaultBody.Any(DefinitelyTerminates));
+            (sw.DefaultBody != null && sw.DefaultBody.Any(ContainsUnconditionalReturnOrThrow));
 
         // If no default and not exhaustive, switch doesn't terminate
         if (sw.DefaultBody == null && !hasUnreachableDefault)

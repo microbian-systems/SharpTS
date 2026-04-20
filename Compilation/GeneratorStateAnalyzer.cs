@@ -71,8 +71,14 @@ public class GeneratorStateAnalyzer : AstVisitorBase
             }
         }
 
-        // Variables that need hoisting: declared before yield AND used after yield
-        var hoistedLocals = new HashSet<string>(_variablesDeclaredBeforeYield);
+        // Variables that need hoisting: used after a yield (regardless of declaration point).
+        // Previously gated on "declared before first yield" — missed variables declared
+        // BETWEEN yields but used AFTER a later yield (yaml's `*parseDocument`: `const line`
+        // declared after `yield* pushSpaces` but used after `yield* pushIndicators` —
+        // the value must persist across pushIndicators, which requires a state-machine field).
+        // Using all declared variables as the superset is a safe over-approximation; worst
+        // case we hoist a local unnecessarily.
+        var hoistedLocals = new HashSet<string>(_declaredVariables);
         hoistedLocals.IntersectWith(_variablesUsedAfterYield);
         hoistedLocals.ExceptWith(parameters); // Parameters are tracked separately
 

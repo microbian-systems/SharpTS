@@ -27,6 +27,7 @@ public partial class ILCompiler
     /// doesn't work before <c>CreateType()</c>).
     /// </summary>
     private readonly Dictionary<string, (FieldBuilder InitStarted, FieldBuilder Initialized)> _cjsInitGuardFields = [];
+    private readonly Dictionary<string, FieldBuilder> _cjsModuleObjectFields = [];
 
     /// <summary>
     /// Defines the .NET type for a CommonJS module: a static class with $exports field,
@@ -49,6 +50,28 @@ public partial class ILCompiler
             FieldAttributes.Public | FieldAttributes.Static
         );
         _modules.CommonJsExportFields[module.Path] = exportsField;
+
+        // Spec-compliant `module` object — a $CJSModule instance that proxies exports
+        // back to the static $exports field and exposes id/filename/loaded/paths/etc.
+        // Stored in a static field so inner arrows and nested functions can reach it
+        // via the existing TopLevelStaticVars resolution path without requiring
+        // capture-display-class machinery for module-scope magic names.
+        var moduleObjField = moduleType.DefineField(
+            "$module",
+            typeof(object),
+            FieldAttributes.Public | FieldAttributes.Static
+        );
+        _cjsModuleObjectFields[module.Path] = moduleObjField;
+
+        // Register `module` so BuildTopLevelStaticVarsForModule picks it up for any
+        // other compilation context scoped to this module (class methods, arrows,
+        // inner functions) — they all rebuild their TopLevelStaticVars map from here.
+        if (!_moduleTopLevelStaticVars.TryGetValue(module.Path, out var moduleStatics))
+        {
+            moduleStatics = new Dictionary<string, FieldBuilder>();
+            _moduleTopLevelStaticVars[module.Path] = moduleStatics;
+        }
+        moduleStatics["module"] = moduleObjField;
 
         // Provide a degenerate ExportFields entry so the rest of the module-emission machinery
         // (which always indexes ExportFields[path]) doesn't throw KeyNotFoundException.
@@ -163,6 +186,28 @@ public partial class ILCompiler
         // patterns for this body.
         ctx.CurrentCjsExportsField = exportsField;
 
+        // Initialize the static `$module` field — a $CJSModule instance pointing at the
+        // module's own $exports field. Accessible to all code in the module's scope
+        // (including nested arrow/inner-function bodies) via the TopLevelStaticVars
+        // resolution path (registered at module-type definition time).
+        var moduleObjField = _cjsModuleObjectFields[module.Path];
+        il.Emit(OpCodes.Ldtoken, moduleType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ldstr, exportsField.Name);
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+        il.Emit(OpCodes.Callvirt, typeof(Type).GetMethod("GetField", [typeof(string), typeof(System.Reflection.BindingFlags)])!);
+        il.Emit(OpCodes.Ldstr, module.Path);
+        il.Emit(OpCodes.Ldstr, module.Path);
+        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Newobj, _runtime.CjsModuleCtor);
+        il.Emit(OpCodes.Stsfld, moduleObjField);
+
+        // The per-module ctx was built BEFORE we registered `module` in _moduleTopLevelStaticVars
+        // on some code paths — ensure this ctx sees it too. Cheap and idempotent.
+        ctx.TopLevelStaticVars ??= new Dictionary<string, FieldBuilder>();
+        ctx.TopLevelStaticVars["module"] = moduleObjField;
+
         var emitter = new ILEmitter(ctx);
 
         foreach (var stmt in module.Statements)
@@ -189,5 +234,7 @@ public partial class ILCompiler
 
         il.MarkLabel(skipLabel);
         il.Emit(OpCodes.Ret);
+
+        ILLabelValidator.Validate(il, $"CJS module init {module.Path}");
     }
 }

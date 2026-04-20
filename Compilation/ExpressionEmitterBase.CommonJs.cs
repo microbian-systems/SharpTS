@@ -83,6 +83,30 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
+    /// Tries to handle a plain assignment <c>exports = X</c>. Returns true if handled.
+    /// In CJS context, bare <c>exports</c> reads lower to <c>ldsfld $exports</c> (via
+    /// <see cref="TryEmitCjsVariable"/>), so the write side must mirror that — otherwise
+    /// <c>exports = X</c> falls through to the generic variable-store path and leaves the
+    /// Dup'd result on the stack (since there's no real local named "exports"), causing
+    /// a dangling stack value that propagates through the rest of the module body and
+    /// ultimately produces a <c>PathStackDepth</c> IL verification error. Chained form
+    /// <c>exports = module.exports = {}</c> (real-world pattern in semver/commonjs libs)
+    /// only works if this path is taken.
+    /// </summary>
+    protected bool TryEmitCjsAssign(Expr.Assign a)
+    {
+        if (!InCjsContext) return false;
+        if (a.Name.Lexeme != "exports") return false;
+
+        EmitExpression(a.Value);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Dup);
+        IL.Emit(OpCodes.Stsfld, Ctx.CurrentCjsExportsField!);
+        SetStackUnknown();
+        return true;
+    }
+
+    /// <summary>
     /// Tries to lower a <c>require('./literal')</c> call to a direct call to the target module's
     /// <c>$GetExports</c> method. Returns true if handled.
     /// </summary>

@@ -12,8 +12,29 @@ public partial class GeneratorMoveNextEmitter
 
     protected override void EmitReturn(Stmt.Return r)
     {
+        // Evaluate the return value for its side effects — the expression may contain
+        // `yield` or `yield*` sub-expressions whose state labels are registered by the
+        // analyzer at the top of MoveNext. Skipping evaluation (the prior behaviour)
+        // left those labels defined but never marked, which makes the metadata writer
+        // fail with "Label N has not been marked" (surfaced via yaml's lexer.parseNext,
+        // where every `case '…': return yield* this.parseFoo()` contributed one
+        // orphaned state label).
+        //
+        // Per ECMA-262 27.3 / 14.5, the completed value of a generator is the return
+        // expression's result; we store it in the Current field so callers can read
+        // it via IEnumerator.Current after MoveNext returns false.
+        if (r.Value != null)
+        {
+            EmitExpression(r.Value);
+            EnsureBoxed();
+            var returnValueTemp = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Stloc, returnValueTemp);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldloc, returnValueTemp);
+            _il.Emit(OpCodes.Stfld, _builder.CurrentField);
+        }
+
         // Generator return - set state to completed and return false
-        // Note: In generators, return value is available via iterator result's done=true
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, -2);
         _il.Emit(OpCodes.Stfld, _builder.StateField);

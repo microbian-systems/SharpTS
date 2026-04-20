@@ -53,6 +53,16 @@ public class BuiltInMethod : ISharpTSCallable, ISharpTSCallableV2
     public bool IsBound => _receiver != null || _hasV2Receiver;
 
     /// <summary>
+    /// True when this method wraps a constant value (e.g. Number.MAX_VALUE, Math.PI)
+    /// rather than a real method. The interpreter invokes such methods on property
+    /// access to materialize the underlying value. Distinguishing is necessary because
+    /// some real methods also have <c>MinArity == MaxArity == 0</c> (Date.now, Array.isArray-as-value),
+    /// and invoking THOSE on property access breaks function-reference aliasing
+    /// (<c>var nativeNow = Date.now; nativeNow();</c> is a lodash/polyfill idiom).
+    /// </summary>
+    public bool IsConstant { get; }
+
+    /// <summary>
     /// Returns true if this method has a native V2 (RuntimeValue) implementation,
     /// meaning CallV2 can bypass the legacy wrapper for better performance.
     /// </summary>
@@ -65,12 +75,29 @@ public class BuiltInMethod : ISharpTSCallable, ISharpTSCallableV2
         : this(name, arity, arity, implementation) { }
 
     public BuiltInMethod(string name, int minArity, int maxArity, Func<Interpreter, object?, List<object?>, object?> implementation)
+        : this(name, minArity, maxArity, implementation, isConstant: false) { }
+
+    /// <summary>
+    /// Internal constructor with IsConstant flag — use <see cref="CreateConstant"/> to wrap
+    /// a property-style constant (Number.MAX_VALUE etc.).
+    /// </summary>
+    internal BuiltInMethod(string name, int minArity, int maxArity,
+        Func<Interpreter, object?, List<object?>, object?> implementation, bool isConstant)
     {
         _name = name;
         _minArity = minArity;
         _maxArity = maxArity;
         _implementation = implementation;
+        IsConstant = isConstant;
     }
+
+    /// <summary>
+    /// Creates a zero-arity BuiltInMethod whose <see cref="IsConstant"/> is true — the
+    /// wrapped value materializes on every invocation, and the interpreter's property-access
+    /// fast-path calls it on read instead of returning the method reference.
+    /// </summary>
+    public static BuiltInMethod CreateConstant(string name, object? value)
+        => new(name, 0, 0, (_, _, _) => value, isConstant: true);
 
     /// <summary>
     /// Creates a BuiltInMethod with a RuntimeValue-based implementation.

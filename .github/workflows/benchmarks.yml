@@ -1,0 +1,48 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_version:
+        description: 'Node.js version'
+        default: '22'
+        type: string
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version || '22' }}
+
+      - name: Build (Release)
+        run: dotnet build -c Release
+
+      - name: Run benchmarks
+        shell: pwsh
+        run: ./benchmarks/run-benchmarks.ps1
+
+      - name: Publish results to job summary
+        shell: pwsh
+        run: |
+          ./benchmarks/format-results.ps1 `
+            -ResultsFile (Join-Path ([System.IO.Path]::GetTempPath()) 'bench-results/results.txt') `
+            -DotNetVersion (dotnet --version) `
+            -NodeVersion (node -v) `
+            >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload raw results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: /tmp/bench-results/
