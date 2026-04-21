@@ -178,7 +178,7 @@ public partial class ILCompiler
             TypeEmitterRegistry = _typeEmitterRegistry,
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
-            BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            BuiltInModuleMethodBindings = GetCurrentBuiltInMethodBindings(),
             ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             // Check for function-level "use strict" directive
@@ -246,7 +246,7 @@ public partial class ILCompiler
             TypeEmitterRegistry = _typeEmitterRegistry,
             BuiltInModuleEmitterRegistry = _builtInModuleEmitterRegistry,
             BuiltInModuleNamespaces = _builtInModuleNamespaces,
-            BuiltInModuleMethodBindings = _builtInModuleMethodBindings,
+            BuiltInModuleMethodBindings = GetCurrentBuiltInMethodBindings(),
             ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode || CheckForUseStrict(method.Body),

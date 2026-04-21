@@ -39,7 +39,13 @@ public partial class ILCompiler
     private readonly TypeEmitterRegistry _typeEmitterRegistry = new();  // Type-first method dispatch registry
     private readonly BuiltInModuleEmitterRegistry _builtInModuleEmitterRegistry = new();  // Built-in module emitters
     private readonly Dictionary<string, string> _builtInModuleNamespaces = [];  // Variable name -> module name for direct dispatch
-    private readonly Dictionary<string, (string ModuleName, string MethodName)> _builtInModuleMethodBindings = [];  // Variable name -> (module, method) for named imports
+    // Per-owning-module local-name → (module, method) bindings for named imports.
+    // Keyed by the importing module's path so that two stdlib modules aliasing the same
+    // primitive under the same local name (e.g. both os.ts and process.ts using `__platform`)
+    // don't collide in a shared flat dictionary.
+    // Null key = single-module / global bindings (legacy single-module Compile path).
+    private readonly Dictionary<string, Dictionary<string, (string ModuleName, string MethodName)>> _builtInModuleMethodBindingsByModule = [];
+    private static readonly Dictionary<string, (string ModuleName, string MethodName)> _emptyBindings = [];
     private readonly HashSet<string> _importedNames = [];  // Every named / default / namespace import, any module source. Used to shadow global call handlers.
     private TypeBuilder _programType = null!;
 
@@ -419,9 +425,18 @@ public partial class ILCompiler
     /// Pre-scans statements for built-in module imports and registers them
     /// in _builtInModuleNamespaces. This must happen before function bodies
     /// are emitted so that calls like os.platform() can be properly dispatched.
+    ///
+    /// <paramref name="owningModulePath"/> is the path of the module that owns
+    /// these imports — named-import bindings are stored per-owning-module so
+    /// that two stdlib modules aliasing the same primitive to the same local
+    /// name don't clobber each other (e.g. os.ts and process.ts both using
+    /// __platform for their respective primitive:os and primitive:process
+    /// imports). Pass null in the single-module Compile path.
     /// </summary>
-    private void PreScanBuiltInModuleImports(List<Stmt> statements)
+    private void PreScanBuiltInModuleImports(List<Stmt> statements, string? owningModulePath = null)
     {
+        var bindings = GetOrCreateBuiltInMethodBindings(owningModulePath);
+
         foreach (var stmt in statements)
         {
             if (stmt is Stmt.Import import && !import.IsTypeOnly)
@@ -470,8 +485,8 @@ public partial class ILCompiler
                             string importedName = spec.Imported.Lexeme;
                             string localName = spec.LocalName?.Lexeme ?? importedName;
 
-                            // Track method binding for direct dispatch
-                            _builtInModuleMethodBindings[localName] = (builtInModuleName, importedName);
+                            // Track method binding for direct dispatch (scoped to this module)
+                            bindings[localName] = (builtInModuleName, importedName);
 
                             if (!_topLevelStaticVars.ContainsKey(localName))
                             {
@@ -486,6 +501,36 @@ public partial class ILCompiler
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Returns the flat local-name → (module, method) binding map for the given
+    /// owning module path, creating it on demand.
+    /// </summary>
+    private Dictionary<string, (string ModuleName, string MethodName)> GetOrCreateBuiltInMethodBindings(string? owningModulePath)
+    {
+        string key = owningModulePath ?? "";
+        if (!_builtInModuleMethodBindingsByModule.TryGetValue(key, out var bindings))
+        {
+            bindings = [];
+            _builtInModuleMethodBindingsByModule[key] = bindings;
+        }
+        return bindings;
+    }
+
+    /// <summary>
+    /// Returns the binding map that call-site emission should consult, scoped
+    /// to whichever module is currently being emitted. Falls back to the
+    /// single-module (null-key) bindings when no module is active.
+    /// </summary>
+    private Dictionary<string, (string ModuleName, string MethodName)> GetCurrentBuiltInMethodBindings()
+    {
+        string? currentPath = _modules.CurrentPath;
+        if (currentPath != null && _builtInModuleMethodBindingsByModule.TryGetValue(currentPath, out var scoped))
+            return scoped;
+        if (_builtInModuleMethodBindingsByModule.TryGetValue("", out var global))
+            return global;
+        return _emptyBindings;
     }
 
     /// <summary>
@@ -773,7 +818,12 @@ public partial class ILCompiler
         Phase1_EmitRuntimeTypes();
         Phase2_AnalyzeClosures(allStatements);
         Phase3_CreateProgramType();
-        PreScanBuiltInModuleImports(allStatements);
+        // Scope each module's named-import bindings to that module so local
+        // aliases like __platform don't collide between stdlib modules.
+        foreach (var m in modules)
+        {
+            PreScanBuiltInModuleImports(m.Statements, m.Path);
+        }
         ModulePhase4_DefineModuleTypes(modules);
         // Captured top-level vars continue to share the entry-point display class
         // (script-compatible closure semantics), but each module gets its own
