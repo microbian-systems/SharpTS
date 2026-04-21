@@ -152,4 +152,41 @@ public class TemplateLiteralTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("x is big\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Template_MultilineInReturn_DoesNotTriggerAsi(ExecutionMode mode)
+    {
+        // Regression for issue #44: a multi-line template literal started on
+        // the same line as `return` was parsed as `return; <orphan template>;`
+        // because the lexer stamped the template token with its END line.
+        var source = """
+            function foo(): string {
+                return `a
+            b`;
+            }
+            console.log(foo());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("a\nb\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Template_MultilineInYield_DoesNotTriggerAsi(ExecutionMode mode)
+    {
+        // Same restricted production as `return`: `yield [no LT here] Expression`.
+        var source = """
+            function* gen(): Generator<string> {
+                yield `a
+            b`;
+            }
+            const it = gen();
+            console.log(it.next().value);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("a\nb\n", output);
+    }
 }

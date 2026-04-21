@@ -22,6 +22,11 @@ public class Lexer(string source)
     private int _start = 0;
     private int _current = 0;
     private int _line = 1;
+    // Line where the current token starts. Snapshotted before each ScanToken so
+    // that multi-line tokens (template literals) record their starting line, not
+    // their ending line. Needed so `return <template>` on the same line doesn't
+    // spuriously trigger ASI via Parser.HasLineTerminatorBeforeCurrent.
+    private int _tokenStartLine = 1;
     // Stack to track brace depth when inside template interpolations
     private readonly Stack<int> _templateBraceDepth = new();
     // Tracks whether we're expecting an expression (true) or operator (false)
@@ -125,6 +130,7 @@ public class Lexer(string source)
         while (!IsAtEnd())
         {
             _start = _current;
+            _tokenStartLine = _line;
             ScanToken();
         }
 
@@ -959,6 +965,7 @@ public class Lexer(string source)
     private void ContinueTemplateLiteral()
     {
         _start = _current;
+        _tokenStartLine = _line;
         var (cooked, raw) = ProcessTemplateSegment();
 
         if (Peek() == '`')
@@ -1171,7 +1178,7 @@ public class Lexer(string source)
     private void AddToken(TokenType type, object? literal)
     {
         string text = _source[_start.._current];
-        _tokens.Add(new Token(type, text, literal, _line, _start));
+        _tokens.Add(new Token(type, text, literal, _tokenStartLine, _start));
         // Update expression state for regex literal disambiguation
         _expectExpr = !IsExpressionEnd(type);
         // Mark that we've emitted a code token (triple-slash directives no longer valid)

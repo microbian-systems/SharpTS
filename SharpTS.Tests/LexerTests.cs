@@ -728,9 +728,9 @@ public class LexerTests
     {
         var source = "`line1\nline2`\nlet x = 5";
         var tokens = Tokenize(source);
-        // Note: The lexer reports the line where the token ENDS, not where it starts
-        // Template ends on line 2 (after processing the \n inside)
-        Assert.Equal(2, tokens[0].Line); // Template ends on line 2
+        // Token.Line records where the token STARTS — required so that
+        // `return <multi-line template>` on one line doesn't trip ASI.
+        Assert.Equal(1, tokens[0].Line); // Template starts on line 1
         Assert.Equal(3, tokens[1].Line); // 'let' is on line 3
     }
 
