@@ -368,9 +368,21 @@ public partial class ILCompiler
                 ctx.FunctionDisplayClassFields?.TryGetValue(funcName, out funcDCStoreField) == true &&
                 ctx.FunctionDisplayClassLocal != null;
 
+            // Parallel check for the enclosing *arrow's* scope display class. Named function
+            // expressions compile as arrows, so when an inner `function X()` is declared inside
+            // one and X is captured by yet-another inner closure, X lives in the arrow's
+            // ArrowScopeDC. LocalVariableResolver reads via that DC field, so we must write to
+            // it here. Without this, reads return the zeroed field (null) and `typeof X` yields
+            // "object" — the lodash `var _ = runInContext()` failure mode.
+            FieldBuilder? arrowScopeDCStoreField = null;
+            bool storeInArrowScopeDC = !storeInFunctionDC &&
+                ctx.CapturedArrowLocals?.Contains(funcName) == true &&
+                ctx.ArrowScopeDisplayClassFields?.TryGetValue(funcName, out arrowScopeDCStoreField) == true &&
+                ctx.ArrowScopeDisplayClassLocal != null;
+
             // Also declare a regular local (used when not stored in DC, or as fallback)
             LocalBuilder? local = null;
-            if (!storeInFunctionDC)
+            if (!storeInFunctionDC && !storeInArrowScopeDC)
                 local = ctx.Locals.DeclareLocal(funcName, _types.Object);
 
             if (_innerFunctionDisplayClasses.TryGetValue(funcStmt, out var displayClass))
@@ -449,6 +461,20 @@ public partial class ILCompiler
                                 il.Emit(OpCodes.Ldnull);
                             }
                         }
+                        else if (ctx.CapturedArrowLocals?.Contains(capturedVar) == true &&
+                                 ctx.ArrowScopeDisplayClassFields?.TryGetValue(capturedVar, out var arrowField) == true &&
+                                 ctx.ArrowScopeDisplayClassLocal != null)
+                        {
+                            // Read from the enclosing arrow's scope DC. Pair with the store-side
+                            // branch above. Note this still snapshots at hoist time — a forward
+                            // reference whose hoist has not yet run loads null here. JavaScript
+                            // spec hoists all `function` decls before any statement executes, so
+                            // a fully robust fix would populate all TSFunctions to their DC
+                            // fields in a first pass before touching inner DC captures. See the
+                            // companion comment at the store site for context.
+                            il.Emit(OpCodes.Ldloc, ctx.ArrowScopeDisplayClassLocal);
+                            il.Emit(OpCodes.Ldfld, arrowField);
+                        }
                         else if (ctx.TopLevelStaticVars != null && ctx.TopLevelStaticVars.TryGetValue(capturedVar, out var topField))
                         {
                             il.Emit(OpCodes.Ldsfld, topField);
@@ -493,6 +519,15 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Ldloc, ctx.FunctionDisplayClassLocal!);
                 il.Emit(OpCodes.Ldloc, temp);
                 il.Emit(OpCodes.Stfld, funcDCStoreField!);
+            }
+            else if (storeInArrowScopeDC)
+            {
+                // Store in the enclosing arrow's scope display class field
+                var temp = il.DeclareLocal(_types.Object);
+                il.Emit(OpCodes.Stloc, temp);
+                il.Emit(OpCodes.Ldloc, ctx.ArrowScopeDisplayClassLocal!);
+                il.Emit(OpCodes.Ldloc, temp);
+                il.Emit(OpCodes.Stfld, arrowScopeDCStoreField!);
             }
             else
             {
