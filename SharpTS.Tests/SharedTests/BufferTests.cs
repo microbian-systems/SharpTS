@@ -1115,4 +1115,84 @@ public class BufferTests
     }
 
     #endregion
+
+    #region Issue #45 — compiled Buffer index access
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_IndexAccess_ReturnsByteValue(ExecutionMode mode)
+    {
+        // Regression for #45: `randomBytes(n)[i]` returned $Undefined in
+        // compiled mode because EmitGetIndex had no case for $Buffer.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { randomBytes } from 'crypto';
+                const bytes = randomBytes(4);
+                console.log(bytes.length);
+                for (let i = 0; i < bytes.length; i++) {
+                    const b = bytes[i];
+                    console.log(typeof b, b >= 0 && b <= 255);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        var lines = output.TrimEnd('\n').Split('\n');
+        Assert.Equal("4", lines[0]);
+        for (int i = 1; i <= 4; i++)
+            Assert.Equal("number true", lines[i]);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_IndexAccess_NumericOperations(ExecutionMode mode)
+    {
+        // Regression for #45: `bytes[i] % n` threw InvalidCastException
+        // because $Undefined couldn't convert to IConvertible.
+        var source = """
+            const buf = Buffer.from([10, 20, 30, 255]);
+            console.log(buf[0] % 3);
+            console.log(buf[3] + 1);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n256\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_IndexAssign_StoresMaskedByte(ExecutionMode mode)
+    {
+        // Matches Node.js semantics: assignment is masked to 0xFF.
+        var source = """
+            const buf = Buffer.alloc(3);
+            buf[0] = 42;
+            buf[1] = 300;  // 300 & 0xFF = 44
+            buf[2] = -1;   // -1 & 0xFF = 255
+            console.log(buf[0], buf[1], buf[2]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42 44 255\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_IndexAccess_OutOfRange_ReturnsNaN(ExecutionMode mode)
+    {
+        // Matches SharpTSBuffer.this[int] — out-of-range reads yield NaN in
+        // both interpreted and compiled modes. (Node itself returns undefined;
+        // aligning SharpTS to that is a separate effort.)
+        var source = """
+            const buf = Buffer.from([1, 2, 3]);
+            console.log(buf[10]);
+            console.log(typeof buf[-1]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("NaN\nnumber\n", output);
+    }
+
+    #endregion
 }
