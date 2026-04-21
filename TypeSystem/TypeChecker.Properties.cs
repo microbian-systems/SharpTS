@@ -174,7 +174,7 @@ public partial class TypeChecker
                     hasNullOrUndefined = true;
                     continue;
                 }
-                throw new TypeCheckException($"Property '{memberName.Lexeme}' cannot be accessed on '{member}'. Object is possibly null or undefined.");
+                throw new TypeCheckException($"Property '{memberName.Lexeme}' cannot be accessed on '{member}'. Object is possibly null or undefined.", memberName.Line);
             }
 
             try

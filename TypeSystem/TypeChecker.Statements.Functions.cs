@@ -513,6 +513,11 @@ public partial class TypeChecker
             _escapeAnalyzer.DefineVariable(funcStmt.Parameters[i].Name.Lexeme);
         }
 
+        // Isolate the narrowing context stack for this function body. Without this,
+        // narrowings added by `if (x) return;` via AddNarrowing persist on the stack
+        // and leak into sibling functions with parameters of the same name.
+        PushEmptyNarrowingScope();
+
         try
         {
             foreach (var bodyStmt in funcStmt.Body)
@@ -581,6 +586,8 @@ public partial class TypeChecker
         }
         finally
         {
+            PopNarrowingScope();
+
             // Pop the declared variable types scope
             PopDeclaredVariableScope();
 

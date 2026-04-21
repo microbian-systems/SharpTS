@@ -643,11 +643,47 @@ public partial class TypeChecker
 
         void CollectNarrowings(Expr expr)
         {
-            // For &&, collect narrowings from both sides
+            // For &&, collect narrowings from both sides. Apply LHS narrowings while
+            // analyzing the RHS so CheckExpr calls inside the RHS (e.g. inside
+            // AnalyzePathNullCheck) see the narrowed receiver. Without this,
+            // `a != null && a.b != null` errors when reading `a.b`, because `a` is
+            // still typed `T | null` at the point we compute `a.b`'s current type.
             if (expr is Expr.Logical logical && logical.Operator.Type == TokenType.AND_AND)
             {
+                int leftStart = narrowings.Count;
                 CollectNarrowings(logical.Left);
-                CollectNarrowings(logical.Right);
+                int leftCount = narrowings.Count - leftStart;
+
+                if (leftCount == 0)
+                {
+                    CollectNarrowings(logical.Right);
+                    return;
+                }
+
+                var narrowedEnv = new TypeEnvironment(_environment);
+                var narrowedCtx = Narrowing.NarrowingContext.Empty;
+                for (int i = leftStart; i < leftStart + leftCount; i++)
+                {
+                    var (path, narrowedType, _) = narrowings[i];
+                    if (path is Narrowing.NarrowingPath.Variable v)
+                        narrowedEnv.Define(v.Name, narrowedType);
+                    else
+                        narrowedCtx = narrowedCtx.WithNarrowing(path, narrowedType);
+                }
+
+                using (new EnvironmentScope(this, narrowedEnv))
+                {
+                    bool pushed = !narrowedCtx.IsEmpty;
+                    if (pushed) PushNarrowingContext(narrowedCtx);
+                    try
+                    {
+                        CollectNarrowings(logical.Right);
+                    }
+                    finally
+                    {
+                        if (pushed) PopNarrowingContext();
+                    }
+                }
                 return;
             }
 

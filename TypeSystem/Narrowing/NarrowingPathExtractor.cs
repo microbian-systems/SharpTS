@@ -28,6 +28,10 @@ public static class NarrowingPathExtractor
         {
             Expr.Variable v => new NarrowingPath.Variable(v.Name.Lexeme),
 
+            // Treat `this` as a pseudo-variable so paths like `this.a.b` are narrowable.
+            // "this" can't be a real identifier in TS source, so the name won't collide.
+            Expr.This => new NarrowingPath.Variable("this"),
+
             Expr.Get get when TryExtract(get.Object) is NarrowingPath basePath =>
                 new NarrowingPath.PropertyAccess(basePath, get.Name.Lexeme),
 

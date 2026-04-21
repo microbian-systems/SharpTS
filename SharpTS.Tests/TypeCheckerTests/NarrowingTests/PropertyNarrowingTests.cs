@@ -187,4 +187,104 @@ public class PropertyNarrowingTests
     }
 
     #endregion
+
+    #region Issue #43 regression tests
+
+    [Fact]
+    public void CompoundAndGuard_FlowsLhsNarrowingToRhs()
+    {
+        // Regression for issue #43: `a != null && a.b != null` spuriously
+        // errored with "Property 'b' cannot be accessed on 'null'" because
+        // the LHS narrowing wasn't applied when analyzing the RHS's path
+        // guard.
+        var source = """
+            interface Obj { prop: string | null; }
+            function test(o: Obj | null): string {
+                if (o != null && o.prop != null) {
+                    return o.prop;
+                }
+                return "default";
+            }
+            console.log(test({ prop: "hi" }));
+            console.log(test(null));
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("hi\ndefault\n", result);
+    }
+
+    [Fact]
+    public void ThisRootedPath_NarrowsInAccessor()
+    {
+        // Regression for issue #43: narrowing of `this.x.y` property paths
+        // didn't apply because the extractor didn't handle Expr.This.
+        var source = """
+            interface R { opaquePath: string | null; }
+            class C {
+                _record: R = { opaquePath: null };
+                get pathname(): string {
+                    if (this._record.opaquePath != null) return this._record.opaquePath;
+                    return "";
+                }
+            }
+            const c = new C();
+            c._record.opaquePath = "p";
+            console.log(c.pathname);
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("p\n", result);
+    }
+
+    [Fact]
+    public void PropertyNarrowing_DoesNotLeakAcrossFunctions()
+    {
+        // Regression for issue #43: narrowings added via AddNarrowing (used
+        // for "if (x) return;" post-if narrowing) leaked across sibling
+        // function bodies because function bodies didn't isolate the
+        // narrowing-context stack.
+        var source = """
+            interface R { x: string | null; }
+            function poison(r: R): void {
+                if (r.x != null) return;  // adds r.x -> null to current scope
+            }
+            function use(r: R): string {
+                if (r.x != null) return r.x;  // must see string, not null
+                return "";
+            }
+            console.log(use({ x: "hi" }));
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("hi\n", result);
+    }
+
+    [Fact]
+    public void ThisNarrowing_DoesNotLeakBetweenAccessors()
+    {
+        // Regression for issue #43: narrowings on `this.x.y` leaked across
+        // getter/setter boundaries because accessor bodies shared the
+        // enclosing narrowing context.
+        var source = """
+            interface R { opaquePath: string | null; }
+            class C {
+                _record: R = { opaquePath: null };
+                set host(_v: string) {
+                    if (this._record.opaquePath != null) return;
+                }
+                get pathname(): string {
+                    if (this._record.opaquePath != null) return this._record.opaquePath;
+                    return "default";
+                }
+            }
+            const c = new C();
+            c._record.opaquePath = "p";
+            console.log(c.pathname);
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("p\n", result);
+    }
+
+    #endregion
 }

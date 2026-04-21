@@ -654,6 +654,10 @@ public partial class TypeChecker
                 _switchDepth = 0;
                 _activeLabels.Clear();
 
+                // Isolate the narrowing context for this method body so narrowings
+                // from `if (x) return;` don't leak into sibling methods/accessors.
+                PushEmptyNarrowingScope();
+
                 try
                 {
                     // Abstract methods have no body to check
@@ -709,6 +713,7 @@ public partial class TypeChecker
                 }
                 finally
                 {
+                    PopNarrowingScope();
                     _environment = previousEnvFunc;
                     _currentFunctionReturnType = previousReturnFunc;
                     _inferredReturnTypes = previousInferredFunc;
@@ -764,6 +769,10 @@ public partial class TypeChecker
                     // enabling patterns like `static get ANY(): Range { return new this("any"); }`.
                     _inStaticMethod = accessor.IsStatic;
 
+                    // Isolate narrowing context so that narrowings don't leak between
+                    // accessors or into sibling methods.
+                    PushEmptyNarrowingScope();
+
                     try
                     {
                         foreach (var bodyStmt in accessor.Body)
@@ -773,6 +782,7 @@ public partial class TypeChecker
                     }
                     finally
                     {
+                        PopNarrowingScope();
                         _environment = previousEnvAcc;
                         _currentFunctionReturnType = previousReturnAcc;
                         _loopDepth = previousLoopDepthAcc;

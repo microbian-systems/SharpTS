@@ -256,7 +256,7 @@ static void Run(string source, DecoratorMode decoratorMode, bool emitDecoratorMe
                 Console.WriteLine($"Error: {diagnostic}");
             if (typeResult.HitErrorLimit)
                 Console.WriteLine("Too many errors, stopping.");
-            return;
+            Environment.Exit(1);
         }
 
         // Variable Resolution Phase (enables O(1) lookups)
