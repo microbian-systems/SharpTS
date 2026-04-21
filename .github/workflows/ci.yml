@@ -40,5 +40,14 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       - name: Test
+        # DOTNET_TC_QuickJit=0 works around a .NET 10 tier-0 QuickJit miscompilation
+        # that surfaces on Linux runners when DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+        # (or the runner is missing libicu) + the test DLL is spawned by xUnit's
+        # testhost. Symptom: `Array.includes(string)` on a freshly-`.map()`-ed list
+        # silently returns the wrong result for the first 1-2 sequential calls (~90%
+        # of runs). Disabling QuickJit (not PGO; not R2R alone) suppresses it.
+        # Remove once the .NET runtime fix ships. See memory/project_intl_ci_invariant_bug.md.
+        env:
+          DOTNET_TC_QuickJit: 0
         run: dotnet test --no-build --configuration Release --verbosity normal
         timeout-minutes: 10

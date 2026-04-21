@@ -179,15 +179,21 @@ public partial class RuntimeEmitter
         EmitTypeBranch("Function", runtime.TSFunctionType);
         EmitTypeBranch("TextEncoder", runtime.TSTextEncoderType);
         EmitTypeBranch("TextDecoder", runtime.TSTextDecoderType);
+        // `Object` — return System.Object's Type token so `globalThis.Object === Object`
+        // holds (bare `Object` lowers to this same helper via ILEmitter.Expressions.cs,
+        // so both sides produce the canonical Type instance). The compile-time static
+        // dispatch for `Object.keys(obj)` etc. runs through ObjectStaticEmitter before
+        // the receiver is evaluated as a value, so this change doesn't affect it.
+        EmitTypeBranch("Object", _types.Object);
 
-        // Remaining named namespaces (Math, JSON, console, Object, Error, Reflect,
+        // Remaining named namespaces (Math, JSON, console, Error, Reflect,
         // process, Number, String, Boolean, Symbol) are represented as singletons
         // in the runtime rather than .NET Type instances. Keep the null-marker
         // behavior for those — compile-time static dispatch already routes through
         // the dedicated namespace emitters (NumberStaticEmitter etc.).
         string[] singletonNamespaces =
         [
-            "Math", "JSON", "console", "Object", "Error", "Reflect",
+            "Math", "JSON", "console", "Error", "Reflect",
             "process", "Number", "String", "Boolean", "Symbol"
         ];
         foreach (var ns in singletonNamespaces)

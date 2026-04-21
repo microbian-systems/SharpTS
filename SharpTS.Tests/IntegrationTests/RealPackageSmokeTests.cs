@@ -411,7 +411,12 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
 
         var result = RunInterpreter(script);
         Assert.Equal(0, result.ExitCode);
-        Assert.Contains("function", result.StandardOutput);
+        // `typeof _` is the first output line. Assert on the first line specifically,
+        // not Contains — lodash's own module init can emit debug strings containing
+        // the word "function" (e.g. from leftover instrumentation), masking a bug
+        // where require('lodash') returns the empty module-init dict instead of the
+        // lodash function.
+        Assert.Equal("function", result.StandardOutput.Split('\n')[0].Trim());
     }
 
     [SkippableFact]
@@ -427,6 +432,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
 
         var (exit, output) = CompileAndRun(script);
         Assert.Equal(0, exit);
-        Assert.Contains("function", output);
+        // See Lodash_Interpreter above for rationale.
+        Assert.Equal("function", output.Split('\n')[0].Trim());
     }
 }
