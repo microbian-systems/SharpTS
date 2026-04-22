@@ -197,6 +197,13 @@ public partial class ILEmitter
         }
         else
         {
+            // The callee didn't resolve to a local or a resolvable variable. Preserve
+            // the legacy Ldnull behavior for this path — the primary #54 repro
+            // (`const F = ...; new F(...)`) routes through the Ldloc branch above,
+            // which IS rewired at notTypeLabel. Routing this branch through
+            // NewOnFunction causes the `if (!(this instanceof F)) return new F(args)`
+            // idiom (yallist, semver) to recurse because function-identity and
+            // instanceof aren't yet aligned in compiled mode.
             IL.Emit(OpCodes.Ldnull);
             return;
         }
@@ -225,7 +232,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Br, doneLabel);
 
         IL.MarkLabel(notTypeLabel);
-        IL.Emit(OpCodes.Ldnull);
+        EmitNewOnFunctionCall(objTemp, n.Arguments);
 
         IL.MarkLabel(doneLabel);
     }
@@ -234,6 +241,8 @@ public partial class ILEmitter
     /// For <c>new someExpr(...)</c> where <c>someExpr</c> is a property/index access:
     /// evaluate, runtime-check for Type, and construct via reflection. Non-Type values
     /// (e.g. <c>$TSFunction</c>) fall through to null to preserve pre-existing behavior.
+    /// See the comment in <see cref="EmitFallbackConstruction"/> for why this path
+    /// stays on Ldnull rather than routing through NewOnFunction.
     /// </summary>
     private void EmitCalleeExprConstruction(Expr.New n)
     {
@@ -258,6 +267,32 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldnull);
 
         IL.MarkLabel(doneLabel);
+    }
+
+    /// <summary>
+    /// Emits <c>$Runtime.NewOnFunction(callee, args)</c> — the JS <c>new</c> protocol
+    /// for runtime-valued function callees (<c>$TSFunction</c>, <c>$BoundTSFunction</c>).
+    /// Leaves the constructed object on the stack. Callee is read from
+    /// <paramref name="calleeLocal"/>; args are evaluated and packed into an object[].
+    /// </summary>
+    private void EmitNewOnFunctionCall(LocalBuilder calleeLocal, List<Expr> arguments)
+    {
+        IL.Emit(OpCodes.Ldloc, calleeLocal);
+
+        // args = new object[N] { arg0, arg1, ... }
+        IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldc_I4, i);
+            EmitExpression(arguments[i]);
+            EmitBoxIfNeeded(arguments[i]);
+            IL.Emit(OpCodes.Stelem_Ref);
+        }
+
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.NewOnFunction);
+        SetStackUnknown();
     }
 
     /// <summary>

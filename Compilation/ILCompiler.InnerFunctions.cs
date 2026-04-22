@@ -254,8 +254,14 @@ public partial class ILCompiler
 
             if (hasDisplayClass)
             {
-                // Instance method on display class - this is arg 0
+                // Instance method on display class - this is arg 0 for captures access.
                 ctx.IsInstanceMethod = true;
+
+                // BUT arg0 on a display class is the display-class self, NOT the
+                // function's JS `this`. Flag this so LoadThis consults the thread-local
+                // _currentFunctionThis (set by $Runtime.NewOnFunction etc.) instead of
+                // Ldarg_0.
+                ctx.IsInnerFunctionOnDisplayClass = true;
 
                 if (_innerFunctionDCFields.TryGetValue(func, out var fieldMap))
                     ctx.CapturedFields = fieldMap;

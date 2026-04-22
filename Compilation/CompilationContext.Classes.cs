@@ -21,6 +21,17 @@ public partial class CompilationContext
     public FieldInfo? FieldsField { get; set; }
     public bool IsInstanceMethod { get; set; }
 
+    /// <summary>
+    /// True when the current method body is an inner <c>function</c> declaration
+    /// emitted onto a display class. In that case <see cref="IsInstanceMethod"/> is
+    /// also true (arg0 is the display-class self — needed for capture access), but
+    /// <c>this</c> in the body is NOT arg0 — it's the dynamic receiver from the
+    /// call site (or null for a bare call). <see cref="LocalVariableResolver.LoadThis"/>
+    /// consults this flag to pick the thread-local <c>_currentFunctionThis</c>
+    /// over the class-instance path.
+    /// </summary>
+    public bool IsInnerFunctionOnDisplayClass { get; set; }
+
     // For static members: current class being compiled
     public TypeBuilder? CurrentClassBuilder { get; set; }
 

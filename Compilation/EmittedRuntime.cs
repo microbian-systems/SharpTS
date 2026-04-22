@@ -219,6 +219,16 @@ public class EmittedRuntime
     public MethodBuilder MergeIntoTSObject { get; set; } = null!;
     public MethodBuilder ToPascalCase { get; set; } = null!;
     public MethodBuilder SafeGetMethod { get; set; } = null!;
+    public MethodBuilder NewOnFunction { get; set; } = null!;
+
+    /// <summary>
+    /// Thread-static field holding the current function's <c>this</c> when the
+    /// enclosing call path (e.g. <c>$Runtime.NewOnFunction</c>) has a thisArg that
+    /// the compiled method signature can't otherwise receive. <see cref="LocalVariableResolver.LoadThis"/>
+    /// falls back to this field when a method has no <c>__this</c> param and no
+    /// captured <c>this</c>.
+    /// </summary>
+    public FieldBuilder CurrentFunctionThisField { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;

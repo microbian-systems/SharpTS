@@ -405,8 +405,10 @@ public class LocalVariableResolver : IVariableResolver
             return;
         }
 
-        // 3. Instance method
-        if (_ctx.IsInstanceMethod)
+        // 3. Instance method — but only when arg0 IS the JS `this`. For inner function
+        //    declarations emitted onto a display class, arg0 is the display-class self,
+        //    not the user's `this`; fall through to the thread-local path in that case.
+        if (_ctx.IsInstanceMethod && !_ctx.IsInnerFunctionOnDisplayClass)
         {
             _il.Emit(OpCodes.Ldarg_0);
             return;
@@ -421,7 +423,17 @@ public class LocalVariableResolver : IVariableResolver
             return;
         }
 
-        // 5. Static context (not in static constructor)
+        // 5. Thread-local `this` set by $Runtime.NewOnFunction (or other call paths
+        //    that prep a thisArg for a method whose signature has no __this param).
+        //    Falls back to null when no such this is active — matches the JS sloppy-
+        //    mode default (undefined-ish) for bare function calls.
+        if (_ctx.Runtime?.CurrentFunctionThisField != null)
+        {
+            _il.Emit(OpCodes.Ldsfld, _ctx.Runtime.CurrentFunctionThisField);
+            return;
+        }
+
+        // 6. Static context without an emitted runtime (reference-assembly mode etc.)
         _il.Emit(OpCodes.Ldnull);
     }
 

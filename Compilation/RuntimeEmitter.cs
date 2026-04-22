@@ -312,6 +312,11 @@ public partial class RuntimeEmitter
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime);
 
+        // Emit $Runtime.NewOnFunction — the JS `new` protocol for runtime-valued
+        // function callees. Depends on $Object, $TSFunction, $BoundTSFunction, and
+        // the $Runtime type itself all being defined.
+        EmitNewOnFunction(_runtimeTypeBuilder!, runtime);
+
         // Emit $BroadcastChannel — extends $EventEmitter, dispatches via $EventLoop,
         // and clones messages via $Runtime.StructuredClone (populated during EmitRuntimeClass
         // → EmitWorkerHelpers → EmitStructuredCloneHelper).

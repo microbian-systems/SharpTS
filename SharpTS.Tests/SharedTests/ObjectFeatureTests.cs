@@ -522,13 +522,11 @@ public class ObjectFeatureTests
         Assert.Equal("item:obj\n", output);
     }
 
-    // Constructor-function pattern: `new F()` routes through BindThis, which used
-    // to shift the scope chain and break closure captures in the body.
-    // Interpreter-only: compiled mode has a separate, pre-existing gap where `new`
-    // on a $TSFunction value emits Ldnull and skips construction entirely. Tracked
-    // in #54; promote this test to ExecutionModes.All once that lands.
+    // Constructor-function pattern: `new F()` on a runtime $TSFunction value must
+    // run the body with a fresh `this` and propagate property writes. Fixed for both
+    // modes in #54.
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Function_ConstructorPattern_CapturesEnclosingVariable(ExecutionMode mode)
     {
         var source = """
@@ -545,6 +543,74 @@ public class ObjectFeatureTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("Hello World\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_New_On_Returned_Ctor_MinimalClosure(ExecutionMode mode)
+    {
+        // The minimal-closure variant from #54 — ctor returned from a factory with
+        // no captured state. Routes through a named local so the compiled path
+        // picks up the $TSFunction and invokes it via NewOnFunction; the inline
+        // `new (outer() as any)('W')` form stays unsupported in compiled mode
+        // pending a broader fix for function identity / instanceof interaction.
+        var source = """
+            function outer(): any {
+                function Ctor(this: any, name: string): void { this.msg = 'Fixed ' + name; }
+                return Ctor;
+            }
+            const C = outer() as any;
+            console.log(new C('W').msg);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Fixed W\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_New_Respects_Explicit_Object_Return(ExecutionMode mode)
+    {
+        // Per JS semantics: if a constructor returns a non-null object, `new` yields
+        // that object rather than the implicit `this`. Guards against the helper
+        // always returning newObj.
+        var source = """
+            function makeCtor(): any {
+                function Ctor(this: any): any {
+                    this.a = 'implicit';
+                    return { a: 'explicit' };
+                }
+                return Ctor;
+            }
+            const C = makeCtor() as any;
+            console.log(new C().a);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("explicit\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_New_Primitive_Return_Is_Ignored(ExecutionMode mode)
+    {
+        // Per JS semantics: if a constructor returns a primitive, `new` yields the
+        // implicit `this` instead. Guards against the helper treating any non-null
+        // return as authoritative.
+        var source = """
+            function makeCtor(): any {
+                function Ctor(this: any): any {
+                    this.msg = 'from this';
+                    return 42;
+                }
+                return Ctor;
+            }
+            const C = makeCtor() as any;
+            console.log(new C().msg);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("from this\n", output);
     }
 
     [Theory]
