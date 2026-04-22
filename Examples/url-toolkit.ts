@@ -4,9 +4,9 @@
 // Demonstrates: url (parse, resolve), querystring (parse, stringify, escape, unescape)
 
 import { parse, resolve } from 'url';
-import querystring from 'querystring';
+import * as querystring from 'querystring';
 import process from 'process';
-import readline from 'readline';
+import * as readline from 'readline';
 
 function printUrlComponents(urlString: string): void {
     const url = parse(urlString);
@@ -27,7 +27,7 @@ function printUrlComponents(urlString: string): void {
         console.log('');
         console.log('Query Parameters');
         console.log('----------------');
-        const query = querystring.parse(url.search.substring(1));
+        const query = querystring.parse(url.search!.substring(1));
         const keys = Object.keys(query);
         for (const key of keys) {
             console.log(key + ' = ' + query[key]);

@@ -5,7 +5,7 @@
 //               path (join, extname, basename)
 
 import fs from 'fs';
-import path from 'path';
+import * as path from 'path';
 import process from 'process';
 
 // Map extensions to folder names
@@ -97,7 +97,7 @@ function main(): void {
     }
 
     const stats = fs.statSync(targetDir);
-    if (!stats.isDirectory) {
+    if (!stats.isDirectory()) {
         console.log('Error: Path is not a directory');
         return;
     }
@@ -117,7 +117,7 @@ function main(): void {
         const entryStat = fs.statSync(fullPath);
 
         // Skip directories
-        if (entryStat.isDirectory) {
+        if (entryStat.isDirectory()) {
             continue;
         }
 

@@ -14,7 +14,7 @@
 // Demonstrates: crypto (randomBytes, randomInt), readline (questionSync)
 
 import { randomBytes, randomInt } from 'crypto';
-import readline from 'readline';
+import * as readline from 'readline';
 import process from 'process';
 
 const LOWERCASE = 'abcdefghijklmnopqrstuvwxyz';

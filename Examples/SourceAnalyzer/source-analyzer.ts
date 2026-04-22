@@ -203,13 +203,13 @@ function scanDirectory(dirPath: string): any[] {
             if (fs.existsSync(fullPath)) {
                 const stat = fs.statSync(fullPath);
 
-                if (stat.isDirectory) {
+                if (stat.isDirectory()) {
                     // Recursively scan subdirectory
                     const subResults = scanDirectory(fullPath);
                     for (let j = 0; j < subResults.length; j = j + 1) {
                         results.push(subResults[j]);
                     }
-                } else if (stat.isFile) {
+                } else if (stat.isFile()) {
                     // Check if it's a supported file type
                     if (isSupportedFile(entry)) {
                         const fileStats = analyzeFile(fullPath);

@@ -7,7 +7,7 @@
 
 import * as http from 'http';
 import { parse } from 'url';
-import querystring from 'querystring';
+import * as querystring from 'querystring';
 import process from 'process';
 
 // ============================================================================
@@ -320,7 +320,7 @@ function handleRequest(req: any, res: any): void {
     // Parse query string
     let query: { [key: string]: string } = {};
     if (parsedUrl.search) {
-        query = querystring.parse(parsedUrl.search.substring(1));
+        query = querystring.parse(parsedUrl.search!.substring(1));
     }
 
     // Route the request

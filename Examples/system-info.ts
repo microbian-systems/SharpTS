@@ -4,7 +4,7 @@
 // Demonstrates: os (platform, arch, hostname, cpus, totalmem, freemem, homedir, tmpdir, userInfo, EOL)
 //               process (pid, version, cwd, env, argv, uptime, memoryUsage)
 
-import os from 'os';
+import * as os from 'os';
 import process from 'process';
 
 function formatBytes(bytes: number): string {

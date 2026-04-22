@@ -5,7 +5,7 @@
 
 import { createHash } from 'crypto';
 import fs from 'fs';
-import path from 'path';
+import * as path from 'path';
 import process from 'process';
 
 function formatBytes(bytes: number): string {
@@ -40,7 +40,7 @@ function main(): void {
     }
 
     const stats = fs.statSync(filePath);
-    if (stats.isDirectory) {
+    if (stats.isDirectory()) {
         console.log('Error: Path is a directory, not a file');
         return;
     }
