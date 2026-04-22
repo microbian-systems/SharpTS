@@ -142,21 +142,24 @@ public class AliasingTests
     [Fact]
     public void AliasAssignment_InvalidatesNarrowing()
     {
-        // When an alias is created, mutations through the alias should invalidate narrowings
+        // When an alias is created, mutations through the alias should be reflected
+        // on the original. With assignment-flow narrowing (issue #48), the write
+        // `alias.prop = null` narrows `obj.prop` (the aliased path) to null, so the
+        // subsequent read errors with 'null' instead of 'string | null'.
         var source = """
             type Obj = { prop: string | null };
             function test(obj: Obj): string {
                 if (obj.prop !== null) {
                     const alias = obj;
-                    alias.prop = null;  // Mutation through alias
-                    return obj.prop;  // Should error - narrowing invalidated
+                    alias.prop = null;  // Mutation through alias — narrows obj.prop to null
+                    return obj.prop;  // Should error - 'null' not assignable to 'string'
                 }
                 return "default";
             }
             """;
 
         var ex = Assert.Throws<TypeMismatchException>(() => TestHarness.RunInterpreted(source));
-        Assert.Contains("string | null", ex.Message);
+        Assert.Contains("null", ex.Message);
     }
 
     [Fact]

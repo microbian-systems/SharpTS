@@ -265,15 +265,78 @@ public partial class TypeChecker
         _ => objType.ToString() ?? "unknown"
     };
 
+    /// <summary>
+    /// Computes the post-write narrowed type for a typed slot by filtering the declared
+    /// union's members to those the RHS could actually be. Matches TypeScript's
+    /// control-flow narrowing across assignments: writing `"s"` to a `string | null`
+    /// slot narrows subsequent reads to `string`. Returns null if no narrowing is
+    /// produced (declared isn't a union, every member survives, or no member matches).
+    /// </summary>
+    private TypeInfo? NarrowToDeclaredSlot(TypeInfo declaredType, TypeInfo valueType)
+    {
+        if (declaredType is not TypeInfo.Union union) return null;
+
+        var declaredMembers = union.FlattenedTypes;
+        IReadOnlyList<TypeInfo> rhsMembers = valueType is TypeInfo.Union rhsUnion
+            ? rhsUnion.FlattenedTypes
+            : [valueType];
+
+        var surviving = new List<TypeInfo>();
+        var seen = new HashSet<TypeInfo>(TypeInfoEqualityComparer.Instance);
+        foreach (var declared in declaredMembers)
+        {
+            foreach (var rhs in rhsMembers)
+            {
+                if (IsCompatible(declared, rhs))
+                {
+                    if (seen.Add(declared))
+                        surviving.Add(declared);
+                    break;
+                }
+            }
+        }
+
+        if (surviving.Count == 0 || surviving.Count == declaredMembers.Count) return null;
+        return surviving.Count == 1 ? surviving[0] : new TypeInfo.Union(surviving);
+    }
+
+    /// <summary>
+    /// After a successful property/setter write, installs a narrowing on the written
+    /// path so subsequent reads see the tighter type. Also mirrors onto exact variable
+    /// aliases (<c>const alias = obj</c>) since those are guaranteed to refer to the
+    /// same object. Does not mirror onto escape-analyzer paths, which are only
+    /// may-alias (installing there would invent false narrowings).
+    /// </summary>
+    private void InstallPostAssignmentNarrowing(
+        Narrowing.NarrowingPath.PropertyAccess assignedPath,
+        TypeInfo declaredSlotType,
+        TypeInfo valueType)
+    {
+        var narrowed = NarrowToDeclaredSlot(declaredSlotType, valueType);
+        if (narrowed == null) return;
+
+        AddNarrowing(assignedPath, narrowed);
+
+        if (assignedPath.Base is Narrowing.NarrowingPath.Variable varPath &&
+            _variableAliases.TryGetValue(varPath.Name, out var originalVar))
+        {
+            var aliasedPath = new Narrowing.NarrowingPath.PropertyAccess(
+                new Narrowing.NarrowingPath.Variable(originalVar),
+                assignedPath.Property);
+            AddNarrowing(aliasedPath, narrowed);
+        }
+    }
+
     private TypeInfo CheckSet(Expr.Set set)
     {
         TypeInfo objType = CheckExpr(set.Object);
 
-        // Invalidate any narrowings affected by this property assignment
+        // Extract the narrowing path for the written location, if narrowable.
         var basePath = Narrowing.NarrowingPathExtractor.TryExtract(set.Object);
+        Narrowing.NarrowingPath.PropertyAccess? assignedPath = null;
         if (basePath != null)
         {
-            var assignedPath = new Narrowing.NarrowingPath.PropertyAccess(basePath, set.Name.Lexeme);
+            assignedPath = new Narrowing.NarrowingPath.PropertyAccess(basePath, set.Name.Lexeme);
             InvalidateNarrowingsFor(assignedPath);
 
             // Also invalidate narrowings on the original variable if this is an alias
@@ -315,6 +378,7 @@ public partial class TypeChecker
                 {
                     throw new TypeCheckException($" Cannot assign '{valueType}' to property '{set.Name.Lexeme}' of type '{propType}'.");
                 }
+                if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, propType, valueType);
                 return valueType;
             }
             throw new TypeCheckException($" Property '{set.Name.Lexeme}' does not exist on type '{tp.Name}'. Consider adding a constraint to the type parameter.");
@@ -334,6 +398,7 @@ public partial class TypeChecker
                     {
                         throw new TypeCheckException($" Cannot assign '{valueType}' to static property '{set.Name.Lexeme}' of type '{staticPropType}'.");
                     }
+                    if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, staticPropType, valueType);
                     return valueType;
                 }
                 current = GetSuperclass(current);
@@ -363,6 +428,7 @@ public partial class TypeChecker
                      {
                          throw new TypeCheckException($" Cannot assign '{valueType}' to property '{memberName}' expecting '{substitutedType}'.");
                      }
+                     if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, substitutedType, valueType);
                      return valueType;
                  }
 
@@ -375,6 +441,7 @@ public partial class TypeChecker
                      {
                          throw new TypeCheckException($" Cannot assign '{valueType}' to field '{memberName}' of type '{substitutedType}'.");
                      }
+                     if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, substitutedType, valueType);
                      return valueType;
                  }
 
@@ -399,6 +466,7 @@ public partial class TypeChecker
                      {
                          throw new TypeCheckException($" Cannot assign '{valueType}' to property '{memberName}' expecting '{setterType}'.");
                      }
+                     if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, setterType, valueType);
                      return valueType;
                  }
 
@@ -467,6 +535,7 @@ public partial class TypeChecker
                  {
                      throw new TypeCheckException($" Cannot assign '{valueType}' to property '{set.Name.Lexeme}' of type '{fieldType}'.");
                  }
+                 if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, fieldType, valueType);
                  return valueType;
              }
              // For now, disallow adding new properties to records via assignment to mimic strictness
@@ -483,6 +552,7 @@ public partial class TypeChecker
                     {
                         throw new TypeCheckException($" Cannot assign '{valueType}' to property '{set.Name.Lexeme}' of type '{member.Value}'.");
                     }
+                    if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, member.Value, valueType);
                     return valueType;
                 }
             }

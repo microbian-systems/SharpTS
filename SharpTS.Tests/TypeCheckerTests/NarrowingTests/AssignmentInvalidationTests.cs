@@ -18,41 +18,43 @@ public class AssignmentInvalidationTests
     [Fact]
     public void PropertyReassignment_InvalidatesNarrowing()
     {
-        // Reassigning the narrowed property should invalidate the narrowing
+        // Reassigning the narrowed property should invalidate the old narrowing.
+        // With assignment-flow narrowing (issue #48), the reassignment additionally
+        // narrows the property to the RHS type, so the read sees 'null', not the
+        // original 'string | null' — either way the assignment to a string return
+        // slot fails.
         var source = """
             type Obj = { prop: string | null };
             function test(obj: Obj): string {
                 if (obj.prop !== null) {
-                    obj.prop = null;  // Reassignment
-                    return obj.prop;  // Should error - narrowing invalidated
+                    obj.prop = null;  // Reassignment — narrows to null
+                    return obj.prop;  // Should error - 'null' not assignable to 'string'
                 }
                 return "default";
             }
             """;
 
         var ex = Assert.Throws<TypeMismatchException>(() => TestHarness.RunInterpreted(source));
-        Assert.Contains("string | null", ex.Message);
+        Assert.Contains("null", ex.Message);
         Assert.Contains("string", ex.Message);
     }
 
     [Fact]
-    public void PropertyReassignment_ToSameType_StillInvalidates()
+    public void PropertyReassignment_ToNarrowerType_NarrowsSubsequentReads()
     {
-        // Even reassigning to a compatible value should invalidate narrowing
-        // because we're conservative about what the new value might be
+        // Writing a string to a `string | null` slot should narrow subsequent reads
+        // to `string` — matching TypeScript's CFA behavior. (Issue #48)
         var source = """
             type Obj = { prop: string | null };
             function test(obj: Obj): string {
-                if (obj.prop !== null) {
-                    obj.prop = "hello";  // Reassigning to string
-                    return obj.prop;  // Should error - narrowing still invalidated
-                }
-                return "default";
+                obj.prop = "hello";
+                return obj.prop;  // Narrowed to string by the write
             }
+            console.log(test({ prop: null }));
             """;
 
-        var ex = Assert.Throws<TypeMismatchException>(() => TestHarness.RunInterpreted(source));
-        Assert.Contains("string | null", ex.Message);
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("hello\n", result);
     }
 
     #endregion

@@ -1512,9 +1512,8 @@ export function parse(urlString: string, parseQueryString?: boolean): LegacyUrlO
         }
         const queryIdx = s.indexOf('?');
         if (queryIdx >= 0) {
-            const searchPart = s.substring(queryIdx);
-            result.search = searchPart;
-            result.query = searchPart.substring(1);
+            result.search = s.substring(queryIdx);
+            result.query = result.search.substring(1);
             s = s.substring(0, queryIdx);
         }
         result.pathname = s;
