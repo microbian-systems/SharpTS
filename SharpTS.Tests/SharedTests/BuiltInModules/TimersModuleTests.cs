@@ -9,21 +9,6 @@ namespace SharpTS.Tests.SharedTests.BuiltInModules;
 [Collection("TimerTests")]
 public class TimersModuleTests
 {
-    // Compiled-mode cross-module rest-param dispatch to `$M_timers_setTimeout/
-    // setInterval(Object, Object, List<object>)` crashes on non-Linux runners:
-    // NRE on Linux under DOTNET_TC_QuickJit=0, AccessViolation at Unbox_Helper
-    // on macOS under any JIT config. The 5 tests below call `timers.setTimeout`/
-    // `timers.setInterval` positionally with a numeric delay — the compiled call
-    // site boxes the delay to Object and the callee unboxes it, and somewhere in
-    // that path the IL is wrong. Last known all-platform green run was
-    // 24325443121 (2026-04-13); the regression slipped in between then and now
-    // under strategy-cancel-on-first-failure, which was hiding non-Linux jobs.
-    // Covered on Linux; skipped elsewhere until the IL bug is fixed.
-    private static void SkipIfCrossModuleRestParamBug(ExecutionMode mode) =>
-        Skip.If(
-            mode == ExecutionMode.Compiled && !OperatingSystem.IsLinux(),
-            "Cross-module rest-param call to stdlib setTimeout/setInterval is miscompiled on non-Linux runners.");
-
     #region Import Tests
 
     [Theory]
@@ -69,11 +54,10 @@ public class TimersModuleTests
 
     #region setTimeout Tests
 
-    [SkippableTheory]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Timers_SetTimeout_ReturnsHandle(ExecutionMode mode)
     {
-        SkipIfCrossModuleRestParamBug(mode);
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -88,11 +72,10 @@ public class TimersModuleTests
         Assert.Equal("true\ntrue\n", output);
     }
 
-    [SkippableTheory]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Timers_SetTimeout_ExecutesCallback_Interpreted(ExecutionMode mode)
     {
-        SkipIfCrossModuleRestParamBug(mode);
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -110,11 +93,10 @@ public class TimersModuleTests
         Assert.Equal("true\n", output);
     }
 
-    [SkippableTheory]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Timers_SetTimeout_ExecutesCallback(ExecutionMode mode)
     {
-        SkipIfCrossModuleRestParamBug(mode);
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -132,11 +114,10 @@ public class TimersModuleTests
         Assert.Equal("true\n", output);
     }
 
-    [SkippableTheory]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Timers_ClearTimeout_CancelsCallback(ExecutionMode mode)
     {
-        SkipIfCrossModuleRestParamBug(mode);
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """
@@ -159,11 +140,10 @@ public class TimersModuleTests
 
     #region setInterval Tests
 
-    [SkippableTheory]
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Timers_SetInterval_ReturnsHandle(ExecutionMode mode)
     {
-        SkipIfCrossModuleRestParamBug(mode);
         var files = new Dictionary<string, string>
         {
             ["main.ts"] = """

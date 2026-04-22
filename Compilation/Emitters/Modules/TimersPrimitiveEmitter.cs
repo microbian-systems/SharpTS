@@ -63,11 +63,7 @@ public sealed class TimersPrimitiveEmitter : IBuiltInModuleEmitter
         // Emit delay - second argument (default 0)
         if (arguments.Count > 1)
         {
-            emitter.EmitExpression(arguments[1]);
-            if (arguments[1] is not Expr.Literal { Value: double })
-            {
-                il.Emit(OpCodes.Unbox_Any, ctx.Types.Double);
-            }
+            emitter.EmitExpressionAsDouble(arguments[1]);
         }
         else
         {
@@ -126,11 +122,7 @@ public sealed class TimersPrimitiveEmitter : IBuiltInModuleEmitter
         // Emit delay - second argument (default 0)
         if (arguments.Count > 1)
         {
-            emitter.EmitExpression(arguments[1]);
-            if (arguments[1] is not Expr.Literal { Value: double })
-            {
-                il.Emit(OpCodes.Unbox_Any, ctx.Types.Double);
-            }
+            emitter.EmitExpressionAsDouble(arguments[1]);
         }
         else
         {

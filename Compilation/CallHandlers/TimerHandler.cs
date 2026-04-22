@@ -42,7 +42,7 @@ public class TimerHandler : ICallHandler
         // Callback
         if (call.Arguments.Count > 0) { emitter.EmitExpression(call.Arguments[0]); emitter.EmitBoxIfNeeded(call.Arguments[0]); } else { il.Emit(OpCodes.Ldnull); }
         // Delay
-        if (call.Arguments.Count > 1) { emitter.EmitExpression(call.Arguments[1]); if (call.Arguments[1] is not Expr.Literal { Value: double }) il.Emit(OpCodes.Unbox_Any, ctx.Types.Double); } else { il.Emit(OpCodes.Ldc_R8, 0.0); }
+        if (call.Arguments.Count > 1) { emitter.EmitExpressionAsDouble(call.Arguments[1]); } else { il.Emit(OpCodes.Ldc_R8, 0.0); }
         // Args array
         if (call.Arguments.Count > 2)
         {

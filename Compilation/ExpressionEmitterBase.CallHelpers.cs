@@ -1032,7 +1032,7 @@ public abstract partial class ExpressionEmitterBase
     protected void EmitSetTimeout(List<Expr> arguments)
     {
         if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
-        if (arguments.Count > 1) { EmitExpression(arguments[1]); if (arguments[1] is not Expr.Literal { Value: double }) IL.Emit(OpCodes.Unbox_Any, Types.Double); } else { IL.Emit(OpCodes.Ldc_R8, 0.0); }
+        if (arguments.Count > 1) { EmitExpressionAsDouble(arguments[1]); } else { IL.Emit(OpCodes.Ldc_R8, 0.0); }
         EmitTimerArgsArray(arguments, 2);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.SetTimeout);
         SetStackUnknown();
@@ -1048,7 +1048,7 @@ public abstract partial class ExpressionEmitterBase
     protected void EmitSetInterval(List<Expr> arguments)
     {
         if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
-        if (arguments.Count > 1) { EmitExpression(arguments[1]); if (arguments[1] is not Expr.Literal { Value: double }) IL.Emit(OpCodes.Unbox_Any, Types.Double); } else { IL.Emit(OpCodes.Ldc_R8, 0.0); }
+        if (arguments.Count > 1) { EmitExpressionAsDouble(arguments[1]); } else { IL.Emit(OpCodes.Ldc_R8, 0.0); }
         EmitTimerArgsArray(arguments, 2);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.SetInterval);
         SetStackUnknown();
