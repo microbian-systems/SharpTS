@@ -24,6 +24,7 @@ public class BuiltInConstructorHandler : ICallHandler
             "Symbol" => EmitSymbol(emitter, call),
             "BigInt" => EmitBigInt(emitter, call),
             "Date" => EmitDate(emitter, call),
+            "Array" => EmitArray(emitter, call),
             "Error" or "TypeError" or "RangeError" or "ReferenceError" or
             "SyntaxError" or "URIError" or "EvalError" or "AggregateError" =>
                 EmitError(emitter, call, v.Name.Lexeme),
@@ -76,6 +77,32 @@ public class BuiltInConstructorHandler : ICallHandler
         // Date() without 'new' returns current date as string
         il.Emit(OpCodes.Call, ctx.Runtime!.CreateDateNoArgs);
         il.Emit(OpCodes.Call, ctx.Runtime!.DateToString);
+        return true;
+    }
+
+    /// <summary>
+    /// Emits <c>Array(…)</c> called without <c>new</c> (issue #61). Per
+    /// ECMAScript §23.1.1 the call form is identical to the construct form:
+    /// <c>Array(3)</c> === <c>new Array(3)</c>. Route through the same
+    /// <c>$Runtime.ArrayConstructor</c> helper as the <c>new</c> path.
+    /// </summary>
+    private static bool EmitArray(IEmitterContext emitter, Expr.Call call)
+    {
+        var il = emitter.IL;
+        var ctx = emitter.Context;
+
+        il.Emit(OpCodes.Ldc_I4, call.Arguments.Count);
+        il.Emit(OpCodes.Newarr, ctx.Types.Object);
+        for (int i = 0; i < call.Arguments.Count; i++)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4, i);
+            emitter.EmitExpression(call.Arguments[i]);
+            emitter.EmitBoxIfNeeded(call.Arguments[i]);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.ArrayConstructor);
+        emitter.SetStackUnknown();
         return true;
     }
 

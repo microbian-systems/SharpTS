@@ -194,6 +194,10 @@ public partial class RuntimeEmitter
         EmitSafeGetMethod(typeBuilder, runtime); // Must be emitted before GetFieldsProperty/SetFieldsProperty
         // Promise callback types must be created before InvokeValue (which dispatches to them)
         EmitPromiseCallbackTypes(moduleBuilder, runtime);
+        // ArrayConstructor (#61) must come before InvokeValue since InvokeValue's
+        // Type-callee dispatch branch emits a direct call to it for `Array(n)`
+        // patterns where Array was stored as a value.
+        EmitArrayConstructor(typeBuilder, runtime);
         // InvokeValue/InvokeMethodValue must come before GetFieldsProperty (needs InvokeMethodValue for getters)
         // and before Promise methods (needed by InvokeCallback)
         EmitInvokeValue(typeBuilder, runtime);
@@ -313,6 +317,8 @@ public partial class RuntimeEmitter
         EmitArrayFlatMap(typeBuilder, runtime);
         EmitArrayFrom(typeBuilder, runtime);
         EmitArrayOf(typeBuilder, runtime);
+        // EmitArrayConstructor is emitted earlier (before InvokeValue) so its
+        // MethodBuilder is available to InvokeValue's Type-callee dispatch.
         EmitArraySort(typeBuilder, runtime);
         EmitArrayToSorted(typeBuilder, runtime);
         EmitToIntegerOrInfinityHelper(typeBuilder, runtime); // Must be before EmitArraySplice/EmitArrayWith

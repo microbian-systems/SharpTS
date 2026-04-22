@@ -277,8 +277,13 @@ public partial class ILEmitter
         // IsAssignableFrom-based instanceof checks keep their Type-token emissions.
         // Runs for `Object` (coercion/identity — lodash `root.Object === Object`),
         // `Function`, and anything else the resolver/classes/functions paths didn't claim.
-        if (name is "Object" or "Function")
+        if (name is "Object" or "Function" or "Number" or "String" or "Boolean")
         {
+            // Bare reference to a built-in constructor. Number/String/Boolean
+            // are added here (issue #62) so that patterns like
+            // `var isInt = Number.isInteger` and `typeof Number === "function"`
+            // don't throw ReferenceError — matches how Object and Function
+            // already resolve via globalThis.
             IL.Emit(OpCodes.Ldstr, name);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GlobalThisGetProperty);
             SetStackUnknown();

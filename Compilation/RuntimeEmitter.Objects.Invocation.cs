@@ -189,11 +189,41 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.MethodCallableType);
         il.Emit(OpCodes.Brtrue, methodCallableLabel);
 
+        // Built-in type constructors stored as values (issue #61): patterns
+        // like lodash's `var Array = context.Array; Array(n)` store the
+        // emitted .NET Type token in a local, then call it. Dispatch here
+        // to the corresponding runtime constructor helper so the call form
+        // produces a real instance rather than null.
+        var typeCalleeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, typeCalleeLabel);
+
         // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
         var notProxyLabel = il.DefineLabel();
         EmitProxyInvokeCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), notProxyLabel);
 
         il.MarkLabel(notProxyLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        // Type dispatch — currently only Array (IList<object>) has a runtime
+        // constructor helper wired up. Other built-in Type constructors
+        // (Date, Map, Set, RegExp, Promise, …) called without `new` return
+        // null, matching pre-fix behavior; they can be wired in incrementally
+        // as usage patterns surface.
+        il.MarkLabel(typeCalleeLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.Type);
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle", [_types.RuntimeTypeHandle])!);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        var notArrayTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notArrayTypeLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ArrayConstructor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notArrayTypeLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
@@ -613,9 +643,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.FuncObjectArrayToObject, "Invoke", _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
+        // Built-in type constructor stored as a value (issue #61): patterns like
+        // `const A = Array; A(n)` end up here because `A` is a plain variable
+        // holding the Type token. Delegate to InvokeValue which has the Type
+        // dispatch — receiver is irrelevant for a constructor-style call.
+        il.MarkLabel(notFuncLabel);
+        var notTypeCalleeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brfalse, notTypeCalleeLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notTypeCalleeLabel);
+
         // Proxy apply trap check: if function is a proxy, call TrapApply
         // TrapApply expects List<object?> so convert the object[] args
-        il.MarkLabel(notFuncLabel);
         var notProxyLabel2 = il.DefineLabel();
         EmitProxyInvokeCheck(il, () => il.Emit(OpCodes.Ldarg_1), () =>
         {

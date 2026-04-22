@@ -338,6 +338,25 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
+            // --- Array (issue #61): JS-spec dispatch for new Array(…) / Array(…).
+            // Emit args as object[] and route through $Runtime.ArrayConstructor
+            // which handles: 0 args → []; 1 numeric arg → length-n nulls; 1
+            // non-numeric arg → [arg]; N args → [a, b, c, …].
+            case "Array":
+                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+                IL.Emit(OpCodes.Newarr, Ctx.Types.Object);
+                for (int i = 0; i < arguments.Count; i++)
+                {
+                    IL.Emit(OpCodes.Dup);
+                    IL.Emit(OpCodes.Ldc_I4, i);
+                    EmitExpression(arguments[i]);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Stelem_Ref);
+                }
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.ArrayConstructor);
+                SetStackUnknown();
+                return true;
+
             // --- DataView ---
             case "DataView":
                 if (arguments.Count == 0)

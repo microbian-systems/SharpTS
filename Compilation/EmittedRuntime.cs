@@ -131,6 +131,8 @@ public class EmittedRuntime
     public MethodBuilder IsArray { get; set; } = null!;
     public MethodBuilder ArrayFrom { get; set; } = null!;
     public MethodBuilder ArrayOf { get; set; } = null!;
+    // Array(…) / new Array(…) dispatch (issue #61).
+    public MethodBuilder ArrayConstructor { get; set; } = null!;
     public MethodBuilder SpreadArray { get; set; } = null!;
     public MethodBuilder ConcatArrays { get; set; } = null!;
     public MethodBuilder ExpandCallArgs { get; set; } = null!;

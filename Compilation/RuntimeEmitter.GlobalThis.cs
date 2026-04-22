@@ -185,16 +185,24 @@ public partial class RuntimeEmitter
         // dispatch for `Object.keys(obj)` etc. runs through ObjectStaticEmitter before
         // the receiver is evaluated as a value, so this change doesn't affect it.
         EmitTypeBranch("Object", _types.Object);
+        // Number / String / Boolean (issue #62) — expose the underlying
+        // primitive .NET types so `typeof Number === "function"` and
+        // `globalThis.Number === Number` hold. Compile-time static dispatch
+        // for `Number.isInteger(x)` etc. routes through the dedicated
+        // NumberStaticEmitter/StringStaticEmitter before the receiver is
+        // evaluated, so these branches only matter for value-form access.
+        EmitTypeBranch("Number", _types.Double);
+        EmitTypeBranch("String", _types.String);
+        EmitTypeBranch("Boolean", _types.Boolean);
 
         // Remaining named namespaces (Math, JSON, console, Error, Reflect,
-        // process, Number, String, Boolean, Symbol) are represented as singletons
-        // in the runtime rather than .NET Type instances. Keep the null-marker
-        // behavior for those — compile-time static dispatch already routes through
-        // the dedicated namespace emitters (NumberStaticEmitter etc.).
+        // process, Symbol) are represented as singletons in the runtime rather
+        // than .NET Type instances. Keep the null-marker behavior for those —
+        // compile-time static dispatch already routes through their dedicated
+        // namespace emitters.
         string[] singletonNamespaces =
         [
-            "Math", "JSON", "console", "Error", "Reflect",
-            "process", "Number", "String", "Boolean", "Symbol"
+            "Math", "JSON", "console", "Error", "Reflect", "process", "Symbol"
         ];
         foreach (var ns in singletonNamespaces)
         {

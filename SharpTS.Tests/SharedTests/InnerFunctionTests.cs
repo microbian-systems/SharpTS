@@ -538,6 +538,68 @@ public class InnerFunctionTests
     }
 
     [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BuiltIn_ArrayConstructor_AllForms(ExecutionMode mode)
+    {
+        // Issue #61: `new Array(n)` / `Array(n)` / `new Array(a, b, c)` must
+        // allocate the right array, not return null.
+        //   - 0 args → empty []
+        //   - 1 numeric arg n → length-n array (nulls represent JS undefined)
+        //   - 1 non-numeric arg x → [x]
+        //   - N args → [a, b, c, …]
+        var source = """
+            console.log((new Array(3) as any).length);
+            console.log((Array(3) as any).length);
+            console.log(new Array(1, 2, 3));
+            console.log(Array("hello"));
+            console.log(Array());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("3\n3\n[1, 2, 3]\n[hello]\n[]\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void BuiltIn_ArrayConstructor_AsValue_CallForm(ExecutionMode mode)
+    {
+        // Issue #61: calling an Array reference stored in a variable — the
+        // pattern lodash's runInContext uses (`var Array = context.Array; Array(n)`).
+        // The runtime Invoke dispatcher recognizes System.Type callees and
+        // routes IList<object> to the Array constructor helper.
+        var source = """
+            const A: any = Array;
+            const r1: any = A(2);
+            console.log(r1.length, r1[0], r1[1]);
+            const r2: any = A("x", "y");
+            console.log(r2.length, r2[0], r2[1]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2 null null\n2 x y\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BuiltIn_NumberStringBoolean_BareIdentifiers(ExecutionMode mode)
+    {
+        // Issue #62: bare `Number` / `String` / `Boolean` must resolve to
+        // something, not throw ReferenceError. typeof should match JS spec
+        // ("function"), and storing them in a variable must round-trip.
+        var source = """
+            console.log(typeof Number, typeof String, typeof Boolean);
+            const n: any = Number;
+            const s: any = String;
+            const b: any = Boolean;
+            console.log(typeof n, typeof s, typeof b);
+            console.log(Number === Number, String === String, Boolean === Boolean);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function function function\nfunction function function\ntrue true true\n", output);
+    }
+
+    [Theory]
     [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
     public void BuiltIn_ClassUnknownStaticProperty_IsUndefined(ExecutionMode mode)
     {
