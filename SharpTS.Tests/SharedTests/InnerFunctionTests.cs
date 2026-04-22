@@ -479,6 +479,43 @@ public class InnerFunctionTests
     }
 
     [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BuiltIn_NumberMethods_AsValues(ExecutionMode mode)
+    {
+        // Issue #60: Number.isInteger / isFinite / isInteger / isSafeInteger
+        // as stored values. Wraps $Runtime.NumberIs* in $TSFunction.
+        var source = """
+            const isInt: any = Number.isInteger;
+            const isFin: any = Number.isFinite;
+            const isSafe: any = Number.isSafeInteger;
+            console.log(typeof isInt, isInt(42), isInt(4.5), isInt("42"));
+            console.log(typeof isFin, isFin(42), isFin(Infinity), isFin(NaN));
+            console.log(typeof isSafe, isSafe(42), isSafe(Math.pow(2, 53)));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function true false false\nfunction true false false\nfunction true false\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BuiltIn_StringFromCharCode_AsValue(ExecutionMode mode)
+    {
+        // Issue #60: String.fromCharCode as a stored value. $Runtime's
+        // helper already accepts object[] so direct $TSFunction wrapping
+        // works via AdjustArgs' rest-parameter slot.
+        var source = """
+            const fromCC: any = String.fromCharCode;
+            console.log(typeof fromCC);
+            console.log(fromCC(65));
+            console.log(fromCC(72, 105, 33));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function\nA\nHi!\n", output);
+    }
+
+    [Theory]
     [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
     public void BuiltIn_MathMaxMin_Variadic_WithCoercion(ExecutionMode mode)
     {

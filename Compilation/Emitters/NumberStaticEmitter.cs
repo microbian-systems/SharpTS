@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Parsing;
 
@@ -95,9 +96,30 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Ldc_R8, 2.220446049250313e-16); // 2^-52
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
-            default:
-                return false;
         }
+
+        // Method references as values (issue #60). Wrap the matching $Runtime
+        // helper in a $TSFunction so `var isInt = Number.isInteger; isInt(42)`
+        // dispatches correctly.
+        var runtime = ctx.Runtime!;
+        MethodInfo? method = propertyName switch
+        {
+            "isNaN"         => runtime.NumberIsNaN,
+            "isFinite"      => runtime.NumberIsFinite,
+            "isInteger"     => runtime.NumberIsInteger,
+            "isSafeInteger" => runtime.NumberIsSafeInteger,
+            _ => null
+        };
+        if (method == null) return false;
+
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldtoken, method);
+        il.Emit(OpCodes.Ldtoken, method.DeclaringType!);
+        il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
+            ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        return true;
     }
 
     #region Helper Methods
@@ -173,5 +195,6 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
 
     public bool HasStaticProperty(string memberName) => memberName is
         "MAX_VALUE" or "MIN_VALUE" or "NaN" or "POSITIVE_INFINITY" or
-        "NEGATIVE_INFINITY" or "MAX_SAFE_INTEGER" or "MIN_SAFE_INTEGER" or "EPSILON";
+        "NEGATIVE_INFINITY" or "MAX_SAFE_INTEGER" or "MIN_SAFE_INTEGER" or "EPSILON"
+        or "isNaN" or "isFinite" or "isInteger" or "isSafeInteger";
 }

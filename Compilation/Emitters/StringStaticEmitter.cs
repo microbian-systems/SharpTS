@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Parsing;
 
@@ -66,10 +67,32 @@ public sealed class StringStaticEmitter : IStaticTypeEmitterStrategy
     }
 
     /// <summary>
-    /// String has no static properties.
+    /// Emits IL for bare access to a <c>String</c> static member — method
+    /// references only (<c>var f = String.fromCharCode</c>). The underlying
+    /// runtime helpers already have <c>object[]</c> signatures that
+    /// <c>$TSFunction.AdjustArgs</c> can feed via its rest-parameter
+    /// handling, so direct wrapping works. See issue #60.
     /// </summary>
     public bool TryEmitStaticPropertyGet(IEmitterContext emitter, string propertyName)
     {
-        return false;
+        var ctx = emitter.Context;
+        var runtime = ctx.Runtime!;
+        MethodInfo? method = propertyName switch
+        {
+            "fromCharCode"  => runtime.StringFromCharCode,
+            "fromCodePoint" => runtime.StringFromCodePoint,
+            _ => null
+        };
+        if (method == null) return false;
+
+        var il = ctx.IL;
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldtoken, method);
+        il.Emit(OpCodes.Ldtoken, method.DeclaringType!);
+        il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
+            ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        return true;
     }
 }
