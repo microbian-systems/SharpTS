@@ -29,6 +29,17 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
     private bool _isClusterWorker;
     private int _port;
 
+    // Drain-before-close state (issue #41): close() doesn't tear the listener
+    // down while requests are in flight. It marks _closeRequested, then the
+    // last HandleRequestAsync to finish invokes FinishClose. Mutations to
+    // _closeRequested and _inFlightRequests are coordinated via _stateLock so
+    // the accept loop can't dispatch a new request onto a listener that's
+    // about to be torn down.
+    private readonly object _stateLock = new();
+    private bool _closeRequested;
+    private int _inFlightRequests;
+    private ISharpTSCallable? _pendingCloseCallback;
+
     /// <summary>
     /// Creates a new HTTP server with the given request handler.
     /// </summary>
@@ -155,7 +166,19 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
 
         registry.RegisterHttpWorker(_port, ClusterContext.WorkerId, context =>
         {
-            // Wrap HttpListenerContext and dispatch through normal handler
+            // Reserve in-flight slot so HandleRequestAsync's decrement pairs
+            // cleanly and close() drain semantics work for cluster workers too.
+            bool accepted;
+            lock (_stateLock)
+            {
+                if (_closeRequested) { accepted = false; }
+                else { _inFlightRequests++; accepted = true; }
+            }
+            if (!accepted)
+            {
+                try { context.Response.Abort(); } catch { }
+                return;
+            }
             _ = HandleRequestAsync(context);
         }, interpreter);
 
@@ -171,39 +194,93 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
     /// <summary>
     /// Closes the server.
     /// </summary>
+    /// <remarks>
+    /// Node-compatible semantics: stops accepting new connections immediately, but
+    /// defers the actual listener teardown until all in-flight requests complete.
+    /// The 'close' event and the optional user callback fire on the main event loop
+    /// thread AFTER the last request finishes — never synchronously from inside a
+    /// request handler.
+    /// </remarks>
     private object? Close(List<object?> args)
     {
         if (!_isListening)
             return this;
 
+        ISharpTSCallable? userCloseCallback = null;
+        if (args.Count > 0 && args[0] is ISharpTSCallable cb)
+            userCloseCallback = cb;
+
+        bool finishNow;
+        lock (_stateLock)
+        {
+            if (_closeRequested) return this; // idempotent
+            _closeRequested = true;
+            _pendingCloseCallback = userCloseCallback;
+            // If no requests are in flight RIGHT NOW, we own the teardown.
+            // The accept loop checks _closeRequested under the same lock before
+            // incrementing _inFlightRequests, so it can't slip a new request in.
+            finishNow = _inFlightRequests == 0;
+        }
+
+        // Signal the accept loop to stop looping. Doesn't unblock the in-flight
+        // GetContextAsync — that's FinishClose's job via Stop()/Close().
         _cts?.Cancel();
 
         if (_isClusterWorker)
         {
             ClusterSingleton.Instance.SharedListeners.UnregisterHttpWorker(_port, ClusterContext.WorkerId);
         }
-        else if (_listener != null)
+
+        if (finishNow)
         {
-            _listener.Stop();
-            _listener.Close();
+            FinishClose();
+        }
+
+        return this;
+    }
+
+    /// <summary>
+    /// Performs the actual listener teardown and dispatches the 'close' event +
+    /// user callback. Called either synchronously from Close() (no in-flight
+    /// requests) or from the last HandleRequestAsync's finally (drain complete).
+    /// </summary>
+    /// <remarks>
+    /// .NET's HttpListener.Stop()/Close() can throw under load on Linux
+    /// (HttpListenerException, ObjectDisposedException, InvalidOperationException).
+    /// Pre-fix, those bubbled through ExecuteBlock's catch, got translated into a
+    /// guest ThrowException, and surfaced as the generic "Exception of type
+    /// ThrowException was thrown" flake in issue #41. Swallowed here because the
+    /// listener is being torn down; nothing actionable remains.
+    ///
+    /// The 'close' event and user callback go through ScheduleTimer(0) so they
+    /// always run on the main interpreter thread via the event loop — FinishClose
+    /// itself may be invoked from a threadpool thread via HandleRequestAsync's
+    /// finally, and user JS must not execute there.
+    /// </remarks>
+    private void FinishClose()
+    {
+        if (!_isClusterWorker && _listener != null)
+        {
+            try { _listener.Stop(); } catch { /* teardown path; see remarks */ }
+            try { _listener.Close(); } catch { /* teardown path; see remarks */ }
             _listener = null;
         }
 
         _isListening = false;
-
-        // Unregister from interpreter's event loop
         _interpreter?.Unref();
 
-        // Call the callback if provided
-        if (args.Count > 0 && args[0] is ISharpTSCallable callback && _interpreter != null)
+        var callback = _pendingCloseCallback;
+        _pendingCloseCallback = null;
+
+        var interp = _interpreter;
+        if (interp != null)
         {
-            callback.Call(_interpreter, new List<object?>());
+            interp.ScheduleTimer(0, 0, () =>
+            {
+                callback?.Call(interp, new List<object?>());
+                EmitEvent("close", new List<object?>());
+            }, isInterval: false);
         }
-
-        // Emit 'close' event
-        EmitEvent("close", new List<object?>());
-
-        return this;
     }
 
     /// <summary>
@@ -258,6 +335,30 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
             try
             {
                 var context = await _listener.GetContextAsync();
+
+                // Reserve an in-flight slot under the same lock Close() uses.
+                // If close was already requested, drop the connection — we're
+                // draining, not accepting new work.
+                bool accepted;
+                lock (_stateLock)
+                {
+                    if (_closeRequested)
+                    {
+                        accepted = false;
+                    }
+                    else
+                    {
+                        _inFlightRequests++;
+                        accepted = true;
+                    }
+                }
+
+                if (!accepted)
+                {
+                    try { context.Response.Abort(); } catch { }
+                    continue;
+                }
+
                 _ = HandleRequestAsync(context);
             }
             catch (HttpListenerException)
@@ -279,9 +380,19 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
     /// <summary>
     /// Handles an individual HTTP request.
     /// </summary>
+    /// <remarks>
+    /// The in-flight counter is incremented by the accept loop BEFORE this
+    /// method is invoked (to close the window with Close()). This method is
+    /// responsible for decrementing it — and, if close was requested while
+    /// it was running, for calling FinishClose from the decrement path.
+    /// </remarks>
     private async Task HandleRequestAsync(HttpListenerContext context)
     {
-        if (_interpreter == null) return;
+        if (_interpreter == null)
+        {
+            DecrementInFlight();
+            return;
+        }
 
         var req = new SharpTSHttpRequest(context.Request);
         var res = new SharpTSHttpResponse(context.Response);
@@ -349,7 +460,24 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
                     // Ignore close errors
                 }
             }
+
+            DecrementInFlight();
         }
+    }
+
+    /// <summary>
+    /// Drops an in-flight reservation. If this is the last in-flight request
+    /// and close() has been requested, completes the deferred teardown.
+    /// </summary>
+    private void DecrementInFlight()
+    {
+        bool finishNow;
+        lock (_stateLock)
+        {
+            _inFlightRequests--;
+            finishNow = _inFlightRequests == 0 && _closeRequested && _isListening;
+        }
+        if (finishNow) FinishClose();
     }
 
     /// <summary>
@@ -358,8 +486,8 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
     public void Dispose()
     {
         _cts?.Cancel();
-        _listener?.Stop();
-        _listener?.Close();
+        try { _listener?.Stop(); } catch { }
+        try { _listener?.Close(); } catch { }
         _cts?.Dispose();
         _listener = null;
         _isListening = false;
