@@ -405,4 +405,67 @@ public class InnerFunctionTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("map\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BuiltIn_ArrayIsArray_AsValue(ExecutionMode mode)
+    {
+        // Regression: `var f = Array.isArray` previously stored the boolean
+        // `false` in compiled mode because $Runtime.GetProperty fell through
+        // to reflection on System.Type (finding System.Type.IsArray) when
+        // the ArrayStaticEmitter's property-get path returned false. Fixed
+        // by emitting a $TSFunction wrapping $Runtime.IsArray at the
+        // property-access site. Common pattern in lodash-style libraries
+        // that cache native methods as locals at module init.
+        var source = """
+            const f: any = Array.isArray;
+            console.log(typeof f);
+            console.log(f([1, 2, 3]));
+            console.log(f("not an array"));
+            console.log(f(null));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function\ntrue\nfalse\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void BuiltIn_ClassNameProperty_Preserved(ExecutionMode mode)
+    {
+        // Compiled-only: regression guard that closing the Type-reflection
+        // leak in $Runtime.GetProperty still preserves Function.prototype.name.
+        // JS spec (§19.2.4.2) says `ClassName.name === "ClassName"`. The Type
+        // branch's explicit "name" handler must still run; only the unguarded
+        // reflection fallback is skipped. (Interpreter has a distinct gap
+        // around class-reference `.name` access, outside this fix's scope.)
+        var source = """
+            class MyClass {
+                static greet(): string { return "hi"; }
+            }
+            console.log(MyClass.name);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("MyClass\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void BuiltIn_ClassUnknownStaticProperty_IsUndefined(ExecutionMode mode)
+    {
+        // Compiled-only: `ClassName.nonexistentProp` must return undefined
+        // per ECMAScript §7.3.2 Get, not a .NET reflection bleed-through
+        // value. Before the fix, `Foo.isClass` returned System.Type.IsClass,
+        // `Foo.fullName` returned Foo's .NET full type name, etc.
+        var source = """
+            class Foo {}
+            console.log(typeof (Foo as any).isClass);
+            console.log(typeof (Foo as any).fullName);
+            console.log(typeof (Foo as any).isSealed);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined\nundefined\nundefined\n", output);
+    }
 }

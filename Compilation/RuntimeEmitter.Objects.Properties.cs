@@ -448,6 +448,24 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(noArrayMethodLabel);
 
+        // Skip all .NET reflection fallbacks for System.Type instances. An
+        // emitted `Array` / user-class token bound to a local becomes a
+        // System.Type at runtime; `P_0.GetType()` returns RuntimeType, whose
+        // .NET properties (IsArray, IsClass, Name, FullName, …) would
+        // otherwise bleed through as JS property values — notably making
+        // `var f = Array.isArray` resolve to the boolean `false` because
+        // IgnoreCase matches System.Type.IsArray and returns its value
+        // for typeof(IList<object>). The legitimate static-member lookups
+        // for Type live in EmitGetProperty's Type branch (static method
+        // → $TSFunction, static field → value, "name" → type.Name) and
+        // already ran before falling through here; no further reflection
+        // is correct for a Type. Returning $Undefined.Instance matches
+        // ECMAScript §7.3.2 Get for absent properties.
+        var skipTypeReflectionLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, skipTypeReflectionLabel);
+
         // Fallback: Try reflection-based property access for runtime-emitted types
         // This handles types like $Readable, $Writable, $Duplex that don't implement $IHasFields
 
@@ -589,6 +607,7 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(noGetMemberLabel);
         il.MarkLabel(nullLabel);
+        il.MarkLabel(skipTypeReflectionLabel);
         // Return $Undefined.Instance for non-existent properties (JavaScript semantics)
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
