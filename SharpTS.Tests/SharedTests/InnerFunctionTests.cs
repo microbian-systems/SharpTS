@@ -601,6 +601,33 @@ public class InnerFunctionTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void BuiltIn_StoredTypeToken_StaticMemberDispatch(ExecutionMode mode)
+    {
+        // Issue #63: when a built-in type constructor is stored in a variable
+        // (const A = Array; const N = Number; const S = String), accessing its
+        // static members must resolve to the same $TSFunction wrapper the
+        // compile-time ArrayStaticEmitter/NumberStaticEmitter/StringStaticEmitter
+        // would emit at a bare Array.isArray site. Exercised by lodash's
+        // runInContext pattern: `var isArray = Array.isArray;`.
+        var source = """
+            const A: any = Array;
+            const N: any = Number;
+            const S: any = String;
+            const isArr = A.isArray;
+            const isInt = N.isInteger;
+            const fromCC = S.fromCharCode;
+            console.log(typeof isArr, typeof isInt, typeof fromCC);
+            console.log(isArr([1,2,3]), isArr("x"));
+            console.log(isInt(42), isInt(4.5));
+            console.log(fromCC(72, 105));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function function function\ntrue false\ntrue false\nHi\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
     public void BuiltIn_ClassUnknownStaticProperty_IsUndefined(ExecutionMode mode)
     {
         // Compiled-only: `ClassName.nonexistentProp` must return undefined

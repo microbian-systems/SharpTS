@@ -198,6 +198,10 @@ public partial class RuntimeEmitter
         // Type-callee dispatch branch emits a direct call to it for `Array(n)`
         // patterns where Array was stored as a value.
         EmitArrayConstructor(typeBuilder, runtime);
+        // LookupBuiltInStaticMember (#63): MethodBuilder defined here so
+        // GetProperty's Type branch can reference it; body emitted later
+        // after all backing static methods are in place.
+        DefineLookupBuiltInStaticMember(typeBuilder, runtime);
         // InvokeValue/InvokeMethodValue must come before GetFieldsProperty (needs InvokeMethodValue for getters)
         // and before Promise methods (needed by InvokeCallback)
         EmitInvokeValue(typeBuilder, runtime);
@@ -383,6 +387,9 @@ public partial class RuntimeEmitter
         // Promise methods moved earlier (before GetProperty, which needs PromiseThen for typeof p.then)
         // Number methods
         EmitNumberMethods(typeBuilder, runtime);
+        // Fill in LookupBuiltInStaticMember's body now that IsArray, NumberIs*,
+        // StringFrom*, and TSFunctionCtor are all in place (#63).
+        EmitLookupBuiltInStaticMemberBody(runtime);
         // Microtask method (queueMicrotask) - must come before timer infrastructure so ProcessMicrotasks is available
         EmitQueueMicrotaskMethod(typeBuilder, runtime);
         // Virtual timer infrastructure (must come before DateMethods which calls ProcessPendingTimers)

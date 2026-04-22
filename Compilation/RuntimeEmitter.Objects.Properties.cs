@@ -1491,6 +1491,24 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notClassNameLabel);
 
+            // Built-in static-member dispatch (#63): for Type tokens that
+            // represent a JS-level built-in constructor (Array → IList<object>,
+            // Number → double, String → string), look up (type, name) against
+            // the runtime table that mirrors the compile-time static emitters.
+            // This is what makes `var A = Array; A.isArray(x)` work — the
+            // compile-time ArrayStaticEmitter only runs for bare `Array.isArray`.
+            var builtInLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.LookupBuiltInStaticMember);
+            il.Emit(OpCodes.Stloc, builtInLocal);
+            il.Emit(OpCodes.Ldloc, builtInLocal);
+            var noBuiltInMatchLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, noBuiltInMatchLabel);
+            il.Emit(OpCodes.Ldloc, builtInLocal);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(noBuiltInMatchLabel);
+
             // No static member matched — fall through to class-instance handler, which
             // on a Type returns Undefined (the intended absent-property signal).
             il.Emit(OpCodes.Br, classInstanceLabel);

@@ -133,6 +133,10 @@ public class EmittedRuntime
     public MethodBuilder ArrayOf { get; set; } = null!;
     // Array(…) / new Array(…) dispatch (issue #61).
     public MethodBuilder ArrayConstructor { get; set; } = null!;
+    // Runtime dispatcher for built-in static member access on stored Type
+    // tokens (issue #63). Returns a $TSFunction wrapper matching what the
+    // compile-time ArrayStaticEmitter / NumberStaticEmitter / etc. would emit.
+    public MethodBuilder LookupBuiltInStaticMember { get; set; } = null!;
     public MethodBuilder SpreadArray { get; set; } = null!;
     public MethodBuilder ConcatArrays { get; set; } = null!;
     public MethodBuilder ExpandCallArgs { get; set; } = null!;
