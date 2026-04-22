@@ -1512,8 +1512,14 @@ export function parse(urlString: string, parseQueryString?: boolean): LegacyUrlO
         }
         const queryIdx = s.indexOf('?');
         if (queryIdx >= 0) {
-            result.search = s.substring(queryIdx);
-            result.query = result.search.substring(1);
+            // Stash the substring in a local — the type checker doesn't carry the
+            // narrowed `string` from `result.search = ...` back through the next
+            // `result.search.substring(1)` read when the RHS comes through `any`
+            // (which `String(...).substring(...)` is, here). Reading it from the
+            // local sidesteps the property-narrowing path entirely.
+            const querySegment = s.substring(queryIdx);
+            result.search = querySegment;
+            result.query = querySegment.substring(1);
             s = s.substring(0, queryIdx);
         }
         result.pathname = s;

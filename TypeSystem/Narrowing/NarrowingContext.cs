@@ -173,9 +173,15 @@ public sealed class NarrowingContext
 
         foreach (var path in _narrowings.Keys)
         {
-            // Only invalidate property narrowings (depth > 0) that have this base
-            // Don't invalidate narrowings on the variable itself
-            if (path.Depth > 0 && basePath.IsPrefixOf(path))
+            // Only invalidate property narrowings strictly DEEPER than basePath:
+            // calling `r.search.substring(...)` may mutate properties of `r.search`
+            // (`r.search.x`, `r.search.foo.bar`) but never `r.search` itself, since the
+            // method receives the property's current value. Without the strict-depth
+            // check the receiver's own narrowing is dropped, which surfaced as the
+            // `result.search.substring(1)` regression in stdlib/url.ts (#56) — every
+            // property assignment installed a narrowing that the very next method call
+            // on that property tore down.
+            if (path.Depth > basePath.Depth && basePath.IsPrefixOf(path))
             {
                 // Check if this is a direct property access that should be skipped
                 if (path is NarrowingPath.PropertyAccess propAccess &&

@@ -217,4 +217,24 @@ public class AssignmentFlowNarrowingTests
         Assert.Contains("null", ex.Message);
         Assert.DoesNotContain("string | null", ex.Message);
     }
+
+    [Fact]
+    public void WriteThenMethodCallOnSameProperty_KeepsNarrowing()
+    {
+        // Issue #56: a method call on the just-narrowed property used to invalidate
+        // its own narrowing because InvalidatePropertiesOf treated the receiver as
+        // one of "its own properties". `obj.search.substring(...)` is the call —
+        // the receiver is `obj.search`, and only properties strictly deeper than
+        // it (e.g. `obj.search.foo`) should be invalidated.
+        var source = """
+            interface R { search: string | null }
+            function f(o: R): number {
+                o.search = "hello";
+                return o.search.substring(1).length;
+            }
+            console.log(f({ search: null }));
+            """;
+
+        Assert.Equal("4\n", TestHarness.RunInterpreted(source));
+    }
 }
