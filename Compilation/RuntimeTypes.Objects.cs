@@ -195,6 +195,50 @@ public static partial class RuntimeTypes
             return name == "length" ? (double)s.Length : null;
         }
 
+        // Class reference used as a value (e.g. `const Alias = Foo; Alias.bar()` or
+        // `require('./mod').Foo.bar()`). Compiled classes are emitted as System.Type
+        // tokens, so property access must look up STATIC members on that Type —
+        // otherwise obj.GetType() below returns System.RuntimeType and reflection
+        // searches for instance members of Type itself, missing every user-declared
+        // static on the target class.
+        if (obj is Type classType)
+        {
+            const System.Reflection.BindingFlags staticPublic =
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
+
+            // Static getter first (auto-accessors and explicit static getters compile to get_Xxx).
+            var pascalName = name.Length > 0
+                ? char.ToUpperInvariant(name[0]) + name[1..]
+                : name;
+            var staticGetter = classType.GetMethod("get_" + pascalName, staticPublic);
+            if (staticGetter != null)
+            {
+                return ReflectionCache.GetInvoker(staticGetter).Invoke(null, default(Span<object?>));
+            }
+
+            // Static field with the user-declared name.
+            var staticField = classType.GetField(name, staticPublic);
+            if (staticField != null)
+            {
+                return staticField.GetValue(null);
+            }
+
+            // Static method — bind with null receiver so InvokeValue forwards args as-is.
+            var staticMethod = classType.GetMethod(name, staticPublic);
+            if (staticMethod != null)
+            {
+                return CreateBoundMethod(null!, staticMethod);
+            }
+
+            // Node/JS spec: Function.prototype.name holds the class name.
+            if (name == "name")
+            {
+                return classType.Name;
+            }
+
+            return null;
+        }
+
         // Class instance - use reflection
         var type = obj.GetType();
 

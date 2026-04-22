@@ -169,4 +169,67 @@ public class StaticMembersTests
     }
 
     #endregion
+
+    #region Static Access Through Indirection (issue #57)
+
+    // Direct `Foo.bar()` compiles to a Call IL instruction. Indirect access
+    // (`const Alias = Foo; Alias.bar()` or `obj.Cls.bar()`) routes through the
+    // dynamic property path — and prior to #57 that path didn't look up static
+    // members on a Type value, so the binding silently became undefined and the
+    // call returned null. Babel-transpiled CJS (minimatch, uuid, many others)
+    // hits this through `const mod = require('./submodule'); mod.AST.fromGlob(...)`.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticMethod_ThroughLocalAlias(ExecutionMode mode)
+    {
+        var source = """
+            class Foo {
+                static bar(): number { return 42; }
+            }
+            const Alias: any = Foo;
+            console.log(typeof Alias.bar);
+            console.log(Alias.bar());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function\n42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticMethod_ThroughObjectProperty(ExecutionMode mode)
+    {
+        var source = """
+            class Foo {
+                static bar(): number { return 42; }
+                static baz(x: number): number { return x * 2; }
+            }
+            const container: any = { Cls: Foo };
+            console.log(typeof container.Cls.bar);
+            console.log(container.Cls.bar());
+            console.log(container.Cls.baz(5));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function\n42\n10\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticField_ThroughLocalAlias(ExecutionMode mode)
+    {
+        var source = """
+            class Config {
+                static version: number = 42;
+            }
+            const Alias: any = Config;
+            console.log(Alias.version);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    #endregion
 }

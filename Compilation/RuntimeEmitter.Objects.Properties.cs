@@ -1386,8 +1386,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         // System.Type handler: check PropertyDescriptorStore first for user-added static
-        // properties (`ClassName.foo = 'bar'`). If not found, fall through to default class
-        // handler which reads .NET Type members via reflection.
+        // properties (`ClassName.foo = 'bar'`). Then look up declared static methods,
+        // fields, and accessors on the .NET Type via reflection. Only falls through to
+        // the class-instance handler (which returns Undefined for Type) if none match.
+        //
+        // Without the reflection step, `const Alias = Foo; Alias.bar()` and
+        // `require('./mod').Cls.staticMethod()` silently bind to undefined — compiled
+        // classes are emitted as System.Type tokens, so static access must walk the Type.
         il.MarkLabel(typeGetLabel);
         {
             var typePdsDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
@@ -1402,7 +1407,73 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noTypePdsLabel);
-            // No PDS entry — fall through to GetFieldsProperty to read .NET Type members
+
+            // Cache the casted Type reference for the three reflection probes below.
+            var typeLocal = il.DeclareLocal(_types.Type);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.Type);
+            il.Emit(OpCodes.Stloc, typeLocal);
+
+            const BindingFlags staticPublic = BindingFlags.Public | BindingFlags.Static;
+
+            // Static method: SafeGetMethod(type, name, Public|Static).
+            // SafeGetMethod handles AmbiguousMatchException deterministically, which matters
+            // because user-declared statics can collide with inherited Type overloads.
+            var staticMethodLocal = il.DeclareLocal(_types.MethodInfo);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4, (int)staticPublic);
+            il.Emit(OpCodes.Call, runtime.SafeGetMethod);
+            il.Emit(OpCodes.Stloc, staticMethodLocal);
+
+            var noStaticMethodLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, staticMethodLocal);
+            il.Emit(OpCodes.Brfalse, noStaticMethodLabel);
+
+            // Found a static method — wrap in $TSFunction(null, methodInfo) so callers
+            // invoking it through InvokeValue/InvokeMethodValue treat it as a callable.
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, staticMethodLocal);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(noStaticMethodLabel);
+
+            // Static field: type.GetField(name, Public|Static).
+            var staticFieldLocal = il.DeclareLocal(typeof(FieldInfo));
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4, (int)staticPublic);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetField", _types.String, typeof(BindingFlags)));
+            il.Emit(OpCodes.Stloc, staticFieldLocal);
+
+            var noStaticFieldLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, staticFieldLocal);
+            il.Emit(OpCodes.Brfalse, noStaticFieldLabel);
+
+            // Found a static field — return field.GetValue(null).
+            il.Emit(OpCodes.Ldloc, staticFieldLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(FieldInfo), "GetValue", _types.Object));
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(noStaticFieldLabel);
+
+            // Function.prototype.name: JS spec — classes expose their declared name as
+            // `Foo.name === "Foo"`. Without this, `Class.name` falls through to Undefined
+            // even though typeof(Class) === "function".
+            var notClassNameLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "name");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, notClassNameLabel);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "Name").GetGetMethod()!);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notClassNameLabel);
+
+            // No static member matched — fall through to class-instance handler, which
+            // on a Type returns Undefined (the intended absent-property signal).
             il.Emit(OpCodes.Br, classInstanceLabel);
         }
 
