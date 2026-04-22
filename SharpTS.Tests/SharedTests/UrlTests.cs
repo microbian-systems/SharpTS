@@ -369,4 +369,110 @@ public class UrlTests
         var output = RunWithUrlImport(body, mode);
         Assert.Equal("hello=world&foo=bar\n", output);
     }
+
+    // ========== Legacy parse() — relative URLs (issue #47) ==========
+
+    private static string RunWithParseImport(string body, ExecutionMode mode)
+    {
+        var files = new System.Collections.Generic.Dictionary<string, string>
+        {
+            ["main.ts"] = "import { parse } from 'url';\n" + body
+        };
+        return TestHarness.RunModules(files, "main.ts", mode);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Parse_RelativeUrl_SplitsQueryString(ExecutionMode mode)
+    {
+        // Regression for #47: parse('/api/echo?k=v') used to return
+        // pathname='/api/echo?k=v' with search=null because basicUrlParse
+        // returns null for schemeless inputs and the fallback dropped the
+        // whole string into pathname.
+        var body = @"
+            const r = parse('/api/echo?k=v');
+            console.log('pathname:', r.pathname);
+            console.log('search:', r.search);
+            console.log('query:', r.query);
+            console.log('hash:', r.hash);
+            console.log('path:', r.path);
+        ";
+        var output = RunWithParseImport(body, mode);
+        Assert.Equal(
+            "pathname: /api/echo\nsearch: ?k=v\nquery: k=v\nhash: null\npath: /api/echo?k=v\n",
+            output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Parse_RelativeUrl_SplitsFragment(ExecutionMode mode)
+    {
+        var body = @"
+            const r = parse('/a/b#frag');
+            console.log('pathname:', r.pathname);
+            console.log('hash:', r.hash);
+            console.log('search:', r.search);
+        ";
+        var output = RunWithParseImport(body, mode);
+        Assert.Equal("pathname: /a/b\nhash: #frag\nsearch: null\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Parse_RelativeUrl_SplitsBothQueryAndFragment(ExecutionMode mode)
+    {
+        var body = @"
+            const r = parse('/a?x=1#f');
+            console.log('pathname:', r.pathname);
+            console.log('search:', r.search);
+            console.log('query:', r.query);
+            console.log('hash:', r.hash);
+        ";
+        var output = RunWithParseImport(body, mode);
+        Assert.Equal("pathname: /a\nsearch: ?x=1\nquery: x=1\nhash: #f\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Parse_RelativeUrl_HashBeforeQuestionMarkIsFragment(ExecutionMode mode)
+    {
+        // Split order matters: a '?' inside a fragment is literal.
+        var body = @"
+            const r = parse('/a#frag?not-a-query');
+            console.log('pathname:', r.pathname);
+            console.log('hash:', r.hash);
+            console.log('search:', r.search);
+        ";
+        var output = RunWithParseImport(body, mode);
+        Assert.Equal("pathname: /a\nhash: #frag?not-a-query\nsearch: null\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Parse_EmptyString_DegenerateCase(ExecutionMode mode)
+    {
+        var body = @"
+            const r = parse('');
+            console.log('pathname:', r.pathname);
+            console.log('search:', r.search);
+            console.log('hash:', r.hash);
+        ";
+        var output = RunWithParseImport(body, mode);
+        Assert.Equal("pathname: \nsearch: null\nhash: null\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Parse_AbsoluteUrl_StillSplitsCorrectly(ExecutionMode mode)
+    {
+        // Regression guard: the absolute-URL path must be unchanged.
+        var body = @"
+            const r = parse('http://host/api/echo?k=v');
+            console.log('pathname:', r.pathname);
+            console.log('search:', r.search);
+            console.log('host:', r.host);
+        ";
+        var output = RunWithParseImport(body, mode);
+        Assert.Equal("pathname: /api/echo\nsearch: ?k=v\nhost: host\n", output);
+    }
 }

@@ -1500,8 +1500,25 @@ export function parse(urlString: string, parseQueryString?: boolean): LegacyUrlO
         href: String(urlString),
     };
     if (rec == null) {
-        result.pathname = String(urlString);
-        result.path = String(urlString);
+        // basicUrlParse returns null for schemeless inputs with no base (e.g.
+        // a request-target like '/api/echo?k=v'). Node's legacy parse() still
+        // splits on '#' and '?' in that case, so do the same by hand. Split
+        // '#' first so a '?' inside a fragment isn't treated as a query.
+        let s = String(urlString);
+        const hashIdx = s.indexOf('#');
+        if (hashIdx >= 0) {
+            result.hash = s.substring(hashIdx);
+            s = s.substring(0, hashIdx);
+        }
+        const queryIdx = s.indexOf('?');
+        if (queryIdx >= 0) {
+            const searchPart = s.substring(queryIdx);
+            result.search = searchPart;
+            result.query = searchPart.substring(1);
+            s = s.substring(0, queryIdx);
+        }
+        result.pathname = s;
+        result.path = (result.pathname ?? '') + (result.search ?? '');
         return result;
     }
     result.protocol = rec.scheme + ':';
