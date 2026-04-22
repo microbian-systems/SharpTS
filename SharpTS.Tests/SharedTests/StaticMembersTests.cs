@@ -232,4 +232,59 @@ public class StaticMembersTests
     }
 
     #endregion
+
+    #region Issue #58 — same-module export then reflective static call
+
+    // In multi-module compilation the class-pre-define pass ran twice, creating two
+    // MethodBuilders for every static method on the same TypeBuilder. The dict
+    // overwrote with the second one and EmitStaticMethodBody filled THAT one — but
+    // the first MethodBuilder remained on the type with no IL. Reflection picked
+    // the body-less twin, so any reflective Invoke (the path triggered by reading
+    // `exports.X.staticMethod` after the static-Type-lookup #57 fix) blew up with
+    // BadImageFormatException. Fixed by per-name idempotency in DefineClassMethodsOnly.
+
+    [Fact]
+    public void StaticMethod_ExportedFromSameModule_Compiled()
+    {
+        // Use RunModules so the class lives inside a real CJS module body —
+        // single-file mode doesn't trigger the duplicate pre-define pass.
+        var files = new Dictionary<string, string>
+        {
+            ["./main.cjs"] = """
+                class Foo {
+                    static bar() { return 42; }
+                }
+                exports.Cls = Foo;
+                console.log(exports.Cls.bar());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "./main.cjs", ExecutionMode.Compiled);
+        Assert.Equal("42\n", output);
+    }
+
+    [Fact]
+    public void StaticMethod_ExportedFromSameModule_MultipleStatics_Compiled()
+    {
+        // Multiple static methods + a non-class export — exercises the same
+        // duplicate-pre-define path with a wider class shape.
+        var files = new Dictionary<string, string>
+        {
+            ["./main.cjs"] = """
+                class Foo {
+                    static add(x, y) { return x + y; }
+                    static mul(x, y) { return x * y; }
+                }
+                exports.Other = 42;
+                exports.Cls = Foo;
+                console.log(exports.Cls.add(2, 3));
+                console.log(exports.Cls.mul(4, 5));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "./main.cjs", ExecutionMode.Compiled);
+        Assert.Equal("5\n20\n", output);
+    }
+
+    #endregion
 }

@@ -348,9 +348,20 @@ public partial class ILCompiler
             _classes.StaticMethods[qualifiedClassName] = [];
         }
 
-        // Pre-define static methods (so they're available during async MoveNext emission)
+        // Pre-define static methods (so they're available during async MoveNext emission).
+        // Per-method idempotency check: in multi-module compilation this method runs twice
+        // for every class (once during the per-module pre-define pass, once at the start of
+        // ModulePhase8 method-body emission). Without the per-name guard, a second
+        // DefineMethod call would create a SECOND empty MethodBuilder on the TypeBuilder for
+        // the same name+signature; the dict overwrites with the new (still empty) builder,
+        // EmitStaticMethodBody fills the new one, and the abandoned first MethodBuilder
+        // shows up via reflection with no body — surface as BadImageFormatException at any
+        // reflective Invoke. Tracked as #58.
         foreach (var method in classStmt.Methods.Where(m => m.Body != null && m.IsStatic && m.Name.Lexeme != "constructor"))
         {
+            if (_classes.StaticMethods[qualifiedClassName].ContainsKey(method.Name.Lexeme))
+                continue;
+
             // Use typed parameters from TypeMap
             var paramTypes = ParameterTypeResolver.ResolveMethodParameters(
                 classStmt.Name.Lexeme, method.Name.Lexeme, method.Parameters, _typeMapper, _typeMap);
