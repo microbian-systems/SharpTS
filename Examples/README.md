@@ -274,7 +274,74 @@ Interop/
 
 ---
 
-### 8. Web Server (`web-server.ts`)
+### 8. Benchmark (`benchmark.ts`)
+
+**What it does:** Times four small CPU-bound workloads using `perf_hooks`, then runs two phases under `performance.mark()` / `performance.measure()`. Output shows ms and ops/sec per workload and a grand-total time.
+
+**Usage:**
+```bash
+sharpts Examples/benchmark.ts                                 # interpreted
+sharpts --compile Examples/benchmark.ts -o b.dll && dotnet b.dll   # compiled
+```
+
+**Demonstrates:**
+- `perf_hooks` module: `performance.now()`, `performance.mark()`, `performance.measure()`, `performance.getEntriesByType()`, `performance.timeOrigin`
+- Warm-up loops, iteration scaling, ops/sec reporting
+- Same-file comparison between tree-walking interpretation and compiled IL — compiled typically runs ~100× faster on the numeric loops
+
+**Key Features:**
+- Runs identically in both modes; the output differs only in absolute timings
+- Ships iteration counts tuned so interpreted completes in a few seconds — compiled is effectively instant
+
+---
+
+### 9. .NET Types (`dotnet-types.ts`)
+
+**What it does:** Demonstrates the *inbound* direction of .NET interop — TypeScript consuming .NET types via the `@DotNetType` decorator. Shows `StringBuilder`, `Guid.newGuid()`, `Convert.toInt32` with an `@DotNetOverload` hint, `Task.Run` with a TypeScript closure as a .NET `Action`, and `AppDomain.ProcessExit` with a DOM-style `addEventListener`.
+
+**Usage:**
+```bash
+sharpts Examples/dotnet-types.ts                                     # interpreted
+sharpts --compile Examples/dotnet-types.ts -o d.dll && dotnet d.dll  # compiled (standalone DLL)
+```
+
+Runs identically in both modes. The compiled DLL is fully standalone — it doesn't need `SharpTS.dll` alongside.
+
+**Demonstrates:**
+- `@DotNetType("System.Text.StringBuilder")` — instance methods and properties
+- `@DotNetType("System.Guid")` — static methods
+- `@DotNetOverload("int")` — pinning the `Convert.ToInt32(int)` overload so `3.7 → 3` instead of the default `ToInt32(double)` `3.7 → 4`
+- Delegates — a TS arrow function passed as `System.Action` to `Task.Run`
+- Events — subscribing to `System.AppDomain.ProcessExit` via `addEventListener`; the handler fires at shutdown
+
+See [dotnet-types.md](../docs/dotnet-types.md) for the full surface of the decorator and related features like `@DotNetOverload` and the threading contract for delegate callbacks.
+
+---
+
+### 10. npm Package: `uuid` (`NpmUuid/npm-uuid.ts`)
+
+**What it does:** Consumes the real [`uuid`](https://www.npmjs.com/package/uuid) package from `node_modules`. Generates v4 UUIDs, validates strings, reads the `NIL` constant, parses a UUID to its 16-byte form, and does a 1000-iteration uniqueness check.
+
+**Setup (one-time):**
+```bash
+cd Examples/NpmUuid
+npm install
+```
+
+**Usage:**
+```bash
+sharpts Examples/NpmUuid/npm-uuid.ts                            # interpreted
+sharpts --compile Examples/NpmUuid/npm-uuid.ts -o u.dll && dotnet u.dll  # compiled
+```
+
+**Demonstrates:**
+- Named ESM `import { v4, validate, ... } from 'uuid'` against a real npm package
+- Multiple named exports backed by Babel-style accessor descriptors
+- Working against `Uint8Array` return values
+
+---
+
+### 11. Web Server (`web-server.ts`)
 
 **What it does:** A demonstration HTTP server with routing, static HTML pages, and dynamic JSON API endpoints. Showcases SharpTS's HTTP server capabilities.
 
@@ -324,31 +391,35 @@ sharpts Examples/web-server.ts --help
 
 ## Feature Matrix
 
-This table shows which SharpTS/TypeScript features each example demonstrates:
+This table shows which SharpTS/TypeScript features each example demonstrates. Abbreviations: fh = file-hasher, fo = file-organizer, pg = password-generator, si = system-info, ut = url-toolkit, sa = source-analyzer, ip = interop, ws = web-server, bm = benchmark, dn = dotnet-types, nu = npm-uuid.
 
-| Feature | file-hasher | file-organizer | password-generator | system-info | url-toolkit | source-analyzer | interop | web-server |
-|---------|-------------|----------------|-----------------------|-------------|-------------|-----------------|---------|------------|
-| Classes | | | | | | ✓ | ✓ | |
-| Interfaces | | | | | | ✓ | | |
-| Inheritance | | | | | | | ✓ | |
-| For-of loops | ✓ | ✓ | | ✓ | ✓ | | | ✓ |
-| While loops | | | | | ✓ | ✓ | | |
-| Object literals | | ✓ | | | ✓ | | | ✓ |
-| Arrays | ✓ | ✓ | | ✓ | ✓ | ✓ | ✓ | ✓ |
-| String manipulation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Type annotations | | | | | | ✓ | ✓ | |
-| Functions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Modules (import) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | | ✓ |
-| CLI arguments | ✓ | ✓ | ✓ | | ✓ | ✓ | | ✓ |
-| File I/O | ✓ | ✓ | | | | ✓ | | |
-| Crypto | ✓ | | ✓ | | | | | |
-| User input | | | ✓ | | ✓ | | | |
-| Process info | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | | ✓ |
-| OS info | | | | ✓ | | | | |
-| Path manipulation | ✓ | ✓ | | ✓ | | ✓ | | |
-| URL parsing | | | | | ✓ | | | ✓ |
-| HTTP server | | | | | | | | ✓ |
-| C# interop | | | | | | | ✓ | |
+| Feature              | fh | fo | pg | si | ut | sa | ip | ws | bm | dn | nu |
+|----------------------|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Classes              |    |    |    |    |    | ✓  | ✓  |    |    | ✓  |    |
+| Interfaces           |    |    |    |    |    | ✓  |    |    | ✓  |    |    |
+| Inheritance          |    |    |    |    |    |    | ✓  |    |    |    |    |
+| For-of loops         | ✓  | ✓  |    | ✓  | ✓  |    |    | ✓  | ✓  |    |    |
+| While loops          |    |    |    |    | ✓  | ✓  |    |    |    |    |    |
+| Object literals      |    | ✓  |    |    | ✓  |    |    | ✓  | ✓  |    |    |
+| Arrays               | ✓  | ✓  |    | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  |    | ✓  |
+| String manipulation  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  |    |    |    |
+| Type annotations     |    |    |    |    |    | ✓  | ✓  |    | ✓  | ✓  |    |
+| Functions            | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  |
+| Modules (import)     | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  |    | ✓  | ✓  |    |    |
+| CommonJS (require)   |    |    |    |    |    |    |    |    |    |    | ✓  |
+| CLI arguments        | ✓  | ✓  | ✓  |    | ✓  | ✓  |    | ✓  |    |    |    |
+| File I/O             | ✓  | ✓  |    |    |    | ✓  |    |    |    |    |    |
+| Crypto               | ✓  |    | ✓  |    |    |    |    |    |    |    |    |
+| User input           |    |    | ✓  |    | ✓  |    |    |    |    |    |    |
+| Process info         | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  |    | ✓  |    |    |    |
+| OS info              |    |    |    | ✓  |    |    |    |    |    |    |    |
+| Path manipulation    | ✓  | ✓  |    | ✓  |    | ✓  |    |    |    |    |    |
+| URL parsing          |    |    |    |    | ✓  |    |    | ✓  |    |    |    |
+| HTTP server          |    |    |    |    |    |    |    | ✓  |    |    |    |
+| Outbound C# interop  |    |    |    |    |    |    | ✓  |    |    |    |    |
+| Inbound .NET interop |    |    |    |    |    |    |    |    |    | ✓  |    |
+| perf_hooks           |    |    |    |    |    |    |    |    | ✓  |    |    |
+| npm package          |    |    |    |    |    |    |    |    |    |    | ✓  |
 
 ## Built-in Modules Used
 
@@ -448,7 +519,10 @@ Recommended order for exploring examples:
 5. **url-toolkit.ts** - Interactive CLI patterns
 6. **web-server.ts** - HTTP server with routing and APIs
 7. **source-analyzer.ts** - Complex application with interfaces
-8. **Interop/** - Advanced: C# interoperability
+8. **benchmark.ts** - `perf_hooks` and an interpreted-vs-compiled comparison
+9. **NpmUuid/npm-uuid.ts** - Consuming a real npm package
+10. **dotnet-types.ts** - Inbound interop: calling .NET BCL from TypeScript
+11. **Interop/** - Outbound interop: consuming compiled TS from C#
 
 ## Creating Your Own Examples
 

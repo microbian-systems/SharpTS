@@ -1,0 +1,10 @@
+{
+  "name": "sharpts-npm-uuid-example",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SharpTS example demonstrating consumption of the 'uuid' npm package.",
+  "main": "npm-uuid.ts",
+  "dependencies": {
+    "uuid": "9.0.1"
+  }
+}

@@ -338,6 +338,77 @@ const arrow = () => 42;
             }
         )
     }
+
+    "benchmark" = @{
+        File = "benchmark.ts"
+        Tests = @(
+            @{
+                Name = "RunBenchmarks"
+                RequiresArgs = $false
+                Args = { @() }
+                # Interpreted runs the hot loops ~100x slower; give it room.
+                Timeout = 60000
+                Assertions = @(
+                    @{ Type = "Contains"; Value = "SharpTS Benchmark" }
+                    @{ Type = "Contains"; Value = "sum 0..9999" }
+                    @{ Type = "Contains"; Value = "fib(20)" }
+                    @{ Type = "Contains"; Value = "ops/sec" }
+                    @{ Type = "Contains"; Value = "measured: cold-load" }
+                    @{ Type = "Contains"; Value = "timeOrigin" }
+                )
+            }
+        )
+    }
+
+    "dotnet-types" = @{
+        File = "dotnet-types.ts"
+        Tests = @(
+            @{
+                Name = "DemonstrateDotNetInterop"
+                RequiresArgs = $false
+                Args = { @() }
+                # Runs clean in both modes. Overload dispatch (#51), delegate
+                # wrapping (#52), and event subscription (#53) all fixed;
+                # compiled DLLs are fully standalone (no SharpTS.dll needed).
+                Assertions = @(
+                    @{ Type = "Contains"; Value = ".NET Types from TypeScript" }
+                    @{ Type = "Contains"; Value = "StringBuilder" }
+                    @{ Type = "Contains"; Value = "user=alice" }
+                    @{ Type = "Contains"; Value = "truncates to: 3" }
+                    @{ Type = "Contains"; Value = "delegate body ran on a Task" }
+                    @{ Type = "Contains"; Value = "ProcessExit fired during shutdown" }
+                )
+            }
+        )
+    }
+
+    "npm-uuid" = @{
+        File = "NpmUuid/npm-uuid.ts"
+        # Skip entirely if node_modules isn't present — surfaces a clear
+        # "run npm install first" message rather than an opaque resolve error.
+        Setup = {
+            $nm = Join-Path $Script:ExamplesDir "NpmUuid/node_modules"
+            return @{ NodeModulesPresent = (Test-Path $nm) }
+        }
+        SkipIf = { param($ctx) -not $ctx.NodeModulesPresent }
+        SkipReason = "Run 'cd Examples/NpmUuid && npm install' first"
+        Tests = @(
+            @{
+                Name = "ConsumeUuidPackage"
+                RequiresArgs = $false
+                Args = { @() }
+                Assertions = @(
+                    @{ Type = "Contains"; Value = "npm Package: uuid" }
+                    @{ Type = "Contains"; Value = "Generate UUIDs" }
+                    @{ Type = "Contains"; Value = "validate:  true" }
+                    @{ Type = "Contains"; Value = "version:   4" }
+                    @{ Type = "Contains"; Value = "NIL:  00000000-0000-0000-0000-000000000000" }
+                    @{ Type = "Contains"; Value = "matches:      true" }
+                    @{ Type = "Contains"; Value = "collisions in 1000: 0" }
+                )
+            }
+        )
+    }
 }
 
 # ========== Fixture Functions ==========
@@ -666,6 +737,17 @@ function Invoke-AllTests {
             TestCases = @()
         }
 
+        # Example-level skip check (e.g., "npm install not run yet")
+        $exampleSkip = $false
+        $exampleSkipReason = $null
+        if ($example.Setup -and $example.SkipIf) {
+            $setupCtx = & $example.Setup
+            if (& $example.SkipIf $setupCtx) {
+                $exampleSkip = $true
+                $exampleSkipReason = if ($example.SkipReason) { $example.SkipReason } else { "SkipIf returned true" }
+            }
+        }
+
         # Show example name in table mode
         if ($OutputFormat -eq "table") {
             Write-Host "  $exampleName " -NoNewline
@@ -679,6 +761,31 @@ function Invoke-AllTests {
 
             foreach ($mode in $modesToTest) {
                 $totalTests++
+
+                # Per-test-case mode skip (e.g., dotnet-types skips compiled modes)
+                $caseSkip = $exampleSkip
+                $caseSkipReason = $exampleSkipReason
+                if (-not $caseSkip -and $testCase.SkipModes -and ($testCase.SkipModes -contains $mode)) {
+                    $caseSkip = $true
+                    $caseSkipReason = "mode '$mode' in SkipModes"
+                }
+
+                if ($caseSkip) {
+                    $skippedTests++
+                    $testCaseResult.Modes += @{
+                        Mode = $mode
+                        Passed = $true
+                        Skipped = $true
+                        SkipReason = $caseSkipReason
+                        Duration = 0
+                    }
+                    if ($OutputFormat -eq "verbose") {
+                        Write-Host "Testing $exampleName/$($testCase.Name) [$mode]... SKIPPED ($caseSkipReason)" -ForegroundColor Yellow
+                    } elseif ($OutputFormat -eq "table") {
+                        Write-Host "-" -NoNewline -ForegroundColor Yellow
+                    }
+                    continue
+                }
 
                 if ($OutputFormat -eq "verbose") {
                     Write-Host "Testing $exampleName/$($testCase.Name) [$mode]... " -NoNewline
