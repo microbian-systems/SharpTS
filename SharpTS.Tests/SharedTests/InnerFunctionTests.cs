@@ -359,4 +359,50 @@ public class InnerFunctionTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("wrapped:x\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InnerFunction_NewOnPeerHoistedFunction(ExecutionMode mode)
+    {
+        // Issue #59: `new X()` inside an inner function where X is a peer
+        // hoisted function. AstVisitorBase.VisitNew was not visiting Callee
+        // (asymmetric with VisitCall), so ClosureAnalyzer never saw X as a
+        // referenced variable and the compiled callsA body didn't receive
+        // X in its display class — `new A()` silently returned null.
+        var source = """
+            const f: any = (function outer() {
+                function A(this: any): void { this.tag = "a-object"; }
+                function callsA(): any { return new (A as any)(); }
+                return callsA();
+            })();
+            console.log(f.tag);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("a-object\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InnerFunction_NewInsideLogicalFallback(ExecutionMode mode)
+    {
+        // Issue #59, lodash shape: `new (x || MapCache)` — MapCache as the
+        // RHS of a short-circuit inside a `new` expression still needs to
+        // be registered as a reference by ClosureAnalyzer so the inner
+        // function's display class receives it.
+        var source = """
+            const f: any = (function outer() {
+                function MapCache(this: any): void { this.kind = "map"; }
+                function memoize(): any {
+                    const cache: any = null;
+                    return new (cache || MapCache)();
+                }
+                return memoize();
+            })();
+            console.log(f.kind);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("map\n", output);
+    }
 }

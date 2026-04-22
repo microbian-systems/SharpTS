@@ -379,6 +379,21 @@ public class ClosureAnalyzer : AstVisitorBase
         AnalyzeArrowFunctionBody(expr);
     }
 
+    protected override void VisitNew(Expr.New expr)
+    {
+        // Base AstVisitorBase.VisitNew visits only Arguments, not Callee —
+        // asymmetric with VisitCall which visits both. That gap meant
+        // `new X()` where X is an outer variable (e.g. a peer hoisted
+        // function) never registered X as a reference, so the enclosing
+        // function's display class didn't receive X as a captured field,
+        // and the compiled body fell back to a runtime global-variable
+        // lookup (which throws ReferenceError or silently returns null).
+        // See issue #59.
+        Visit(expr.Callee);
+        foreach (var arg in expr.Arguments)
+            Visit(arg);
+    }
+
     protected override void VisitThis(Expr.This expr)
     {
         // Arrow functions capture 'this' from their lexical scope. Also propagate the
