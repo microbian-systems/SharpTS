@@ -456,36 +456,58 @@ public partial class ILEmitter
 
         // Numeric compound assignment
         bool isBitwise = CompoundOperatorHelper.IsBitwise(ca.Operator.Type);
+        bool isUnsignedShift = ca.Operator.Type == TokenType.GREATER_GREATER_GREATER_EQUAL;
 
-        // Get current value as double — EnsureDouble() is stack-type-aware
-        // and avoids emitting Convert.ToDouble when the value is already unboxed.
-        EmitVariable(new Expr.Variable(ca.Name));
-        EnsureDouble();
-
-        if (isBitwise)
+        if (isUnsignedShift)
         {
-            // Convert to int for bitwise operations
-            IL.Emit(OpCodes.Conv_I4);
-            EmitExpressionAsDouble(ca.Value);
-            IL.Emit(OpCodes.Conv_I4);
+            // `x >>>= y`: route through JsToInt32 for spec-correct ToInt32, then Shr_Un with
+            // zero-extend to uint64 before Conv_R8 so bit 31 doesn't flip the result negative.
+            EmitVariable(new Expr.Variable(ca.Name));
+            EnsureBoxed();
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.JsToInt32);
+
+            EmitExpression(ca.Value);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.JsToInt32);
+
+            IL.Emit(OpCodes.Ldc_I4, 0x1F);
+            IL.Emit(OpCodes.And);
+            IL.Emit(OpCodes.Shr_Un);
+            IL.Emit(OpCodes.Conv_U8);
+            IL.Emit(OpCodes.Conv_R8);
         }
         else
         {
-            // Emit right side as double
-            EmitExpressionAsDouble(ca.Value);
-        }
+            // Get current value as double — EnsureDouble() is stack-type-aware
+            // and avoids emitting Convert.ToDouble when the value is already unboxed.
+            EmitVariable(new Expr.Variable(ca.Name));
+            EnsureDouble();
 
-        // Emit the operator using centralized helper
-        var opcode = CompoundOperatorHelper.GetOpcode(ca.Operator.Type);
-        if (opcode.HasValue)
-        {
-            IL.Emit(opcode.Value);
-        }
+            if (isBitwise)
+            {
+                // Convert to int for bitwise operations
+                IL.Emit(OpCodes.Conv_I4);
+                EmitExpressionAsDouble(ca.Value);
+                IL.Emit(OpCodes.Conv_I4);
+            }
+            else
+            {
+                // Emit right side as double
+                EmitExpressionAsDouble(ca.Value);
+            }
 
-        if (isBitwise)
-        {
-            // Convert back to double
-            IL.Emit(OpCodes.Conv_R8);
+            // Emit the operator using centralized helper
+            var opcode = CompoundOperatorHelper.GetOpcode(ca.Operator.Type);
+            if (opcode.HasValue)
+            {
+                IL.Emit(opcode.Value);
+            }
+
+            if (isBitwise)
+            {
+                // Convert back to double
+                IL.Emit(OpCodes.Conv_R8);
+            }
         }
 
         // Store result — keep unboxed for typed double locals

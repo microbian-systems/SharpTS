@@ -461,9 +461,9 @@ public partial class Interpreter
                     bool equal = l.Equals(r);
                     return RuntimeValue.FromBoolean(eq.IsNegated ? !equal : equal);
                 case OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift:
-                    return RuntimeValue.FromNumber(EvaluateBitwise(binary.Operator.Type, (int)l, (int)r));
+                    return RuntimeValue.FromNumber(EvaluateBitwise(binary.Operator.Type, JsToInt32(l), JsToInt32(r)));
                 case OperatorDescriptor.UnsignedRightShift:
-                    return RuntimeValue.FromNumber((double)((uint)(int)l >> ((int)r & 0x1F)));
+                    return RuntimeValue.FromNumber((double)(JsToUint32(l) >> (JsToInt32(r) & 0x1F)));
             }
         }
 
@@ -507,7 +507,7 @@ public partial class Interpreter
             OperatorDescriptor.Equality eq => RuntimeValue.FromBoolean(EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated)),
             OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
                 RuntimeValue.FromNumber(EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right))),
-            OperatorDescriptor.UnsignedRightShift => RuntimeValue.FromNumber((double)((uint)ToInt32(left) >> (ToInt32(right) & 0x1F))),
+            OperatorDescriptor.UnsignedRightShift => RuntimeValue.FromNumber((double)(ToUint32(left) >> (ToInt32(right) & 0x1F))),
             OperatorDescriptor.In => RuntimeValue.FromBoxed(EvaluateIn(left, right)),
             OperatorDescriptor.InstanceOf => RuntimeValue.FromBoxed(EvaluateInstanceof(left, right)),
             _ => RuntimeValue.Undefined
@@ -545,7 +545,7 @@ public partial class Interpreter
             OperatorDescriptor.Equality eq => EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated),
             OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
                 EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right)),
-            OperatorDescriptor.UnsignedRightShift => (double)((uint)ToInt32(left) >> (ToInt32(right) & 0x1F)),
+            OperatorDescriptor.UnsignedRightShift => (double)(ToUint32(left) >> (ToInt32(right) & 0x1F)),
             OperatorDescriptor.In => EvaluateIn(left, right),
             OperatorDescriptor.InstanceOf => EvaluateInstanceof(left, right),
             _ => null
@@ -666,15 +666,34 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Converts a runtime value to a 32-bit signed integer.
+    /// Converts a boxed double to a 32-bit signed integer per ECMA-262 ToInt32.
     /// </summary>
-    /// <param name="value">The value to convert (expected to be a double).</param>
-    /// <returns>The 32-bit integer representation.</returns>
-    /// <remarks>
-    /// Used for bitwise operations which operate on 32-bit integers per ECMAScript spec.
-    /// </remarks>
     /// <seealso href="https://tc39.es/ecma262/#sec-toint32">ECMAScript ToInt32</seealso>
-    private int ToInt32(object? value) => (int)(double)value!;
+    private static int ToInt32(object? value) => JsToInt32((double)value!);
+
+    /// <summary>
+    /// Converts a boxed double to a 32-bit unsigned integer per ECMA-262 ToUint32.
+    /// </summary>
+    /// <seealso href="https://tc39.es/ecma262/#sec-touint32">ECMAScript ToUint32</seealso>
+    private static uint ToUint32(object? value) => JsToUint32((double)value!);
+
+    // ECMA-262 ToInt32 / ToUint32 on a double. Unlike C#'s saturating (int) cast,
+    // non-finite → 0 and out-of-range doubles wrap modulo 2^32. Mirrors JsToInt32 in
+    // Compilation/RuntimeEmitter.CoreUtilities.cs so interpreted and compiled modes agree.
+    private static int JsToInt32(double n)
+    {
+        if (!double.IsFinite(n)) return 0;
+        double t = n >= 0 ? Math.Floor(n) : Math.Ceiling(n);
+        double mod = t - Math.Floor(t / 4294967296.0) * 4294967296.0;
+        return mod >= 2147483648.0 ? (int)(mod - 4294967296.0) : (int)mod;
+    }
+
+    private static uint JsToUint32(double n)
+    {
+        if (!double.IsFinite(n)) return 0;
+        double t = n >= 0 ? Math.Floor(n) : Math.Ceiling(n);
+        return (uint)(t - Math.Floor(t / 4294967296.0) * 4294967296.0);
+    }
 
     /// <summary>
     /// Evaluates the <c>instanceof</c> operator.
@@ -906,12 +925,12 @@ public partial class Interpreter
                 TokenType.STAR_EQUAL => RuntimeValue.FromNumber(l * r),
                 TokenType.SLASH_EQUAL => RuntimeValue.FromNumber(l / r),
                 TokenType.PERCENT_EQUAL => RuntimeValue.FromNumber(l % r),
-                TokenType.AMPERSAND_EQUAL => RuntimeValue.FromNumber((int)l & (int)r),
-                TokenType.PIPE_EQUAL => RuntimeValue.FromNumber((int)l | (int)r),
-                TokenType.CARET_EQUAL => RuntimeValue.FromNumber((int)l ^ (int)r),
-                TokenType.LESS_LESS_EQUAL => RuntimeValue.FromNumber((int)l << ((int)r & 0x1F)),
-                TokenType.GREATER_GREATER_EQUAL => RuntimeValue.FromNumber((int)l >> ((int)r & 0x1F)),
-                TokenType.GREATER_GREATER_GREATER_EQUAL => RuntimeValue.FromNumber((uint)(int)l >> ((int)r & 0x1F)),
+                TokenType.AMPERSAND_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) & JsToInt32(r)),
+                TokenType.PIPE_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) | JsToInt32(r)),
+                TokenType.CARET_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) ^ JsToInt32(r)),
+                TokenType.LESS_LESS_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) << (JsToInt32(r) & 0x1F)),
+                TokenType.GREATER_GREATER_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) >> (JsToInt32(r) & 0x1F)),
+                TokenType.GREATER_GREATER_GREATER_EQUAL => RuntimeValue.FromNumber(JsToUint32(l) >> (JsToInt32(r) & 0x1F)),
                 _ => throw new InterpreterException($"Unknown compound operator: {op}")
             };
         }
@@ -939,7 +958,7 @@ public partial class Interpreter
                 TokenType.CARET_EQUAL => ToInt32(l2) ^ ToInt32(r2),
                 TokenType.LESS_LESS_EQUAL => ToInt32(l2) << (ToInt32(r2) & 0x1F),
                 TokenType.GREATER_GREATER_EQUAL => ToInt32(l2) >> (ToInt32(r2) & 0x1F),
-                TokenType.GREATER_GREATER_GREATER_EQUAL => (int)((uint)ToInt32(l2) >> (ToInt32(r2) & 0x1F)),
+                TokenType.GREATER_GREATER_GREATER_EQUAL => (double)(ToUint32(l2) >> (ToInt32(r2) & 0x1F)),
                 _ => throw new InterpreterException($"Unknown compound operator: {op}")
             })
         };

@@ -95,6 +95,65 @@ public class OperatorTests
         Assert.Equal("4294967295\n", output);
     }
 
+    // ECMA-262 ToInt32/ToUint32 wraps operands modulo 2^32 before bitwise ops.
+    // Regression for uuid.parse() which uses `v >>> 24 & 0xff` on a 48-bit number.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UnsignedRightShift_OperandAbove2Pow32_UsesLow32Bits(ExecutionMode mode)
+    {
+        var source = """
+            const v = 0x123456789abc;
+            console.log((v >>> 24) & 0xff);
+            console.log((v >>> 16) & 0xff);
+            console.log((v >>> 8) & 0xff);
+            console.log(v & 0xff);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("86\n120\n154\n188\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BitwiseOr_OperandAbove2Pow32_WrapsModulo(ExecutionMode mode)
+    {
+        var source = """
+            console.log((2 ** 32 + 5) | 0);
+            console.log((2 ** 32) | 0);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("5\n0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BitwiseOr_NonFiniteOperand_ReturnsZero(ExecutionMode mode)
+    {
+        var source = """
+            console.log(NaN | 0);
+            console.log(Infinity | 0);
+            console.log(-Infinity | 0);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n0\n0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UnsignedRightShiftCompound_OperandAbove2Pow32_UsesLow32Bits(ExecutionMode mode)
+    {
+        var source = """
+            let v = 0x123456789abc;
+            v >>>= 24;
+            console.log(v & 0xff);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("86\n", output);
+    }
+
     #endregion
 
     #region Nullish Coalescing
