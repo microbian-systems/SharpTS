@@ -39,6 +39,11 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    // `this` value stored on the function itself (from BindThis) rather than in an
+    // extra closure scope — otherwise the resolver's scope-distance count wouldn't
+    // match the runtime chain and outer-variable captures would be off-by-one.
+    private readonly object? _boundThis;
+    private readonly bool _hasBoundThis;
     // JS-spec: functions are objects and support arbitrary property
     // assignment (e.g. `fn.DNS = "..."`). Lazily allocated.
     private Dictionary<string, object?>? _properties;
@@ -47,9 +52,16 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
     private Dictionary<string, (ISharpTSCallable? Get, ISharpTSCallable? Set)>? _accessors;
 
     public SharpTSFunction(Stmt.Function declaration, RuntimeEnvironment closure)
+        : this(declaration, closure, boundThis: null, hasBoundThis: false)
+    {
+    }
+
+    private SharpTSFunction(Stmt.Function declaration, RuntimeEnvironment closure, object? boundThis, bool hasBoundThis)
     {
         _declaration = declaration;
         _closure = closure;
+        _boundThis = boundThis;
+        _hasBoundThis = hasBoundThis;
         _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
     }
 
@@ -125,10 +137,14 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
 
         // JS calling convention: if `this` isn't bound by a receiver
         // (bare call `foo()`), it defaults to the global object in
-        // sloppy mode and to `undefined` in strict mode. Only default
-        // if the closure doesn't already supply `this` (e.g. from Bind*
-        // or a method call via `obj.foo()`).
-        if (!_closure.TryGet("this", out _))
+        // sloppy mode and to `undefined` in strict mode. A receiver set
+        // via BindThis is stored on the function itself (not an extra
+        // closure scope) so scope distances stay aligned with the resolver.
+        if (_hasBoundThis)
+        {
+            environment.Define("this", _boundThis);
+        }
+        else if (!_closure.TryGet("this", out _))
         {
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
@@ -216,9 +232,7 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
     /// </summary>
     public SharpTSFunction BindThis(object? thisValue)
     {
-        RuntimeEnvironment environment = new(_closure);
-        environment.Define("this", thisValue);
-        return new SharpTSFunction(_declaration, environment);
+        return new SharpTSFunction(_declaration, _closure, boundThis: thisValue, hasBoundThis: true);
     }
 
     /// <summary>
@@ -236,9 +250,12 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
             ? new RuntimeEnvironment(_closure, strictMode: true)
             : new RuntimeEnvironment(_closure);
 
-        // See Call() for rationale: default `this` to globalThis in sloppy
-        // mode / undefined in strict mode for bare calls.
-        if (!_closure.TryGet("this", out _))
+        // See Call() for rationale on bound-this and default-this.
+        if (_hasBoundThis)
+        {
+            environment.Define("this", _boundThis);
+        }
+        else if (!_closure.TryGet("this", out _))
         {
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
@@ -285,6 +302,11 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
     private readonly Expr.ArrowFunction _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    // Receiver bound via Bind(). Stored on the function itself rather than
+    // wrapping _closure with an extra scope — otherwise runtime scope depth
+    // wouldn't match the resolver's static distances and outer captures break.
+    private readonly object? _boundThis;
+    private readonly bool _hasBoundThis;
     // JS: arrow/function expressions are objects; support property assignment
     // (e.g. minimatch's `exports.minimatch.sep = "/"`).
     private Dictionary<string, object?>? _properties;
@@ -297,10 +319,17 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
     public bool HasOwnThis { get; }
 
     public SharpTSArrowFunction(Expr.ArrowFunction declaration, RuntimeEnvironment closure, bool hasOwnThis = false)
+        : this(declaration, closure, hasOwnThis, boundThis: null, hasBoundThis: false)
+    {
+    }
+
+    private SharpTSArrowFunction(Expr.ArrowFunction declaration, RuntimeEnvironment closure, bool hasOwnThis, object? boundThis, bool hasBoundThis)
     {
         _declaration = declaration;
         _closure = closure;
         HasOwnThis = hasOwnThis;
+        _boundThis = boundThis;
+        _hasBoundThis = hasBoundThis;
         _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
     }
 
@@ -374,6 +403,13 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
 
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
+        // Receiver bound via Bind() is stored on the function itself, not in an
+        // extra closure scope — see field comment on _boundThis.
+        if (_hasBoundThis)
+        {
+            environment.Define("this", _boundThis);
+        }
+
         // Function expressions (HasOwnThis) bind their own `arguments`; true arrows
         // (HasOwnThis=false) inherit it from the enclosing scope per JS spec. Needed
         // for lodash-style wrappers: `function outer() { return function() {
@@ -435,6 +471,11 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
         }
 
         ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
+
+        if (_hasBoundThis)
+        {
+            environment.Define("this", _boundThis);
+        }
 
         // Function expressions (HasOwnThis) bind their own `arguments`; true arrows do not.
         if (HasOwnThis)
@@ -499,12 +540,11 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
     /// Binds 'this' to the given object. Only applicable for function expressions with HasOwnThis=true.
     /// </summary>
     /// <param name="thisObject">The object to bind as 'this'.</param>
-    /// <returns>A new SharpTSArrowFunction with 'this' bound in its closure.</returns>
+    /// <returns>A new SharpTSArrowFunction with 'this' bound.</returns>
     public SharpTSArrowFunction Bind(object thisObject)
     {
-        RuntimeEnvironment environment = new(_closure);
-        environment.Define("this", thisObject);
-        return new SharpTSArrowFunction(_declaration, environment, hasOwnThis: true);
+        return new SharpTSArrowFunction(_declaration, _closure, hasOwnThis: true,
+                                         boundThis: thisObject, hasBoundThis: true);
     }
 
     public override string ToString()

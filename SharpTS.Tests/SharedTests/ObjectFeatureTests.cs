@@ -480,6 +480,73 @@ public class ObjectFeatureTests
         Assert.Equal("100\n", output);
     }
 
+    // Binding `this` for method shorthand must not shift the closure-scope chain;
+    // otherwise the resolver's scope distances don't match the runtime chain and
+    // outer-variable captures read as undefined. Originally surfaced as
+    // PerformanceObserver's callback seeing `[undefined]` from `list.getEntries()`.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_MethodShorthand_CapturesEnclosingVariable(ExecutionMode mode)
+    {
+        var source = """
+            function trigger(entry: any): any {
+                const list = {
+                    getEntries(): any[] { return [entry]; }
+                };
+                return list.getEntries()[0];
+            }
+            const e = { name: 'm', val: 42 };
+            const got = trigger(e);
+            console.log(got.name + ':' + got.val);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("m:42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_MethodShorthand_ClosureAndThisCoexist(ExecutionMode mode)
+    {
+        var source = """
+            function make(prefix: string): any {
+                return {
+                    name: 'obj',
+                    describe(): string { return prefix + ':' + this.name; }
+                };
+            }
+            console.log(make('item').describe());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("item:obj\n", output);
+    }
+
+    // Constructor-function pattern: `new F()` routes through BindThis, which used
+    // to shift the scope chain and break closure captures in the body.
+    // Interpreter-only: compiled mode has a separate, pre-existing gap where `new`
+    // on a $TSFunction value emits Ldnull and skips construction entirely. Tracked
+    // in #54; promote this test to ExecutionModes.All once that lands.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Function_ConstructorPattern_CapturesEnclosingVariable(ExecutionMode mode)
+    {
+        var source = """
+            function makeCtor(greeting: string): any {
+                function Ctor(this: any, name: string): void {
+                    this.msg = greeting + ' ' + name;
+                }
+                return Ctor;
+            }
+            const Hi = makeCtor('Hello') as any;
+            const x = new Hi('World');
+            console.log(x.msg);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Hello World\n", output);
+    }
+
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Object_MethodShorthand_ThisBinding_MultipleMethods(ExecutionMode mode)
