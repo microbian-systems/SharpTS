@@ -351,6 +351,28 @@ public class EmittedRuntime
     // Utility methods
     public MethodBuilder Random { get; set; } = null!;
     public MethodBuilder GetEnumMemberName { get; set; } = null!;
+
+    // Math static-method-as-value adapters. Wrap System.Math methods with
+    // JS-coercing signatures (object → object via ToNumber) so that
+    // `var f = Math.floor; f(x)` resolves to a callable $TSFunction that
+    // preserves spec behavior (`Math.floor(null) === 0`, `Math.floor("2.5") === 2`,
+    // `Math.floor(undefined)` is NaN). See issue #60.
+    public MethodBuilder MathFloorAdapter { get; set; } = null!;
+    public MethodBuilder MathCeilAdapter { get; set; } = null!;
+    public MethodBuilder MathAbsAdapter { get; set; } = null!;
+    public MethodBuilder MathSqrtAdapter { get; set; } = null!;
+    public MethodBuilder MathRoundAdapter { get; set; } = null!;
+    public MethodBuilder MathTruncAdapter { get; set; } = null!;
+    public MethodBuilder MathSignAdapter { get; set; } = null!;
+    public MethodBuilder MathSinAdapter { get; set; } = null!;
+    public MethodBuilder MathCosAdapter { get; set; } = null!;
+    public MethodBuilder MathTanAdapter { get; set; } = null!;
+    public MethodBuilder MathLogAdapter { get; set; } = null!;
+    public MethodBuilder MathExpAdapter { get; set; } = null!;
+    public MethodBuilder MathPowAdapter { get; set; } = null!;
+    public MethodBuilder MathMaxAdapter { get; set; } = null!;
+    public MethodBuilder MathMinAdapter { get; set; } = null!;
+
     public MethodBuilder ConcatTemplate { get; set; } = null!;
     public MethodBuilder InvokeTaggedTemplate { get; set; } = null!;
     public MethodBuilder InvokeTaggedTemplateWithThis { get; set; } = null!;

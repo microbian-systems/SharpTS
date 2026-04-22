@@ -451,6 +451,56 @@ public class InnerFunctionTests
     }
 
     [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BuiltIn_MathMethods_AsValues(ExecutionMode mode)
+    {
+        // Issue #60: `var f = Math.floor; f(x)` must resolve to the Math.floor
+        // function. Previously `Math` emitted as a null constant and
+        // `MathStaticEmitter.TryEmitStaticPropertyGet` only handled PI/E,
+        // so value-form method access fell through to $Runtime.GetProperty(null, …)
+        // and yielded null. Every native-method caching pattern
+        // (`var nativeMax = Math.max` in lodash et al.) silently produced
+        // a null-callable that returned null on every invocation.
+        var source = """
+            const floor: any = Math.floor;
+            const ceil: any = Math.ceil;
+            const max: any = Math.max;
+            const min: any = Math.min;
+            const abs: any = Math.abs;
+            const round: any = Math.round;
+            console.log(typeof floor, typeof max, typeof round);
+            console.log(floor(2.9), ceil(2.1), abs(-5));
+            console.log(max(1, 2, 3, 4), min(4, 3, 2, 1));
+            console.log(round(2.5), round(-0.5));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function function function\n2 3 5\n4 1\n3 0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void BuiltIn_MathMaxMin_Variadic_WithCoercion(ExecutionMode mode)
+    {
+        // Compiled-only: verifies that the Math.max/min adapters coerce
+        // through ToNumber per ES spec (`Math.max("2", "3") === 3`) and
+        // short-circuit NaN correctly. Wrapped via the object[] rest-param
+        // slot on $TSFunction.AdjustArgs.
+        var source = """
+            const max: any = Math.max;
+            const min: any = Math.min;
+            console.log(max("2", "3", "1"));
+            console.log(min("5", "2", "8"));
+            console.log(max());
+            console.log(min());
+            console.log(isNaN(max(1, NaN, 2)));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("3\n2\n-Infinity\nInfinity\ntrue\n", output);
+    }
+
+    [Theory]
     [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
     public void BuiltIn_ClassUnknownStaticProperty_IsUndefined(ExecutionMode mode)
     {
