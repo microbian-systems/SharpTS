@@ -395,12 +395,26 @@ public partial class ILEmitter
     }
 
     /// <summary>
-    /// Emits a reflection-dispatched call to
-    /// <see cref="Runtime.DotNet.DotNetEventBinder.CompiledAddEventListener"/> or
-    /// <c>CompiledRemoveEventListener</c>. Pushes <c>null</c> on the stack (the
-    /// JS-level <c>undefined</c>) matching the void-return convention for other
-    /// external method calls.
+    /// Emits a <c>@DotNetType addEventListener(name, handler)</c> or
+    /// <c>removeEventListener(name, handler)</c> call. Pushes <c>null</c> (the JS-level
+    /// <c>undefined</c>) on return to match the void-return convention for other
+    /// external calls.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Fast path (literal event name): resolves the <see cref="EventInfo"/> at compile
+    /// time, uses <see cref="DelegateAdapterEmitter"/> to construct a delegate matching
+    /// the event's handler type, registers in the emitted <c>$Runtime</c> subscription
+    /// table, and emits a direct <c>call</c>/<c>callvirt</c> to the event's
+    /// <c>add_</c>/<c>remove_</c> accessor. Fully standalone — no runtime dependency on
+    /// SharpTS.dll.
+    /// </para>
+    /// <para>
+    /// Slow path (dynamic event name): falls through to the reflection-into-SharpTS
+    /// helper. Requires SharpTS.dll to be loadable at runtime; used only when the first
+    /// argument isn't a string literal.
+    /// </para>
+    /// </remarks>
     /// <param name="receiver">Receiver expression for instance events, or null for static.</param>
     /// <param name="externalType">The <c>@DotNetType</c> target (used for event lookup).</param>
     /// <param name="methodName">Either <c>addEventListener</c> or <c>removeEventListener</c>.</param>
@@ -419,6 +433,204 @@ public partial class ILEmitter
                 $"'{methodName}' on '@DotNetType {externalType.FullName}' requires (eventName, handler) — got {arguments.Count} argument(s).");
         }
 
+        // Fast path: string-literal event name → compile-time EventInfo, full standalone emit.
+        if (arguments[0] is Expr.Literal { Value: string literalEventName })
+        {
+            EmitExternalEventSubscriptionStandalone(
+                receiver, externalType, methodName, literalEventName, arguments[1], isStatic);
+            return;
+        }
+
+        // Slow path: dynamic event name — fall back to reflection-into-SharpTS.
+        EmitExternalEventSubscriptionReflected(receiver, externalType, methodName, arguments, isStatic);
+    }
+
+    /// <summary>
+    /// Fast-path emission used when the event name is a compile-time string literal.
+    /// The full add/remove flow is baked into the compiled DLL and depends only on the
+    /// BCL + emitted <c>$Runtime</c> helpers.
+    /// </summary>
+    private void EmitExternalEventSubscriptionStandalone(
+        Expr? receiver,
+        Type externalType,
+        string methodName,
+        string eventName,
+        Expr handlerExpr,
+        bool isStatic)
+    {
+        bool isAdd = methodName == "addEventListener";
+
+        var evt = ResolveExternalEvent(externalType, eventName)
+            ?? throw new CompileException(
+                $"Event '{eventName}' not found on '@DotNetType {externalType.FullName}'.");
+
+        var handlerDelegateType = evt.EventHandlerType
+            ?? throw new CompileException(
+                $"Event '{eventName}' on '{externalType.FullName}' has no EventHandlerType.");
+
+        var accessor = (isAdd ? evt.AddMethod : evt.RemoveMethod)
+            ?? throw new CompileException(
+                $"Event '{eventName}' on '{externalType.FullName}' has no {(isAdd ? "add" : "remove")} accessor.");
+
+        // Evaluate handler (tsFunction) into a local.
+        var tsFuncLocal = IL.DeclareLocal(_ctx.Types.Object);
+        EmitExpression(handlerExpr);
+        EmitBoxIfNeeded(handlerExpr);
+        IL.Emit(OpCodes.Stloc, tsFuncLocal);
+
+        // Evaluate receiver (null for static) into a local.
+        var receiverLocal = IL.DeclareLocal(_ctx.Types.Object);
+        if (isStatic || receiver == null)
+        {
+            IL.Emit(OpCodes.Ldnull);
+        }
+        else
+        {
+            EmitExpression(receiver);
+            EmitBoxIfNeeded(receiver);
+        }
+        IL.Emit(OpCodes.Stloc, receiverLocal);
+
+        if (isAdd)
+        {
+            // Build the delegate via a per-handler-type adapter.
+            var adapter = _ctx.TypeMapper.DelegateAdapters.GetOrEmit(handlerDelegateType);
+            var delegateLocal = IL.DeclareLocal(handlerDelegateType);
+
+            IL.Emit(OpCodes.Ldloc, tsFuncLocal);
+            IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSFunctionType);
+            IL.Emit(OpCodes.Newobj, adapter.Ctor);
+            IL.Emit(OpCodes.Ldftn, adapter.Invoke);
+            var delegateCtor = handlerDelegateType.GetConstructor(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, [typeof(object), typeof(IntPtr)], null)
+                ?? throw new CompileException(
+                    $"Delegate type '{handlerDelegateType.FullName}' lacks the standard (object, IntPtr) constructor.");
+            IL.Emit(OpCodes.Newobj, delegateCtor);
+            IL.Emit(OpCodes.Stloc, delegateLocal);
+
+            // Register in $Runtime table — no-op if already registered.
+            EmitPushOwner(receiverLocal, externalType, isStatic);
+            IL.Emit(OpCodes.Ldstr, eventName);
+            IL.Emit(OpCodes.Ldloc, tsFuncLocal);
+            IL.Emit(OpCodes.Ldloc, delegateLocal);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.AddEventSubscription);
+
+            // If the subscription was a duplicate (add returned false), skip the actual AddEventHandler.
+            var skipAddLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Brfalse, skipAddLabel);
+
+            // Call the event's add accessor: evt.add_X(delegate).
+            EmitEventAccessorCall(receiverLocal, accessor, isStatic, delegateLocal, handlerDelegateType);
+
+            IL.MarkLabel(skipAddLabel);
+        }
+        else
+        {
+            // Remove path: look up the previously-registered Delegate and unsubscribe.
+            var delegateLocal = IL.DeclareLocal(typeof(Delegate));
+            EmitPushOwner(receiverLocal, externalType, isStatic);
+            IL.Emit(OpCodes.Ldstr, eventName);
+            IL.Emit(OpCodes.Ldloc, tsFuncLocal);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.RemoveEventSubscription);
+            IL.Emit(OpCodes.Stloc, delegateLocal);
+
+            var skipRemoveLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, delegateLocal);
+            IL.Emit(OpCodes.Brfalse, skipRemoveLabel);
+
+            // Delegate → EventHandlerType cast is needed because the accessor's param is the
+            // specific delegate type, not the base Delegate.
+            var typedDelegateLocal = IL.DeclareLocal(handlerDelegateType);
+            IL.Emit(OpCodes.Ldloc, delegateLocal);
+            IL.Emit(OpCodes.Castclass, handlerDelegateType);
+            IL.Emit(OpCodes.Stloc, typedDelegateLocal);
+
+            EmitEventAccessorCall(receiverLocal, accessor, isStatic, typedDelegateLocal, handlerDelegateType);
+
+            IL.MarkLabel(skipRemoveLabel);
+        }
+
+        // Void return on the JS side → undefined (null in compiled convention).
+        IL.Emit(OpCodes.Ldnull);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Pushes the subscription-table "owner" key: the receiver for instance events, or
+    /// <c>typeof(externalType)</c> for static events. Matches the interpreter's
+    /// <c>DotNetEventBinder</c> keying.
+    /// </summary>
+    private void EmitPushOwner(LocalBuilder receiverLocal, Type externalType, bool isStatic)
+    {
+        if (isStatic)
+        {
+            IL.Emit(OpCodes.Ldtoken, externalType);
+            IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+        }
+    }
+
+    /// <summary>
+    /// Emits a direct call to the event's <c>add_X</c> / <c>remove_X</c> accessor.
+    /// Static events take no receiver; instance events take it as <c>this</c>.
+    /// </summary>
+    private void EmitEventAccessorCall(
+        LocalBuilder receiverLocal,
+        MethodInfo accessor,
+        bool isStatic,
+        LocalBuilder delegateLocal,
+        Type handlerDelegateType)
+    {
+        if (!isStatic && !accessor.IsStatic)
+        {
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+            // The accessor expects the specific declaring type as `this`; cast the object.
+            IL.Emit(OpCodes.Castclass, accessor.DeclaringType ?? _ctx.Types.Object);
+        }
+
+        IL.Emit(OpCodes.Ldloc, delegateLocal);
+
+        // For instance accessors on reference types, callvirt gives proper dispatch even
+        // though event accessors aren't typically virtual. For static accessors, call.
+        IL.Emit(accessor.IsStatic ? OpCodes.Call : OpCodes.Callvirt, accessor);
+    }
+
+    /// <summary>
+    /// Resolves an event on <paramref name="externalType"/> by its TS-facing name. Tries
+    /// the original name first, then PascalCase (e.g. <c>processExit</c> → <c>ProcessExit</c>).
+    /// </summary>
+    private static EventInfo? ResolveExternalEvent(Type externalType, string eventName)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static;
+        var evt = externalType.GetEvent(eventName, flags);
+        if (evt != null) return evt;
+
+        // PascalCase fallback.
+        if (eventName.Length > 0 && char.IsLower(eventName[0]))
+        {
+            var pascal = char.ToUpperInvariant(eventName[0]) + eventName[1..];
+            evt = externalType.GetEvent(pascal, flags);
+            if (evt != null) return evt;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Legacy reflection-into-SharpTS path, kept for the case where the event name isn't
+    /// a compile-time string literal. Requires SharpTS.dll to be loadable at runtime.
+    /// </summary>
+    private void EmitExternalEventSubscriptionReflected(
+        Expr? receiver,
+        Type externalType,
+        string methodName,
+        List<Expr> arguments,
+        bool isStatic)
+    {
         string helperMethod = methodName == "addEventListener"
             ? "CompiledAddEventListener"
             : "CompiledRemoveEventListener";

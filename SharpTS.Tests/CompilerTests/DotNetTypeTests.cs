@@ -1087,6 +1087,93 @@ public class DotNetTypeTests
 
     #endregion
 
+    #region Issue #53 — event subscription standalone
+
+    [Fact]
+    public void Issue53_AppDomain_ProcessExit_Standalone()
+    {
+        // The user's exact repro. Runs standalone (no SharpTS.dll copied alongside),
+        // so if the emitted IL reflects into SharpTS at runtime this NREs. AppDomain
+        // is pure BCL — the fixture doesn't transitively pull SharpTS in.
+        var source = """
+            @DotNetType("System.AppDomain")
+            declare class AppDomain {
+                static readonly currentDomain: AppDomain;
+                addEventListener(name: string, handler: (sender: any, args: any) => void): void;
+            }
+            AppDomain.currentDomain.addEventListener("ProcessExit", (sender, args) => {
+                console.log("(event) ProcessExit fired");
+            });
+            console.log("wired");
+            """;
+
+        var output = TestHarness.RunCompiledStandalone(source);
+        Assert.Contains("wired", output);
+        Assert.Contains("ProcessExit fired", output);
+    }
+
+    [Fact]
+    public void Issue53_RemoveEventListener_Standalone()
+    {
+        // removeEventListener path — add, fire once, remove, fire again. Second fire
+        // must not invoke the handler. Uses CallbackFixture, so SharpTS.dll gets
+        // transitively loaded via SharpTS.Tests.dll — this test only proves the new
+        // emitted path is wired up correctly, not true standalone operation. The
+        // AppDomain test above covers the standalone case.
+        var source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                fireStringEvent(payload: string): void;
+                addEventListener(name: string, handler: (sender: any, payload: string) => void): void;
+                removeEventListener(name: string, handler: (sender: any, payload: string) => void): void;
+            }
+            const fx = new CallbackFixture();
+            const handler = (sender: any, payload: string) => console.log("got:" + payload);
+            fx.addEventListener("StringReceived", handler);
+            fx.fireStringEvent("first");
+            fx.removeEventListener("StringReceived", handler);
+            fx.fireStringEvent("second");
+            console.log("done");
+            """;
+
+        var output = TestHarness.RunCompiledWithTestFixtures(source);
+        Assert.Equal("got:first\ndone\n", output);
+    }
+
+    [Fact]
+    public void Issue53_Multiple_Instances_Same_Event()
+    {
+        // Two CallbackFixture instances subscribe to the same event; removing the
+        // handler from one instance must NOT silence the other. Guards against a
+        // subscription-key collision where the owner isn't part of the identity.
+        var source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                fireStringEvent(payload: string): void;
+                addEventListener(name: string, handler: (sender: any, payload: string) => void): void;
+                removeEventListener(name: string, handler: (sender: any, payload: string) => void): void;
+            }
+            const a = new CallbackFixture();
+            const b = new CallbackFixture();
+            const logA = (sender: any, p: string) => console.log("A:" + p);
+            const logB = (sender: any, p: string) => console.log("B:" + p);
+            a.addEventListener("StringReceived", logA);
+            b.addEventListener("StringReceived", logB);
+            a.fireStringEvent("1");
+            b.fireStringEvent("2");
+            a.removeEventListener("StringReceived", logA);
+            a.fireStringEvent("3");
+            b.fireStringEvent("4");
+            """;
+
+        var output = TestHarness.RunCompiledWithTestFixtures(source);
+        Assert.Equal("A:1\nB:2\nB:4\n", output);
+    }
+
+    #endregion
+
     #region Event subscription (compile mode)
 
     [Fact]

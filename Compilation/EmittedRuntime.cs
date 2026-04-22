@@ -246,6 +246,12 @@ public class EmittedRuntime
     public MethodBuilder ObjectSetPrototypeOf { get; set; } = null!;
     public FieldBuilder FrozenObjectsField { get; set; } = null!;
     public FieldBuilder SealedObjectsField { get; set; } = null!;
+
+    // @DotNetType event subscription registry (compiled mode — see
+    // RuntimeEmitter.EventSubscriptions.cs).
+    public FieldBuilder EventSubscriptionsField { get; set; } = null!;
+    public MethodBuilder AddEventSubscription { get; set; } = null!;
+    public MethodBuilder RemoveEventSubscription { get; set; } = null!;
     public FieldBuilder NonExtensibleObjectsField { get; set; } = null!;
     public FieldBuilder PrototypeStoreField { get; set; } = null!;
 

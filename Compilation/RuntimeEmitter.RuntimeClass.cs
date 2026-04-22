@@ -155,6 +155,10 @@ public partial class RuntimeEmitter
         // Initialize _finRegPokeTable = new ConditionalWeakTable<object, object>()
         EmitFinRegPokeTableInit(cctorIL, runtime);
 
+        // Define the event-subscription registry (field + two helper methods). Must be
+        // emitted while we still hold the cctor IL generator so the field gets initialized.
+        EmitEventSubscriptionHelpers(typeBuilder, runtime, cctorIL);
+
         cctorIL.Emit(OpCodes.Ret);
 
         // Emit all methods - these are now in partial class files
