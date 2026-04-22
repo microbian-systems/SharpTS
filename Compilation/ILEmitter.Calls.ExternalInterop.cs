@@ -34,9 +34,10 @@ public partial class ILEmitter
             throw new CompileException($"Instance method '{methodName}' (or '{pascalMethodName}') not found on external type {externalType.FullName}");
         }
 
-        // Use type-aware overload resolution
+        // Use type-aware overload resolution, honoring @DotNetOverload if declared.
         var resolver = new ExternalMethodResolver(_ctx.TypeMap, _ctx.Types);
-        var candidate = resolver.ResolveMethod(methods, arguments);
+        string? hint = _ctx.TypeMapper.GetOverloadHint(externalType, methodName);
+        var candidate = resolver.ResolveMethod(methods, arguments, hint);
         var method = (MethodInfo)candidate.Method;
 
         // Emit receiver and prepare for member access
@@ -75,9 +76,11 @@ public partial class ILEmitter
             throw new CompileException($"No public constructors found on external type {externalType.FullName}");
         }
 
-        // Use type-aware overload resolution
+        // Use type-aware overload resolution, honoring @DotNetOverload("...") on the
+        // TS constructor declaration if declared.
         var resolver = new ExternalMethodResolver(_ctx.TypeMap, _ctx.Types);
-        var candidate = resolver.ResolveConstructor(ctors, arguments);
+        string? hint = _ctx.TypeMapper.GetOverloadHint(externalType, "constructor");
+        var candidate = resolver.ResolveConstructor(ctors, arguments, hint);
         var ctor = (ConstructorInfo)candidate.Method;
 
         // Emit arguments with type conversion (handles params arrays)
@@ -111,9 +114,10 @@ public partial class ILEmitter
             throw new CompileException($"Static method '{methodName}' (or '{pascalMethodName}') not found on external type {externalType.FullName}");
         }
 
-        // Use type-aware overload resolution
+        // Use type-aware overload resolution, honoring @DotNetOverload if declared.
         var resolver = new ExternalMethodResolver(_ctx.TypeMap, _ctx.Types);
-        var candidate = resolver.ResolveMethod(methods, arguments);
+        string? hint = _ctx.TypeMapper.GetOverloadHint(externalType, methodName);
+        var candidate = resolver.ResolveMethod(methods, arguments, hint);
         var method = (MethodInfo)candidate.Method;
 
         // Emit arguments with type conversion (handles params arrays)

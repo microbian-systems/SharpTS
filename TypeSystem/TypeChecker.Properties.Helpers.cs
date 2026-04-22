@@ -199,8 +199,10 @@ public partial class TypeChecker
             return CheckGetOnGenericInstance(gc, ig.TypeArguments, memberNameStr);
         }
 
-        // Handle regular class instance
-        if (instance.ClassType is TypeInfo.Class instanceClassType)
+        // Handle regular class instance. ResolvedClassType unwraps MutableClass to its
+        // frozen Class — needed when signature collection created this Instance before
+        // the class was frozen (e.g., method return types on @DotNetType shims).
+        if (instance.ResolvedClassType is TypeInfo.Class instanceClassType)
         {
             return CheckGetOnRegularInstance(instanceClassType, memberName);
         }

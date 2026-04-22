@@ -1,6 +1,7 @@
 using System.Reflection;
 using SharpTS.Diagnostics.Exceptions;
 using SharpTS.Parsing;
+using SharpTS.Runtime.DotNet;
 using SharpTS.TypeSystem;
 using TSTypeInfo = SharpTS.TypeSystem.TypeInfo;
 
@@ -55,11 +56,14 @@ public class ExternalMethodResolver(TypeMap? typeMap, TypeProvider types)
     /// </summary>
     /// <param name="methods">Candidate methods to choose from.</param>
     /// <param name="arguments">TypeScript expressions being passed as arguments.</param>
+    /// <param name="overloadHint">Optional <c>@DotNetOverload</c> signature string; when
+    /// supplied, narrows candidates to those whose parameter types match the hint
+    /// before cost-based scoring.</param>
     /// <returns>The best matching method candidate.</returns>
     /// <exception cref="Exception">When no compatible overload is found.</exception>
-    public MethodCandidate ResolveMethod(MethodInfo[] methods, List<Expr> arguments)
+    public MethodCandidate ResolveMethod(MethodInfo[] methods, List<Expr> arguments, string? overloadHint = null)
     {
-        return Resolve(methods.Cast<MethodBase>().ToArray(), arguments);
+        return Resolve(methods.Cast<MethodBase>().ToArray(), arguments, overloadHint);
     }
 
     /// <summary>
@@ -67,15 +71,30 @@ public class ExternalMethodResolver(TypeMap? typeMap, TypeProvider types)
     /// </summary>
     /// <param name="constructors">Candidate constructors to choose from.</param>
     /// <param name="arguments">TypeScript expressions being passed as arguments.</param>
+    /// <param name="overloadHint">Optional <c>@DotNetOverload</c> signature string; see
+    /// <see cref="ResolveMethod"/>.</param>
     /// <returns>The best matching constructor candidate.</returns>
     /// <exception cref="Exception">When no compatible overload is found.</exception>
-    public MethodCandidate ResolveConstructor(ConstructorInfo[] constructors, List<Expr> arguments)
+    public MethodCandidate ResolveConstructor(ConstructorInfo[] constructors, List<Expr> arguments, string? overloadHint = null)
     {
-        return Resolve(constructors.Cast<MethodBase>().ToArray(), arguments);
+        return Resolve(constructors.Cast<MethodBase>().ToArray(), arguments, overloadHint);
     }
 
-    private MethodCandidate Resolve(MethodBase[] candidates, List<Expr> arguments)
+    private MethodCandidate Resolve(MethodBase[] candidates, List<Expr> arguments, string? overloadHint = null)
     {
+        // Apply @DotNetOverload hint filter — narrow to matching signatures before scoring.
+        if (!string.IsNullOrWhiteSpace(overloadHint))
+        {
+            try
+            {
+                candidates = DotNetMethodResolver.FilterByHint(candidates, overloadHint!);
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new CompileException(ex.Message);
+            }
+        }
+
         var scored = new List<MethodCandidate>();
 
         foreach (var method in candidates)

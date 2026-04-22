@@ -66,15 +66,7 @@ internal static class DotNetMethodResolver
         IEnumerable<MethodBase> pool = candidates;
         if (!string.IsNullOrWhiteSpace(overloadHint))
         {
-            var expected = ParseOverloadHint(overloadHint);
-            pool = candidates.Where(m => MatchesHint(m, expected));
-            var filtered = pool.ToArray();
-            if (filtered.Length == 0)
-            {
-                throw new InvalidOperationException(
-                    $"@DotNetOverload hint '{overloadHint}' did not match any candidate of '{candidates[0].Name}'.");
-            }
-            pool = filtered;
+            pool = FilterByHint(candidates, overloadHint!);
         }
 
         var scored = new List<RuntimeMethodCandidate>();
@@ -271,6 +263,26 @@ internal static class DotNetMethodResolver
         if (t == typeof(string)) return 32;
         if (t == typeof(bool)) return 1;
         return 1000;
+    }
+
+    /// <summary>
+    /// Filters a candidate method/constructor list by a <c>@DotNetOverload</c> hint.
+    /// Shared between the interpreter (<see cref="DotNetMethodResolver"/>) and the
+    /// compiler (<see cref="SharpTS.Compilation.ExternalMethodResolver"/>) so both
+    /// honor the hint identically. Throws <see cref="InvalidOperationException"/>
+    /// when the hint matches no candidate.
+    /// </summary>
+    internal static MethodBase[] FilterByHint(MethodBase[] candidates, string hint)
+    {
+        if (candidates.Length == 0) return candidates;
+        var expected = ParseOverloadHint(hint);
+        var filtered = candidates.Where(m => MatchesHint(m, expected)).ToArray();
+        if (filtered.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"@DotNetOverload hint '{hint}' did not match any candidate of '{candidates[0].Name}'.");
+        }
+        return filtered;
     }
 
     /// <summary>

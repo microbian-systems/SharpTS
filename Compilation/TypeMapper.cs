@@ -23,6 +23,8 @@ public class TypeMapper
     private Dictionary<string, TypeBuilder>? _classBuilders;
     private UnionTypeGenerator? _unionGenerator;
     private readonly Dictionary<string, Type> _externalTypes = [];  // @DotNetType mappings
+    // @DotNetOverload hints keyed by .NET type, then by TS method name ("constructor" for ctors).
+    private readonly Dictionary<Type, Dictionary<string, string>> _externalOverloadHints = [];
 
     public TypeMapper(ModuleBuilder moduleBuilder, TypeProvider? types = null)
     {
@@ -43,6 +45,39 @@ public class TypeMapper
     /// Gets the external types dictionary for external access.
     /// </summary>
     public IReadOnlyDictionary<string, Type> ExternalTypes => _externalTypes;
+
+    /// <summary>
+    /// Associates <c>@DotNetOverload</c> hints with an external .NET type. Hints are
+    /// keyed by TS method name (or <c>"constructor"</c>). Subsequent calls for the
+    /// same type merge into the existing map.
+    /// </summary>
+    public void RegisterOverloadHints(Type dotNetType, IReadOnlyDictionary<string, string> hints)
+    {
+        if (hints.Count == 0) return;
+        if (!_externalOverloadHints.TryGetValue(dotNetType, out var map))
+        {
+            map = new Dictionary<string, string>(StringComparer.Ordinal);
+            _externalOverloadHints[dotNetType] = map;
+        }
+        foreach (var kv in hints)
+        {
+            map[kv.Key] = kv.Value;
+        }
+    }
+
+    /// <summary>
+    /// Returns the <c>@DotNetOverload</c> hint for a given method on an external type,
+    /// or null if none was declared.
+    /// </summary>
+    public string? GetOverloadHint(Type dotNetType, string methodName)
+    {
+        if (_externalOverloadHints.TryGetValue(dotNetType, out var map) &&
+            map.TryGetValue(methodName, out var hint))
+        {
+            return hint;
+        }
+        return null;
+    }
 
     /// <summary>
     /// Gets the TypeProvider used for type resolution.

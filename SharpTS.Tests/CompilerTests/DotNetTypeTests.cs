@@ -911,6 +911,92 @@ public class DotNetTypeTests
 
     #endregion
 
+    #region Issue #51 — overload dispatch + @DotNetOverload hint
+
+    [Fact]
+    public void Issue51_Guid_ToString_InferredReceiver_NoAmbiguousMatch()
+    {
+        // Repro from issue #51 (a): toString() on an inferred @DotNetType receiver
+        // used to route through $Runtime.GetFieldsProperty and crash with
+        // AmbiguousMatchException because Guid has four ToString overloads.
+        var source = """
+            @DotNetType("System.Guid")
+            declare class Guid {
+                static newGuid(): Guid;
+                toString(): string;
+            }
+            const g = Guid.newGuid();
+            console.log(g.toString().length > 30 ? "valid" : "invalid");
+            """;
+
+        var output = TestHarness.RunCompiled(source, DecoratorMode.Legacy);
+        Assert.Equal("valid\n", output);
+    }
+
+    [Fact]
+    public void Issue51_StringBuilder_ChainedAppend_NoAmbiguousMatch()
+    {
+        // Repro from issue #51 (a): chained Append calls crash the same way
+        // because the intermediate receiver's static type is lost.
+        var source = """
+            @DotNetType("System.Text.StringBuilder")
+            declare class StringBuilder {
+                constructor();
+                append(value: string): StringBuilder;
+                toString(): string;
+            }
+            const sb = new StringBuilder();
+            sb.append("hello").append(" world");
+            console.log(sb.toString());
+            """;
+
+        var output = TestHarness.RunCompiled(source, DecoratorMode.Legacy);
+        Assert.Equal("hello world\n", output);
+    }
+
+    [Fact]
+    public void Issue51_DotNetOverload_Int_TruncatesInsteadOfRounds()
+    {
+        // Repro from issue #51 (b): without the hint, Convert.toInt32(3.7) picks
+        // the double overload and rounds to 4. With @DotNetOverload("int") the
+        // int overload is selected and truncates to 3 (banker's rounding is
+        // moot — int takes the value as-is, truncating).
+        var source = """
+            @DotNetType("System.Convert")
+            declare class Convert {
+                @DotNetOverload("int")
+                static toInt32(value: number): number;
+            }
+            console.log(Convert.toInt32(3.7));
+            """;
+
+        var output = TestHarness.RunCompiled(source, DecoratorMode.Legacy);
+        Assert.Equal("3\n", output);
+    }
+
+    [Fact]
+    public void Issue51_DotNetOverload_UnknownSignature_Throws()
+    {
+        // A nonsensical hint must be surfaced, not silently dropped. If the
+        // compiler drops the hint it falls through to the cost-based resolver
+        // and this prints "4". Honoring the hint should fail with a clear
+        // "no overload matches" error.
+        var source = """
+            @DotNetType("System.Convert")
+            declare class Convert {
+                @DotNetOverload("nonexistent-type")
+                static toInt32(value: number): number;
+            }
+            console.log(Convert.toInt32(3.7));
+            """;
+
+        var ex = Assert.ThrowsAny<System.Exception>(() =>
+            TestHarness.RunCompiled(source, DecoratorMode.Legacy));
+        Assert.Contains("overload", ex.Message, System.StringComparison.OrdinalIgnoreCase);
+    }
+
+    #endregion
+
     #region Event subscription (compile mode)
 
     [Fact]

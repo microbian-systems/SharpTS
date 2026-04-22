@@ -187,10 +187,14 @@ public partial class ILEmitter
         if (receiverType is not TypeSystem.TypeInfo.Instance instance)
             return false;
 
-        // Extract the class name from the instance's class type
-        string? simpleClassName = instance.ClassType switch
+        // Extract the class name from the instance's class type.
+        // Use ResolvedClassType so chained expressions like sb.append(...).append(...)
+        // — whose return type was captured during signature collection while the class
+        // was still a MutableClass — resolve to the frozen Class here.
+        string? simpleClassName = instance.ResolvedClassType switch
         {
             TypeSystem.TypeInfo.Class c => c.Name,
+            TypeSystem.TypeInfo.MutableClass mc => mc.Name,
             _ => null
         };
         if (simpleClassName == null)

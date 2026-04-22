@@ -187,6 +187,7 @@ public partial class RuntimeEmitter
         EmitGetArrayMethod(typeBuilder, runtime);
         EmitGetFunctionMethod(typeBuilder, runtime);  // For bind/call/apply on functions
         EmitToPascalCase(typeBuilder, runtime);  // Must be emitted before GetFieldsProperty/SetFieldsProperty
+        EmitSafeGetMethod(typeBuilder, runtime); // Must be emitted before GetFieldsProperty/SetFieldsProperty
         // Promise callback types must be created before InvokeValue (which dispatches to them)
         EmitPromiseCallbackTypes(moduleBuilder, runtime);
         // InvokeValue/InvokeMethodValue must come before GetFieldsProperty (needs InvokeMethodValue for getters)

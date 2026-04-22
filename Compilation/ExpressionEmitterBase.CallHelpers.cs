@@ -836,12 +836,15 @@ public abstract partial class ExpressionEmitterBase
 
         // Path A: TypeMap resolved the receiver to a class Instance — the normal case for
         // ILEmitter and for user code whose types we fully inferred.
+        // Use ResolvedClassType so chained call returns (whose type was captured while the
+        // class was still a MutableClass) resolve to the frozen Class here.
         var receiverType = Ctx.TypeMap?.Get(receiver);
         if (receiverType is TypeSystem.TypeInfo.Instance instance)
         {
-            simpleClassName = instance.ClassType switch
+            simpleClassName = instance.ResolvedClassType switch
             {
                 TypeSystem.TypeInfo.Class classType => classType.Name,
+                TypeSystem.TypeInfo.MutableClass mc => mc.Name,
                 _ => null
             };
         }

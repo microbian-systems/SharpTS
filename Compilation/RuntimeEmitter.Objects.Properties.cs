@@ -51,6 +51,152 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits a reflection helper <c>SafeGetMethod(Type, string, BindingFlags) -> MethodInfo</c>
+    /// that wraps <see cref="Type.GetMethod(string, BindingFlags)"/> and degrades gracefully
+    /// when the lookup would otherwise throw <see cref="System.Reflection.AmbiguousMatchException"/>
+    /// because multiple overloads share the name. On ambiguity: prefer a zero-argument
+    /// overload (matches the "read property, invoke with no args" pattern used by
+    /// <c>GetFieldsProperty</c>'s callable wrapping); otherwise return the first
+    /// name-matching overload. Returns null when no method matches the name.
+    /// </summary>
+    internal void EmitSafeGetMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "SafeGetMethod",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.MethodInfo,
+            [_types.Type, _types.String, typeof(BindingFlags)]
+        );
+        runtime.SafeGetMethod = method;
+
+        var il = method.GetILGenerator();
+        var resultLocal = il.DeclareLocal(_types.MethodInfo);
+        var methodsArrayType = _types.MethodInfo.MakeArrayType();
+        var methodsLocal = il.DeclareLocal(methodsArrayType);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var mLocal = il.DeclareLocal(_types.MethodInfo);
+
+        var retLabel = il.DefineLabel();
+
+        // Happy path: return t.GetMethod(name, flags) when unambiguous.
+        il.BeginExceptionBlock();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Leave, retLabel);
+
+        // Ambiguous — fall back to a deterministic pick.
+        il.BeginCatchBlock(typeof(System.Reflection.AmbiguousMatchException));
+        il.Emit(OpCodes.Pop); // discard exception
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // methods = t.GetMethods(flags)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethods", typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, methodsLocal);
+
+        // Pass 1: prefer a zero-arg overload.
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        var pass1Start = il.DefineLabel();
+        var pass1End = il.DefineLabel();
+        var pass1Continue = il.DefineLabel();
+        il.MarkLabel(pass1Start);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, methodsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, pass1End);
+
+        il.Emit(OpCodes.Ldloc, methodsLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, mLocal);
+
+        // if (!m.Name.Equals(name, OrdinalIgnoreCase)) continue
+        il.Emit(OpCodes.Ldloc, mLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.MethodBase, "Name"));
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4, (int)StringComparison.OrdinalIgnoreCase);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String, _types.StringComparison));
+        il.Emit(OpCodes.Brfalse, pass1Continue);
+
+        // if (m.GetParameters().Length != 0) continue
+        il.Emit(OpCodes.Ldloc, mLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "GetParameters"));
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brtrue, pass1Continue);
+
+        // Zero-arg match — store and break out of pass 1.
+        il.Emit(OpCodes.Ldloc, mLocal);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Br, pass1End);
+
+        il.MarkLabel(pass1Continue);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, pass1Start);
+        il.MarkLabel(pass1End);
+
+        // If pass 1 found something, we're done.
+        var catchEnd = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Brtrue, catchEnd);
+
+        // Pass 2: first name match (arbitrary but deterministic).
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        var pass2Start = il.DefineLabel();
+        var pass2End = il.DefineLabel();
+        var pass2Continue = il.DefineLabel();
+        il.MarkLabel(pass2Start);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, methodsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, pass2End);
+
+        il.Emit(OpCodes.Ldloc, methodsLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, mLocal);
+
+        il.Emit(OpCodes.Ldloc, mLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.MethodBase, "Name"));
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4, (int)StringComparison.OrdinalIgnoreCase);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Equals", _types.String, _types.String, _types.StringComparison));
+        il.Emit(OpCodes.Brfalse, pass2Continue);
+
+        il.Emit(OpCodes.Ldloc, mLocal);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Br, pass2End);
+
+        il.MarkLabel(pass2Continue);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, pass2Start);
+        il.MarkLabel(pass2End);
+
+        il.MarkLabel(catchEnd);
+        il.Emit(OpCodes.Leave, retLabel);
+        il.EndExceptionBlock();
+
+        il.MarkLabel(retLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitGetFieldsProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // GetFieldsProperty(object obj, string name) -> object
@@ -336,12 +482,14 @@ public partial class RuntimeEmitter
 
         // Fallback: Try reflection-based method lookup for runtime-emitted types
         // This handles methods like Push, Pipe, etc. on $Readable, $Writable, $Dir, etc.
+        // Uses SafeGetMethod so overloaded methods (e.g. Guid.ToString, StringBuilder.Append)
+        // don't crash with AmbiguousMatchException.
         var methodInfoLocal = il.DeclareLocal(_types.MethodInfo);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
         il.Emit(OpCodes.Ldloc, pascalNameLocal);
         il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.IgnoreCase));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Call, runtime.SafeGetMethod);
         il.Emit(OpCodes.Stloc, methodInfoLocal);
 
         // If method found, wrap in $TSFunction and return
@@ -375,7 +523,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
         il.Emit(OpCodes.Ldstr, "GetMember");
         il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Call, runtime.SafeGetMethod);
         il.Emit(OpCodes.Stloc, getMemberLocal);
 
         il.Emit(OpCodes.Ldloc, getMemberLocal);
@@ -416,7 +564,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, getMemberResultLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
         il.Emit(OpCodes.Ldstr, "Call");
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public));
+        il.Emit(OpCodes.Call, runtime.SafeGetMethod);
         il.Emit(OpCodes.Stloc, callMethodLocal);
         il.Emit(OpCodes.Ldloc, callMethodLocal);
         il.Emit(OpCodes.Brfalse, returnAsIsLabel);
@@ -638,7 +787,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
         il.Emit(OpCodes.Ldstr, "SetMember");
         il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Call, runtime.SafeGetMethod);
         il.Emit(OpCodes.Stloc, setMemberLocal);
 
         il.Emit(OpCodes.Ldloc, setMemberLocal);
@@ -813,7 +962,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
         il.Emit(OpCodes.Ldstr, "SetMember");
         il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Call, runtime.SafeGetMethod);
         il.Emit(OpCodes.Stloc, setMemberLocal);
 
         il.Emit(OpCodes.Ldloc, setMemberLocal);

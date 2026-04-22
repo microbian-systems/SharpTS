@@ -212,7 +212,7 @@ public partial class ILCompiler
     /// </summary>
     private static readonly HashSet<string> CompileTimeOnlyDecorators = new(StringComparer.OrdinalIgnoreCase)
     {
-        "lock", "DotNetType", "Namespace",
+        "lock", "DotNetType", "DotNetOverload", "Namespace",
         "Obsolete", "deprecated", "Serializable", "NonSerialized", "attribute"
     };
 

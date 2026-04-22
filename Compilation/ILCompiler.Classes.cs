@@ -52,6 +52,13 @@ public partial class ILCompiler
                 // Register in TypeMapper for type resolution during IL emission
                 _typeMapper.RegisterExternalType(qualifiedClassName, externalType);
                 _typeMapper.RegisterExternalType(classStmt.Name.Lexeme, externalType);
+
+                // Collect @DotNetOverload hints so external-call emission can disambiguate.
+                var hints = GetOverloadHints(classStmt);
+                if (hints.Count > 0)
+                {
+                    _typeMapper.RegisterOverloadHints(externalType, hints);
+                }
             }
             else
             {
@@ -436,6 +443,33 @@ public partial class ILCompiler
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Collects <c>@DotNetOverload("...")</c> hints from a <c>@DotNetType</c> shim
+    /// class, keyed by TS method name (<c>"constructor"</c> for the constructor).
+    /// Mirrors <c>Interpreter.DotNet.cs</c>'s <c>ExtractOverloadHints</c>.
+    /// </summary>
+    private static Dictionary<string, string> GetOverloadHints(Stmt.Class classStmt)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var method in classStmt.Methods)
+        {
+            if (method.Decorators == null) continue;
+            foreach (var decorator in method.Decorators)
+            {
+                if (decorator.Expression is Expr.Call call &&
+                    call.Callee is Expr.Variable v &&
+                    v.Name.Lexeme == "DotNetOverload" &&
+                    call.Arguments.Count == 1 &&
+                    call.Arguments[0] is Expr.Literal { Value: string hint })
+                {
+                    result[method.Name.Lexeme] = hint;
+                    break;
+                }
+            }
+        }
+        return result;
     }
 
     /// <summary>

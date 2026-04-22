@@ -218,6 +218,7 @@ public class EmittedRuntime
     public MethodBuilder MergeIntoObject { get; set; } = null!;
     public MethodBuilder MergeIntoTSObject { get; set; } = null!;
     public MethodBuilder ToPascalCase { get; set; } = null!;
+    public MethodBuilder SafeGetMethod { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;

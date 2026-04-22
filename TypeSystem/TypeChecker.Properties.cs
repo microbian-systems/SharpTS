@@ -705,7 +705,10 @@ public partial class TypeChecker
                 }
             }
 
-            if (instance.ClassType is TypeInfo.Class instanceClassType)
+            // ResolvedClassType unwraps MutableClass to its frozen Class when signature
+            // collection created the Instance before the class was frozen (common for
+            // @DotNetType shims referenced from their own method return types).
+            if (instance.ResolvedClassType is TypeInfo.Class instanceClassType)
             {
                 TypeInfo? current = instanceClassType;
                 while (current != null)
