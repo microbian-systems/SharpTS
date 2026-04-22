@@ -520,6 +520,12 @@ public partial class TypeChecker
 
         try
         {
+            // Hoist inner function declarations so forward references resolve.
+            // JS spec hoists all `function` decls to the top of the containing
+            // scope before any statement executes; the TypeChecker needs to
+            // mirror that to accept well-formed mutually-recursive inner fns.
+            HoistFunctionDeclarations(funcStmt.Body);
+
             foreach (var bodyStmt in funcStmt.Body)
             {
                 CheckStmt(bodyStmt);

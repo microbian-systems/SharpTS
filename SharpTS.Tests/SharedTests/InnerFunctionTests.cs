@@ -269,4 +269,94 @@ public class InnerFunctionTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("deep\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InnerFunction_ForwardReferenceHoisted(ExecutionMode mode)
+    {
+        // Reduced repro of issue #40: an earlier-declared hoisted function
+        // forward-references a later-declared hoisted function. Both are
+        // captured via the enclosing scope; spec-correct behavior requires
+        // the forward reference to resolve at call time.
+        var source = """
+            function outer(): string {
+                function first(): string { return second(); }
+                function second(): string { return "forward"; }
+                return first();
+            }
+            console.log(outer());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("forward\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InnerFunction_MutualRecursion(ExecutionMode mode)
+    {
+        // Two hoisted functions reference each other. Before the two-pass
+        // hoist, isEven's capture of isOdd snapshotted null.
+        var source = """
+            function outer(): void {
+                function isEven(n: number): boolean {
+                    if (n === 0) return true;
+                    return isOdd(n - 1);
+                }
+                function isOdd(n: number): boolean {
+                    if (n === 0) return false;
+                    return isEven(n - 1);
+                }
+                console.log(isEven(4));
+                console.log(isOdd(7));
+            }
+            outer();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InnerFunction_ThreeWayForwardReferenceCycle(ExecutionMode mode)
+    {
+        // Three-way cycle, all forward references.
+        var source = """
+            function outer(): string {
+                function a(): string { return "a->" + b(); }
+                function b(): string { return "b->" + c(); }
+                function c(): string { return "c"; }
+                return a();
+            }
+            console.log(outer());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("a->b->c\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InnerFunction_ForwardReferenceInArrowBody(ExecutionMode mode)
+    {
+        // Exact shape from issue #40: hoisted forward-reference inside an
+        // IIFE (arrow body), with the cross-reference going through the
+        // enclosing arrow's scope display class.
+        var source = """
+            const f = (function runInContext() {
+                function lodash(value: any): any {
+                    return Wrapper(value);
+                }
+                function Wrapper(v: any): string {
+                    return "wrapped:" + v;
+                }
+                return lodash;
+            })();
+            console.log(f("x"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("wrapped:x\n", output);
+    }
 }

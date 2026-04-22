@@ -1124,6 +1124,11 @@ public partial class TypeChecker
             }
             else if (arrow.BlockBody != null)
             {
+                // Hoist inner function declarations so forward references within
+                // an arrow body (incl. IIFEs like `(function runInContext() {…})()`)
+                // resolve. Matches the behavior in CheckFunctionDeclaration.
+                HoistFunctionDeclarations(arrow.BlockBody);
+
                 // Block body - check statements
                 foreach (var stmt in arrow.BlockBody)
                 {
