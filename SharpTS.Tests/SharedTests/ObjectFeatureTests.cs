@@ -551,9 +551,7 @@ public class ObjectFeatureTests
     {
         // The minimal-closure variant from #54 — ctor returned from a factory with
         // no captured state. Routes through a named local so the compiled path
-        // picks up the $TSFunction and invokes it via NewOnFunction; the inline
-        // `new (outer() as any)('W')` form stays unsupported in compiled mode
-        // pending a broader fix for function identity / instanceof interaction.
+        // picks up the $TSFunction and invokes it via NewOnFunction.
         var source = """
             function outer(): any {
                 function Ctor(this: any, name: string): void { this.msg = 'Fixed ' + name; }
@@ -565,6 +563,67 @@ public class ObjectFeatureTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("Fixed W\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_New_On_Inline_Callee_Expression(ExecutionMode mode)
+    {
+        // Inline form: `new (factory() as any)(args)` with no intermediate local.
+        // The compiled path here goes through EmitCalleeExprConstruction (and the
+        // expanded EmitFallbackConstruction dispatch added in #54's follow-up) so
+        // non-Variable callees route through NewOnFunction instead of silently
+        // emitting Ldnull.
+        var source = """
+            function outer(): any {
+                function Ctor(this: any, name: string): void { this.msg = 'Inline ' + name; }
+                return Ctor;
+            }
+            console.log(new (outer() as any)('W').msg);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Inline W\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_Call_RoutesPropertyWritesToTarget(ExecutionMode mode)
+    {
+        // `Fn.call(target, ...)` must mutate `target`. Compiled path needed
+        // InvokeWithThis to bridge thisArg into the body's `this` via the
+        // _currentFunctionThis thread-local (otherwise no-`__this`-param bodies
+        // dropped thisArg on the floor); interpreter path needed
+        // BoundSharpTSFunctionWrapper to flush its synthetic-this wrapper back
+        // to the target object after the call returns (otherwise writes landed
+        // on the synthetic and disappeared).
+        var source = """
+            const target: any = { before: true };
+            function Fn(this: any, x: number): void { this.x = x; }
+            (Fn as any).call(target, 99);
+            console.log(target.x);
+            console.log(target.before);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("99\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_Apply_RoutesPropertyWritesToTarget(ExecutionMode mode)
+    {
+        // .apply walks the same InvokeWithThis path as .call (compiled) and the
+        // same BoundSharpTSFunctionWrapper path (interpreter). Lock both modes in.
+        var source = """
+            const target: any = {};
+            function Fn(this: any, x: number, y: number): void { this.sum = x + y; }
+            (Fn as any).apply(target, [10, 32]);
+            console.log(target.sum);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
     }
 
     [Theory]

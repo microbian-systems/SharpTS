@@ -22,17 +22,11 @@ public partial class RuntimeEmitter
     /// </remarks>
     internal void EmitNewOnFunction(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // Thread-static "current function this" field. Function bodies with no
-        // __this parameter (e.g. `function Ctor() { this.x = 1 }`) resolve `this`
-        // by reading this field — see LocalVariableResolver.LoadThis's final
-        // fallback path.
-        var currentThisField = typeBuilder.DefineField(
-            "_currentFunctionThis",
-            _types.Object,
-            FieldAttributes.Public | FieldAttributes.Static);
-        var threadStaticCtor = typeof(ThreadStaticAttribute).GetConstructor(Type.EmptyTypes)!;
-        currentThisField.SetCustomAttribute(new CustomAttributeBuilder(threadStaticCtor, []));
-        runtime.CurrentFunctionThisField = currentThisField;
+        // The thread-static `_currentFunctionThis` field is now defined on $TSFunction
+        // (during EmitTSFunctionClass) so that $TSFunction.InvokeWithThis can also
+        // set/restore it for `Fn.call(target, ...)` paths. NewOnFunction just consumes
+        // runtime.CurrentFunctionThisField below.
+        var currentThisField = runtime.CurrentFunctionThisField;
 
         var method = typeBuilder.DefineMethod(
             "NewOnFunction",

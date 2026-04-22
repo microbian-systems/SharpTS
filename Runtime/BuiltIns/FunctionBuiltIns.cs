@@ -321,23 +321,50 @@ internal class BoundSharpTSFunctionWrapper : ISharpTSCallable, ISharpTSCallableV
         // Create a synthetic instance that wraps the actual object
         var syntheticInstance = new SyntheticThisInstance(_thisArg);
         var boundFn2 = _fn.Bind(syntheticInstance);
-        return boundFn2.Call(interpreter, arguments);
+        var result = boundFn2.Call(interpreter, arguments);
+        FlushSyntheticBack(syntheticInstance, _thisArg);
+        return result;
     }
 
     public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
-        SharpTSFunction boundFn;
         if (_thisArg is SharpTSInstance instance)
         {
-            boundFn = _fn.Bind(instance);
+            var boundFn = _fn.Bind(instance);
+            return ((ISharpTSCallableV2)boundFn).CallV2(interpreter, arguments);
         }
-        else
+
+        var syntheticInstance = new SyntheticThisInstance(_thisArg);
+        var boundFn2 = _fn.Bind(syntheticInstance);
+        var result = ((ISharpTSCallableV2)boundFn2).CallV2(interpreter, arguments);
+        FlushSyntheticBack(syntheticInstance, _thisArg);
+        return result;
+    }
+
+    /// <summary>
+    /// Copy fields written into the synthetic-this wrapper back to the original
+    /// target object. <c>Fn.call(target, ...)</c> is supposed to mutate
+    /// <c>target</c>; without this flush, writes inside the body land on the
+    /// synthetic and disappear when the call returns. Covers <see cref="SharpTSObject"/>
+    /// and plain <see cref="Dictionary{TKey,TValue}"/> targets — the only shapes
+    /// the constructor accepts as actualThis.
+    /// </summary>
+    private static void FlushSyntheticBack(SyntheticThisInstance synthetic, object actualThis)
+    {
+        if (actualThis is SharpTSObject obj)
         {
-            var syntheticInstance = new SyntheticThisInstance(_thisArg);
-            boundFn = _fn.Bind(syntheticInstance);
+            foreach (var name in synthetic.GetFieldNames())
+            {
+                obj.SetProperty(name, synthetic.GetRawField(name));
+            }
         }
-        // SharpTSFunction implements ISharpTSCallableV2
-        return ((ISharpTSCallableV2)boundFn).CallV2(interpreter, arguments);
+        else if (actualThis is Dictionary<string, object?> dict)
+        {
+            foreach (var name in synthetic.GetFieldNames())
+            {
+                dict[name] = synthetic.GetRawField(name);
+            }
+        }
     }
 }
 

@@ -180,7 +180,17 @@ public partial class ILEmitter
     /// </summary>
     private void EmitFallbackConstruction(string className, Expr.New n)
     {
-        if (n.Callee is Expr.Get or Expr.GetIndex)
+        // Any callee that isn't a bare Variable goes through EmitCalleeExprConstruction
+        // — it evaluates the expression once into a local and either constructs from a
+        // Type or routes to NewOnFunction. Covers Get/GetIndex (mod.Foo, arr[0]),
+        // TypeAssertion / Grouping / NonNullAssertion wrappers (very common — `(outer()
+        // as any)('W')`), and direct Call/IIFE callees (`new (outer())('W')`).
+        // Variable callees stay on the Ldloc-then-runtime-check path below so the
+        // `if (!(this instanceof F)) return new F(args)` idiom (yallist, semver) keeps
+        // its current Ldnull semantics for the unresolved-variable subcase — function-
+        // identity and instanceof aren't yet aligned for $TSFunction values, so routing
+        // those through NewOnFunction would recurse.
+        if (n.Callee is not Expr.Variable)
         {
             EmitCalleeExprConstruction(n);
             return;
@@ -238,11 +248,15 @@ public partial class ILEmitter
     }
 
     /// <summary>
-    /// For <c>new someExpr(...)</c> where <c>someExpr</c> is a property/index access:
-    /// evaluate, runtime-check for Type, and construct via reflection. Non-Type values
-    /// (e.g. <c>$TSFunction</c>) fall through to null to preserve pre-existing behavior.
-    /// See the comment in <see cref="EmitFallbackConstruction"/> for why this path
-    /// stays on Ldnull rather than routing through NewOnFunction.
+    /// For <c>new someExpr(...)</c> where <c>someExpr</c> is a property/index access or
+    /// a call expression: evaluate, runtime-check for Type, and construct via reflection.
+    /// Non-Type callable values (<c>$TSFunction</c>, <c>$BoundTSFunction</c>) route through
+    /// <c>$Runtime.NewOnFunction</c> so the constructor body runs and <c>this</c> binds to
+    /// the fresh instance — same JS <c>new</c> protocol the Ldloc branch in
+    /// <see cref="EmitFallbackConstruction"/> uses. The callee-expression path doesn't
+    /// hit the <c>if (!(this instanceof F)) return new F(args)</c> idiom that motivated
+    /// the unresolved-variable Ldnull branch above (that idiom always names the
+    /// constructor as a bare variable), so routing here is safe.
     /// </summary>
     private void EmitCalleeExprConstruction(Expr.New n)
     {
@@ -264,7 +278,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Br, doneLabel);
 
         IL.MarkLabel(notTypeLabel);
-        IL.Emit(OpCodes.Ldnull);
+        EmitNewOnFunctionCall(objTemp, n.Arguments);
 
         IL.MarkLabel(doneLabel);
     }

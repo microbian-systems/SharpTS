@@ -28,6 +28,21 @@ public partial class RuntimeEmitter
         var fieldCacheType = _types.MakeGenericType(_types.ConcurrentDictionaryOpen, _types.Type, _types.FieldInfo);
         var fieldCacheField = typeBuilder.DefineField("_thisFieldCache", fieldCacheType, FieldAttributes.Private | FieldAttributes.Static | FieldAttributes.InitOnly);
 
+        // Thread-static "current function this" slot. Reads in compiled function bodies
+        // (LocalVariableResolver.LoadThis's final fallback path) pick this up when the
+        // method has no `__this` parameter. Set + restored around InvokeWithThis below
+        // (so `Fn.call(target, ...)` routes properties to target) and around
+        // $Runtime.NewOnFunction's body (so `new Fn(...)` routes to the fresh instance).
+        // Lives on $TSFunction rather than $Runtime so InvokeWithThis can reference it
+        // at TSFunction-emit time — $Runtime hasn't been built yet at this point.
+        var currentThisField = typeBuilder.DefineField(
+            "_currentFunctionThis",
+            _types.Object,
+            FieldAttributes.Public | FieldAttributes.Static);
+        var threadStaticCtor = typeof(ThreadStaticAttribute).GetConstructor(Type.EmptyTypes)!;
+        currentThisField.SetCustomAttribute(new CustomAttributeBuilder(threadStaticCtor, []));
+        runtime.CurrentFunctionThisField = currentThisField;
+
         // Static Constructor
         var cctorBuilder = typeBuilder.DefineConstructor(
             MethodAttributes.Static | MethodAttributes.Private | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
@@ -250,15 +265,38 @@ public partial class RuntimeEmitter
 
         iwt.MarkLabel(checkDoneLabel);
 
-        // if (!expectsThis) { return Invoke(args); }
+        // if (!expectsThis) { route thisArg through the thread-local; call Invoke(args) }
+        // The function body has no __this parameter (e.g. `function Fn() { this.x = ... }`),
+        // so the only way the user's `this` reaches it is via LocalVariableResolver.LoadThis's
+        // thread-local fallback. Set + restore around the Invoke so `Fn.call(target, ...)`
+        // routes property writes to target. NewOnFunction does the same set/restore around
+        // its own InvokeWithThis call — both layers of save/restore are no-ops at the inner
+        // layer (same value), so they nest correctly.
         var expectsThisLabel = iwt.DefineLabel();
         iwt.Emit(OpCodes.Ldloc, expectsThisLocal);
         iwt.Emit(OpCodes.Brtrue, expectsThisLabel);
 
-        // Call Invoke(args) and return
+        // Save current thread-local this, set to thisArg, call Invoke, restore in finally.
+        var prevThisIWT = iwt.DeclareLocal(_types.Object);
+        var resultIWT = iwt.DeclareLocal(_types.Object);
+
+        iwt.Emit(OpCodes.Ldsfld, currentThisField);
+        iwt.Emit(OpCodes.Stloc, prevThisIWT);
+
+        iwt.Emit(OpCodes.Ldarg_1);
+        iwt.Emit(OpCodes.Stsfld, currentThisField);
+
+        iwt.BeginExceptionBlock();
         iwt.Emit(OpCodes.Ldarg_0);
         iwt.Emit(OpCodes.Ldarg_2);
         iwt.Emit(OpCodes.Callvirt, invokeBuilder);
+        iwt.Emit(OpCodes.Stloc, resultIWT);
+        iwt.BeginFinallyBlock();
+        iwt.Emit(OpCodes.Ldloc, prevThisIWT);
+        iwt.Emit(OpCodes.Stsfld, currentThisField);
+        iwt.EndExceptionBlock();
+
+        iwt.Emit(OpCodes.Ldloc, resultIWT);
         iwt.Emit(OpCodes.Ret);
 
         // expectsThis is true - prepend thisArg to args
