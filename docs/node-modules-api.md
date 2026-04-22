@@ -78,6 +78,11 @@ Execute external processes and shell commands.
 |--------|-----------|-------------|
 | `execSync` | `execSync(command, options?)` | Execute shell command synchronously |
 | `spawnSync` | `spawnSync(command, args?, options?)` | Spawn process synchronously |
+| `execFileSync` | `execFileSync(file, args?, options?)` | Execute file synchronously without shell |
+| `exec` | `exec(command, options?, callback?)` | Execute shell command asynchronously |
+| `execFile` | `execFile(file, args?, options?, callback?)` | Execute file asynchronously without shell |
+| `spawn` | `spawn(command, args?, options?)` | Spawn a child process, returns `ChildProcess` |
+| `fork` | `fork(modulePath, args?, options?)` | Spawn a Node child with IPC channel |
 
 ### execSync Options
 
@@ -188,9 +193,9 @@ const m = randomInt(10, 20);     // 10-19
 
 ## fs
 
-File system operations. **Note: Only synchronous APIs are supported.**
+File system operations. Synchronous, callback-style async, and promise-based APIs are all supported. For promise-based APIs see the `fs/promises` section below.
 
-### File Operations
+### File Operations (sync)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -201,22 +206,43 @@ File system operations. **Note: Only synchronous APIs are supported.**
 | `copyFileSync` | `copyFileSync(src, dest)` | Copy file |
 | `renameSync` | `renameSync(oldPath, newPath)` | Rename/move file |
 | `unlinkSync` | `unlinkSync(path)` | Delete file |
+| `truncateSync` | `truncateSync(path, len?)` | Truncate file to length |
+| `openSync` | `openSync(path, flags, mode?)` | Open file, return fd |
+| `closeSync` | `closeSync(fd)` | Close file descriptor |
+| `readSync` | `readSync(fd, buffer, offset, length, position?)` | Read from fd |
+| `writeSync` | `writeSync(fd, buffer, ...)` | Write to fd |
+| `ftruncateSync` | `ftruncateSync(fd, len?)` | Truncate via fd |
+| `fstatSync` | `fstatSync(fd)` | Stat via fd |
 
-### Directory Operations
+### Directory Operations (sync)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `mkdirSync` | `mkdirSync(path)` | Create directory |
+| `mkdirSync` | `mkdirSync(path, options?)` | Create directory |
+| `mkdtempSync` | `mkdtempSync(prefix)` | Create unique temp directory |
 | `rmdirSync` | `rmdirSync(path, options?)` | Remove directory |
-| `readdirSync` | `readdirSync(path)` | List directory contents |
+| `readdirSync` | `readdirSync(path, options?)` | List directory contents |
+| `opendirSync` | `opendirSync(path)` | Open directory handle |
 
-### File Information
+### File Information / Permissions (sync)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `statSync` | `statSync(path)` | Get file/directory stats |
 | `lstatSync` | `lstatSync(path)` | Get stats (symlink-aware) |
 | `accessSync` | `accessSync(path, mode?)` | Check file accessibility |
+| `realpathSync` | `realpathSync(path)` | Resolve canonical path |
+| `readlinkSync` | `readlinkSync(path)` | Read symlink target |
+| `symlinkSync` | `symlinkSync(target, path, type?)` | Create symlink |
+| `linkSync` | `linkSync(existing, new)` | Create hard link |
+| `chmodSync` | `chmodSync(path, mode)` | Change permissions |
+| `chownSync` | `chownSync(path, uid, gid)` | Change ownership |
+| `lchownSync` | `lchownSync(path, uid, gid)` | Change ownership (symlink-aware) |
+| `utimesSync` | `utimesSync(path, atime, mtime)` | Update access/modification times |
+
+### Callback-style Async
+
+Most file/directory sync methods have callback-style counterparts with the trailing `(err, result) => …` pattern: `readFile`, `writeFile`, `appendFile`, `copyFile`, `rename`, `unlink`, `mkdir`, `readdir`, `stat`, `lstat`, `access`, `chmod`, `chown`. Use `fs/promises` for `Promise`-returning equivalents.
 
 ### Stat Object Properties
 
@@ -725,11 +751,473 @@ console.log(util.types.isNull(null));         // true
 
 ---
 
+## fs/promises
+
+Promise-based counterparts of the `fs` callback API. Every listed method returns a `Promise` and accepts the same arguments as the synchronous form (minus the error-first callback).
+
+| Method | Description |
+|--------|-------------|
+| `readFile` | Read file contents |
+| `writeFile` | Write file contents |
+| `appendFile` | Append to file |
+| `copyFile` | Copy file |
+| `rename` | Rename/move |
+| `unlink` | Delete file |
+| `truncate` | Truncate to length |
+| `mkdir` | Create directory |
+| `mkdtemp` | Create temp directory |
+| `rmdir` / `rm` | Remove directory/file |
+| `readdir` | List directory contents |
+| `stat` / `lstat` | File info |
+| `access` | Check accessibility |
+| `chmod` | Change permissions |
+| `realpath` | Resolve canonical path |
+| `readlink` / `symlink` / `link` | Symlink / hardlink ops |
+| `utimes` | Update atime/mtime |
+| `open` | Returns a `FileHandle` |
+
+### Example
+
+```typescript
+import { readFile, writeFile } from 'fs/promises';
+
+const content = await readFile('input.txt', 'utf8');
+await writeFile('output.txt', content.toUpperCase());
+```
+
+---
+
+## buffer
+
+Binary data handling via the `Buffer` class. `Buffer` is also exposed as a global — `import` is only required when the consumer wants the named binding.
+
+### Static Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `from` | `Buffer.from(source, encoding?)` | Create from string, array, or ArrayBuffer |
+| `alloc` | `Buffer.alloc(size, fill?, encoding?)` | Allocate zero-filled buffer |
+| `allocUnsafe` | `Buffer.allocUnsafe(size)` | Allocate without zeroing |
+| `allocUnsafeSlow` | `Buffer.allocUnsafeSlow(size)` | Allocate without the pool |
+| `isBuffer` | `Buffer.isBuffer(obj)` | Type guard |
+| `isEncoding` | `Buffer.isEncoding(encoding)` | Encoding supported? |
+| `byteLength` | `Buffer.byteLength(value, encoding?)` | Byte length of a string |
+| `concat` | `Buffer.concat(list, totalLength?)` | Concatenate buffers |
+| `compare` | `Buffer.compare(a, b)` | Sort-compatible compare |
+
+### Instance Methods
+
+`toString`, `write`, `slice`, `equals`, `compare`, `copy`, `fill`, `indexOf`, `includes`, `toJSON`, `swap16`, `swap32`, `swap64`. Typed read/write: `readInt8`, `readUInt8`, `readInt16BE/LE`, `readUInt16BE/LE`, `readInt32BE/LE`, `readUInt32BE/LE`, `readFloatBE/LE`, `readDoubleBE/LE`, `readBigInt64BE/LE`, `readBigUInt64BE/LE`, and the matching `write*` variants.
+
+### Supported Encodings
+
+`utf8`, `utf16le`/`ucs2`, `ascii`, `latin1`/`binary`, `base64`, `hex`.
+
+### Example
+
+```typescript
+const buf = Buffer.from('hello', 'utf8');
+console.log(buf.length);              // 5
+console.log(buf.toString('hex'));     // "68656c6c6f"
+const merged = Buffer.concat([buf, Buffer.from(' world')]);
+```
+
+---
+
+## events
+
+Event-driven programming via `EventEmitter`.
+
+### EventEmitter
+
+| Method | Description |
+|--------|-------------|
+| `on(name, listener)` / `addListener` | Subscribe |
+| `once(name, listener)` | Subscribe for a single fire |
+| `prependListener` / `prependOnceListener` | Subscribe at the front of the queue |
+| `off(name, listener)` / `removeListener` | Unsubscribe |
+| `removeAllListeners(name?)` | Remove all listeners for an event (or everything) |
+| `emit(name, ...args)` | Dispatch to listeners — returns `true` if any ran |
+| `listenerCount(name)` | Number of subscribers |
+| `eventNames()` | Names with at least one listener |
+| `setMaxListeners(n)` | Warn threshold |
+
+### Example
+
+```typescript
+import { EventEmitter } from 'events';
+
+const ee = new EventEmitter();
+ee.on('tick', (n: number) => console.log(`tick ${n}`));
+ee.emit('tick', 1);
+```
+
+---
+
+## stream
+
+Node.js streaming primitives.
+
+### Exports
+
+Classes: `Readable`, `Writable`, `Duplex`, `Transform`, `PassThrough`.
+
+Helpers: `pipeline(...streams, cb?)`, `finished(stream, cb)`, `addAbortSignal(signal, stream)`.
+
+The submodule `stream/promises` exposes promise-returning `pipeline` and `finished`.
+
+### stream/web
+
+WHATWG streams: `ReadableStream`, `WritableStream`, `TransformStream`, `ByteLengthQueuingStrategy`, `CountQueuingStrategy`.
+
+### Example
+
+```typescript
+import { pipeline } from 'stream/promises';
+import { createReadStream, createWriteStream } from 'fs';
+import { createGzip } from 'zlib';
+
+await pipeline(
+  createReadStream('input.txt'),
+  createGzip(),
+  createWriteStream('input.txt.gz'),
+);
+```
+
+---
+
+## http / https
+
+HTTP client and server.
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `createServer(requestListener?)` | Create an HTTP server |
+| `request(options, callback?)` | Make an HTTP request |
+| `get(options, callback?)` | `request` with method forced to `GET` |
+
+### Constants / Objects
+
+- `METHODS` — array of supported HTTP method names
+- `STATUS_CODES` — `{ code: reason-phrase }` map
+- `Agent` — connection pooling
+- `globalAgent` — default shared agent
+
+`https` exposes the same API with TLS transport.
+
+### Example
+
+```typescript
+import http from 'http';
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Hello\n');
+});
+server.listen(3000);
+```
+
+---
+
+## net
+
+TCP networking.
+
+| Symbol | Description |
+|--------|-------------|
+| `createServer(options?, connectionListener?)` | New TCP server |
+| `createConnection(options, callback?)` / `connect` | New TCP connection |
+| `Server` | TCP server class |
+| `Socket` | TCP socket class |
+| `isIP(input)` | 4, 6, or 0 |
+| `isIPv4` / `isIPv6` | Version-specific checks |
+
+### Example
+
+```typescript
+import net from 'net';
+
+const server = net.createServer((socket) => {
+  socket.write('hello\n');
+  socket.end();
+});
+server.listen(7000);
+```
+
+---
+
+## tls
+
+TLS/SSL sockets on top of `net`.
+
+| Symbol | Description |
+|--------|-------------|
+| `createServer(options, connectionListener?)` | TLS server |
+| `connect(options, callback?)` | Client connection |
+| `createSecureContext(options)` | Reusable credential bundle |
+| `Server`, `TLSSocket` | Classes |
+| `DEFAULT_MIN_VERSION`, `DEFAULT_MAX_VERSION` | Default protocol bounds |
+
+Options accept `key`, `cert`, `ca`, `host`, `port`, `minVersion`, `maxVersion`.
+
+---
+
+## dgram
+
+UDP datagrams.
+
+| Symbol | Description |
+|--------|-------------|
+| `createSocket(type, callback?)` | Create a socket (`'udp4'` or `'udp6'`) |
+| `Socket` | Socket class — `bind`, `send`, `close`, EventEmitter interface |
+
+### Example
+
+```typescript
+import dgram from 'dgram';
+
+const sock = dgram.createSocket('udp4');
+sock.on('message', (msg, rinfo) => console.log(`from ${rinfo.address}: ${msg}`));
+sock.bind(41234);
+```
+
+---
+
+## dns / dns/promises
+
+DNS resolution.
+
+### Top-level Methods
+
+`lookup`, `lookupService`, `resolve`, `resolve4`, `resolve6`, `resolveCaa`, `resolveCname`, `resolveMx`, `resolveNs`, `resolvePtr`, `resolveSoa`, `resolveSrv`, `resolveTxt`, `resolveAny`, `reverse`, `getServers`, `setServers`.
+
+### Resolver
+
+`Resolver` class provides a private instance with its own servers: `new Resolver()`, `resolver.resolve4(host, cb)`, `resolver.setServers([...])`, `resolver.cancel()`.
+
+### Promise API
+
+`import { resolve4 } from 'dns/promises'` — same surface, Promise-returning. Also available as `dns.promises`.
+
+### Error Codes
+
+Exposed as named constants: `NOTFOUND`, `SERVFAIL`, `REFUSED`, `TIMEOUT`, `NODATA`, `FORMERR`, `NOMEM`, `BADQUERY`, `BADNAME`, `BADFAMILY`, `BADRESP`, `CONNREFUSED`, `CANCELLED`, and more.
+
+---
+
+## zlib
+
+Compression/decompression.
+
+### Sync
+
+`deflateSync`, `inflateSync`, `deflateRawSync`, `inflateRawSync`, `gzipSync`, `gunzipSync`, `unzipSync`, `brotliCompressSync`, `brotliDecompressSync`.
+
+### Async (callback)
+
+`deflate`, `inflate`, `deflateRaw`, `inflateRaw`, `gzip`, `gunzip`, `unzip`, `brotliCompress`, `brotliDecompress`.
+
+### Stream Factories
+
+`createDeflate`, `createInflate`, `createDeflateRaw`, `createInflateRaw`, `createGzip`, `createGunzip`, `createUnzip`, `createBrotliCompress`, `createBrotliDecompress`, `createZstdCompress`, `createZstdDecompress`.
+
+### Example
+
+```typescript
+import { gzipSync, gunzipSync } from 'zlib';
+
+const compressed = gzipSync(Buffer.from('hello world'));
+const original = gunzipSync(compressed).toString();
+```
+
+---
+
+## timers / timers/promises
+
+Timer functions. Also available as globals.
+
+| Method | Description |
+|--------|-------------|
+| `setTimeout(cb, ms, ...args)` | Run once after delay |
+| `setInterval(cb, ms, ...args)` | Repeat every delay |
+| `setImmediate(cb, ...args)` | Run on next tick |
+| `clearTimeout(handle)` / `clearInterval` / `clearImmediate` | Cancel |
+
+`timers/promises` exposes `setTimeout(ms, value?, options?)` and `setImmediate(value?, options?)` returning a `Promise`, both accepting `{ signal }` for cancellation via `AbortController`.
+
+### Example
+
+```typescript
+import { setTimeout as delay } from 'timers/promises';
+
+await delay(1000);
+console.log('one second later');
+```
+
+---
+
+## vm
+
+Compile and execute code in a custom context.
+
+| Method | Description |
+|--------|-------------|
+| `createContext(contextObject?)` | Wrap an object as a sandbox |
+| `isContext(obj)` | Test for a context object |
+| `runInContext(code, context, options?)` | Run `code` in an existing context |
+| `runInNewContext(code, contextObject?, options?)` | Create a context and run |
+| `runInThisContext(code, options?)` | Run in the current context |
+| `compileFunction(code, params?, options?)` | Compile to a callable function |
+| `Script` | `new Script(code, options?)` with `.runInContext()` / `.runInNewContext()` / `.runInThisContext()` |
+
+Options include `timeout` for execution cap.
+
+---
+
+## worker_threads
+
+Thread-based workers.
+
+| Symbol | Description |
+|--------|-------------|
+| `Worker` | Spawn a worker; `postMessage`, `terminate`, `on('message')` |
+| `MessageChannel`, `BroadcastChannel` | Structured messaging primitives |
+| `isMainThread` | `true` in the main thread |
+| `parentPort` | Message port to parent (in workers) |
+| `workerData` | Data passed at construction |
+| `threadId` | Current thread ID |
+| `resourceLimits` | Per-worker limits |
+| `getEnvironmentData` / `setEnvironmentData` | Shared env map |
+| `SHARE_ENV` | Sentinel to inherit environment |
+| `markAsUntransferable` / `moveMessagePortToContext` / `receiveMessageOnPort` | Advanced port ops |
+
+---
+
+## cluster
+
+Fork worker processes that share server ports.
+
+| Symbol | Description |
+|--------|-------------|
+| `fork(env?)` | Create a worker |
+| `disconnect(callback?)` | Gracefully disconnect all workers |
+| `isPrimary` / `isMaster` | `true` in the primary/master process |
+| `isWorker` | `true` in worker processes |
+| `worker` | Current worker (when `isWorker`) |
+| `workers` | `{ id: Worker }` map (primary) |
+| `settings` | Active fork settings |
+| `setupPrimary(settings?)` / `setupMaster` | Configure default fork settings |
+
+Extends `EventEmitter` (`on`, `once`, `emit`, `off`, `removeAllListeners`, `listenerCount`, `listeners`, `eventNames`).
+
+---
+
+## async_hooks
+
+Asynchronous context tracking.
+
+### AsyncLocalStorage
+
+| Method | Description |
+|--------|-------------|
+| `run(store, callback, ...args)` | Execute within a store scope |
+| `enterWith(store)` | Set store for the current async chain |
+| `exit(callback, ...args)` | Run without any store |
+| `getStore()` | Current store, or `undefined` |
+| `disable()` | Drop all references |
+
+### Example
+
+```typescript
+import { AsyncLocalStorage } from 'async_hooks';
+
+const als = new AsyncLocalStorage<{ requestId: string }>();
+
+als.run({ requestId: 'abc' }, () => {
+  // Any `getStore()` call in this (and descendant) async task sees { requestId: 'abc' }
+  handleRequest();
+});
+```
+
+---
+
+## perf_hooks
+
+High-resolution performance timing.
+
+### performance
+
+| Member | Description |
+|--------|-------------|
+| `now()` | Monotonic time in ms since `timeOrigin` |
+| `timeOrigin` | Wall-clock anchor (ms since epoch) |
+| `mark(name, options?)` | Record a named timestamp |
+| `measure(name, startMark?, endMark?)` | Record a duration between marks |
+| `getEntries()` / `getEntriesByName` / `getEntriesByType` | Query recorded entries |
+| `clearMarks(name?)` / `clearMeasures(name?)` | Drop entries |
+
+### PerformanceObserver
+
+Subscribe to mark/measure events synchronously:
+
+```typescript
+import { performance, PerformanceObserver } from 'perf_hooks';
+
+const obs = new PerformanceObserver((list) => {
+  for (const entry of list.getEntries()) console.log(entry.name, entry.duration);
+});
+obs.observe({ entryTypes: ['measure'] });
+
+performance.mark('start');
+// ... work ...
+performance.mark('end');
+performance.measure('work', 'start', 'end');
+```
+
+---
+
+## string_decoder
+
+Incremental decoding of `Buffer` chunks to strings, preserving multi-byte sequences across writes.
+
+### StringDecoder
+
+```typescript
+new StringDecoder(encoding?)  // default 'utf8'
+```
+
+| Method | Description |
+|--------|-------------|
+| `write(buffer)` | Decode chunk, buffering any trailing incomplete sequence |
+| `end(buffer?)` | Flush any buffered bytes and return the final string |
+
+### Example
+
+```typescript
+import { StringDecoder } from 'string_decoder';
+
+const decoder = new StringDecoder('utf8');
+const a = decoder.write(Buffer.from([0xE2, 0x82]));       // "" — incomplete
+const b = decoder.write(Buffer.from([0xAC]));             // "€"
+```
+
+---
+
+## tty
+
+Terminal detection.
+
+| Method | Description |
+|--------|-------------|
+| `isatty(fd)` | Is the file descriptor a TTY? |
+
+`ReadStream` / `WriteStream` classes are not currently implemented — use `process.stdout.isTTY` (a boolean) or `tty.isatty(1)` for the common case.
+
+---
+
 ## Notes
-
-### Synchronous APIs Only
-
-The `fs` module only supports synchronous operations (`*Sync` methods). Async methods like `readFile()`, `writeFile()`, etc. are not available.
 
 ### Error Handling
 
