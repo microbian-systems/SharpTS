@@ -399,6 +399,7 @@ public partial class ILCompiler
     private void Phase1_EmitRuntimeTypes()
     {
         _runtime = new RuntimeEmitter(_types).EmitAll(_moduleBuilder);
+        _typeMapper.SetRuntime(_runtime);
     }
 
     /// <summary>

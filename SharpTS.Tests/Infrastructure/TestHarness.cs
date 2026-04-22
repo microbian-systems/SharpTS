@@ -223,6 +223,17 @@ public static class TestHarness
     }
 
     /// <summary>
+    /// Like <see cref="RunCompiled(string, DecoratorMode)"/> but does NOT copy SharpTS.dll
+    /// alongside the output. Simulates the real-world flow of shipping a user's compiled
+    /// DLL without the SharpTS runtime — exposes bugs where emitted IL reflects into
+    /// SharpTS via <c>Type.GetType("..., SharpTS")</c> and then NREs when that returns null.
+    /// </summary>
+    public static string RunCompiledStandalone(string source, DecoratorMode decoratorMode = DecoratorMode.Legacy)
+    {
+        return RunCompiled(source, decoratorMode, DefaultTimeout, scriptArgs: null, includeTestsAssembly: false, copySharpTsRuntime: false);
+    }
+
+    /// <summary>
     /// Compiles TypeScript source to a .NET DLL with decorator support and timeout, executes it, and captures output.
     /// </summary>
     /// <param name="source">TypeScript source code</param>
@@ -230,7 +241,7 @@ public static class TestHarness
     /// <param name="timeout">Maximum execution time before throwing TimeoutException</param>
     /// <returns>Captured console output from the compiled executable</returns>
     /// <exception cref="TimeoutException">Thrown if execution exceeds the timeout (likely an infinite loop bug)</exception>
-    public static string RunCompiled(string source, DecoratorMode decoratorMode, TimeSpan timeout, string[]? scriptArgs = null, bool includeTestsAssembly = false)
+    public static string RunCompiled(string source, DecoratorMode decoratorMode, TimeSpan timeout, string[]? scriptArgs = null, bool includeTestsAssembly = false, bool copySharpTsRuntime = true)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempDir);
@@ -258,16 +269,20 @@ public static class TestHarness
             compiler.Save(dllPath);
 
             // Copy SharpTS.dll and its dependencies for runtime dependency (needed for Promise.all/race/allSettled/any)
-            var sharpTsDll = typeof(RuntimeTypes).Assembly.Location;
-            if (!string.IsNullOrEmpty(sharpTsDll) && File.Exists(sharpTsDll))
+            // Tests that intentionally simulate a standalone deployment pass copySharpTsRuntime: false.
+            if (copySharpTsRuntime)
             {
-                File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
-
-                // Copy ZstdSharp.dll (required for zstd compression in compiled mode)
-                var zstdDll = Path.Combine(Path.GetDirectoryName(sharpTsDll)!, "ZstdSharp.dll");
-                if (File.Exists(zstdDll))
+                var sharpTsDll = typeof(RuntimeTypes).Assembly.Location;
+                if (!string.IsNullOrEmpty(sharpTsDll) && File.Exists(sharpTsDll))
                 {
-                    File.Copy(zstdDll, Path.Combine(tempDir, "ZstdSharp.dll"), overwrite: true);
+                    File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
+
+                    // Copy ZstdSharp.dll (required for zstd compression in compiled mode)
+                    var zstdDll = Path.Combine(Path.GetDirectoryName(sharpTsDll)!, "ZstdSharp.dll");
+                    if (File.Exists(zstdDll))
+                    {
+                        File.Copy(zstdDll, Path.Combine(tempDir, "ZstdSharp.dll"), overwrite: true);
+                    }
                 }
             }
 

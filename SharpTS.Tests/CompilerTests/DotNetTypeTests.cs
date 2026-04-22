@@ -997,6 +997,96 @@ public class DotNetTypeTests
 
     #endregion
 
+    #region Issue #52 — TS closure → .NET delegate in compiled mode
+
+    [Fact]
+    public void Issue52_Task_Run_VoidAction_Compiled()
+    {
+        // Exact repro from issue #52: passing a TS arrow function where a
+        // @DotNetType method expects an Action throws NullReferenceException
+        // in compiled mode because the old path reflects into SharpTS.dll
+        // which isn't loaded when the DLL runs standalone.
+        var source = """
+            @DotNetType("System.Threading.Tasks.Task")
+            declare class Task {
+                static run(action: () => void): Task;
+                wait(): void;
+            }
+            const t = Task.run(() => { console.log("inside the task"); });
+            t.wait();
+            console.log("done");
+            """;
+
+        // Critical: run standalone (no SharpTS.dll alongside) to match the user's
+        // repro. The previous reflection-into-SharpTS path only works when SharpTS.dll
+        // happens to be loaded, which masks the bug in the default test harness.
+        var output = TestHarness.RunCompiledStandalone(source);
+        Assert.Contains("inside the task", output);
+        Assert.Contains("done", output);
+    }
+
+    [Fact]
+    public void Issue52_Delegate_WithStringArg_Compiled()
+    {
+        // Action<string> — verifies that string args flow through the adapter
+        // to the TS closure's parameter.
+        var source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                invokeWithGreeting(callback: (s: string) => void): void;
+            }
+            const fx = new CallbackFixture();
+            fx.invokeWithGreeting((s) => console.log("got: " + s));
+            """;
+
+        var output = TestHarness.RunCompiledWithTestFixtures(source);
+        Assert.Equal("got: hello\n", output);
+    }
+
+    [Fact]
+    public void Issue52_Delegate_WithReturn_Compiled()
+    {
+        // Func<int, int> — the TS closure returns a value and the .NET side
+        // consumes it. Verifies the return-path unboxing.
+        var source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                doubleOf(callback: (n: number) => number, input: number): number;
+            }
+            const fx = new CallbackFixture();
+            console.log(fx.doubleOf((n) => n + 1, 10));
+            """;
+
+        // doubleOf does (callback(input)) * 2 → (10 + 1) * 2 = 22
+        var output = TestHarness.RunCompiledWithTestFixtures(source);
+        Assert.Equal("22\n", output);
+    }
+
+    [Fact]
+    public void Issue52_Multiple_DelegateShapes_In_OneProgram()
+    {
+        // Two distinct delegate shapes in one program — each needs its own
+        // adapter class in the emitted DLL. Guards against cache / de-dup bugs.
+        var source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                invokeWithGreeting(callback: (s: string) => void): void;
+                invokeNoArgs(callback: () => void): void;
+            }
+            const fx = new CallbackFixture();
+            fx.invokeWithGreeting((s) => console.log("A:" + s));
+            fx.invokeNoArgs(() => console.log("B"));
+            """;
+
+        var output = TestHarness.RunCompiledWithTestFixtures(source);
+        Assert.Equal("A:hello\nB\n", output);
+    }
+
+    #endregion
+
     #region Event subscription (compile mode)
 
     [Fact]

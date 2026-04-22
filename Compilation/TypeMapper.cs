@@ -85,6 +85,41 @@ public class TypeMapper
     public TypeProvider Types => _types;
 
     /// <summary>
+    /// The module builder that owns all emitted types. Exposed so per-feature emitters
+    /// (e.g. <see cref="DelegateAdapterEmitter"/>) can define new nested types alongside
+    /// user classes and the <c>$Runtime</c> helpers.
+    /// </summary>
+    public ModuleBuilder ModuleBuilder => _moduleBuilder;
+
+    private EmittedRuntime? _runtime;
+    private DelegateAdapterEmitter? _delegateAdapters;
+
+    /// <summary>
+    /// Called by <see cref="ILCompiler"/> once the runtime has been emitted. Enables
+    /// features like <see cref="DelegateAdapters"/> that need <c>$TSFunction</c> and
+    /// other emitted builders.
+    /// </summary>
+    public void SetRuntime(EmittedRuntime runtime) => _runtime = runtime;
+
+    /// <summary>
+    /// Per-compilation cache of TS-closure-to-.NET-delegate adapter types. Lazily
+    /// constructed on first access. Each unique delegate signature gets one adapter
+    /// class emitted into the module; subsequent uses reuse the same class.
+    /// </summary>
+    public DelegateAdapterEmitter DelegateAdapters
+    {
+        get
+        {
+            if (_runtime == null)
+            {
+                throw new InvalidOperationException(
+                    "TypeMapper.DelegateAdapters accessed before SetRuntime was called.");
+            }
+            return _delegateAdapters ??= new DelegateAdapterEmitter(_moduleBuilder, _runtime, _types);
+        }
+    }
+
+    /// <summary>
     /// Sets the class builders dictionary for resolving TypeScript class types to their actual .NET types.
     /// Must be called before using MapTypeInfoStrict() with class types.
     /// </summary>

@@ -364,9 +364,9 @@ public partial class ILEmitter
         }
         else if (typeof(Delegate).IsAssignableFrom(targetType))
         {
-            // TS function ($TSFunction on stack) → .NET Delegate. Emits a call to
-            // DotNetDelegateShim.CreateForTSFunction(Type, object) via the late-binding
-            // reflection pattern so the compiled DLL doesn't hard-reference SharpTS.dll.
+            // TS function ($TSFunction on stack) → .NET Delegate. Emits a per-delegate-type
+            // adapter class inside the compiled DLL and binds its Invoke as the delegate
+            // target — fully standalone, no runtime dependency on SharpTS.dll.
             EmitDelegateConversion(targetType);
         }
         else if (targetType.IsValueType)
@@ -492,55 +492,52 @@ public partial class ILEmitter
 
     /// <summary>
     /// Emits IL that converts a <c>$TSFunction</c> reference on the stack into a
-    /// <see cref="Delegate"/> of <paramref name="delegateType"/> by calling
-    /// <see cref="Runtime.DotNet.DotNetDelegateShim.CreateForTSFunction"/> via reflection.
-    /// Late-bound so the compiled DLL doesn't hard-reference SharpTS.dll.
+    /// <see cref="Delegate"/> of <paramref name="delegateType"/>.
     /// </summary>
     /// <remarks>
-    /// Stack in:  [object] — the <c>$TSFunction</c> reference.<br/>
-    /// Stack out: [delegateType] — the compiled shim, castclassed to the target.
+    /// <para>
+    /// Uses a compile-time-emitted adapter class (one per unique delegate type)
+    /// that holds the <c>$TSFunction</c> and exposes an <c>Invoke</c> method
+    /// matching the delegate's signature. The call site then constructs a standard
+    /// delegate via <c>new TDelegate(adapter, adapter.Invoke)</c> — the canonical
+    /// method-group-to-delegate pattern in IL.
+    /// </para>
+    /// <para>
+    /// Stack in:  [object] — the <c>$TSFunction</c> reference (typed as object).<br/>
+    /// Stack out: [TDelegate] — a delegate of <paramref name="delegateType"/>.
+    /// </para>
+    /// <para>
+    /// Keeping the adapter in the compiled DLL (rather than reflecting into
+    /// <c>DotNetDelegateShim</c> on SharpTS) preserves the standalone property:
+    /// the compiled output runs without SharpTS.dll present.
+    /// </para>
     /// </remarks>
     private void EmitDelegateConversion(Type delegateType)
     {
-        // Save $TSFunction from stack into a local.
-        var tsFuncLocal = IL.DeclareLocal(_ctx.Types.Object);
-        IL.Emit(OpCodes.Stloc, tsFuncLocal);
+        var adapter = _ctx.TypeMapper.DelegateAdapters.GetOrEmit(delegateType);
 
-        // object[] invokeArgs = new object[2];
-        IL.Emit(OpCodes.Ldc_I4_2);
-        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
-        var invokeArgsLocal = IL.DeclareLocal(_ctx.Types.ObjectArray);
-        IL.Emit(OpCodes.Stloc, invokeArgsLocal);
+        // Cast the $TSFunction reference (currently typed as object on the stack) to
+        // the emitted $TSFunction type so the adapter ctor signature matches.
+        IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSFunctionType);
 
-        // invokeArgs[0] = typeof(delegateType)
-        IL.Emit(OpCodes.Ldloc, invokeArgsLocal);
-        IL.Emit(OpCodes.Ldc_I4_0);
-        IL.Emit(OpCodes.Ldtoken, delegateType);
-        IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
-        IL.Emit(OpCodes.Stelem_Ref);
+        // new Adapter(tsFunction) — consumes the $TSFunction, leaves the adapter on the stack.
+        // That adapter also serves as the delegate's target instance for the ctor below.
+        IL.Emit(OpCodes.Newobj, adapter.Ctor);
 
-        // invokeArgs[1] = tsFunc
-        IL.Emit(OpCodes.Ldloc, invokeArgsLocal);
-        IL.Emit(OpCodes.Ldc_I4_1);
-        IL.Emit(OpCodes.Ldloc, tsFuncLocal);
-        IL.Emit(OpCodes.Stelem_Ref);
+        // Load the adapter's Invoke method pointer. Stack now: [adapter, IntPtr] — the
+        // exact shape the Delegate(object, IntPtr) ctor expects.
+        IL.Emit(OpCodes.Ldftn, adapter.Invoke);
 
-        // Type shimType = Type.GetType("SharpTS.Runtime.DotNet.DotNetDelegateShim, SharpTS");
-        IL.Emit(OpCodes.Ldstr, "SharpTS.Runtime.DotNet.DotNetDelegateShim, SharpTS");
-        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Type, "GetType", _ctx.Types.String));
+        // new TDelegate(object target, IntPtr method) — every Delegate has this ctor.
+        var delegateCtor = delegateType.GetConstructor(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            null,
+            [typeof(object), typeof(IntPtr)],
+            null)
+            ?? throw new InvalidOperationException(
+                $"Delegate type '{delegateType.FullName}' lacks the standard (object, IntPtr) constructor.");
+        IL.Emit(OpCodes.Newobj, delegateCtor);
 
-        // MethodInfo m = shimType.GetMethod("CreateForTSFunction");
-        IL.Emit(OpCodes.Ldstr, "CreateForTSFunction");
-        IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.Type, "GetMethod", _ctx.Types.String));
-
-        // object result = m.Invoke(null, invokeArgs);
-        IL.Emit(OpCodes.Ldnull);
-        IL.Emit(OpCodes.Ldloc, invokeArgsLocal);
-        IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(
-            _ctx.Types.MethodInfo, "Invoke", _ctx.Types.Object, _ctx.Types.ObjectArray));
-
-        // Cast result to the target delegate type.
-        IL.Emit(OpCodes.Castclass, delegateType);
         SetStackUnknown();
     }
 }
