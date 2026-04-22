@@ -1368,8 +1368,14 @@ public partial class Interpreter : IDisposable
                         object? value;
                         if (isCjsSource)
                         {
-                            // Pull named imports off the live module.exports object.
-                            value = cjsExports is SharpTSObject so ? so.GetProperty(importedName) : null;
+                            // Named CJS exports can be either plain fields (`exports.foo = ...`)
+                            // or accessor properties (Babel's transpiled `export { foo }` emits
+                            // `Object.defineProperty(exports, "foo", { get() { return _m.default; } })`).
+                            // Route through the full property-access path so getters are invoked;
+                            // a direct _fields read would skip them and bind undefined.
+                            value = cjsExports is SharpTSObject so
+                                ? EvaluateGetOnRecord(so, importedName)
+                                : null;
                         }
                         else
                         {
@@ -1452,8 +1458,27 @@ public partial class Interpreter : IDisposable
             string sourcePath = _moduleResolver!.ResolveModulePath(export.FromModulePath, _currentModule!.Path);
             var sourceModuleInstance = _loadedModules.GetValueOrDefault(sourcePath);
 
+            // CJS sources are lazy-initialized; trigger init so we have exports to read.
+            // Mirrors the import-side trigger in BindModuleImports.
+            if (sourceModuleInstance == null)
+            {
+                var sourceParsed = _moduleResolver.GetCachedModule(sourcePath);
+                if (sourceParsed?.IsCommonJs == true)
+                {
+                    ExecuteCommonJsModule(sourceParsed);
+                    sourceModuleInstance = _loadedModules.GetValueOrDefault(sourcePath);
+                }
+            }
+
             if (sourceModuleInstance != null && _currentModuleInstance != null)
             {
+                // For CJS sources, read from the live module.exports object via the full
+                // property-access path so accessor-defined named exports work (matching the
+                // import-side fix). ESM sources use the static Exports dictionary as before.
+                SharpTSObject? cjsExports = sourceModuleInstance.CommonJsModuleObject != null
+                    ? sourceModuleInstance.CommonJsModuleObject.GetProperty("exports") as SharpTSObject
+                    : null;
+
                 if (export.NamedExports != null)
                 {
                     // Re-export specific names
@@ -1461,8 +1486,28 @@ public partial class Interpreter : IDisposable
                     {
                         string importedName = spec.LocalName.Lexeme;
                         string exportedName = spec.ExportedName?.Lexeme ?? importedName;
-                        var value = sourceModuleInstance.GetExport(importedName);
+                        object? value = cjsExports != null
+                            ? EvaluateGetOnRecord(cjsExports, importedName)
+                            : sourceModuleInstance.GetExport(importedName);
                         _currentModuleInstance.SetExport(exportedName, value);
+                    }
+                }
+                else if (cjsExports != null)
+                {
+                    // Re-export all from a CJS source: enumerate both data fields and accessor
+                    // properties. Skip the __esModule interop marker (Babel-style CJS emits it
+                    // to signal "this is an ES-module-shaped object" — it should not leak as a
+                    // named export of the re-exporting ESM module).
+                    foreach (var name in cjsExports.Fields.Keys)
+                    {
+                        if (name == "__esModule") continue;
+                        _currentModuleInstance.SetExport(name, EvaluateGetOnRecord(cjsExports, name));
+                    }
+                    foreach (var name in cjsExports.AccessorPropertyNames)
+                    {
+                        if (name == "__esModule") continue;
+                        if (cjsExports.Fields.ContainsKey(name)) continue;
+                        _currentModuleInstance.SetExport(name, EvaluateGetOnRecord(cjsExports, name));
                     }
                 }
                 else

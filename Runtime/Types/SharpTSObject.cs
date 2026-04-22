@@ -88,6 +88,16 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
     /// <inheritdoc />
     public IEnumerable<string> PropertyNames => _fields.Keys;
 
+    /// <summary>
+    /// Names of accessor (getter-defined) properties on this object. Disjoint from
+    /// <see cref="Fields"/>.Keys because <see cref="DefineProperty"/> removes any
+    /// data-property entry when installing an accessor. Callers that need the full
+    /// own-property name set (re-exports from CJS modules whose named bindings are
+    /// Babel-style getters) must union this with <see cref="Fields"/>.Keys.
+    /// </summary>
+    public IEnumerable<string> AccessorPropertyNames =>
+        _getters?.Keys ?? Enumerable.Empty<string>();
+
     /// <inheritdoc />
     public object? GetProperty(string name)
     {

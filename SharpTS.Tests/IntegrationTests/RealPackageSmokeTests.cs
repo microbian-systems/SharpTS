@@ -242,6 +242,53 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
         Assert.Contains("36", output);
     }
 
+    // The .ts (ESM) variants exercise a separate code path: named imports against a CJS
+    // module whose exports are accessor properties (Babel's transpiled `Object.defineProperty
+    // (exports, "v4", { get: ... })`). The interpreter previously read these via a direct
+    // _fields lookup that bypassed getters and bound v4 to undefined; covered by issue #55.
+
+    [SkippableFact]
+    public void Uuid_Esm_Interpreter()
+    {
+        SkipIfNoNpm();
+        var script = CreateScript("test_uuid_esm.ts", """
+            import { v4, validate, NIL } from 'uuid';
+            const id = v4();
+            console.log(typeof id);
+            console.log(id.length);
+            console.log(validate(id));
+            console.log(NIL);
+            """);
+
+        var result = RunInterpreter(script);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("string", result.StandardOutput);
+        Assert.Contains("36", result.StandardOutput);
+        Assert.Contains("true", result.StandardOutput);
+        Assert.Contains("00000000-0000-0000-0000-000000000000", result.StandardOutput);
+    }
+
+    [SkippableFact]
+    public void Uuid_Esm_Compiled()
+    {
+        SkipIfNoNpm();
+        var script = CreateScript("test_uuid_esm_c.ts", """
+            import { v4, validate, NIL } from 'uuid';
+            const id = v4();
+            console.log(typeof id);
+            console.log(id.length);
+            console.log(validate(id));
+            console.log(NIL);
+            """);
+
+        var (exit, output) = CompileAndRun(script);
+        Assert.Equal(0, exit);
+        Assert.Contains("string", output);
+        Assert.Contains("36", output);
+        Assert.Contains("true", output);
+        Assert.Contains("00000000-0000-0000-0000-000000000000", output);
+    }
+
     // ──────────────────────────────────────────────────────────────
     // debug — logging utility (depends on ms)
     // ──────────────────────────────────────────────────────────────

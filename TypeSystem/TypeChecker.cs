@@ -1183,13 +1183,21 @@ public partial class TypeChecker
                     {
                         if (export.NamedExports != null)
                         {
-                            // Re-export specific names
+                            // Re-export specific names. For CJS sources we don't know at type-check
+                            // time which names the module's runtime body will define on `exports`
+                            // (e.g. Babel's `Object.defineProperty(exports, "x", { get })` pattern),
+                            // so trust the re-exporter and type each name as Any — mirrors the
+                            // import-from-CJS handling in BindModuleImports.
                             foreach (var spec in export.NamedExports)
                             {
+                                string exportedName = spec.ExportedName?.Lexeme ?? spec.LocalName.Lexeme;
                                 if (sourceModule.ExportedTypes.TryGetValue(spec.LocalName.Lexeme, out var type))
                                 {
-                                    string exportedName = spec.ExportedName?.Lexeme ?? spec.LocalName.Lexeme;
                                     module.ExportedTypes[exportedName] = type;
+                                }
+                                else if (sourceModule.IsCommonJs)
+                                {
+                                    module.ExportedTypes[exportedName] = new TypeInfo.Any();
                                 }
                             }
                         }
