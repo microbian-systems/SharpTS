@@ -53,6 +53,8 @@
     <None Remove="SharpTS.Sdk/**" />
     <Compile Remove="SharpTS.Sdk.Tasks/**" />
     <None Remove="SharpTS.Sdk.Tasks/**" />
+    <Compile Remove="scripts/**" />
+    <None Remove="scripts/**" />
   </ItemGroup>
 
   <ItemGroup>
