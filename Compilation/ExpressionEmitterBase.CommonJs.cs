@@ -1,4 +1,5 @@
 using System.Reflection.Emit;
+using SharpTS.Modules;
 using SharpTS.Parsing;
 using SharpTS.Runtime.BuiltIns.Modules;
 
@@ -146,7 +147,7 @@ public abstract partial class ExpressionEmitterBase
         string resolvedPath;
         try
         {
-            resolvedPath = Ctx.ModuleResolver.ResolveModulePath(specifier, Ctx.CurrentModulePath);
+            resolvedPath = Ctx.ModuleResolver.ResolveModulePath(specifier, Ctx.CurrentModulePath, ResolutionKind.Cjs);
         }
         catch (Exception ex)
         {

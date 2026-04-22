@@ -9,6 +9,19 @@ using SharpTS.TypeSystem;
 namespace SharpTS.Modules;
 
 /// <summary>
+/// Whether a resolution request originates from an ESM <c>import</c> or a CJS <c>require()</c>.
+/// Determines which conditions are passed to <see cref="ExportsResolver"/>. See
+/// <see cref="ExportsResolver.EsmConditions"/> and <see cref="ExportsResolver.CjsConditions"/>.
+/// </summary>
+public enum ResolutionKind
+{
+    /// <summary>ESM import — matches <c>"import"</c> condition, not <c>"require"</c>.</summary>
+    Esm,
+    /// <summary>CJS require — matches <c>"require"</c> condition, not <c>"import"</c>.</summary>
+    Cjs,
+}
+
+/// <summary>
 /// Resolves module paths and manages module loading with circular dependency detection.
 /// </summary>
 /// <remarks>
@@ -51,9 +64,13 @@ public class ModuleResolver
     /// </summary>
     /// <param name="specifier">The import specifier (e.g., './foo', '../bar', 'lodash')</param>
     /// <param name="currentModulePath">The path of the module containing the import</param>
+    /// <param name="kind">Whether this is an ESM import or a CJS require (controls exports
+    /// conditions). Defaults to <see cref="ResolutionKind.Esm"/> — call sites that represent a
+    /// <c>require()</c> or literal CJS specifier should pass <see cref="ResolutionKind.Cjs"/>
+    /// so dual-export packages route to the correct entry.</param>
     /// <returns>Absolute path to the resolved module</returns>
     /// <exception cref="Exception">If the module cannot be found</exception>
-    public string ResolveModulePath(string specifier, string currentModulePath)
+    public string ResolveModulePath(string specifier, string currentModulePath, ResolutionKind kind = ResolutionKind.Esm)
     {
         string currentDir = Path.GetDirectoryName(currentModulePath) ?? _basePath;
 
@@ -72,7 +89,7 @@ public class ModuleResolver
         else if (specifier.StartsWith('#'))
         {
             // Subpath imports (#-prefixed) — resolve through nearest package.json "imports" field
-            string? result = TryResolveSubpathImport(specifier, currentDir);
+            string? result = TryResolveSubpathImport(specifier, currentDir, kind);
             if (result != null)
                 return result;
             throw new Exception($"Module Error: Cannot resolve subpath import '{specifier}'. " +
@@ -107,13 +124,13 @@ public class ModuleResolver
             }
 
             // Try self-referencing: if nearest package.json has "name" matching the specifier
-            string? selfRef = TryResolveSelfReference(specifier, currentDir);
+            string? selfRef = TryResolveSelfReference(specifier, currentDir, kind);
             if (selfRef != null)
                 return selfRef;
 
             // Bare specifier (e.g., 'lodash')
             // Look in node_modules directories
-            string? resolvedPath = TryResolveNodeModule(specifier, currentDir);
+            string? resolvedPath = TryResolveNodeModule(specifier, currentDir, kind);
             if (resolvedPath != null)
             {
                 return resolvedPath;
@@ -127,7 +144,7 @@ public class ModuleResolver
     /// Tries to resolve a bare specifier by looking in node_modules directories.
     /// Supports package.json "exports" field, "main"/"types" fallback, and legacy index.ts.
     /// </summary>
-    private string? TryResolveNodeModule(string specifier, string startDir)
+    private string? TryResolveNodeModule(string specifier, string startDir, ResolutionKind kind)
     {
         var (packageName, subpath) = ParsePackageSpecifier(specifier);
         string? currentDir = startDir;
@@ -138,7 +155,7 @@ public class ModuleResolver
 
             if (Directory.Exists(packageDir))
             {
-                var result = TryResolveInPackageDir(packageDir, subpath);
+                var result = TryResolveInPackageDir(packageDir, subpath, kind);
                 if (result != null)
                     return result;
             }
@@ -164,7 +181,7 @@ public class ModuleResolver
     /// <summary>
     /// Attempts to resolve a subpath within a specific package directory.
     /// </summary>
-    private string? TryResolveInPackageDir(string packageDir, string subpath)
+    private string? TryResolveInPackageDir(string packageDir, string subpath, ResolutionKind kind)
     {
         string packageJsonPath = Path.Combine(packageDir, "package.json");
         var pkg = LoadPackageJson(packageJsonPath);
@@ -173,7 +190,7 @@ public class ModuleResolver
         {
             // Use exports field
             var resolved = ExportsResolver.ResolvePackageExports(
-                pkg.Exports.Value, subpath, ExportsResolver.DefaultConditions);
+                pkg.Exports.Value, subpath, ConditionsFor(kind));
             if (resolved != null)
                 return ResolveExportsPath(resolved, packageDir);
             // Exports field exists but no match — per spec, this blocks resolution
@@ -328,7 +345,7 @@ public class ModuleResolver
     /// <summary>
     /// Resolves #-prefixed subpath imports through the nearest package.json "imports" field.
     /// </summary>
-    private string? TryResolveSubpathImport(string specifier, string startDir)
+    private string? TryResolveSubpathImport(string specifier, string startDir, ResolutionKind kind)
     {
         string? dir = startDir;
         while (dir != null)
@@ -340,7 +357,7 @@ public class ModuleResolver
                 if (pkg.Imports != null)
                 {
                     var resolved = ExportsResolver.ResolvePackageImports(
-                        pkg.Imports.Value, specifier, ExportsResolver.DefaultConditions);
+                        pkg.Imports.Value, specifier, ConditionsFor(kind));
                     if (resolved != null)
                         return ResolveExportsPath(resolved, dir);
                 }
@@ -355,7 +372,7 @@ public class ModuleResolver
     /// <summary>
     /// Resolves self-referencing imports (when a package imports itself by name through its own exports).
     /// </summary>
-    private string? TryResolveSelfReference(string specifier, string startDir)
+    private string? TryResolveSelfReference(string specifier, string startDir, ResolutionKind kind)
     {
         var (packageName, subpath) = ParsePackageSpecifier(specifier);
 
@@ -367,7 +384,7 @@ public class ModuleResolver
             if (pkg?.Name == packageName && pkg.Exports != null)
             {
                 var resolved = ExportsResolver.ResolvePackageExports(
-                    pkg.Exports.Value, subpath, ExportsResolver.DefaultConditions);
+                    pkg.Exports.Value, subpath, ConditionsFor(kind));
                 if (resolved != null)
                     return ResolveExportsPath(resolved, dir);
                 return null;
@@ -376,6 +393,12 @@ public class ModuleResolver
         }
         return null;
     }
+
+    private static string[] ConditionsFor(ResolutionKind kind) => kind switch
+    {
+        ResolutionKind.Cjs => ExportsResolver.CjsConditions,
+        _ => ExportsResolver.EsmConditions,
+    };
 
     /// <summary>
     /// Loads a package.json with caching.
@@ -812,7 +835,9 @@ public class ModuleResolver
             string requiredPath;
             try
             {
-                requiredPath = ResolveModulePath(specifier, absolutePath);
+                // Literal require() in a CJS body — pass Cjs so dual-export packages
+                // route to the "require" entry, not "import" (matches Node semantics).
+                requiredPath = ResolveModulePath(specifier, absolutePath, ResolutionKind.Cjs);
             }
             catch
             {

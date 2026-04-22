@@ -220,4 +220,75 @@ public class ExportsResolverTests
         var result = ExportsResolver.ResolvePackageExports(exports, "./foo", Conditions);
         Assert.Null(result);
     }
+
+    // ──────────────────────────────────────────────────────────────
+    // EsmConditions vs CjsConditions — Node treats import/require
+    // as mutually exclusive per call site. Dual-export packages like
+    // uuid@9 and minimatch@9 nest both keys in the same exports map
+    // with insertion-order ambiguity; the per-kind sets disambiguate.
+    // ──────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void EsmConditions_PickImportOverRequire()
+    {
+        var exports = Parse("""{ "require": "./cjs.js", "import": "./esm.js" }""");
+        var result = ExportsResolver.ResolvePackageExports(exports, ".", ExportsResolver.EsmConditions);
+        Assert.Equal("./esm.js", result);
+    }
+
+    [Fact]
+    public void CjsConditions_PickRequireOverImport()
+    {
+        var exports = Parse("""{ "import": "./esm.js", "require": "./cjs.js" }""");
+        var result = ExportsResolver.ResolvePackageExports(exports, ".", ExportsResolver.CjsConditions);
+        Assert.Equal("./cjs.js", result);
+    }
+
+    [Fact]
+    public void EsmConditions_UuidShapedExports_PicksEsmWrapper()
+    {
+        // Mirrors uuid@9's package.json: nested "node" with module/require/import in that
+        // insertion order. Node's ESM resolver picks "import" ("./wrapper.mjs"); the CJS
+        // resolver picks "require" ("./dist/index.js"). Both must agree with Node.
+        var exports = Parse("""
+            {
+                ".": {
+                    "node": {
+                        "module": "./dist/esm-node/index.js",
+                        "require": "./dist/index.js",
+                        "import": "./wrapper.mjs"
+                    },
+                    "default": "./dist/esm-browser/index.js"
+                }
+            }
+            """);
+        Assert.Equal("./wrapper.mjs",
+            ExportsResolver.ResolvePackageExports(exports, ".", ExportsResolver.EsmConditions));
+        Assert.Equal("./dist/index.js",
+            ExportsResolver.ResolvePackageExports(exports, ".", ExportsResolver.CjsConditions));
+    }
+
+    [Fact]
+    public void EsmConditions_MinimatchShapedExports_PicksEsmEntry()
+    {
+        // minimatch@9 — nested per-kind subobjects with types-default fallback.
+        var exports = Parse("""
+            {
+                ".": {
+                    "import": {
+                        "types": "./dist/esm/index.d.ts",
+                        "default": "./dist/esm/index.js"
+                    },
+                    "require": {
+                        "types": "./dist/commonjs/index.d.ts",
+                        "default": "./dist/commonjs/index.js"
+                    }
+                }
+            }
+            """);
+        Assert.Equal("./dist/esm/index.js",
+            ExportsResolver.ResolvePackageExports(exports, ".", ExportsResolver.EsmConditions));
+        Assert.Equal("./dist/commonjs/index.js",
+            ExportsResolver.ResolvePackageExports(exports, ".", ExportsResolver.CjsConditions));
+    }
 }

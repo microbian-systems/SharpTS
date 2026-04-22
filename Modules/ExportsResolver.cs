@@ -9,9 +9,25 @@ namespace SharpTS.Modules;
 public static class ExportsResolver
 {
     /// <summary>
-    /// Default conditions for SharpTS resolution.
-    /// Matches Node.js runtime behavior: "node" and "require" for CJS, "import" for ESM.
-    /// Note: "types" is intentionally excluded — it's for TypeScript tooling, not runtime.
+    /// Conditions applied when resolving an ESM <c>import</c> against an exports map.
+    /// Excludes <c>"require"</c> to match Node's resolution for ESM — otherwise a dual
+    /// <c>{ require, import }</c> entry whose <c>require</c> key is listed first would
+    /// always win regardless of how the caller is importing, and any package shipping
+    /// divergent ESM/CJS entries (e.g. an ESM wrapper around CJS internals like uuid@9)
+    /// would serve the wrong file.
+    /// </summary>
+    public static readonly string[] EsmConditions = ["node", "import", "default"];
+
+    /// <summary>
+    /// Conditions applied when resolving a CommonJS <c>require()</c> call against an exports map.
+    /// Excludes <c>"import"</c> for the same reason <see cref="EsmConditions"/> excludes
+    /// <c>"require"</c>: Node treats these as mutually exclusive per call site.
+    /// </summary>
+    public static readonly string[] CjsConditions = ["node", "require", "default"];
+
+    /// <summary>
+    /// Legacy combined condition set retained for callers that don't know their import
+    /// kind. Prefer <see cref="EsmConditions"/> or <see cref="CjsConditions"/>.
     /// </summary>
     public static readonly string[] DefaultConditions = ["node", "require", "import", "default"];
 
