@@ -22,187 +22,233 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         emitter.EmitBoxIfNeeded(receiver);
 
         // Handle both List<object> and $Array types
-        // For $Array, extract the Elements property
-        EmitGetListFromArrayOrList(il, ctx);
+        // For $Array, extract the Elements property.
+        // The returned local holds the ORIGINAL receiver, used below for
+        // identity-preserving methods (sort/reverse/fill/copyWithin) and to
+        // wrap "new array" method results back into $Array so downstream
+        // code sees a $Array whenever the input was one.
+        var receiverLocal = EmitGetListFromArrayOrList(il, ctx);
+
+        // Methods whose spec says "return this" — the caller expects the same
+        // reference the receiver started with. Since we unwrapped to a List,
+        // the runtime helper returns the inner List, not the $Array wrapper;
+        // to preserve `arr === arr.sort()` we stash the wrapper and push it
+        // back at the end.
+        bool returnsReceiver = methodName is "sort" or "reverse" or "fill" or "copyWithin";
+        // Methods whose spec says "return a new Array" — we want callers to
+        // continue seeing a $Array after them (not a bare List<object?>), so
+        // downstream array methods / runtime dispatch still match.
+        bool returnsNewArray = methodName is
+            "slice" or "concat" or "map" or "filter" or "flat" or "flatMap"
+            or "splice" or "toReversed" or "toSorted" or "toSpliced" or "with";
 
         switch (methodName)
         {
             case "pop":
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayPop);
-                return true;
+                break;
 
             case "shift":
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayShift);
-                return true;
+                break;
 
             case "unshift":
                 // JS `arr.unshift(a, b, c)` prepends all args in order: [a,b,c,...orig].
                 // ArrayUnshift(list, el) inserts one element at the start, so iterate
                 // in reverse to preserve the final order.
                 EmitVariadicListMutation(emitter, arguments, ctx.Runtime!.ArrayUnshift, reverse: true);
-                return true;
+                break;
 
             case "push":
                 // JS `arr.push(a, b, c)` appends all args. Iterate forward.
                 EmitVariadicListMutation(emitter, arguments, ctx.Runtime!.ArrayPush, reverse: false);
-                return true;
+                break;
 
             case "slice":
                 EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArraySlice);
-                return true;
+                break;
 
             case "map":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayMap);
-                return true;
+                break;
 
             case "filter":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFilter);
-                return true;
+                break;
 
             case "forEach":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayForEach);
                 il.Emit(OpCodes.Ldnull); // forEach returns undefined
-                return true;
+                break;
 
             case "find":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFind);
-                return true;
+                break;
 
             case "findIndex":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFindIndex);
                 il.Emit(OpCodes.Box, ctx.Types.Double);
-                return true;
+                break;
 
             case "some":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArraySome);
-                return true;
+                break;
 
             case "every":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayEvery);
-                return true;
+                break;
 
             case "reduce":
                 EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduce);
-                return true;
+                break;
 
             case "reduceRight":
                 EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduceRight);
-                return true;
+                break;
 
             case "join":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayJoin);
-                return true;
+                break;
 
             case "concat":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayConcat);
-                return true;
+                break;
 
             case "reverse":
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReverse);
-                return true;
+                break;
 
             case "flat":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFlat);
-                return true;
+                break;
 
             case "flatMap":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFlatMap);
-                return true;
+                break;
 
             case "includes":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayIncludes);
-                return true;
+                break;
 
             case "indexOf":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayIndexOf);
                 il.Emit(OpCodes.Box, ctx.Types.Double);
-                return true;
+                break;
 
             case "sort":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArraySort);
-                return true;
+                break;
 
             case "toSorted":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayToSorted);
-                return true;
+                break;
 
             case "splice":
                 EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArraySplice);
-                return true;
+                break;
 
             case "toSpliced":
                 EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayToSpliced);
-                return true;
+                break;
 
             case "findLast":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFindLast);
-                return true;
+                break;
 
             case "findLastIndex":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFindLastIndex);
                 il.Emit(OpCodes.Box, ctx.Types.Double);
-                return true;
+                break;
 
             case "toReversed":
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayToReversed);
-                return true;
+                break;
 
             case "with":
                 EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayWith);
-                return true;
+                break;
 
             case "at":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayAt);
-                return true;
+                break;
 
             case "fill":
                 EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFill);
-                return true;
+                break;
 
             case "copyWithin":
                 EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayCopyWithin);
-                return true;
+                break;
 
             case "entries":
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayEntries);
-                return true;
+                break;
 
             case "keys":
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayKeys);
-                return true;
+                break;
 
             case "values":
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayValues);
-                return true;
+                break;
 
             default:
                 return false;
+        }
+
+        EmitPostCallAdjust(il, ctx, receiverLocal, returnsReceiver, returnsNewArray);
+        return true;
+    }
+
+    /// <summary>
+    /// After a call that leaves a List&lt;object?&gt; on the stack, adjust the
+    /// top-of-stack so downstream code sees the expected JS value:
+    /// - For "return this" methods: pop the list, push the saved <c>$Array</c>
+    ///   receiver (or the bare list if receiver wasn't a <c>$Array</c>).
+    /// - For "return new array" methods: wrap the list in a fresh <c>$Array</c>.
+    /// Called from per-case branches in <see cref="TryEmitMethodCall"/>.
+    /// </summary>
+    private static void EmitPostCallAdjust(ILGenerator il, CompilationContext ctx, LocalBuilder receiverLocal, bool returnsReceiver, bool returnsNewArray)
+    {
+        if (returnsReceiver)
+        {
+            // Stack: [list (the mutated inner List<object?>)]
+            // We want: the ORIGINAL receiver (the $Array wrapper if it was one).
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ldloc, receiverLocal);
+            return;
+        }
+
+        if (returnsNewArray)
+        {
+            // Stack: [list]  → want: [new $Array(list)]
+            il.Emit(OpCodes.Newobj, ctx.Runtime!.TSArrayCtor);
         }
     }
 
@@ -265,7 +311,23 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
         var fallbackLabelNH = il.DefineLabel();
         var endLabelNH = il.DefineLabel();
+        // Stage E.2 M2/M3: $Array inherits List<object?>, so `isinst List<object?>`
+        // below matches $Array instances — but base `Count` only sees the dense
+        // prefix, missing any sparse tail. Check $Array first and use its
+        // LongLength getter (int-clamped Length would truncate lengths past
+        // int.MaxValue; M3 acceptance demands `a.length === 2147483649` works).
+        var tsArrayCheckLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Isinst, ctx.Runtime!.TSArrayType);
+        il.Emit(OpCodes.Brfalse, tsArrayCheckLabel);
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Castclass, ctx.Runtime!.TSArrayType);
+        il.Emit(OpCodes.Callvirt, ctx.Runtime!.TSArrayLongLengthGetter);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, ctx.Types.Double);
+        il.Emit(OpCodes.Br, endLabelNH);
 
+        il.MarkLabel(tsArrayCheckLabel);
         il.Emit(OpCodes.Ldloc, objLocal);
         il.Emit(OpCodes.Isinst, listTypeNH);
         il.Emit(OpCodes.Brfalse, fallbackLabelNH);
@@ -301,8 +363,11 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
     /// <summary>
     /// Emits code to convert an array value (either List&lt;object&gt; or $Array) to List&lt;object&gt;.
     /// The value is expected to be on the stack; leaves List&lt;object&gt; on the stack.
+    /// Returns the local that stashes the ORIGINAL receiver — callers emitting
+    /// identity-preserving methods (sort/reverse/fill/copyWithin) use this to
+    /// push the receiver back after the runtime helper returns.
     /// </summary>
-    private static void EmitGetListFromArrayOrList(ILGenerator il, CompilationContext ctx)
+    private static LocalBuilder EmitGetListFromArrayOrList(ILGenerator il, CompilationContext ctx)
     {
         var objLocal = il.DeclareLocal(ctx.Types.Object);
         il.Emit(OpCodes.Stloc, objLocal);
@@ -384,6 +449,7 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         il.Emit(OpCodes.Castclass, ctx.Types.ListOfObject);
 
         il.MarkLabel(endLabel);
+        return objLocal;
     }
 
     /// <summary>

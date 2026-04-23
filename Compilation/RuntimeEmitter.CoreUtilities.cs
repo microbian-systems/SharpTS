@@ -2225,6 +2225,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
+        // $Array (check BEFORE the plain List check — $Array inherits
+        // List<object?>; the List branch below reads base.Count and misses
+        // sparse holes, and returns true for a hole index where it should
+        // return false).
+        var tsArrayHasLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brtrue, tsArrayHasLabel);
+
         // Check if obj is List<object> (array)
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
@@ -2327,6 +2336,43 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Bge, falseLabel);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
+
+        // $Array — "length" is always present; numeric keys use TSArrayHasIndex
+        // (which returns false for holes, unlike the List branch's index-in-
+        // range check). Non-numeric named keys aren't stored on arrays, so
+        // fall back to false.
+        il.MarkLabel(tsArrayHasLabel);
+        {
+            var tsArrKeyStrLocal = il.DeclareLocal(_types.String);
+            var tsArrIndexLocal = il.DeclareLocal(_types.Int64);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+            il.Emit(OpCodes.Stloc, tsArrKeyStrLocal);
+
+            // if (key == "length") return true
+            var tsArrNotLength = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, tsArrKeyStrLocal);
+            il.Emit(OpCodes.Ldstr, "length");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, tsArrNotLength);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(tsArrNotLength);
+            // long.TryParse(key, out idx) — if fails, key isn't numeric → false.
+            il.Emit(OpCodes.Ldloc, tsArrKeyStrLocal);
+            il.Emit(OpCodes.Ldloca, tsArrIndexLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Int64, "TryParse", _types.String, _types.Int64.MakeByRefType()));
+            il.Emit(OpCodes.Brfalse, falseLabel);
+
+            // arr.HasIndex(idx) — handles sparse + hole semantics.
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+            il.Emit(OpCodes.Ldloc, tsArrIndexLocal);
+            il.Emit(OpCodes.Callvirt, runtime.TSArrayHasIndex);
+            il.Emit(OpCodes.Ret);
+        }
 
         // Symbol key path
         il.MarkLabel(symbolKeyLabel);

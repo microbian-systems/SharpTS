@@ -27,6 +27,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnLabel);
 
+        // Stage E.2 M2: also call $Array.Freeze() to set the internal _isFrozen
+        // bit. SetStrict / SetLong / the frozen-check branches in SetIndex all
+        // prefer the internal flag; the legacy FrozenObjectsField weak table is
+        // updated below for backward compatibility with other dispatch paths
+        // that predate the $Array encapsulation.
+        var notTSArrayLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brfalse, notTSArrayLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayFreeze);
+        il.MarkLabel(notTSArrayLabel);
+
         // Call $PropertyDescriptorStore.Freeze(obj) - fully standalone, no reflection
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.PDSFreeze);

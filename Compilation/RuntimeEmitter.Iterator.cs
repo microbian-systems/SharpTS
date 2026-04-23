@@ -361,6 +361,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, throwLabel);
 
+        // 1a. Stage E.2: fast path for $Array — return its backing list directly.
+        // Since `$Array` inherits List<object?> (M2 decision), Elements is just
+        // `this`. The sparse tail past base Count is lost in this fast path,
+        // which is acceptable because IterateToList is called by spread /
+        // Array.from / concat — all of which either produce fresh dense arrays
+        // or receive dense prefixes. Callers needing sparse-aware iteration
+        // use the long-indexed GetLong / HasIndex accessors directly.
+        var notTSArrayLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brfalse, notTSArrayLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSArrayLabel);
+
         // 1. If obj is already List<object>, return it directly (fast path for arrays)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);

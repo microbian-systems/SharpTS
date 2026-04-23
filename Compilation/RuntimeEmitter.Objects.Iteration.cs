@@ -242,6 +242,60 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnEmptyLabel);
 
+        // Stage E.2 M5: $Array / List<object?> path — Object.values on an
+        // array returns its PRESENT elements (holes skipped, spec 20.1.2.23).
+        // $Array inherits List<object?>, so one Isinst covers both.
+        var notListLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, listType);
+        il.Emit(OpCodes.Brfalse, notListLabel);
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        {
+            var listIterLocal = il.DeclareLocal(listType);
+            var iLocal = il.DeclareLocal(_types.Int32);
+            var elemLocal = il.DeclareLocal(_types.Object);
+            var loopStart = il.DefineLabel();
+            var loopEnd = il.DefineLabel();
+            var advance = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, listType);
+            il.Emit(OpCodes.Stloc, listIterLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, iLocal);
+            il.MarkLabel(loopStart);
+            il.Emit(OpCodes.Ldloc, iLocal);
+            il.Emit(OpCodes.Ldloc, listIterLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Count")!);
+            il.Emit(OpCodes.Bge, loopEnd);
+
+            il.Emit(OpCodes.Ldloc, listIterLocal);
+            il.Emit(OpCodes.Ldloc, iLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Item", [_types.Int32])!);
+            il.Emit(OpCodes.Stloc, elemLocal);
+
+            // Skip holes.
+            il.Emit(OpCodes.Ldloc, elemLocal);
+            il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+            il.Emit(OpCodes.Brtrue, advance);
+
+            // result.Add(elem);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, elemLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+
+            il.MarkLabel(advance);
+            il.Emit(OpCodes.Ldloc, iLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, iLocal);
+            il.Emit(OpCodes.Br, loopStart);
+            il.MarkLabel(loopEnd);
+        }
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notListLabel);
         il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, resultLocal);
         // $IHasFields supports class-instance key/value storage.
@@ -372,6 +426,69 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnEmptyLabel);
 
+        // Stage E.2 M5: $Array / List<object?> path — Object.entries on an
+        // array returns [[index_string, value], ...] for PRESENT elements,
+        // skipping holes per spec 20.1.2.5.
+        var notListLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, listType);
+        il.Emit(OpCodes.Brfalse, notListLabel);
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        {
+            var listIterLocal = il.DeclareLocal(listType);
+            var iLocal = il.DeclareLocal(_types.Int32);
+            var elemLocal = il.DeclareLocal(_types.Object);
+            var loopStart = il.DefineLabel();
+            var loopEnd = il.DefineLabel();
+            var advance = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, listType);
+            il.Emit(OpCodes.Stloc, listIterLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, iLocal);
+            il.MarkLabel(loopStart);
+            il.Emit(OpCodes.Ldloc, iLocal);
+            il.Emit(OpCodes.Ldloc, listIterLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Count")!);
+            il.Emit(OpCodes.Bge, loopEnd);
+
+            il.Emit(OpCodes.Ldloc, listIterLocal);
+            il.Emit(OpCodes.Ldloc, iLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Item", [_types.Int32])!);
+            il.Emit(OpCodes.Stloc, elemLocal);
+
+            // Skip holes.
+            il.Emit(OpCodes.Ldloc, elemLocal);
+            il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+            il.Emit(OpCodes.Brtrue, advance);
+
+            // entry = new List<object> { i.ToString(), elem }; result.Add(entry);
+            il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Stloc, entryLocal);
+            il.Emit(OpCodes.Ldloc, entryLocal);
+            il.Emit(OpCodes.Ldloca, iLocal);
+            il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int32, "ToString"));
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+            il.Emit(OpCodes.Ldloc, entryLocal);
+            il.Emit(OpCodes.Ldloc, elemLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, entryLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+
+            il.MarkLabel(advance);
+            il.Emit(OpCodes.Ldloc, iLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, iLocal);
+            il.Emit(OpCodes.Br, loopStart);
+            il.MarkLabel(loopEnd);
+        }
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notListLabel);
         il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, resultLocal);
         il.Emit(OpCodes.Ldarg_0);

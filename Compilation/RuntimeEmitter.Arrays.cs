@@ -78,18 +78,24 @@ public partial class RuntimeEmitter
 
     private void EmitCreateArray(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Stage E.2 M2: returns $Array (not List<object?>). Every array-literal
+        // and rest-parameter path in the emitter routes through this, so the
+        // change propagates without per-caller updates — downstream consumers
+        // either use SetStackUnknown() (the stack-type tracker accepts any ref)
+        // or hand off to $Runtime dispatchers that already Isinst $Array first.
         var method = typeBuilder.DefineMethod(
             "CreateArray",
             MethodAttributes.Public | MethodAttributes.Static,
-            _types.ListOfObject,
+            runtime.TSArrayType,
             [_types.ObjectArray]
         );
         runtime.CreateArray = method;
 
         var il = method.GetILGenerator();
-        // new List<object>(elements)
+        // return new $Array(new List<object>(elements));
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.IEnumerableOfObject));
+        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
         il.Emit(OpCodes.Ret);
     }
 
@@ -132,12 +138,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
 
-        // $Array handler: unwrap to elements, get count
+        // $Array handler: use the sparse-aware Length getter (clamps to
+        // int.MaxValue when the array is sparse-long past that; callers
+        // receiving int accept the clamp). Reading base.Count here would
+        // miss the sparse tail — `new Array(10_000_000).length` would
+        // report 0 instead of 10_000_000.
         il.MarkLabel(tsArrayLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSArrayType);
-        il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayLengthGetter);
         il.Emit(OpCodes.Ret);
 
         // Descriptor-driven: emit Count handler for each backing type
@@ -192,13 +201,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
-        // $Array handler: unwrap to elements, get item
+        // $Array handler: unwrap to elements, get item, convert hole sentinel
+        // to undefined at the language boundary (ECMA-262: `arr[i]` on a hole
+        // reads as undefined). Stage E.2 M2 added this unhole — holes start
+        // appearing once ArrayConstructor uses SetLength to create sparse
+        // initial arrays instead of zero-padding.
         il.MarkLabel(tsArrayElLabel);
+        var tsArrayGetItemResult = il.DeclareLocal(_types.Object);
+        var tsArrayGetItemNotHole = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSArrayType);
         il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Stloc, tsArrayGetItemResult);
+        il.Emit(OpCodes.Ldloc, tsArrayGetItemResult);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brfalse, tsArrayGetItemNotHole);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(tsArrayGetItemNotHole);
+        il.Emit(OpCodes.Ldloc, tsArrayGetItemResult);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(listLabel);
@@ -301,17 +324,29 @@ public partial class RuntimeEmitter
 
         var listLoopStart = il.DefineLabel();
         var listLoopEnd = il.DefineLabel();
+        var listLoopSkip = il.DefineLabel();
         il.MarkLabel(listLoopStart);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldloc, listLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, listLoopEnd);
 
+        // Stage E.2 M5: for-in / GetKeys on arrays skips holes per ECMA-262
+        // 14.7.5.6 ForIn/OfBodyEvaluation (uses OrdinaryOwnPropertyKeys which
+        // only returns kPresent indices). Without the check, an array with
+        // `delete arr[2]` would yield "2" in `for (k in arr)`.
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Item", [_types.Int32])!);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, listLoopSkip);
+
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloca, indexLocal);
         il.Emit(OpCodes.Call, _types.Int32.GetMethod("ToString", Type.EmptyTypes)!);
         il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
 
+        il.MarkLabel(listLoopSkip);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
@@ -461,7 +496,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, namesLocal);
         il.Emit(OpCodes.Ret);
 
-        // List case: return ["0", "1", ..., "length"]
+        // List case: return ["0", "1", ..., "length"] (skipping holes).
         il.MarkLabel(listLabel);
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, Type.EmptyTypes));
         il.Emit(OpCodes.Stloc, namesLocal);
@@ -472,14 +507,27 @@ public partial class RuntimeEmitter
 
         var listLoopStart = il.DefineLabel();
         var listLoopEnd = il.DefineLabel();
+        var listLoopSkip = il.DefineLabel();
         il.Emit(OpCodes.Br, listLoopEnd);
 
         il.MarkLabel(listLoopStart);
+        // Stage E.2 M5: getOwnPropertyNames skips holes — interpreter matches
+        // via SharpTSArray.HasIndex; compile mode must check the List entry
+        // against the $ArrayHole sentinel.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("get_Item", [_types.Int32])!);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, listLoopSkip);
+
         // names.Add(i.ToString())
         il.Emit(OpCodes.Ldloc, namesLocal);
         il.Emit(OpCodes.Ldloca, iLocal);
         il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int32, "ToString"));
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+        il.MarkLabel(listLoopSkip);
         // i++
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -587,16 +635,17 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits ConcatArrays: concatenates multiple iterables into a single List&lt;object&gt;.
+    /// Emits ConcatArrays: concatenates multiple iterables into a single $Array.
     /// Supports arrays, strings, and custom iterables with Symbol.iterator.
-    /// Signature: List&lt;object&gt; ConcatArrays(object[] arrays, $TSSymbol iteratorSymbol, Type runtimeType)
+    /// Signature: <c>$Array ConcatArrays(object[] arrays, $TSSymbol iteratorSymbol, Type runtimeType)</c>.
+    /// Stage E.2 M2: returns <c>$Array</c> (was <c>List&lt;object?&gt;</c>).
     /// </summary>
     private void EmitConcatArrays(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
             "ConcatArrays",
             MethodAttributes.Public | MethodAttributes.Static,
-            _types.ListOfObject,
+            runtime.TSArrayType,
             [_types.ObjectArray, runtime.TSSymbolType, _types.Type]  // Added iteratorSymbol and runtimeType
         );
         runtime.ConcatArrays = method;
@@ -645,7 +694,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(loopEnd);
+        // Wrap the List<object?> in $Array on the way out.
         il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
         il.Emit(OpCodes.Ret);
     }
 

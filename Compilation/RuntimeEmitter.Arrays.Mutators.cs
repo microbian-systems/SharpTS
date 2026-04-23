@@ -525,6 +525,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
         il.Emit(OpCodes.Stloc, itemLocal);
 
+        // ECMA-262 23.1.3.12 FlattenIntoArray: skip holes (only kPresent
+        // slots are flattened). Without this the hole sentinel would be
+        // Add()'d directly into the result list.
+        var flatContinueLoop = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, itemLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, flatContinueLoop);
+
         // if (depth > 0 && item is List<object> nestedList)
         var addDirectly = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_2); // depth
@@ -544,8 +552,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Sub);
         il.Emit(OpCodes.Call, method); // recursive call
-        var continueLoop = il.DefineLabel();
-        il.Emit(OpCodes.Br, continueLoop);
+        il.Emit(OpCodes.Br, flatContinueLoop);
 
         // else: result.Add(item)
         il.MarkLabel(addDirectly);
@@ -553,7 +560,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, itemLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
 
-        il.MarkLabel(continueLoop);
+        il.MarkLabel(flatContinueLoop);
         // i++
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -604,6 +611,15 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(loopStart);
 
+        // ECMA-262 23.1.3.12: flatMap skips holes at the SOURCE level (no
+        // callback invocation for a hole source slot).
+        var flatMapContinue = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, flatMapContinue);
+
         var argsLocal = il.DeclareLocal(_types.ObjectArray);
 
         // Build args array: [list[i], (double)i, list]
@@ -649,12 +665,41 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, nestedListLocal);
         il.Emit(OpCodes.Brfalse, addDirectly);
 
-        // result.AddRange(nestedList)
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldloc, nestedListLocal);
-        il.Emit(OpCodes.Callvirt, _types.ListObjectAddRange);
-        var continueLoop = il.DefineLabel();
-        il.Emit(OpCodes.Br, continueLoop);
+        // ECMA-262: inner arrays also have their holes skipped during the
+        // single-level flatten (CreateDataPropertyOrThrow fires only when
+        // kPresent). Replace the plain AddRange with a hole-skipping loop.
+        {
+            var innerI = il.DeclareLocal(_types.Int32);
+            var innerStart = il.DefineLabel();
+            var innerEnd = il.DefineLabel();
+            var innerSkip = il.DefineLabel();
+            var innerElement = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, innerI);
+            il.MarkLabel(innerStart);
+            il.Emit(OpCodes.Ldloc, innerI);
+            il.Emit(OpCodes.Ldloc, nestedListLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+            il.Emit(OpCodes.Bge, innerEnd);
+            il.Emit(OpCodes.Ldloc, nestedListLocal);
+            il.Emit(OpCodes.Ldloc, innerI);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+            il.Emit(OpCodes.Stloc, innerElement);
+            il.Emit(OpCodes.Ldloc, innerElement);
+            il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+            il.Emit(OpCodes.Brtrue, innerSkip);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, innerElement);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+            il.MarkLabel(innerSkip);
+            il.Emit(OpCodes.Ldloc, innerI);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, innerI);
+            il.Emit(OpCodes.Br, innerStart);
+            il.MarkLabel(innerEnd);
+        }
+        il.Emit(OpCodes.Br, flatMapContinue);
 
         // else: result.Add(callResult)
         il.MarkLabel(addDirectly);
@@ -662,7 +707,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, callResultLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
 
-        il.MarkLabel(continueLoop);
+        il.MarkLabel(flatMapContinue);
         // i++
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -1364,11 +1409,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Blt, loopEnd);
 
-        // result.Add(list[i])
+        // result.Add(list[i] unholed) — ECMA-262 23.1.3.33 Array.prototype
+        // .toReversed uses Get (which unholes) + CreateDataPropertyOrThrow,
+        // producing a DENSE output where source holes become undefined.
         il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        EmitLoadElementUnholed(il, iLocal, runtime);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
 
         // i--
@@ -1458,10 +1503,34 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(validIndex);
 
-        // result = new List<object>(list)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Newobj, _types.ListObjectFromEnumerableCtor);
+        // ECMA-262 23.1.3.39 Array.prototype.with: produces a DENSE output
+        // where source holes become undefined (uses Get + CreateDataProperty
+        // OrThrow, not kPresent). Build the copy with an unholing loop rather
+        // than the one-shot `new List(list)` — the latter propagates the raw
+        // $ArrayHole sentinel into the result.
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
         il.Emit(OpCodes.Stloc, resultLocal);
+        {
+            var withI = il.DeclareLocal(_types.Int32);
+            var withStart = il.DefineLabel();
+            var withEnd = il.DefineLabel();
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, withI);
+            il.MarkLabel(withStart);
+            il.Emit(OpCodes.Ldloc, withI);
+            il.Emit(OpCodes.Ldloc, lenLocal);
+            il.Emit(OpCodes.Bge, withEnd);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            EmitLoadElementUnholed(il, withI, runtime);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+            il.Emit(OpCodes.Ldloc, withI);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, withI);
+            il.Emit(OpCodes.Br, withStart);
+            il.MarkLabel(withEnd);
+        }
 
         // result[actualIndex] = args[1]
         il.Emit(OpCodes.Ldloc, resultLocal);
@@ -1545,10 +1614,9 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(validIndex);
 
-        // return list[actualIndex]
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, actualIndexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        // return list[actualIndex] unholed — spec: Get-style read (holes
+        // read as undefined at the language boundary).
+        EmitLoadElementUnholed(il, actualIndexLocal, runtime);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1677,10 +1745,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, beforeLoopCondition);
 
         il.MarkLabel(beforeLoopStart);
+        // ECMA-262 23.1.3.35 toSpliced: dense output — source holes become
+        // undefined in the copy (uses Get + CreateDataPropertyOrThrow).
         il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        EmitLoadElementUnholed(il, iLocal, runtime);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
 
         il.Emit(OpCodes.Ldloc, iLocal);
@@ -1742,10 +1810,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, afterLoopCondition);
 
         il.MarkLabel(afterLoopStart);
+        // toSpliced after-skip region: same unhole rule as the before loop.
         il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        EmitLoadElementUnholed(il, iLocal, runtime);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
 
         il.Emit(OpCodes.Ldloc, iLocal);

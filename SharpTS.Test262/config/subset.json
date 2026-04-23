@@ -1,5 +1,5 @@
 {
-  "__comment__": "Milestone 2 subset — Array folder re-added for issue #73 Stage D. Sparse storage + hole-aware built-ins (commits 23052c0 / 15f4e40 / 1074240) landed in the interpreter; compiled mode still uses dense List<object?> backing so `compiledExcludeFolders` holds Array out until Stage E ports sparse storage into the emitter. Known interpreter gap: indices > int.MaxValue - 1 (e.g. S15.4.5.2_A1_T1.js: x[4294967294]=1) still throw RangeError — widening the index API to uint32 is tracked separately.",
+  "__comment__": "Milestone 2 subset — Array folder in both interpreter and compiled paths. Stage E.2 M1-M4 (2026-04-23) landed the full compile-mode sparse/hole-aware port: $Array inherits List<object?>, creation helpers produce $Array, runtime dispatch uses long-indexed API, built-in emitters honor ECMA-262 hole semantics (forEach/map/filter/reduce/reduceRight/every/some/flat/flatMap/indexOf/includes/toReversed/with/toSpliced/at/join). `compiledExcludeFolders` cleared; baseline regen planned.",
   "folders": [
     "test/built-ins/Array",
     "test/built-ins/Math",
@@ -7,9 +7,7 @@
     "test/built-ins/String",
     "test/language/expressions/new"
   ],
-  "compiledExcludeFolders": [
-    "test/built-ins/Array"
-  ],
+  "compiledExcludeFolders": [],
   "timeoutSeconds": 5,
   "skipFeaturesFile": "skip-features.txt"
 }

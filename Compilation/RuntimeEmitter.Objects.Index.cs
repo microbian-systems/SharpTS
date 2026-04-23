@@ -197,14 +197,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
         il.Emit(OpCodes.Ret);
 
-        // $Array handler: unwrap to List<object?> elements, then index
+        // $Array handler: route through the long-indexed Get, which returns
+        // $Undefined for OOB and unholes hole slots. Matches the descriptor-
+        // driven List branches below that already OOB-return undefined —
+        // without this, real packages (semver, minimatch, yaml) crash when
+        // `arr[i]` runs past the end during parsing.
         il.MarkLabel(tsArrayLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSArrayType);
-        il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayGetLong);
         il.Emit(OpCodes.Ret);
 
         // Descriptor-driven: emit get handler for each backing type.
@@ -516,13 +519,28 @@ public partial class RuntimeEmitter
 
         // $Array handler: unwrap to List<object?> elements, then set
         il.MarkLabel(tsArraySetLabel);
+        // Route through the long-indexed Set, which handles:
+        //   - auto-extend beyond current length (JS `arr[5] = x` on an empty
+        //     array creates holes and extends — without this, real packages
+        //     like semver crashed with ArgumentOutOfRangeException on the
+        //     `regexp.src[index] = value` idiom)
+        //   - sparse transition past SparseThreshold
+        //   - internal _isFrozen check (silently no-ops on frozen arrays;
+        //     strict-mode wraps via SetIndexStrict)
+        // Legacy FrozenObjectsField check kept for pre-M2 paths that froze
+        // the $Array via the global weak table instead of arr.Freeze().
+        var tsArrayFrozenLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, tsArrayFrozenLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brtrue, nullLabel); // Frozen — silently return
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSArrayType);
-        il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "set_Item", _types.Int32, _types.Object));
+        il.Emit(OpCodes.Callvirt, runtime.TSArraySetLong);
         il.Emit(OpCodes.Ret);
 
         // Descriptor-driven: emit set handler for each backing type
@@ -630,6 +648,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
         il.Emit(OpCodes.Brtrue, symbolKeyLabel);
 
+        // $Array — `delete arr[i]` turns the slot into a hole via DeleteAt.
+        // Must come BEFORE the trueLabel fallthrough so we actually delete;
+        // the pre-M3 code just returned true without mutating.
+        var tsArrayDeleteIdxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brtrue, tsArrayDeleteIdxLabel);
+
         // Dict<string, object>
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
@@ -637,6 +663,17 @@ public partial class RuntimeEmitter
 
         // Other types (arrays, strings, etc.) - cannot delete, return true
         il.Emit(OpCodes.Br, trueLabel);
+
+        // $Array handler: convert index to long, call DeleteAt, return true.
+        // DeleteAt silently no-ops for frozen arrays / OOB indices (JS-spec).
+        il.MarkLabel(tsArrayDeleteIdxLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayDeleteAt);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
 
         // Symbol key handler: GetSymbolDict(obj).Remove(key)
         il.MarkLabel(symbolKeyLabel);
@@ -736,6 +773,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
         il.Emit(OpCodes.Brtrue, symbolKeyLabel);
 
+        // $Array — `delete arr[i]` turns the slot into a hole via DeleteAt.
+        // Must come BEFORE the trueLabel fallthrough so we actually delete;
+        // the pre-M3 code just returned true without mutating.
+        var tsArrayDeleteIdxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brtrue, tsArrayDeleteIdxLabel);
+
         // Dict<string, object>
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
@@ -743,6 +788,17 @@ public partial class RuntimeEmitter
 
         // Other types (arrays, strings, etc.) - cannot delete, return true
         il.Emit(OpCodes.Br, trueLabel);
+
+        // $Array handler: convert index to long, call DeleteAt, return true.
+        // DeleteAt silently no-ops for frozen arrays / OOB indices (JS-spec).
+        il.MarkLabel(tsArrayDeleteIdxLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayDeleteAt);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
 
         // Symbol key handler: GetSymbolDict(obj).Remove(key)
         il.MarkLabel(symbolKeyLabel);

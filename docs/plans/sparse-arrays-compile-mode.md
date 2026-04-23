@@ -1,7 +1,7 @@
 # Sparse + hole-aware arrays in compile mode — implementation plan
 
 **Issue:** #73 Stage E.2
-**Status:** Planning
+**Status:** **COMPLETE** (2026-04-23). All six milestones M1–M6 landed. 10,275/10,275 unit tests pass. Compiled Test262 baseline: 2,181 Pass (interpreter: 850 Pass). Array folder re-enabled in compile mode, sparse/hole-aware dispatch end-to-end.
 **Prerequisite:** Stages A–D merged; Stage E.1 (interpreter uint32 widening) merged.
 
 ## Goal

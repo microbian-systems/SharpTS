@@ -567,6 +567,11 @@ public class InnerFunctionTests
         // pattern lodash's runInContext uses (`var Array = context.Array; Array(n)`).
         // The runtime Invoke dispatcher recognizes System.Type callees and
         // routes IList<object> to the Array constructor helper.
+        //
+        // Expected output changed 2026-04-23 (issue #73 Stage E.2 M2):
+        // `Array(n)` now creates a sparse n-length array of holes (ECMA-262
+        // §23.1.1.1), not a dense list of nulls. `r1[0]` reads "undefined"
+        // instead of "null" — matches the interpreter and real JS engines.
         var source = """
             const A: any = Array;
             const r1: any = A(2);
@@ -576,7 +581,7 @@ public class InnerFunctionTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("2 null null\n2 x y\n", output);
+        Assert.Equal("2 undefined undefined\n2 x y\n", output);
     }
 
     [Theory]

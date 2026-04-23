@@ -31,10 +31,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        // if (Equals(list[i], searchElement)) return true
+        // ECMA-262 23.1.3.13 Array.prototype.includes: DOES NOT skip holes.
+        // A hole reads as undefined, so `[,].includes(undefined) === true`.
+        // The unhole happens at the boundary — without it, the raw
+        // $ArrayHole sentinel would compare unequal to SharpTSUndefined.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        var holeCheckDone = il.DefineLabel();
+        var notHole = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brfalse, notHole);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Br, holeCheckDone);
+        il.MarkLabel(notHole);
+        il.MarkLabel(holeCheckDone);
+
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.Equals);
 
@@ -75,6 +89,7 @@ public partial class RuntimeEmitter
 
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
+        var advance = il.DefineLabel();
 
         il.MarkLabel(loopStart);
         il.Emit(OpCodes.Ldloc, indexLocal);
@@ -82,6 +97,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
+        // ECMA-262 23.1.3.14: indexOf SKIPS holes (comparison fires only on
+        // kPresent slots; `[,,,].indexOf(undefined) === -1` because undefined
+        // matches no present element).
+        EmitSkipIfHole(il, indexLocal, advance, runtime);
+
+        // compare(list[i], searchElement)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
@@ -95,6 +116,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notMatch);
+        il.MarkLabel(advance);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
@@ -161,6 +183,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
 
         il.MarkLabel(skipSep);
+        // ECMA-262 23.1.3.16: holes render as empty string (unlike `toString`
+        // of undefined which gives "undefined"). Also applies to null +
+        // undefined in the same slot — the Stringify helper already treats
+        // those as "" when the spec so demands, so for holes we just skip
+        // the append (separator has already been added above when i > 0).
+        var skipAppend = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, skipAppend);
+
         // sb.Append(Stringify(list[i]))
         il.Emit(OpCodes.Ldloc, sbLocal);
         il.Emit(OpCodes.Ldarg_0);
@@ -169,6 +203,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
         il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(skipAppend);
 
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -200,11 +236,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.IEnumerableOfObject));
         il.Emit(OpCodes.Stloc, resultLocal);
 
-        // if (arg1 is List<object> otherList) result.AddRange(otherList)
+        // if (arg1 is $Array arr) result.AddRange(arr.Elements)
+        // else if (arg1 is List<object> otherList) result.AddRange(otherList)
         // else result.Add(arg1)
         var notList = il.DefineLabel();
+        var notTSArray = il.DefineLabel();
         var done = il.DefineLabel();
 
+        // Stage E.2 M2: $Array needs to spread like a list. The old code only
+        // checked `Isinst List<object?>`, so with M2's emitter-level switch to
+        // $Array, concat(b) where b is a compiled array literal would Add the
+        // wrapper as one element instead of spreading — classic regression
+        // driver for Array_Concat_ReturnsNewArray.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brfalse, notTSArray);
+
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "AddRange", _types.IEnumerableOfObject));
+        il.Emit(OpCodes.Br, done);
+
+        il.MarkLabel(notTSArray);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brfalse, notList);

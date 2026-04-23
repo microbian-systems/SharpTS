@@ -812,6 +812,11 @@ public class EmittedRuntime
     public MethodBuilder DynamicImportModule { get; set; } = null!;
     public MethodBuilder WrapTaskAsPromise { get; set; } = null!;
 
+    // $ArrayHole singleton — sentinel for ECMA-262 array holes (index in range but never written).
+    // NOTE: Must stay in sync with SharpTS.Runtime.Types.ArrayHole
+    public Type ArrayHoleType { get; set; } = null!;
+    public FieldInfo ArrayHoleInstance { get; set; } = null!;
+
     // $Array type - emitted for standalone assemblies
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSArray
     public Type TSArrayType { get; set; } = null!;
@@ -825,6 +830,20 @@ public class EmittedRuntime
     public MethodBuilder TSArraySet { get; set; } = null!;
     public MethodBuilder TSArraySetStrict { get; set; } = null!;
     public MethodBuilder TSArrayToString { get; set; } = null!;
+
+    // Stage E.2 additions (long-indexed sparse/hole-aware API).
+    // Mirrors SharpTSArray public surface. Legacy int-indexed Get/Set above
+    // continue to work (they widen to the long path internally).
+    // Count is inherited from List<object?> — no custom getter.
+    public MethodBuilder TSArrayLongLengthGetter { get; set; } = null!;
+    public MethodBuilder TSArrayLengthGetter { get; set; } = null!;
+    public MethodBuilder TSArrayHasIndex { get; set; } = null!;
+    public MethodBuilder TSArrayGetRaw { get; set; } = null!;
+    public MethodBuilder TSArrayGetLong { get; set; } = null!;
+    public MethodBuilder TSArraySetLong { get; set; } = null!;
+    public MethodBuilder TSArraySetStrictLong { get; set; } = null!;
+    public MethodBuilder TSArraySetLength { get; set; } = null!;
+    public MethodBuilder TSArrayDeleteAt { get; set; } = null!;
 
     // $IHasFields interface - for unified property access on user classes and $Object
     // Note: These use MethodInfo instead of MethodBuilder because we need the actual

@@ -1283,16 +1283,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
-        // List - check for "length"
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.ListOfObject);
-        il.Emit(OpCodes.Brtrue, listLabel);
-
-        // $Array - check for "length" (wrapper around List<object?>)
+        // $Array - check for "length" (inherits List<object?>; MUST come
+        // BEFORE the plain List check so sparse-aware length is used —
+        // otherwise `new Array(10_000_000).length` returns 0).
         var sharpTSArrayLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSArrayType);
         il.Emit(OpCodes.Brtrue, sharpTSArrayLabel);
+
+        // List - check for "length"
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brtrue, listLabel);
 
         // String - check for "length"
         il.Emit(OpCodes.Ldarg_0);
@@ -1920,19 +1922,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         var notSharpTSArrayLengthLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notSharpTSArrayLengthLabel);
-        // Get arr.Elements.Count
+        // Use the LongLength getter — not the int-clamped Length — so `.length`
+        // reads up to 2^32 - 1 survive (M3 acceptance: `a.length === 2147483649`).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSArrayType);
-        il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObjectNullable, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayLongLengthGetter);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notSharpTSArrayLengthLabel);
-        // For other properties on $Array, fall through to GetFieldsProperty
+        // For other properties on $Array (method names like push/pop/sort/etc.),
+        // reuse GetListProperty — it returns the $BoundArrayMethod wrapper, and
+        // $Array IS a List<object?> by inheritance, so the cast works.
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
+        il.Emit(OpCodes.Call, runtime.GetListProperty);
         il.Emit(OpCodes.Ret);
 
         // $Buffer handler - "length" and "toString"
@@ -2151,6 +2156,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brtrue, tsObjectLabel);
 
+        // $Array — special-case `arr.length = N` (route through $Array.SetLength
+        // so truncation/extension uses the sparse-aware path). Other named-
+        // property writes on arrays are silently ignored; ECMA-262 §22.1.5
+        // permits them but most emitters don't preserve them and the spec
+        // compiler tests don't exercise that corner. Must come BEFORE the
+        // Dictionary check (since $Array inherits List<object?> which is
+        // neither), and BEFORE SetFieldsProperty fallthrough.
+        var tsArraySetPropLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brtrue, tsArraySetPropLabel);
+
         // Dictionary
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
@@ -2224,6 +2241,29 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notExportsLabel);
             // Silently ignore writes to other module properties
+            il.Emit(OpCodes.Ret);
+        }
+
+        // $Array handler — `arr.length = N` routes through SetLength. Any
+        // other name falls off into the normal silent-ignore (JS permits
+        // arbitrary named writes on arrays but we don't persist them).
+        il.MarkLabel(tsArraySetPropLabel);
+        {
+            var notLengthLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "length");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, notLengthLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
+            il.Emit(OpCodes.Callvirt, runtime.TSArraySetLength);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(notLengthLabel);
+            // Silently ignore other named writes on arrays.
             il.Emit(OpCodes.Ret);
         }
 
@@ -2561,17 +2601,18 @@ public partial class RuntimeEmitter
         // Default - just return
         il.Emit(OpCodes.Ret);
 
-        // $Array - call SetStrict with index and strictMode
+        // $Array - call SetStrict with index and strictMode via the long API.
+        // Stage E.2 M6: widened from TSArraySetStrict (int) to TSArraySetStrictLong
+        // so `"use strict"; arr[2147483648] = v` doesn't truncate to int.MinValue.
+        // Parallel to the M3 GetIndex/SetIndex widening.
         il.MarkLabel(sharpTSArrayLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSArrayType);
-        // Convert index to int: (int)(double)index
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
         il.Emit(OpCodes.Ldarg_2); // value
         il.Emit(OpCodes.Ldarg_3); // strictMode
-        il.Emit(OpCodes.Callvirt, runtime.TSArraySetStrict);
+        il.Emit(OpCodes.Callvirt, runtime.TSArraySetStrictLong);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(nullLabel);
@@ -2654,6 +2695,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brtrue, sharpTSObjectLabel);
 
+        // $Array — `delete arr[i]` turns the slot into a hole. Must come
+        // BEFORE the Dictionary check (not relevant here, just ordering)
+        // and BEFORE the trueLabel fallthrough so actual deletions happen.
+        var tsArrayDelLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brtrue, tsArrayDelLabel);
+
         // Dictionary
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
@@ -2661,6 +2710,32 @@ public partial class RuntimeEmitter
 
         // Other types - cannot delete properties, return true (JS behavior for non-configurable)
         il.Emit(OpCodes.Br, trueLabel);
+
+        // $Array delete handler — if the key is a numeric index call
+        // DeleteAt; otherwise return true (JS non-configurable behavior).
+        il.MarkLabel(tsArrayDelLabel);
+        {
+            var tsArrDelIndexLocal = il.DeclareLocal(_types.Int64);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloca, tsArrDelIndexLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Int64, "TryParse", _types.String, _types.Int64.MakeByRefType()));
+            var tsArrDelNonNumericLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, tsArrDelNonNumericLabel);
+
+            // arr.DeleteAt(idx); return true;
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+            il.Emit(OpCodes.Ldloc, tsArrDelIndexLocal);
+            il.Emit(OpCodes.Callvirt, runtime.TSArrayDeleteAt);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(tsArrDelNonNumericLabel);
+            // Non-numeric key — JS allows it (returns true) but no storage
+            // on arrays. Matches pre-M3 fallthrough behavior.
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ret);
+        }
 
         // $TSObject - call DeleteProperty instance method
         il.MarkLabel(sharpTSObjectLabel);

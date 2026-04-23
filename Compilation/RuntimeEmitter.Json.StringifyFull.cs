@@ -416,6 +416,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", [_types.Int32]));
         il.Emit(OpCodes.Stloc, elemLocal);
 
+        // Stage E.2 M5: ECMA-262 25.5.2.4 SerializeJSONArray — a hole slot
+        // serializes as "null". The replacer is NOT invoked for holes
+        // (SerializeJSONProperty short-circuits on missing properties).
+        var holeAppendedLabel = il.DefineLabel();
+        var notHoleLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, elemLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brfalse, notHoleLabel);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, "null");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, holeAppendedLabel);
+
+        il.MarkLabel(notHoleLabel);
+
         // If replacer function exists, call it: elem = InvokeCallback(replacer, i, elem)
         EmitCallReplacerIfNeeded(il, elemLocal, iLocal, runtime);
 
@@ -441,6 +457,8 @@ public partial class RuntimeEmitter
         il.MarkLabel(notNullResult);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
         il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(holeAppendedLabel);
 
         // i++
         il.Emit(OpCodes.Ldloc, iLocal);

@@ -6,6 +6,46 @@ namespace SharpTS.Compilation;
 public partial class RuntimeEmitter
 {
     /// <summary>
+    /// Emits: <c>if (list[indexLocal] is $ArrayHole) goto skipLabel;</c>.
+    /// Used by Stage E.2 M4 to skip holes in forEach/filter/reduce/every/
+    /// some/flat/flatMap/indexOf/lastIndexOf per ECMA-262. Expects
+    /// <c>arg0 = list</c> (the List&lt;object?&gt; we're iterating).
+    /// </summary>
+    private void EmitSkipIfHole(ILGenerator il, LocalBuilder indexLocal, Label skipLabel, EmittedRuntime runtime)
+    {
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, skipLabel);
+    }
+
+    /// <summary>
+    /// Emits: load <c>list[indexLocal]</c>, and if it's the <c>$ArrayHole</c>
+    /// sentinel substitute <c>$Undefined.Instance</c>. Leaves the boundary-
+    /// adjusted value on the stack. Used by find/findIndex/findLast/
+    /// findLastIndex where the callback IS invoked on holes but with
+    /// <c>undefined</c> as the element (matches interpreter's <c>arr[i]</c>
+    /// unhole semantics).
+    /// </summary>
+    private void EmitLoadElementUnholed(ILGenerator il, LocalBuilder indexLocal, EmittedRuntime runtime)
+    {
+        var notHoleLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brfalse, notHoleLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Br, doneLabel);
+        il.MarkLabel(notHoleLabel);
+        il.MarkLabel(doneLabel);
+    }
+
+    /// <summary>
     /// Emits IL to create callback args array [list[i], (double)i, list],
     /// invoke the callback via InvokeMethodValue with undefined thisArg,
     /// and leave the result on the stack.
@@ -19,19 +59,23 @@ public partial class RuntimeEmitter
     /// than absorbing the first real argument (list[i]) into it. ES spec: when
     /// no <c>thisArg</c> is supplied to forEach/map/filter/etc., the callback's
     /// <c>this</c> is undefined in strict mode, which we represent as null.
+    ///
+    /// Stage E.2 M4: args[0] is unholed so callbacks never see the $ArrayHole
+    /// sentinel. Callers that want to skip holes entirely should call
+    /// <see cref="EmitSkipIfHole"/> BEFORE this helper — the unhole here is
+    /// for find/etc. which must still invoke the callback on holes (with
+    /// undefined as the element).
     /// </remarks>
     private void EmitCallbackArgsAndInvoke(ILGenerator il, LocalBuilder indexLocal, EmittedRuntime runtime)
     {
-        // var args = new object[] { list[i], (double)i, list }
+        // var args = new object[] { list[i]-unholed, (double)i, list }
         il.Emit(OpCodes.Ldc_I4_3);
         il.Emit(OpCodes.Newarr, _types.Object);
 
-        // args[0] = list[i]
+        // args[0] = unholed list[i]
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        EmitLoadElementUnholed(il, indexLocal, runtime);
         il.Emit(OpCodes.Stelem_Ref);
 
         // args[1] = (double)i
@@ -81,6 +125,8 @@ public partial class RuntimeEmitter
 
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
+        var holeLabel = il.DefineLabel();
+        var addedLabel = il.DefineLabel();
 
         // Loop: for (int i = 0; i < list.Count; i++)
         il.MarkLabel(loopStart);
@@ -88,6 +134,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
+
+        // ECMA-262 23.1.3.19: map SKIPS the callback on holes but PRESERVES
+        // the hole in the output at the same position. So a `map` over
+        // `[1, hole, 3]` yields `[fn(1), hole, fn(3)]`, not `[fn(1), fn(3)]`.
+        EmitSkipIfHole(il, indexLocal, holeLabel, runtime);
 
         EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
 
@@ -99,7 +150,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloc, callResultLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+        il.Emit(OpCodes.Br, addedLabel);
 
+        il.MarkLabel(holeLabel);
+        // Hole-preserving output: push $ArrayHole.Instance to the result list.
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayHoleInstance);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+        il.MarkLabel(addedLabel);
         // i++
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -144,6 +203,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
+
+        // ECMA-262 23.1.3.8: filter skips holes (callback not invoked, element
+        // not copied into output — filter densifies).
+        EmitSkipIfHole(il, indexLocal, skipAdd, runtime);
 
         EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
 
@@ -193,6 +256,7 @@ public partial class RuntimeEmitter
 
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
+        var advance = il.DefineLabel();
 
         // Loop: for (int i = 0; i < list.Count; i++)
         il.MarkLabel(loopStart);
@@ -201,9 +265,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
+        // ECMA-262 23.1.3.15: forEach skips holes.
+        EmitSkipIfHole(il, indexLocal, advance, runtime);
+
         EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
         il.Emit(OpCodes.Pop); // Discard result
 
+        il.MarkLabel(advance);
         // i++
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -242,13 +310,12 @@ public partial class RuntimeEmitter
 
         EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
 
-        // if (IsTruthy(result)) return list[i]
+        // if (IsTruthy(result)) return list[i] (unholed — spec: find returns
+        // `undefined` when the matched slot is a hole, not the sentinel).
         il.Emit(OpCodes.Call, runtime.IsTruthy);
         var notFound = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notFound);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        EmitLoadElementUnholed(il, indexLocal, runtime);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notFound);
@@ -328,6 +395,7 @@ public partial class RuntimeEmitter
 
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
+        var advance = il.DefineLabel();
 
         il.MarkLabel(loopStart);
         il.Emit(OpCodes.Ldloc, indexLocal);
@@ -335,16 +403,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
+        // ECMA-262 23.1.3.29: some skips holes.
+        EmitSkipIfHole(il, indexLocal, advance, runtime);
+
         EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
         il.Emit(OpCodes.Call, runtime.IsTruthy);
 
-        var notFound = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, notFound);
+        il.Emit(OpCodes.Brfalse, advance);
         il.Emit(OpCodes.Ldc_I4_1); // return true
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(notFound);
+        il.MarkLabel(advance);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
@@ -375,6 +445,7 @@ public partial class RuntimeEmitter
 
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
+        var continueLoop = il.DefineLabel();
 
         il.MarkLabel(loopStart);
         il.Emit(OpCodes.Ldloc, indexLocal);
@@ -382,10 +453,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
+        // ECMA-262 23.1.3.6: every skips holes (callback not invoked; doesn't
+        // affect "all match" result).
+        EmitSkipIfHole(il, indexLocal, continueLoop, runtime);
+
         EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
         il.Emit(OpCodes.Call, runtime.IsTruthy);
 
-        var continueLoop = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, continueLoop);
         il.Emit(OpCodes.Ldc_I4_0); // return false
         il.Emit(OpCodes.Box, _types.Boolean);
@@ -435,13 +509,11 @@ public partial class RuntimeEmitter
 
         EmitCallbackArgsAndInvoke(il, indexLocal, runtime);
 
-        // if (IsTruthy(result)) return list[i]
+        // if (IsTruthy(result)) return list[i] (unholed).
         il.Emit(OpCodes.Call, runtime.IsTruthy);
         var notFound = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notFound);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        EmitLoadElementUnholed(il, indexLocal, runtime);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notFound);
@@ -545,21 +617,48 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Bgt, hasInitial);
 
-        // No initial value: acc = list[0], start from index 1
+        // No initial value: scan forward for first PRESENT (non-hole) element.
+        // ECMA-262 23.1.3.24: "If no initial value was provided, the first
+        // present element is used as the initial acc and kPresent tracking
+        // starts from there; TypeError if the array has no present elements."
+        var scanLocal = il.DeclareLocal(_types.Int32);
+        var scanStart = il.DefineLabel();
+        var scanEnd = il.DefineLabel();
+        var scanFound = il.DefineLabel();
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, scanLocal);
+        il.MarkLabel(scanStart);
+        il.Emit(OpCodes.Ldloc, scanLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        var notEmpty = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, notEmpty);
-        // Empty array with no initial - throw or return null
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(notEmpty);
+        il.Emit(OpCodes.Bge, scanEnd);
+        // if (!(list[scan] is ArrayHole)) goto found
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, scanLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brfalse, scanFound);
+        il.Emit(OpCodes.Ldloc, scanLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, scanLocal);
+        il.Emit(OpCodes.Br, scanStart);
+
+        il.MarkLabel(scanEnd);
+        // No present element — TypeError per spec.
+        il.Emit(OpCodes.Ldstr, "TypeError: Reduce of empty array with no initial value");
+        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(scanFound);
+        // acc = list[scan]; i = scan + 1;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, scanLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
         il.Emit(OpCodes.Stloc, accLocal);
+        il.Emit(OpCodes.Ldloc, scanLocal);
         il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Stloc, indexLocal);
         il.Emit(OpCodes.Br, startLoop);
 
@@ -573,11 +672,15 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(startLoop);
         var loopEnd = il.DefineLabel();
+        var reduceAdvance = il.DefineLabel();
 
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
+
+        // Skip holes per spec.
+        EmitSkipIfHole(il, indexLocal, reduceAdvance, runtime);
 
         // Create args: [acc, list[i], i, list]
         il.Emit(OpCodes.Ldc_I4_4);
@@ -615,6 +718,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.InvokeValue);
         il.Emit(OpCodes.Stloc, accLocal);
 
+        il.MarkLabel(reduceAdvance);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
@@ -660,28 +764,47 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Bgt, hasInitial);
 
-        // No initial value: acc = list[last], start from index (last - 1)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        var notEmpty = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, notEmpty);
-        // Empty array with no initial - return null
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(notEmpty);
-        // acc = list[list.Count - 1]
-        il.Emit(OpCodes.Ldarg_0);
+        // No initial value: scan BACKWARD for last PRESENT (non-hole) element.
+        // ECMA-262 23.1.3.25 (symmetric to reduce).
+        var scanLocal = il.DeclareLocal(_types.Int32);
+        var scanStart = il.DefineLabel();
+        var scanEnd = il.DefineLabel();
+        var scanFound = il.DefineLabel();
+        // scan = list.Count - 1
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, scanLocal);
+        il.MarkLabel(scanStart);
+        il.Emit(OpCodes.Ldloc, scanLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, scanEnd);
+        // if (!(list[scan] is ArrayHole)) goto found
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, scanLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brfalse, scanFound);
+        il.Emit(OpCodes.Ldloc, scanLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, scanLocal);
+        il.Emit(OpCodes.Br, scanStart);
+
+        il.MarkLabel(scanEnd);
+        il.Emit(OpCodes.Ldstr, "TypeError: Reduce of empty array with no initial value");
+        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(scanFound);
+        // acc = list[scan]; i = scan - 1;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, scanLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
         il.Emit(OpCodes.Stloc, accLocal);
-        // startIndex = list.Count - 2
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldloc, scanLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Sub);
         il.Emit(OpCodes.Stloc, indexLocal);
         il.Emit(OpCodes.Br, startLoop);
@@ -700,11 +823,15 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(startLoop);
         var loopEnd = il.DefineLabel();
+        var reduceRightAdvance = il.DefineLabel();
 
         // Loop: for (int i = startIndex; i >= 0; i--)
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Blt, loopEnd);
+
+        // Skip holes per spec (symmetric to reduce).
+        EmitSkipIfHole(il, indexLocal, reduceRightAdvance, runtime);
 
         // Create args: [acc, list[i], i, list]
         il.Emit(OpCodes.Ldc_I4_4);
@@ -742,6 +869,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.InvokeValue);
         il.Emit(OpCodes.Stloc, accLocal);
 
+        il.MarkLabel(reduceRightAdvance);
         // i--
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldc_I4_1);

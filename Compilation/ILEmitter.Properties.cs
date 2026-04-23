@@ -560,28 +560,29 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Ldloc, objLocal);
             }
 
-            // List<object?> / $Array path
-            IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfObject);
-            var isListLabel = IL.DefineLabel();
-            IL.Emit(OpCodes.Brtrue, isListLabel);
-            IL.Emit(OpCodes.Ldloc, objLocal);
+            // $Array first (inherits List<object?>; checking List first
+            // truncates large indices via Conv_I4 and would throw or misread
+            // for uint32-range writes). TSArrayGetLong handles OOB and holes.
             IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
-            IL.Emit(OpCodes.Brfalse, fallbackLabelNH);
-
-            // $Array path: extract Elements list
+            var notTSArrayGet = IL.DefineLabel();
+            IL.Emit(OpCodes.Brfalse, notTSArrayGet);
             IL.Emit(OpCodes.Ldloc, objLocal);
             IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
-            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayElementsGetter);
-            var doGetLabel = IL.DefineLabel();
-            IL.Emit(OpCodes.Br, doGetLabel);
+            EmitExpressionAsDouble(gi.Index);
+            IL.Emit(OpCodes.Conv_I8);
+            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayGetLong);
+            SetStackUnknown();
+            IL.Emit(OpCodes.Br, endLabelNH);
 
-            // List path: cast directly
-            IL.MarkLabel(isListLabel);
+            IL.MarkLabel(notTSArrayGet);
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfObject);
+            IL.Emit(OpCodes.Brfalse, fallbackLabelNH);
+
+            // List<object?> path: cast + get_Item (int-indexed; ordinary arrays
+            // don't exceed int.MaxValue so no widening needed here).
             IL.Emit(OpCodes.Ldloc, objLocal);
             IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfObject);
-
-            // Common: list[index]
-            IL.MarkLabel(doGetLabel);
             EmitExpressionAsDouble(gi.Index);
             IL.Emit(OpCodes.Conv_I4);
             IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.ListOfObject, "get_Item", _ctx.Types.Int32));
@@ -784,26 +785,32 @@ public partial class ILEmitter
         Expr.SetIndex si, LocalBuilder objLocal, LocalBuilder valueLocal,
         Label fallbackLabel, Label endLabel)
     {
+        // $Array first — since $Array inherits List<object?>, checking List
+        // first would catch $Array via the typed-list fast path and truncate
+        // large indices through Conv_I4 (2147483648 → int.MinValue), then
+        // SetArrayElement's pad-loop OOMs. The long-indexed TSArraySetLong
+        // handles uint32 range and sparse transitions natively.
+        IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
+        var notTSArrayLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Brfalse, notTSArrayLabel);
+
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
+        EmitExpressionAsDouble(si.Index);
+        IL.Emit(OpCodes.Conv_I8);
+        IL.Emit(OpCodes.Ldloc, valueLocal);
+        IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArraySetLong);
+        IL.Emit(OpCodes.Ldloc, valueLocal);
+        IL.Emit(OpCodes.Br, endLabel);
+
+        IL.MarkLabel(notTSArrayLabel);
+
         // Check List<object?>
+        IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfObject);
         var isListLabel = IL.DefineLabel();
         IL.Emit(OpCodes.Brtrue, isListLabel);
-        IL.Emit(OpCodes.Ldloc, objLocal);
-        IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
-        IL.Emit(OpCodes.Brfalse, fallbackLabel);
-
-        // $Array path: check frozen, then extract Elements list
-        IL.Emit(OpCodes.Ldloc, objLocal);
-        IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
-        var tsArrayLocal = IL.DeclareLocal(_ctx.Runtime!.TSArrayType);
-        IL.Emit(OpCodes.Stloc, tsArrayLocal);
-        IL.Emit(OpCodes.Ldloc, tsArrayLocal);
-        IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayIsFrozenGetter);
-        IL.Emit(OpCodes.Brtrue, fallbackLabel);
-        IL.Emit(OpCodes.Ldloc, tsArrayLocal);
-        IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayElementsGetter);
-        var doSetLabel = IL.DefineLabel();
-        IL.Emit(OpCodes.Br, doSetLabel);
+        IL.Emit(OpCodes.Br, fallbackLabel);
 
         // List path: check frozen, then cast
         IL.MarkLabel(isListLabel);
@@ -818,8 +825,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfObject);
 
-        // Common: SetArrayElement(list, index, value)
-        IL.MarkLabel(doSetLabel);
+        // List<object?>: SetArrayElement(list, index, value)
         EmitExpressionAsDouble(si.Index);
         IL.Emit(OpCodes.Conv_I4);
         IL.Emit(OpCodes.Ldloc, valueLocal);

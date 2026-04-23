@@ -65,6 +65,12 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSPromise
         EmitTSPromiseClass(moduleBuilder, runtime);
 
+        // Emit $ArrayHole singleton first — $Array methods reference
+        // $ArrayHole.Instance for padding intermediate positions on sparse writes
+        // and `a.length = N` extensions.
+        // NOTE: Must stay in sync with SharpTS.Runtime.Types.ArrayHole
+        EmitArrayHoleClass(moduleBuilder, runtime);
+
         // Emit $Array class for standalone array support
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSArray
         EmitTSArrayClass(moduleBuilder, runtime);

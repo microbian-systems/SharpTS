@@ -291,7 +291,7 @@ public partial class RuntimeEmitter
 
         // List<object> - stringify array
         il.MarkLabel(listLabel);
-        EmitStringifyArray(il, method, valueLocal);
+        EmitStringifyArray(il, method, valueLocal, runtime);
 
         // Dictionary<string, object> - stringify object
         il.MarkLabel(dictLabel);
@@ -508,7 +508,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitStringifyArray(ILGenerator il, MethodBuilder stringifyMethod, LocalBuilder valueLocal)
+    private void EmitStringifyArray(ILGenerator il, MethodBuilder stringifyMethod, LocalBuilder valueLocal, EmittedRuntime runtime)
     {
         var sbLocal = il.DeclareLocal(_types.StringBuilder);
         var arrLocal = il.DeclareLocal(_types.ListOfObject);
@@ -556,6 +556,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
         il.MarkLabel(skipComma);
 
+        // Stage E.2 M5: ECMA-262 25.5.2.4 SerializeJSONArray — a hole slot
+        // serializes as "null" (SerializeJSONProperty returns undefined for
+        // holes, which SerializeJSONArray substitutes with "null"). Without
+        // this check the $ArrayHole sentinel would flow to StringifyValue
+        // and render as "undefined" or similar.
+        var notHoleLabel = il.DefineLabel();
+        var appendedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, arrLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", [_types.Int32]));
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brfalse, notHoleLabel);
+        // Hole: append "null" and skip.
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, "null");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, appendedLabel);
+
+        il.MarkLabel(notHoleLabel);
         // sb.Append(StringifyValue(arr[i], indent, depth + 1));
         il.Emit(OpCodes.Ldloc, sbLocal);
         il.Emit(OpCodes.Ldloc, arrLocal);
@@ -568,6 +588,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, stringifyMethod);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
         il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(appendedLabel);
 
         // i++
         il.Emit(OpCodes.Ldloc, iLocal);
