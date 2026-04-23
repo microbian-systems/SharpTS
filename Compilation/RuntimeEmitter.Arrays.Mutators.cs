@@ -1526,22 +1526,21 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(indexDone);
 
-        // if (actualIndex < 0 || actualIndex >= len) return null
-        var returnNull = il.DefineLabel();
+        // ECMA-262 23.1.3.1: out-of-bounds returns undefined (NOT null).
+        var returnUndefined = il.DefineLabel();
         var validIndex = il.DefineLabel();
 
         il.Emit(OpCodes.Ldloc, actualIndexLocal);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Blt, returnNull);
+        il.Emit(OpCodes.Blt, returnUndefined);
 
         il.Emit(OpCodes.Ldloc, actualIndexLocal);
         il.Emit(OpCodes.Ldloc, lenLocal);
-        il.Emit(OpCodes.Bge, returnNull);
+        il.Emit(OpCodes.Bge, returnUndefined);
         il.Emit(OpCodes.Br, validIndex);
 
-        // Return null for out of bounds
-        il.MarkLabel(returnNull);
-        il.Emit(OpCodes.Ldnull);
+        il.MarkLabel(returnUndefined);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(validIndex);

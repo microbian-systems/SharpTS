@@ -649,12 +649,14 @@ public class ArrayMethodTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void Array_At_OutOfBoundsReturnsNull(ExecutionMode mode)
+    public void Array_At_OutOfBoundsReturnsUndefined(ExecutionMode mode)
     {
+        // ECMA-262 23.1.3.1 specifies `at()` returns undefined (not null) for
+        // out-of-range indices.
         var source = """
             let nums: number[] = [1, 2, 3];
-            console.log(nums.at(10) === null);
-            console.log(nums.at(-10) === null);
+            console.log(nums.at(10) === undefined);
+            console.log(nums.at(-10) === undefined);
             """;
 
         var output = TestHarness.Run(source, mode);
@@ -667,8 +669,8 @@ public class ArrayMethodTests
     {
         var source = """
             let nums: number[] = [];
-            console.log(nums.at(0) === null);
-            console.log(nums.at(-1) === null);
+            console.log(nums.at(0) === undefined);
+            console.log(nums.at(-1) === undefined);
             """;
 
         var output = TestHarness.Run(source, mode);

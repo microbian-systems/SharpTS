@@ -282,7 +282,8 @@ public partial class Interpreter
         {
             SharpTSObject o => o.Fields.Keys,
             SharpTSInstance inst => inst.GetFieldNames(),
-            SharpTSArray arr => Enumerable.Range(0, arr.Length).Select(i => i.ToString()),
+            // for...in skips holes per ECMA-262.
+            SharpTSArray arr => Enumerable.Range(0, arr.Length).Where(arr.HasIndex).Select(i => i.ToString()),
             // Plain Dictionary<string, object?> from runtime helpers (e.g.,
             // Web Streams iterator results) — see SharpTSReadableStream.MakeReadResult.
             IDictionary<string, object?> d => d.Keys,

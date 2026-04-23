@@ -651,13 +651,16 @@ public partial class Interpreter
         }
         if (right is SharpTSArray arr)
         {
-            // For arrays, check if index exists
+            // `i in arr` is false for holes per ECMA-262 HasProperty. A length-5
+            // array with a[2] missing returns false for `"2" in arr` but true for
+            // `"0" in arr` (present).
+            if (key == "length") return true;
             if (double.TryParse(key, out double index))
             {
                 int i = (int)index;
-                return i >= 0 && i < arr.Length;
+                return arr.HasIndex(i);
             }
-            return false;
+            return arr.HasNamedProperty(key);
         }
 
         throw new InterpreterException("'in' operator requires an object on the right side.");

@@ -53,43 +53,57 @@ public static class ArrayBuiltIns
 
     private static object? Flat(Interpreter _, SharpTSArray arr, List<object?> args)
     {
-        // Default depth is 1, handle Infinity for complete flatten
+        // ECMA-262 23.1.3.13: skips holes.
         var depth = args.Count > 0 && args[0] is double d
             ? (double.IsPositiveInfinity(d) ? int.MaxValue : (int)d)
             : 1;
 
         var result = new List<object?>();
-        FlattenRecursive(arr, result, depth);
+        FlattenArray(arr, result, depth);
         return new SharpTSArray(result);
     }
 
-    private static void FlattenRecursive(IEnumerable<object?> source, List<object?> result, int depth)
+    private static void FlattenArray(SharpTSArray source, List<object?> result, int depth)
     {
-        foreach (var item in source)
+        int len = source.Length;
+        for (int i = 0; i < len; i++)
         {
-            if (depth > 0 && item is SharpTSArray nestedArray)
-            {
-                FlattenRecursive(nestedArray, result, depth - 1);
-            }
+            if (!source.HasIndex(i)) continue;  // skip holes per spec
+            var item = source[i];
+            if (depth > 0 && item is SharpTSArray nested)
+                FlattenArray(nested, result, depth - 1);
             else
-            {
                 result.Add(item);
-            }
         }
     }
 
     private static object? FlatMap(Interpreter interp, SharpTSArray arr, List<object?> args)
     {
+        // ECMA-262 23.1.3.12: skips holes.
         using var iter = CallbackIterator.Create(args, arr, "flatMap");
         var result = new List<object?>();
-        for (int i = 0; i < arr.Length; i++)
+        int len = arr.Length;
+        for (int i = 0; i < len; i++)
         {
+            if (!arr.HasIndex(i)) continue;
             var callResult = iter.InvokeRV(interp, arr[i], i).ToObject();
             // flatMap flattens by 1 level only
             if (callResult is SharpTSArray mappedArray)
-                result.AddRange(mappedArray);
+            {
+                // Spec: inner arrays also have their holes skipped during the
+                // single-level flatten. (CreateDataPropertyOrThrow only fires
+                // when kPresent is true.)
+                int innerLen = mappedArray.Length;
+                for (int j = 0; j < innerLen; j++)
+                {
+                    if (mappedArray.HasIndex(j))
+                        result.Add(mappedArray[j]);
+                }
+            }
             else
+            {
                 result.Add(callResult);
+            }
         }
         return new SharpTSArray(result);
     }
@@ -354,10 +368,13 @@ public static class ArrayBuiltIns
 
     private static RuntimeValue IncludesV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.14: does NOT skip holes — holes compare as undefined
+        // under SameValueZero, so [,].includes(undefined) === true.
         var searchElement = args[0].ToObject();
-        foreach (var element in arr)
+        int len = arr.Length;
+        for (int i = 0; i < len; i++)
         {
-            if (IsEqual(element, searchElement))
+            if (IsEqual(arr[i], searchElement))  // arr[i] unhole's to undefined
                 return RuntimeValue.True;
         }
         return RuntimeValue.False;
@@ -365,9 +382,13 @@ public static class ArrayBuiltIns
 
     private static RuntimeValue IndexOfV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.17: skips holes. Uses strict equality (===) which never
+        // matches a hole.
         var searchElement = args[0].ToObject();
-        for (int idx = 0; idx < arr.Length; idx++)
+        int len = arr.Length;
+        for (int idx = 0; idx < len; idx++)
         {
+            if (!arr.HasIndex(idx)) continue;
             if (IsEqual(arr[idx], searchElement))
                 return RuntimeValue.FromNumber(idx);
         }
@@ -376,46 +397,107 @@ public static class ArrayBuiltIns
 
     private static RuntimeValue JoinV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.16: holes (and null/undefined values) render as empty
+        // string. The default separator is ",".
         var separator = args.Length > 0 ? Stringify(args[0].ToObject()) : ",";
-        return RuntimeValue.FromString(string.Join(separator, arr.Select(Stringify)));
+        int len = arr.Length;
+        if (len == 0) return RuntimeValue.EmptyString;
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < len; i++)
+        {
+            if (i > 0) sb.Append(separator);
+            // Holes AND null/undefined elements stringify to empty per spec.
+            if (!arr.HasIndex(i)) continue;
+            var v = arr[i];
+            if (v is null or SharpTSUndefined) continue;
+            sb.Append(Stringify(v));
+        }
+        return RuntimeValue.FromString(sb.ToString());
+    }
+
+    /// <summary>
+    /// Copies [0, length) of <paramref name="src"/> into <paramref name="dst"/>,
+    /// preserving holes as <see cref="ArrayHole"/>.<c>Instance</c> entries. Used
+    /// by concat / with / toReversed to honor ECMA-262's hole-preserving semantics.
+    /// </summary>
+    private static void AppendPreservingHoles(SharpTSArray src, List<object?> dst)
+    {
+        int len = src.Length;
+        for (int i = 0; i < len; i++)
+        {
+            if (src.HasIndex(i))
+                dst.Add(src[i]);
+            else
+                dst.Add(ArrayHole.Instance);
+        }
     }
 
     private static RuntimeValue ConcatV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
-        var arg = args[0].ToObject();
-        var result = new List<object?>(arr);
-        if (arg is SharpTSArray otherArr)
-            result.AddRange(otherArr);
-        else
-            result.Add(arg);
+        // ECMA-262 23.1.3.2: preserves holes from array arguments; non-array args
+        // are appended as single elements.
+        var result = new List<object?>(arr.Length);
+        AppendPreservingHoles(arr, result);
+        for (int a = 0; a < args.Length; a++)
+        {
+            var arg = args[a].ToObject();
+            if (arg is SharpTSArray otherArr)
+                AppendPreservingHoles(otherArr, result);
+            else
+                result.Add(arg);
+        }
         return RuntimeValue.FromObject(new SharpTSArray(result));
     }
 
     private static RuntimeValue ReverseV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.26: preserves holes. Implemented via hole-aware swap
+        // so reverse([1,,3]) === [3,,1] (middle stays a hole).
         if (arr.IsFrozen)
             return RuntimeValue.FromObject(arr);
-        arr.ReverseInPlace();
+        int len = arr.Length;
+        int lower = 0, upper = len - 1;
+        while (lower < upper)
+        {
+            bool lowerPresent = arr.HasIndex(lower);
+            bool upperPresent = arr.HasIndex(upper);
+            var lowerValue = lowerPresent ? arr[lower] : null;
+            var upperValue = upperPresent ? arr[upper] : null;
+            if (upperPresent) arr[lower] = upperValue;
+            else arr.DeleteAt(lower);
+            if (lowerPresent) arr[upper] = lowerValue;
+            else arr.DeleteAt(upper);
+            lower++;
+            upper--;
+        }
         return RuntimeValue.FromObject(arr);
     }
 
     private static RuntimeValue ToReversedV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
-        var result = new List<object?>(arr.Length);
-        for (int i = arr.Length - 1; i >= 0; i--)
-            result.Add(arr[i]);
+        // ECMA-262 23.1.3.33: produces a dense array — holes are fetched via Get
+        // (returns undefined) and assigned via CreateDataPropertyOrThrow. So
+        // toReversed FILLS holes with undefined. (This is different from reverse,
+        // which preserves holes.)
+        int len = arr.Length;
+        var result = new List<object?>(len);
+        for (int i = len - 1; i >= 0; i--)
+            result.Add(arr[i]);  // user-facing read: holes become undefined
         return RuntimeValue.FromObject(new SharpTSArray(result));
     }
 
     private static RuntimeValue WithV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.39: produces a dense array with the modified element.
+        // Holes in the source become undefined in the output.
         int len = arr.Length;
         int index = (int)args[0].AsNumber();
         int actualIndex = index < 0 ? len + index : index;
         if (actualIndex < 0 || actualIndex >= len)
             throw new Exception("RangeError: Invalid index for with()");
-        var result = new List<object?>(arr);
-        result[actualIndex] = args[1].ToObject();
+        var result = new List<object?>(len);
+        for (int i = 0; i < len; i++)
+            result.Add(i == actualIndex ? args[1].ToObject() : arr[i]);
         return RuntimeValue.FromObject(new SharpTSArray(result));
     }
 
@@ -425,12 +507,14 @@ public static class ArrayBuiltIns
         int index = (int)args[0].AsNumber();
         int actualIndex = index < 0 ? len + index : index;
         if (actualIndex < 0 || actualIndex >= len)
-            return RuntimeValue.Null;
+            return RuntimeValue.Undefined;
         return RuntimeValue.FromBoxed(arr[actualIndex]);
     }
 
     private static RuntimeValue FillV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.9: Fill WRITES every position in [start, end) — holes
+        // are filled, not preserved.
         if (arr.IsFrozen)
             return RuntimeValue.FromObject(arr);
 
@@ -472,38 +556,60 @@ public static class ArrayBuiltIns
 
         if (count > 0)
         {
+            // ECMA-262 23.1.3.4: if source is a hole, DELETE target (make hole).
+            // Otherwise copy the value. Order (forward/backward) matters only when
+            // source and dest ranges overlap.
             if (from < to && to < from + count)
             {
                 for (int i = count - 1; i >= 0; i--)
-                    arr[to + i] = arr[from + i];
+                    CopyOrHole(arr, from + i, to + i);
             }
             else
             {
                 for (int i = 0; i < count; i++)
-                    arr[to + i] = arr[from + i];
+                    CopyOrHole(arr, from + i, to + i);
             }
         }
 
         return RuntimeValue.FromObject(arr);
     }
 
+    private static void CopyOrHole(SharpTSArray arr, int fromIdx, int toIdx)
+    {
+        if (arr.HasIndex(fromIdx))
+            arr[toIdx] = arr[fromIdx];
+        else
+            arr.DeleteAt(toIdx);
+    }
+
     // --- Callback-based V2 methods ---
 
     private static RuntimeValue MapV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.18: skip holes (only invoke callback for present indices)
+        // but preserve them in the output array at the same position.
         using var iter = CallbackIterator.CreateFromRV(args, arr, "map");
-        List<object?> result = [];
-        for (int i = 0; i < arr.Length; i++)
-            result.Add(iter.Invoke(interp, arr[i], i));
+        int len = arr.Length;
+        List<object?> result = new(len);
+        for (int i = 0; i < len; i++)
+        {
+            if (arr.HasIndex(i))
+                result.Add(iter.Invoke(interp, arr[i], i));
+            else
+                result.Add(ArrayHole.Instance);  // preserve hole
+        }
         return RuntimeValue.FromObject(new SharpTSArray(result));
     }
 
     private static RuntimeValue FilterV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.8: skip holes. Output is always dense.
         using var iter = CallbackIterator.CreateFromRV(args, arr, "filter");
         List<object?> result = [];
-        for (int i = 0; i < arr.Length; i++)
+        int len = arr.Length;
+        for (int i = 0; i < len; i++)
         {
+            if (!arr.HasIndex(i)) continue;
             if (iter.InvokeRV(interp, arr[i], i).IsTruthy())
                 result.Add(arr[i]);
         }
@@ -512,28 +618,36 @@ public static class ArrayBuiltIns
 
     private static RuntimeValue ForEachV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.15: skip holes.
         using var iter = CallbackIterator.CreateFromRV(args, arr, "forEach");
-        for (int i = 0; i < arr.Length; i++)
+        int len = arr.Length;
+        for (int i = 0; i < len; i++)
+        {
+            if (!arr.HasIndex(i)) continue;
             iter.InvokeRV(interp, arr[i], i);
+        }
         return RuntimeValue.Undefined;
     }
 
     private static RuntimeValue FindV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.10: DOES call callback on holes (no HasProperty check).
         using var iter = CallbackIterator.CreateFromRV(args, arr, "find");
-        for (int i = 0; i < arr.Length; i++)
+        int len = arr.Length;
+        for (int i = 0; i < len; i++)
         {
             if (iter.InvokeRV(interp, arr[i], i).IsTruthy())
                 return RuntimeValue.FromBoxed(arr[i]);
         }
-        // ECMA-262 23.1.3.10: return undefined when no element matches.
         return RuntimeValue.Undefined;
     }
 
     private static RuntimeValue FindIndexV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.11: DOES call callback on holes (no HasProperty check).
         using var iter = CallbackIterator.CreateFromRV(args, arr, "findIndex");
-        for (int i = 0; i < arr.Length; i++)
+        int len = arr.Length;
+        for (int i = 0; i < len; i++)
         {
             if (iter.InvokeRV(interp, arr[i], i).IsTruthy())
                 return RuntimeValue.FromNumber(i);
@@ -543,9 +657,12 @@ public static class ArrayBuiltIns
 
     private static RuntimeValue SomeV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.29: skip holes.
         using var iter = CallbackIterator.CreateFromRV(args, arr, "some");
-        for (int i = 0; i < arr.Length; i++)
+        int len = arr.Length;
+        for (int i = 0; i < len; i++)
         {
+            if (!arr.HasIndex(i)) continue;
             if (iter.InvokeRV(interp, arr[i], i).IsTruthy())
                 return RuntimeValue.True;
         }
@@ -554,9 +671,12 @@ public static class ArrayBuiltIns
 
     private static RuntimeValue EveryV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.6: skip holes.
         using var iter = CallbackIterator.CreateFromRV(args, arr, "every");
-        for (int i = 0; i < arr.Length; i++)
+        int len = arr.Length;
+        for (int i = 0; i < len; i++)
         {
+            if (!arr.HasIndex(i)) continue;
             if (!iter.InvokeRV(interp, arr[i], i).IsTruthy())
                 return RuntimeValue.False;
         }
@@ -565,9 +685,13 @@ public static class ArrayBuiltIns
 
     private static RuntimeValue ReduceV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.24: skip holes. Initial accumulator, if none supplied,
+        // is the first PRESENT element. TypeError if the array has no present
+        // elements and no initial value is provided.
         var callback = args[0].ToObject() as ISharpTSCallable
             ?? throw new Exception("Runtime Error: reduce requires a function argument.");
 
+        int len = arr.Length;
         int startIndex = 0;
         object? accumulator;
 
@@ -577,10 +701,16 @@ public static class ArrayBuiltIns
         }
         else
         {
-            if (arr.Length == 0)
-                throw new Exception("Runtime Error: reduce of empty array with no initial value.");
-            accumulator = arr[0];
-            startIndex = 1;
+            // Find first present index.
+            int firstPresent = -1;
+            for (int i = 0; i < len; i++)
+            {
+                if (arr.HasIndex(i)) { firstPresent = i; break; }
+            }
+            if (firstPresent < 0)
+                throw new Exception("TypeError: Reduce of empty array with no initial value.");
+            accumulator = arr[firstPresent];
+            startIndex = firstPresent + 1;
         }
 
         var callbackArgs = ArgumentListPool.Rent();
@@ -590,8 +720,9 @@ public static class ArrayBuiltIns
             callbackArgs.Add(null);
             callbackArgs.Add(null);
             callbackArgs.Add(arr);
-            for (int i = startIndex; i < arr.Length; i++)
+            for (int i = startIndex; i < len; i++)
             {
+                if (!arr.HasIndex(i)) continue;
                 callbackArgs[0] = accumulator;
                 callbackArgs[1] = arr[i];
                 callbackArgs[2] = (double)i;
@@ -607,22 +738,30 @@ public static class ArrayBuiltIns
 
     private static RuntimeValue ReduceRightV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
+        // ECMA-262 23.1.3.25: skip holes; symmetric to reduce.
         var callback = args[0].ToObject() as ISharpTSCallable
             ?? throw new Exception("Runtime Error: reduceRight requires a function argument.");
 
-        int startIndex = arr.Length - 1;
+        int len = arr.Length;
+        int startIndex;
         object? accumulator;
 
         if (args.Length > 1)
         {
             accumulator = args[1].ToObject();
+            startIndex = len - 1;
         }
         else
         {
-            if (arr.Length == 0)
-                throw new Exception("Runtime Error: reduceRight of empty array with no initial value.");
-            accumulator = arr[arr.Length - 1];
-            startIndex = arr.Length - 2;
+            int lastPresent = -1;
+            for (int i = len - 1; i >= 0; i--)
+            {
+                if (arr.HasIndex(i)) { lastPresent = i; break; }
+            }
+            if (lastPresent < 0)
+                throw new Exception("TypeError: Reduce of empty array with no initial value.");
+            accumulator = arr[lastPresent];
+            startIndex = lastPresent - 1;
         }
 
         var callbackArgs = ArgumentListPool.Rent();
@@ -634,6 +773,7 @@ public static class ArrayBuiltIns
             callbackArgs.Add(arr);
             for (int i = startIndex; i >= 0; i--)
             {
+                if (!arr.HasIndex(i)) continue;
                 callbackArgs[0] = accumulator;
                 callbackArgs[1] = arr[i];
                 callbackArgs[2] = (double)i;

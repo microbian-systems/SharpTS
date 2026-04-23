@@ -48,6 +48,15 @@ public static class ObjectBuiltIns
             var keys = obj.Fields.Keys.Select(k => (object?)k).ToList();
             return RuntimeValue.FromObject(new SharpTSArray(keys));
         }
+        if (arg is SharpTSArray arr)
+        {
+            // ECMA-262: only present (non-hole) indices are own enumerable
+            // properties, so Object.keys skips holes.
+            var keys = new List<object?>();
+            for (int i = 0; i < arr.Length; i++)
+                if (arr.HasIndex(i)) keys.Add(i.ToString());
+            return RuntimeValue.FromObject(new SharpTSArray(keys));
+        }
         if (arg is SharpTSInstance inst)
         {
             var keys = inst.GetFieldNames().Select(k => (object?)k).ToList();
@@ -74,6 +83,13 @@ public static class ObjectBuiltIns
             var values = obj.Fields.Values.ToList();
             return RuntimeValue.FromObject(new SharpTSArray(values));
         }
+        if (arg is SharpTSArray arr)
+        {
+            var values = new List<object?>();
+            for (int i = 0; i < arr.Length; i++)
+                if (arr.HasIndex(i)) values.Add(arr[i]);
+            return RuntimeValue.FromObject(new SharpTSArray(values));
+        }
         if (arg is SharpTSInstance inst)
         {
             var values = inst.GetFieldNames().Select(n => inst.GetRawField(n)).ToList();
@@ -93,6 +109,16 @@ public static class ObjectBuiltIns
         {
             var entries = obj.Fields.Select(kv =>
                 (object?)new SharpTSArray([(object?)kv.Key, kv.Value])).ToList();
+            return RuntimeValue.FromObject(new SharpTSArray(entries));
+        }
+        if (arg is SharpTSArray arr)
+        {
+            var entries = new List<object?>();
+            for (int i = 0; i < arr.Length; i++)
+            {
+                if (!arr.HasIndex(i)) continue;
+                entries.Add(new SharpTSArray([(object?)i.ToString(), arr[i]]));
+            }
             return RuntimeValue.FromObject(new SharpTSArray(entries));
         }
         if (arg is SharpTSInstance inst)

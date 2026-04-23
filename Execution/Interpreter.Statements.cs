@@ -709,7 +709,9 @@ public partial class Interpreter
         {
             SharpTSObject o => o.Fields.Keys,
             SharpTSInstance i => i.GetFieldNames(),
-            SharpTSArray a => Enumerable.Range(0, a.Length).Select(i => i.ToString()),
+            // for...in skips holes per ECMA-262 (only own enumerable index properties
+            // that actually exist — holes don't).
+            SharpTSArray a => Enumerable.Range(0, a.Length).Where(a.HasIndex).Select(i => i.ToString()),
             // JS functions are objects; enumerate user-assigned properties. Lodash iterates
             // its own utility namespace (which is a function returning the wrapper) with
             // `for (var key in _) { ... }` to copy members onto the mixin target.

@@ -109,6 +109,8 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     /// Indexed access to an existing slot. Throws <see cref="ArgumentOutOfRangeException"/>
     /// for out-of-range reads and writes — use <see cref="Get(int)"/> / <see cref="Set(int, object?)"/>
     /// for the JS-semantic variants (undefined on OOB read, extend on OOB write).
+    /// Returns <see cref="SharpTSUndefined"/>.<c>Instance</c> for holes (user-facing);
+    /// use <see cref="GetRaw(int)"/> to see <see cref="ArrayHole"/>.<c>Instance</c>.
     /// </summary>
     public object? this[int index]
     {
@@ -116,7 +118,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         {
             if ((uint)index >= (uint)_length)
                 throw new ArgumentOutOfRangeException(nameof(index));
-            return GetCore(index);
+            return UnholeForRead(GetCore(index));
         }
         set
         {
@@ -126,13 +128,64 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         }
     }
 
-    /// <summary>Reads the slot at the given index without mutating length or storage mode.</summary>
+    /// <summary>
+    /// Reads the slot at <paramref name="index"/> WITHOUT converting holes to undefined.
+    /// Returns <see cref="ArrayHole"/>.<c>Instance</c> for holes (index in range but
+    /// not written), or <see cref="SharpTSUndefined"/>.<c>Instance</c> for out-of-range
+    /// indices. Built-in array methods that distinguish holes from explicit undefined
+    /// (forEach skips, map preserves, indexOf skips, includes does not) must use this.
+    /// </summary>
+    public object? GetRaw(int index)
+    {
+        if ((uint)index >= (uint)_length) return SharpTSUndefined.Instance;
+        return GetCore(index);
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> if <paramref name="index"/> is a present (non-hole) slot.
+    /// Equivalent to ECMA-262 <c>HasProperty</c> for numeric indices: <c>(String(i)) in arr</c>.
+    /// </summary>
+    public bool HasIndex(int index)
+    {
+        if ((uint)index >= (uint)_length) return false;
+        if (_sparse == null) return index < _dense.Count && _dense[index] is not ArrayHole;
+        if (index < _dense.Count) return _dense[index] is not ArrayHole;
+        return _sparse.ContainsKey((uint)index);
+    }
+
+    /// <summary>
+    /// Makes <paramref name="index"/> a hole (ECMA-262 <c>delete arr[i]</c>).
+    /// Length is unchanged. No-op for out-of-range indices or frozen arrays.
+    /// </summary>
+    public void DeleteAt(int index)
+    {
+        if (IsFrozen) return;
+        if ((uint)index >= (uint)_length) return;
+        if (_sparse == null || index < _dense.Count)
+            _dense[index] = ArrayHole.Instance;
+        else
+            _sparse.Remove((uint)index);
+    }
+
+    /// <summary>Reads the slot at the given index without mutating length or storage mode.
+    /// Returns <see cref="ArrayHole"/>.<c>Instance</c> for holes (positions not written).
+    /// Callers that want JS-spec user-facing behavior (holes read as undefined) should
+    /// use <see cref="Get(int)"/> or convert via <see cref="UnholeForRead(object?)"/>.</summary>
     private object? GetCore(int index)
     {
         if (_sparse == null || index < _dense.Count)
             return _dense[index];
-        return _sparse.TryGetValue((uint)index, out var v) ? v : SharpTSUndefined.Instance;
+        return _sparse.TryGetValue((uint)index, out var v) ? v : ArrayHole.Instance;
     }
+
+    /// <summary>
+    /// Converts an <see cref="ArrayHole"/> to <see cref="SharpTSUndefined"/>.<c>Instance</c>
+    /// for user-facing reads. Holes are observable as undefined at the language level
+    /// (<c>arr[i] === undefined</c> for a hole, spread fills holes with undefined, etc.),
+    /// so boundary helpers must strip the internal sentinel before returning.
+    /// </summary>
+    private static object? UnholeForRead(object? value)
+        => value is ArrayHole ? SharpTSUndefined.Instance : value;
 
     /// <summary>Writes the slot at the given index without mutating length or transitioning.</summary>
     private void SetCore(int index, object? value)
@@ -144,12 +197,19 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// User-facing iteration: holes are yielded as <see cref="SharpTSUndefined"/>.<c>Instance</c>
+    /// so <c>for-of</c>, <c>[...arr]</c>, and LINQ see undefined (matches ECMA-262 iterator
+    /// protocol behavior of <c>values()</c>). Built-ins that need to skip holes — forEach,
+    /// filter, reduce, etc. — must NOT use this enumerator; they iterate indices and check
+    /// <see cref="HasIndex(int)"/> themselves.
+    /// </remarks>
     public IEnumerator<object?> GetEnumerator()
     {
         int denseCount = _dense.Count;
         int cap = Math.Min(denseCount, _length);
         for (int i = 0; i < cap; i++)
-            yield return _dense[i];
+            yield return UnholeForRead(_dense[i]);
         if (_sparse != null || _length > denseCount)
         {
             for (int i = denseCount; i < _length; i++)
@@ -224,7 +284,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         _length = _dense.Count;
     }
 
-    /// <summary>Removes and returns the last element.</summary>
+    /// <summary>Removes and returns the last element. A hole reads as undefined.</summary>
     public object? RemoveLast()
     {
         if (_length == 0)
@@ -245,16 +305,16 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         }
         _length--;
         TryCollapseSparse();
-        return result;
+        return UnholeForRead(result);
     }
 
-    /// <summary>Removes and returns the first element (O(1) in dense mode).</summary>
+    /// <summary>Removes and returns the first element (O(1) in dense mode). A hole reads as undefined.</summary>
     public object? RemoveFirst()
     {
         MaterializeDense();
         var result = _dense.RemoveFirst();
         _length = _dense.Count;
-        return result;
+        return UnholeForRead(result);
     }
 
     /// <summary>Removes the element at the given index.</summary>
@@ -302,11 +362,11 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         return result;
     }
 
-    /// <summary>Returns the last element without removing it.</summary>
-    public object? PeekLast() => _length == 0 ? throw new InvalidOperationException("Array is empty.") : GetCore(_length - 1);
+    /// <summary>Returns the last element without removing it (holes read as undefined).</summary>
+    public object? PeekLast() => _length == 0 ? throw new InvalidOperationException("Array is empty.") : UnholeForRead(GetCore(_length - 1));
 
-    /// <summary>Returns the first element without removing it.</summary>
-    public object? PeekFirst() => _length == 0 ? throw new InvalidOperationException("Array is empty.") : GetCore(0);
+    /// <summary>Returns the first element without removing it (holes read as undefined).</summary>
+    public object? PeekFirst() => _length == 0 ? throw new InvalidOperationException("Array is empty.") : UnholeForRead(GetCore(0));
 
     /// <summary>Returns true if the element is present (reference/Equals match).</summary>
     public bool ContainsElement(object? item) => IndexOfElement(item) >= 0;
@@ -337,7 +397,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
             if (_sparse.TryGetValue((uint)i, out var v))
                 _dense.Add(v);
             else
-                _dense.Add(SharpTSUndefined.Instance);
+                _dense.Add(ArrayHole.Instance);  // Preserve hole identity into dense.
         }
         _sparse = null;
     }
@@ -404,15 +464,17 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// JS-semantic read. Returns <see cref="SharpTSUndefined"/>.<c>Instance</c>
-    /// for out-of-range indices and for holes. Does not distinguish between
-    /// explicit undefined and holes — that distinction is a Stage C concern.
+    /// JS-semantic read for user-facing code. Returns <see cref="SharpTSUndefined"/>.<c>Instance</c>
+    /// for out-of-range indices AND for holes — matching the observable behavior
+    /// of <c>arr[i]</c> at the language level. Built-ins that need to distinguish
+    /// holes (forEach, indexOf, etc.) should use <see cref="GetRaw(int)"/> plus
+    /// <see cref="HasIndex(int)"/>.
     /// </summary>
     public object? Get(int index)
     {
         if ((uint)index >= (uint)_length)
             return SharpTSUndefined.Instance;
-        return GetCore(index);
+        return UnholeForRead(GetCore(index));
     }
 
     public RuntimeValue GetRV(int index) => RuntimeValue.FromBoxed(Get(index));
@@ -493,8 +555,11 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         long growth = (long)index + 1 - _length;
         if (growth <= SparseThreshold)
         {
+            // Pad intermediate positions with ArrayHole, not Undefined —
+            // per ECMA-262, a[5] = 1 on an empty array creates holes at 0..4
+            // that forEach skips, hasOwnProperty rejects, etc.
             while (_dense.Count <= index)
-                _dense.Add(SharpTSUndefined.Instance);
+                _dense.Add(ArrayHole.Instance);
             _dense[index] = value;
             _length = _dense.Count;
             return;
@@ -558,8 +623,9 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
             return;
         }
 
+        // Pad with ArrayHole — `a.length = N` (N > length) creates holes, not undefined.
         while (_dense.Count < newLength)
-            _dense.Add(SharpTSUndefined.Instance);
+            _dense.Add(ArrayHole.Instance);
         _length = _dense.Count;
     }
 
@@ -795,13 +861,18 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
 
         if (int.TryParse(name, out int index) && index >= 0 && index < _length)
         {
+            // Holes have no own property descriptor — ECMA-262 HasOwnProperty
+            // returns false, and Object.getOwnPropertyDescriptor returns undefined.
+            if (!HasIndex(index))
+                return null;
+
             PropertyDescriptorFlags flags = default;
             if (_descriptors?.TryGetValue(name, out flags) != true)
                 flags = PropertyDescriptorFlags.Default;
 
             return new SharpTSPropertyDescriptor
             {
-                Value = GetCore(index),
+                Value = UnholeForRead(GetCore(index)),
                 Writable = flags.Writable,
                 Enumerable = flags.Enumerable,
                 Configurable = flags.Configurable
@@ -826,5 +897,18 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         return null;
     }
 
-    public override string ToString() => $"[{string.Join(", ", this.Select(e => e?.ToString() ?? "null"))}]";
+    public override string ToString()
+    {
+        // Render holes as "undefined" for debug; public-facing toString/join
+        // (which renders holes as empty string) live in the array built-ins.
+        var sb = new System.Text.StringBuilder("[");
+        for (int i = 0; i < _length; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            var raw = GetCore(i);
+            sb.Append(raw is ArrayHole ? "undefined" : raw?.ToString() ?? "null");
+        }
+        sb.Append(']');
+        return sb.ToString();
+    }
 }
