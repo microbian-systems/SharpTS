@@ -1,10 +1,14 @@
 {
-  "__comment__": "Milestone 2 starter subset minus Array. Array folder is deferred on issue #73 (proper sparse-array storage). Growth guards in SharpTSArray.Set and SharpTSArrayGlobal.Call prevent the most common OOM path, but individual Array.prototype methods still drive process memory past the in-process runner's watchdog threshold on tests that exercise sparse semantics. Adding Array to this list without first shipping sparse storage will exhaust memory.",
+  "__comment__": "Milestone 2 subset — Array folder re-added for issue #73 Stage D. Sparse storage + hole-aware built-ins (commits 23052c0 / 15f4e40 / 1074240) landed in the interpreter; compiled mode still uses dense List<object?> backing so `compiledExcludeFolders` holds Array out until Stage E ports sparse storage into the emitter. Known interpreter gap: indices > int.MaxValue - 1 (e.g. S15.4.5.2_A1_T1.js: x[4294967294]=1) still throw RangeError — widening the index API to uint32 is tracked separately.",
   "folders": [
+    "test/built-ins/Array",
     "test/built-ins/Math",
     "test/built-ins/Number",
     "test/built-ins/String",
     "test/language/expressions/new"
+  ],
+  "compiledExcludeFolders": [
+    "test/built-ins/Array"
   ],
   "timeoutSeconds": 5,
   "skipFeaturesFile": "skip-features.txt"

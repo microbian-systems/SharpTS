@@ -58,8 +58,9 @@ public class Test262Tests
         var config = Test262Config.Load(configFile);
         var skipFeatures = config.LoadSkipFeatures(configDir);
 
-        var files = EnumerateTestFiles(test262Root, config.Folders);
-        _output.WriteLine($"[{mode}] enumerated {files.Count} test files from {config.Folders.Count} folders");
+        var modeFolders = config.GetFoldersForMode(mode);
+        var files = EnumerateTestFiles(test262Root, modeFolders);
+        _output.WriteLine($"[{mode}] enumerated {files.Count} test files from {modeFolders.Count} folders");
 
         var runner = new Test262Runner(test262Root, config.Timeout, skipFeatures);
         var current = new SortedDictionary<string, string>(StringComparer.Ordinal);

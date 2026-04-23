@@ -11,9 +11,25 @@ namespace SharpTS.Test262;
 public sealed record Test262Config(
     [property: JsonPropertyName("folders")] IReadOnlyList<string> Folders,
     [property: JsonPropertyName("timeoutSeconds")] int TimeoutSeconds,
-    [property: JsonPropertyName("skipFeaturesFile")] string? SkipFeaturesFile)
+    [property: JsonPropertyName("skipFeaturesFile")] string? SkipFeaturesFile,
+    [property: JsonPropertyName("compiledExcludeFolders")] IReadOnlyList<string>? CompiledExcludeFolders = null)
 {
     public TimeSpan Timeout => TimeSpan.FromSeconds(TimeoutSeconds);
+
+    /// <summary>
+    /// Resolves the folders to enumerate for a given execution mode. Compiled
+    /// mode may exclude folders via <see cref="CompiledExcludeFolders"/> — used
+    /// to keep large-allocation test suites (e.g. <c>test/built-ins/Array</c>)
+    /// in interpreter baselines while compiled-mode catches up on sparse
+    /// storage (issue #73 Stage E follow-up).
+    /// </summary>
+    public IReadOnlyList<string> GetFoldersForMode(Test262ExecutionMode mode)
+    {
+        if (mode != Test262ExecutionMode.Compiled || CompiledExcludeFolders is null or { Count: 0 })
+            return Folders;
+        var excluded = new HashSet<string>(CompiledExcludeFolders, StringComparer.Ordinal);
+        return [.. Folders.Where(f => !excluded.Contains(f))];
+    }
 
     private static readonly JsonSerializerOptions Options = new()
     {

@@ -248,6 +248,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, nLocal);
         il.MarkLabel(invalidRangeLabel);
 
+        // Compile-mode arrays use List<object?> directly — no sparse storage
+        // yet (interpreter gained it in issue #73 Stage B; compile mode is the
+        // Stage E follow-up). Without a guard, `new Array(50_000_000)` blows
+        // the heap. Throw RangeError past 1M so huge Array() calls fail fast
+        // instead of OOM'ing the test host.
+        var throwRangeErrorLabel = il.DefineLabel();
+        var sizeOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Ldc_I4, 1_000_000);
+        il.Emit(OpCodes.Bgt, throwRangeErrorLabel);
+        il.Emit(OpCodes.Br, sizeOkLabel);
+
+        il.MarkLabel(throwRangeErrorLabel);
+        il.Emit(OpCodes.Ldstr, "RangeError: Array(N) size exceeds compile-mode cap (1M). See issue #73 Stage E for sparse-storage port.");
+        il.Emit(OpCodes.Newobj, typeof(Exception).GetConstructor([typeof(string)])!);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(sizeOkLabel);
+
         // list = new List<object>(n)
         il.Emit(OpCodes.Ldloc, nLocal);
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
