@@ -27,4 +27,23 @@ public static class Test262Paths
 
     public static string HarnessDir(string root) => Path.Combine(root, "harness");
     public static string TestDir(string root) => Path.Combine(root, "test");
+
+    /// <summary>
+    /// Locates the <c>SharpTS.Test262/</c> project source directory — the place
+    /// where <c>config/</c> and <c>baselines/</c> live. Required so tests read
+    /// the live files (and can rewrite baselines with <c>UPDATE_BASELINE=1</c>)
+    /// instead of stale copies in <c>bin/</c>.
+    /// </summary>
+    public static string? TryFindProjectDir()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName, "SharpTS.Test262");
+            if (File.Exists(Path.Combine(candidate, "SharpTS.Test262.csproj")))
+                return candidate;
+            dir = dir.Parent;
+        }
+        return null;
+    }
 }

@@ -33,12 +33,14 @@ public sealed class Test262Runner
     private readonly string _test262Root;
     private readonly Test262HarnessAssembler _assembler;
     private readonly TimeSpan _timeout;
+    private readonly HashSet<string> _skipFeatures;
 
-    public Test262Runner(string test262Root, TimeSpan? timeout = null)
+    public Test262Runner(string test262Root, TimeSpan? timeout = null, HashSet<string>? skipFeatures = null)
     {
         _test262Root = test262Root;
         _assembler = new Test262HarnessAssembler(test262Root);
         _timeout = timeout ?? DefaultTimeout;
+        _skipFeatures = skipFeatures ?? new HashSet<string>(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -70,6 +72,18 @@ public sealed class Test262Runner
         if (metadata.IsAsync)
             return new Test262Result(Test262Outcome.Skipped, null, "async-done-deferred");
 
+        // Feature-gated skip so known-unsupported categories don't pollute
+        // Fail/RuntimeError buckets. Only one matching tag is reported; the
+        // rest are irrelevant once the first has ruled the test out.
+        if (_skipFeatures.Count > 0 && metadata.Features.Count > 0)
+        {
+            foreach (var feature in metadata.Features)
+            {
+                if (_skipFeatures.Contains(feature))
+                    return new Test262Result(Test262Outcome.Skipped, null, $"skip-feature:{feature}");
+            }
+        }
+
         string assembled;
         int harnessLength;
         try
@@ -91,49 +105,77 @@ public sealed class Test262Runner
 
     private Test262Result RunInterpreted(string source, int harnessLength)
     {
-        var task = Task.Run(() =>
+        // Parse + type-check on the caller's thread — neither honors the VM
+        // timeout token so we'd rather not burn a dedicated thread per test
+        // on work that doesn't need cancellation.
+        SharpTS.Diagnostics.ParseDiagnosticResult parseResult;
+        try
         {
             var lexer = new Lexer(source);
             var tokens = lexer.ScanTokens();
             var parser = new Parser(tokens);
-            var parseResult = parser.Parse();
-            if (!parseResult.IsSuccess)
-                return new Test262Result(Test262Outcome.ParseError, parseResult.Diagnostics.First().ToString(), null);
+            parseResult = parser.Parse();
+        }
+        catch (Exception ex)
+        {
+            // Lexer throws raw Exception on syntax it won't tokenize
+            // (legacy octals, bad escapes). Those are parse-phase failures.
+            return new Test262Result(Test262Outcome.ParseError, ex.Message, null);
+        }
+        if (!parseResult.IsSuccess)
+            return new Test262Result(Test262Outcome.ParseError, parseResult.Diagnostics.First().ToString(), null);
 
-            TypeMap typeMap;
-            try
-            {
-                var checker = new TypeChecker();
-                typeMap = checker.Check(parseResult.Statements);
-            }
-            catch (TypeCheckException ex)
-            {
-                return new Test262Result(Test262Outcome.TypeCheckError, ex.Message, null);
-            }
+        TypeMap typeMap;
+        try
+        {
+            var checker = new TypeChecker();
+            typeMap = checker.Check(parseResult.Statements);
+        }
+        catch (TypeCheckException ex)
+        {
+            return new Test262Result(Test262Outcome.TypeCheckError, ex.Message, null);
+        }
 
+        // Execute on a dedicated thread and signal the interpreter's VM
+        // timeout token on deadline. The token is checked between statements
+        // and loop iterations, so most runaway tests self-terminate promptly.
+        // Pathological tight-loop tests can still run longer than the
+        // timeout — we detect and log that leak but don't block.
+        Test262Result? result = null;
+        Exception? threadException = null;
+        using var cts = new CancellationTokenSource();
+
+        var thread = new Thread(() =>
+        {
             var sw = new StringWriter();
             using var interpreter = new Interpreter(stdout: sw, stderr: TextWriter.Null);
+            interpreter.SetVmTimeoutToken(cts.Token);
             try
             {
                 interpreter.Interpret(parseResult.Statements, typeMap);
+                result = new Test262Result(Test262Outcome.Pass, null, null);
             }
             catch (Exception ex)
             {
-                return ClassifyExecutionException(ex, harnessLength);
+                threadException = ex;
             }
-            return new Test262Result(Test262Outcome.Pass, null, null);
-        });
+        })
+        { IsBackground = true };
 
-        try
+        thread.Start();
+        if (!thread.Join(_timeout))
         {
-            if (task.Wait(_timeout))
-                return task.Result;
+            cts.Cancel();
+            // Give the interpreter a short grace window to honor the token.
+            // If it doesn't, accept the leak — the thread is background so
+            // it dies with the process; we just won't see its result.
+            thread.Join(TimeSpan.FromMilliseconds(500));
             return new Test262Result(Test262Outcome.Timeout, $"exceeded {_timeout.TotalSeconds}s", null);
         }
-        catch (AggregateException ex)
-        {
-            return ClassifyExecutionException(ex.InnerException ?? ex, harnessLength);
-        }
+
+        if (threadException is not null)
+            return ClassifyExecutionException(threadException, harnessLength);
+        return result ?? new Test262Result(Test262Outcome.RuntimeError, "runner produced no result", null);
     }
 
     private Test262Result RunCompiled(string source, int harnessLength)
@@ -148,10 +190,18 @@ public sealed class Test262Runner
 
         try
         {
-            var lexer = new Lexer(source);
-            var tokens = lexer.ScanTokens();
-            var parser = new Parser(tokens);
-            var parseResult = parser.Parse();
+            SharpTS.Diagnostics.ParseDiagnosticResult parseResult;
+            try
+            {
+                var lexer = new Lexer(source);
+                var tokens = lexer.ScanTokens();
+                var parser = new Parser(tokens);
+                parseResult = parser.Parse();
+            }
+            catch (Exception ex)
+            {
+                return new Test262Result(Test262Outcome.ParseError, ex.Message, null);
+            }
             if (!parseResult.IsSuccess)
                 return new Test262Result(Test262Outcome.ParseError, parseResult.Diagnostics.First().ToString(), null);
 

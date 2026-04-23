@@ -1,0 +1,32 @@
+# Test262 feature tags that cause SharpTS to bucket as Skipped.
+# Tests are skipped when the frontmatter `features: [...]` list intersects
+# this set. Add an entry here when a whole category of tests is known to
+# probe an unimplemented feature — so they don't pollute Fail/RuntimeError
+# buckets and hide actionable regressions.
+#
+# Keep this list small and justified. Each line is one feature tag, '#'
+# introduces a comment.
+
+# Shared memory / atomics — not planned.
+SharedArrayBuffer
+Atomics
+
+# Async iteration protocol — Milestone 1 also auto-skips anything with the
+# `async` flag, but tagged tests without the flag still land here.
+async-iteration
+
+# Regexp extensions we don't support yet.
+regexp-duplicate-named-groups
+regexp-lookbehind
+regexp-match-indices
+regexp-named-groups
+regexp-unicode-property-escapes
+regexp-v-flag
+
+# Proposals SharpTS hasn't picked up.
+Temporal
+ShadowRealm
+decorators
+explicit-resource-management
+iterator-helpers
+async-explicit-resource-management

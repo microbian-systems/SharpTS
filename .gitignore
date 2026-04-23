@@ -95,3 +95,5 @@ vscode-sharpts/dist/
 vscode-sharpts/.eslintcache
 vscode-sharpts/.vscode-test/
 *.vsix
+# Test262 wide-sweep output (gitignored; large + triage-only)
+SharpTS.Test262/wide-sweep-report.md

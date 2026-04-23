@@ -1,0 +1,11 @@
+{
+  "__comment__": "Milestone 2 starter subset minus Array. Array is deferred: several of its tests allocate in pathological tight loops (e.g. `new Array(2**32).fill(x)`) that outrun the VM timeout token, accumulate orphan-thread memory, and OOM the test process. Tracked in the `project_test262_scale` memory note.",
+  "folders": [
+    "test/built-ins/Math",
+    "test/built-ins/Number",
+    "test/built-ins/String",
+    "test/language/expressions/new"
+  ],
+  "timeoutSeconds": 5,
+  "skipFeaturesFile": "skip-features.txt"
+}

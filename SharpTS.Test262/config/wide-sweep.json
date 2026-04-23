@@ -1,0 +1,8 @@
+{
+  "folders": [
+    "test/built-ins",
+    "test/language"
+  ],
+  "timeoutSeconds": 5,
+  "skipFeaturesFile": "skip-features.txt"
+}
