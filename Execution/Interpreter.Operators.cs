@@ -655,7 +655,7 @@ public partial class Interpreter
             if (double.TryParse(key, out double index))
             {
                 int i = (int)index;
-                return i >= 0 && i < arr.Elements.Count;
+                return i >= 0 && i < arr.Length;
             }
             return false;
         }
@@ -686,10 +686,10 @@ public partial class Interpreter
         if (obj is SharpTSArray array)
         {
             var sb = new System.Text.StringBuilder("[");
-            for (int i = 0; i < array.Elements.Count; i++)
+            for (int i = 0; i < array.Length; i++)
             {
                 if (i > 0) sb.Append(", ");
-                sb.Append(Stringify(array.Elements[i]));
+                sb.Append(Stringify(array[i]));
             }
             sb.Append(']');
             return sb.ToString();

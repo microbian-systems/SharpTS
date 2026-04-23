@@ -21,7 +21,7 @@ public static partial class RuntimeTypes
         length = 0;
         if (obj is not SharpTSArray arr)
             return false;
-        length = arr.Elements.Count;
+        length = arr.Length;
         return true;
     }
 
@@ -31,9 +31,9 @@ public static partial class RuntimeTypes
         result = null;
         if (obj is not SharpTSArray arr)
             return false;
-        if (index >= 0 && index < arr.Elements.Count)
+        if (index >= 0 && index < arr.Length)
         {
-            result = arr.Elements[index];
+            result = arr[index];
             return true;
         }
         return false;

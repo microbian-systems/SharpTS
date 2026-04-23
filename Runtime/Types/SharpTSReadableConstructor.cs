@@ -94,7 +94,7 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
         // Push items from iterable
         if (iterable is SharpTSArray arr)
         {
-            foreach (var item in arr.Elements)
+            foreach (var item in arr)
             {
                 var pushMethod = stream.GetMember("push") as BuiltInMethod;
                 pushMethod?.Bind(stream).Call(interpreter, [item]);

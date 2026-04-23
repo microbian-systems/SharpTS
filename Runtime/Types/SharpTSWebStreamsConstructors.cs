@@ -43,7 +43,7 @@ public sealed class SharpTSReadableStreamConstructor : ISharpTSCallable
         switch (iterable)
         {
             case SharpTSArray arr:
-                foreach (var e in arr.Elements) pulled.Enqueue(e);
+                foreach (var e in arr) pulled.Enqueue(e);
                 break;
             case string s:
                 foreach (var ch in s) pulled.Enqueue(ch.ToString());

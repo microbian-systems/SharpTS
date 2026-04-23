@@ -107,7 +107,16 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
              "TryReverse", "TryReverseStrict", "TryShift", "TryShiftStrict",
              "TryUnshift", "TryUnshiftStrict",
              // RuntimeValue overloads used only by interpreter, not emitted IL
-             "GetRV"]),
+             "GetRV",
+             // Encapsulation API introduced for issue #73 Stage A (sparse-array migration).
+             // These collapse direct .Elements access in the interpreter; compiled-mode
+             // emission still operates on List<object?> backing, so $Array has no need
+             // for them. They may go away in Stage B once storage is redesigned.
+             "Add", "AddRange", "AddFirst", "Insert", "InsertRange",
+             "RemoveLast", "RemoveFirst", "RemoveAt", "RemoveRange",
+             "Clear", "ReverseInPlace", "GetRange",
+             "PeekLast", "PeekFirst",
+             "ContainsElement", "IndexOfElement"]),
 
         new(typeof(SharpTSObject), "Object",
             [.. BaseIgnored, "GetMember",

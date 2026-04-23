@@ -677,7 +677,7 @@ public partial class Interpreter
         // Get elements based on iterable type
         IEnumerable<object?> elements = iterable switch
         {
-            SharpTSArray array => array.Elements,
+            SharpTSArray array => array,
             SharpTSBuffer buffer => buffer.Data.Select(b => (object?)(double)b),  // yields byte values as numbers
             SharpTSMap map => map.Entries().Elements,      // yields [key, value] arrays
             SharpTSSet set => set.Values().Elements,       // yields values
@@ -709,7 +709,7 @@ public partial class Interpreter
         {
             SharpTSObject o => o.Fields.Keys,
             SharpTSInstance i => i.GetFieldNames(),
-            SharpTSArray a => Enumerable.Range(0, a.Elements.Count).Select(i => i.ToString()),
+            SharpTSArray a => Enumerable.Range(0, a.Length).Select(i => i.ToString()),
             // JS functions are objects; enumerate user-assigned properties. Lodash iterates
             // its own utility namespace (which is a function returning the wrapper) with
             // `for (var key in _) { ... }` to copy members onto the mixin target.
@@ -888,7 +888,7 @@ public partial class Interpreter
         // Fall back to known iterable types
         return value switch
         {
-            SharpTSArray array => array.Elements,
+            SharpTSArray array => array,
             SharpTSMap map => map.Entries().Elements,      // yields [key, value] arrays
             SharpTSSet set => set.Values().Elements,       // yields values
             SharpTSIterator iter => iter.Elements,

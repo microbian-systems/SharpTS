@@ -98,7 +98,7 @@ public static class FunctionBuiltIns
         }
         else if (argsArray is SharpTSArray tsArray)
         {
-            callArgs = new List<object?>(tsArray.Elements);
+            callArgs = new List<object?>(tsArray);
         }
         else if (argsArray is List<object?> list)
         {

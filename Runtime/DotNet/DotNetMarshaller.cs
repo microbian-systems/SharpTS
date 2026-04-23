@@ -104,9 +104,9 @@ internal static class DotNetMarshaller
         if (value is SharpTSArray tsArray && targetType.IsArray)
         {
             var elementType = targetType.GetElementType()!;
-            var array = Array.CreateInstance(elementType, tsArray.Elements.Count);
+            var array = Array.CreateInstance(elementType, tsArray.Length);
             int idx = 0;
-            foreach (var el in tsArray.Elements)
+            foreach (var el in tsArray)
             {
                 array.SetValue(Convert(el, elementType, interpreter), idx++);
             }

@@ -1,3 +1,4 @@
+using System.Collections;
 using SharpTS.Runtime;
 using SharpTS.TypeSystem;
 
@@ -12,14 +13,98 @@ namespace SharpTS.Runtime.Types;
 /// Provides indexed Get/Set access with bounds checking.
 /// Used by <see cref="Interpreter"/> when evaluating array literals and array operations
 /// (e.g., indexing, push, pop, map, filter).
+/// <para>
+/// Access API (Stage A of issue #73): callers should use <see cref="Length"/>, the
+/// indexer, <see cref="GetEnumerator"/>, and the mutation helpers on this type
+/// rather than reaching into <see cref="Elements"/>. <c>Elements</c> remains public
+/// during the migration so call sites can move incrementally; it will become
+/// private when the dual-mode (dense + sparse dictionary) backing store lands.
+/// </para>
 /// </remarks>
 /// <seealso cref="SharpTSObject"/>
-public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
+public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnlyList<object?>
 {
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Array;
 
     public Deque<object?> Elements { get; } = elements;
+
+    /// <summary>
+    /// ECMA-262 array length. Today this is identical to <see cref="Elements"/>.<c>Count</c>;
+    /// once sparse storage lands (issue #73) it becomes the authoritative length and
+    /// may exceed the physical slot count.
+    /// </summary>
+    public int Length => Elements.Count;
+
+    /// <summary>
+    /// Collection count. Same as <see cref="Length"/> — present so the runtime can detect
+    /// the array size cheaply (e.g. <c>new List&lt;object?&gt;(array)</c> preallocates capacity).
+    /// </summary>
+    public int Count => Length;
+
+    /// <summary>
+    /// Indexed access to an existing slot. Throws <see cref="ArgumentOutOfRangeException"/>
+    /// for out-of-range reads and writes — use <see cref="Get(int)"/> / <see cref="Set(int, object?)"/>
+    /// for the JS-semantic variants (undefined on OOB read, extend-with-undefined on OOB write).
+    /// </summary>
+    public object? this[int index]
+    {
+        get => Elements[index];
+        set => Elements[index] = value;
+    }
+
+    /// <inheritdoc />
+    public IEnumerator<object?> GetEnumerator() => Elements.GetEnumerator();
+
+    IEnumerator IEnumerable.GetEnumerator() => Elements.GetEnumerator();
+
+    /// <summary>Appends an element. Does not check frozen/sealed state — callers that care must check.</summary>
+    public void Add(object? value) => Elements.Add(value);
+
+    /// <summary>Appends many elements. Does not check frozen/sealed state.</summary>
+    public void AddRange(IEnumerable<object?> values) => Elements.AddRange(values);
+
+    /// <summary>Prepends an element (O(1) via Deque).</summary>
+    public void AddFirst(object? value) => Elements.AddFirst(value);
+
+    /// <summary>Inserts at an index, shifting later elements right.</summary>
+    public void Insert(int index, object? value) => Elements.Insert(index, value);
+
+    /// <summary>Inserts many elements at an index.</summary>
+    public void InsertRange(int index, IEnumerable<object?> values) => Elements.InsertRange(index, values);
+
+    /// <summary>Removes and returns the last element.</summary>
+    public object? RemoveLast() => Elements.RemoveLast();
+
+    /// <summary>Removes and returns the first element (O(1) via Deque).</summary>
+    public object? RemoveFirst() => Elements.RemoveFirst();
+
+    /// <summary>Removes the element at the given index.</summary>
+    public void RemoveAt(int index) => Elements.RemoveAt(index);
+
+    /// <summary>Removes a contiguous range of elements.</summary>
+    public void RemoveRange(int index, int count) => Elements.RemoveRange(index, count);
+
+    /// <summary>Clears all elements.</summary>
+    public void Clear() => Elements.Clear();
+
+    /// <summary>Reverses in place.</summary>
+    public void ReverseInPlace() => Elements.Reverse();
+
+    /// <summary>Returns a new <see cref="List{T}"/> containing the given slice.</summary>
+    public List<object?> GetRange(int index, int count) => Elements.GetRange(index, count);
+
+    /// <summary>Returns the last element without removing it.</summary>
+    public object? PeekLast() => Elements.PeekLast();
+
+    /// <summary>Returns the first element without removing it.</summary>
+    public object? PeekFirst() => Elements.PeekFirst();
+
+    /// <summary>Returns true if the element is present (reference/Equals match).</summary>
+    public bool ContainsElement(object? item) => Elements.Contains(item);
+
+    /// <summary>Returns the first index of the element, or -1 if not found.</summary>
+    public int IndexOfElement(object? item) => Elements.IndexOf(item);
 
     /// <summary>
     /// Creates a SharpTSArray from any enumerable collection.

@@ -425,10 +425,10 @@ public static class ZlibModuleInterpreter
     /// </summary>
     private static byte[] ArrayToBytes(SharpTSArray array)
     {
-        var bytes = new byte[array.Elements.Count];
-        for (int i = 0; i < array.Elements.Count; i++)
+        var bytes = new byte[array.Length];
+        for (int i = 0; i < array.Length; i++)
         {
-            bytes[i] = array.Elements[i] switch
+            bytes[i] = array[i] switch
             {
                 double d => (byte)((int)d & 0xFF),
                 int n => (byte)(n & 0xFF),

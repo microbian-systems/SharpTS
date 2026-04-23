@@ -368,7 +368,7 @@ public static class FetchBuiltIns
             bool b => b,
             double d => d,
             string s => s,
-            SharpTSArray arr => arr.Elements.Select(ConvertToSerializable).ToArray(),
+            SharpTSArray arr => arr.Select(ConvertToSerializable).ToArray(),
             SharpTSObject obj => obj.Fields.ToDictionary(kv => kv.Key, kv => ConvertToSerializable(kv.Value)),
             SharpTSBuffer buf => Convert.ToBase64String(buf.Data),
             SharpTSUndefined => null,

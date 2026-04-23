@@ -111,7 +111,7 @@ public class SharpTSTlsSocket : SharpTSSocket
                 // Parse ALPNProtocols from options
                 if (options?.GetProperty("ALPNProtocols") is SharpTSArray alpnArray)
                 {
-                    sslOptions.ApplicationProtocols = alpnArray.Elements
+                    sslOptions.ApplicationProtocols = alpnArray
                         .OfType<string>()
                         .Select(s => new SslApplicationProtocol(s))
                         .ToList();

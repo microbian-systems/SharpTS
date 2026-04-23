@@ -428,10 +428,10 @@ public static class ProcessBuiltIns
         double totalNanoseconds = currentTicks * 1_000_000_000.0 / _tickFrequency;
 
         // If a previous time is provided, calculate the difference
-        if (args.Count > 0 && args[0] is SharpTSArray prev && prev.Elements.Count >= 2)
+        if (args.Count > 0 && args[0] is SharpTSArray prev && prev.Length >= 2)
         {
-            var prevSeconds = Convert.ToDouble(prev.Elements[0]);
-            var prevNanos = Convert.ToDouble(prev.Elements[1]);
+            var prevSeconds = Convert.ToDouble(prev[0]);
+            var prevNanos = Convert.ToDouble(prev[1]);
             double prevTotalNanos = prevSeconds * 1_000_000_000.0 + prevNanos;
             totalNanoseconds -= prevTotalNanos;
         }

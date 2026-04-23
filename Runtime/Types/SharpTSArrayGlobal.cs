@@ -141,52 +141,48 @@ public sealed class SharpTSArrayUnboundMethod : ISharpTSCallable
 
     private static object? PushImpl(SharpTSArray arr, List<object?> args)
     {
-        foreach (var item in args) arr.Elements.Add(item);
-        return (double)arr.Elements.Count;
+        foreach (var item in args) arr.Add(item);
+        return (double)arr.Length;
     }
 
     private static object? PopImpl(SharpTSArray arr, List<object?> args)
     {
-        if (arr.Elements.Count == 0) return SharpTSUndefined.Instance;
-        var last = arr.Elements[arr.Elements.Count - 1];
-        arr.Elements.RemoveAt(arr.Elements.Count - 1);
-        return last;
+        if (arr.Length == 0) return SharpTSUndefined.Instance;
+        return arr.RemoveLast();
     }
 
     private static object? ShiftImpl(SharpTSArray arr, List<object?> args)
     {
-        if (arr.Elements.Count == 0) return SharpTSUndefined.Instance;
-        var first = arr.Elements[0];
-        arr.Elements.RemoveAt(0);
-        return first;
+        if (arr.Length == 0) return SharpTSUndefined.Instance;
+        return arr.RemoveFirst();
     }
 
     private static object? UnshiftImpl(SharpTSArray arr, List<object?> args)
     {
-        for (int i = 0; i < args.Count; i++) arr.Elements.Insert(i, args[i]);
-        return (double)arr.Elements.Count;
+        for (int i = 0; i < args.Count; i++) arr.Insert(i, args[i]);
+        return (double)arr.Length;
     }
 
     private static object? SliceImpl(SharpTSArray arr, List<object?> args)
     {
         int start = args.Count > 0 && args[0] is double s ? (int)s : 0;
-        int end = args.Count > 1 && args[1] is double e ? (int)e : arr.Elements.Count;
-        if (start < 0) start = Math.Max(0, arr.Elements.Count + start);
-        if (end < 0) end = Math.Max(0, arr.Elements.Count + end);
-        start = Math.Min(start, arr.Elements.Count);
-        end = Math.Min(end, arr.Elements.Count);
+        int end = args.Count > 1 && args[1] is double e ? (int)e : arr.Length;
+        if (start < 0) start = Math.Max(0, arr.Length + start);
+        if (end < 0) end = Math.Max(0, arr.Length + end);
+        start = Math.Min(start, arr.Length);
+        end = Math.Min(end, arr.Length);
         if (end <= start) return new SharpTSArray(new List<object?>());
         var result = new List<object?>(end - start);
-        for (int i = start; i < end; i++) result.Add(arr.Elements[i]);
+        for (int i = start; i < end; i++) result.Add(arr[i]);
         return new SharpTSArray(result);
     }
 
     private static object? ConcatImpl(SharpTSArray arr, List<object?> args)
     {
-        var result = new List<object?>(arr.Elements);
+        var result = new List<object?>(arr);
         foreach (var a in args)
         {
-            if (a is SharpTSArray inner) result.AddRange(inner.Elements);
+            if (a is SharpTSArray inner) result.AddRange(inner);
             else result.Add(a);
         }
         return new SharpTSArray(result);
@@ -196,9 +192,9 @@ public sealed class SharpTSArrayUnboundMethod : ISharpTSCallable
     {
         if (args.Count == 0) return -1.0;
         var target = args[0];
-        for (int i = 0; i < arr.Elements.Count; i++)
+        for (int i = 0; i < arr.Length; i++)
         {
-            if (Equals(arr.Elements[i], target)) return (double)i;
+            if (Equals(arr[i], target)) return (double)i;
         }
         return -1.0;
     }

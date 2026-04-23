@@ -277,7 +277,7 @@ public static class DnsModuleInterpreter
     private static string[] ExtractStringArray(object? value)
     {
         if (value is SharpTSArray arr)
-            return arr.Elements.Select(e => e?.ToString() ?? "").ToArray();
+            return arr.Select(e => e?.ToString() ?? "").ToArray();
         if (value is List<object?> list)
             return list.Select(e => e?.ToString() ?? "").ToArray();
         throw new Exception("Runtime Error: dns.setServers requires an array of strings");

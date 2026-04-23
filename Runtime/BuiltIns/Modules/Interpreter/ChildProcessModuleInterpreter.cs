@@ -99,7 +99,7 @@ public static class ChildProcessModuleInterpreter
         var cmdArgs = new List<string>();
         if (args.Count > 1 && args[1] is SharpTSArray argsArray)
         {
-            foreach (var arg in argsArray.Elements)
+            foreach (var arg in argsArray)
             {
                 cmdArgs.Add(arg?.ToString() ?? "");
             }
@@ -304,7 +304,7 @@ public static class ChildProcessModuleInterpreter
 
         if (args.Count > 1 && args[1] is SharpTSArray argsArray)
         {
-            foreach (var arg in argsArray.Elements)
+            foreach (var arg in argsArray)
             {
                 cmdArgs.Add(arg?.ToString() ?? "");
             }
@@ -436,7 +436,7 @@ public static class ChildProcessModuleInterpreter
 
         if (args.Count > 1 && args[1] is SharpTSArray argsArray)
         {
-            foreach (var arg in argsArray.Elements)
+            foreach (var arg in argsArray)
                 cmdArgs.Add(arg?.ToString() ?? "");
             if (args.Count > 2)
                 options = args[2] as SharpTSObject;
@@ -510,7 +510,7 @@ public static class ChildProcessModuleInterpreter
         var nextIdx = 1;
         if (args.Count > nextIdx && args[nextIdx] is SharpTSArray argsArray)
         {
-            foreach (var arg in argsArray.Elements)
+            foreach (var arg in argsArray)
                 cmdArgs.Add(arg?.ToString() ?? "");
             nextIdx++;
         }
@@ -627,7 +627,7 @@ public static class ChildProcessModuleInterpreter
 
         if (args.Count > 1 && args[1] is SharpTSArray argsArray)
         {
-            foreach (var arg in argsArray.Elements)
+            foreach (var arg in argsArray)
                 forkArgs.Add(arg?.ToString() ?? "");
             if (args.Count > 2)
                 options = args[2] as SharpTSObject;

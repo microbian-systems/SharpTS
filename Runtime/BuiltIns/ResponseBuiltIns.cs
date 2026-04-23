@@ -87,7 +87,7 @@ public static class ResponseBuiltIns
             bool b => b,
             double d => d,
             string s => s,
-            SharpTSArray arr => arr.Elements.Select(ConvertToSerializable).ToArray(),
+            SharpTSArray arr => arr.Select(ConvertToSerializable).ToArray(),
             SharpTSObject obj => obj.Fields.ToDictionary(kv => kv.Key, kv => ConvertToSerializable(kv.Value)),
             SharpTSUndefined => null,
             _ => value.ToString()

@@ -182,12 +182,12 @@ public abstract class SharpTSTypedArray : ITypeCategorized
         }
         else if (source is SharpTSArray array)
         {
-            if (offset + array.Elements.Count > _length)
+            if (offset + array.Length > _length)
                 throw new Exception("RangeError: Source too large for target");
 
-            for (int i = 0; i < array.Elements.Count; i++)
+            for (int i = 0; i < array.Length; i++)
             {
-                this[offset + i] = array.Elements[i];
+                this[offset + i] = array[i];
             }
         }
         else

@@ -46,11 +46,11 @@ public class SharpTSMap : ITypeCategorized, IEnumerable<object?>
     public static SharpTSMap FromEntries(SharpTSArray entriesArray)
     {
         var map = new SharpTSMap();
-        foreach (var entry in entriesArray.Elements)
+        foreach (var entry in entriesArray)
         {
-            if (entry is SharpTSArray pair && pair.Elements.Count >= 2)
+            if (entry is SharpTSArray pair && pair.Length >= 2)
             {
-                map._map[NormalizeKey(pair.Elements[0])] = pair.Elements[1];
+                map._map[NormalizeKey(pair[0])] = pair[1];
             }
         }
         return map;

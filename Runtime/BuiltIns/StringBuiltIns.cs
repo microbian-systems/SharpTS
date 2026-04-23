@@ -161,17 +161,17 @@ public static class StringBuiltIns
             throw new Exception("TypeError: String.raw requires at least 1 argument.");
 
         object? stringsArg = args[0].ToObject();
-        IList<object?>? rawStrings = null;
+        IReadOnlyList<object?>? rawStrings = null;
 
         if (stringsArg is SharpTSTemplateStringsArray tsa)
         {
-            rawStrings = tsa.Raw.Elements;
+            rawStrings = tsa.Raw;
         }
         else if (stringsArg is SharpTSObject obj)
         {
             var rawProp = obj.GetProperty("raw");
             if (rawProp is SharpTSArray rawArr)
-                rawStrings = rawArr.Elements;
+                rawStrings = rawArr;
         }
         else if (stringsArg is SharpTSArray arr)
         {
@@ -179,11 +179,11 @@ public static class StringBuiltIns
             {
                 var rawProp = accessor.GetProperty("raw");
                 if (rawProp is SharpTSArray rawArr)
-                    rawStrings = rawArr.Elements;
+                    rawStrings = rawArr;
             }
             if (rawStrings == null)
             {
-                rawStrings = arr.Elements;
+                rawStrings = arr;
             }
         }
 

@@ -1345,7 +1345,7 @@ public sealed class BuiltInRegistry
         if (obj is bool b) return b ? "true" : "false";
         if (obj is SharpTSArray arr)
         {
-            return "[" + string.Join(", ", arr.Elements.Select(Stringify)) + "]";
+            return "[" + string.Join(", ", arr.Select(Stringify)) + "]";
         }
         if (obj is SharpTSObject sobj)
         {

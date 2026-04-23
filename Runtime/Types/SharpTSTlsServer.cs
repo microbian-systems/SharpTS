@@ -62,7 +62,7 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
             // Parse ALPNProtocols
             if (options.GetProperty("ALPNProtocols") is SharpTSArray alpnArray)
             {
-                _alpnProtocols = alpnArray.Elements
+                _alpnProtocols = alpnArray
                     .OfType<string>()
                     .Select(s => new SslApplicationProtocol(s))
                     .ToList();

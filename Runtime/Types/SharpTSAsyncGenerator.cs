@@ -490,7 +490,7 @@ public class SharpTSAsyncGenerator : ITypeCategorized
     {
         return value switch
         {
-            SharpTSArray array => array.Elements,
+            SharpTSArray array => array,
             SharpTSGenerator gen => gen,
             SharpTSIterator iter => iter.Elements,
             SharpTSMap map => map.Entries().Elements,

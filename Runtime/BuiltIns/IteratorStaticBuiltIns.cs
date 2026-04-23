@@ -28,7 +28,7 @@ public static class IteratorStaticBuiltIns
             return new SharpTSIterator(GeneratorToEnumerable(gen));
 
         if (value is SharpTSArray arr)
-            return new SharpTSIterator(arr.Elements);
+            return new SharpTSIterator(arr);
 
         if (value is SharpTSSet set)
             return new SharpTSIterator(set.Values().Elements);

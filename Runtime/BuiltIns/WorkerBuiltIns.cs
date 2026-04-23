@@ -215,10 +215,10 @@ internal class TypedArrayConstructorImpl<T> : ISharpTSCallable where T : SharpTS
         // new Int32Array(array) - copy from another array
         if (arguments[0] is SharpTSArray arr)
         {
-            var result = _createFromLength(arr.Elements.Count);
-            for (int i = 0; i < arr.Elements.Count; i++)
+            var result = _createFromLength(arr.Length);
+            for (int i = 0; i < arr.Length; i++)
             {
-                result[i] = arr.Elements[i];
+                result[i] = arr[i];
             }
             return result;
         }

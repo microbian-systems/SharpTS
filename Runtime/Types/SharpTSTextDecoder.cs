@@ -169,7 +169,7 @@ public class SharpTSTextDecoder : ISharpTSPropertyAccessor
                 {
                     SharpTSBuffer buf => buf.Data,
                     byte[] arr => arr,
-                    SharpTSArray tsArr => tsArr.Elements.Select(e => e switch
+                    SharpTSArray tsArr => tsArr.Select(e => e switch
                     {
                         double d => (byte)(int)d,
                         int i => (byte)i,

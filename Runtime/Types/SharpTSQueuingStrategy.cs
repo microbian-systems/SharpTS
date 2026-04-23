@@ -77,7 +77,7 @@ public sealed class SharpTSByteLengthQueuingStrategy : SharpTSQueuingStrategy
             SharpTSBuffer buf => buf.Length,
             SharpTSArrayBuffer ab => ab.ByteLength,
             SharpTSTypedArray ta => ta.ByteLength,
-            SharpTSArray arr => arr.Elements.Count,
+            SharpTSArray arr => arr.Length,
             _ => TryGetByteLength(chunk),
         };
     }

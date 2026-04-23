@@ -82,9 +82,9 @@ public static class MapBuiltIns
         var result = new SharpTSMap();
         var callbackArgs = new List<object?> { null, null };
 
-        for (int i = 0; i < iterable.Elements.Count; i++)
+        for (int i = 0; i < iterable.Length; i++)
         {
-            var element = iterable.Elements[i];
+            var element = iterable[i];
             callbackArgs[0] = element;
             callbackArgs[1] = (double)i;
             var key = callback.Call(interp, callbackArgs);
@@ -95,7 +95,7 @@ public static class MapBuiltIns
                 existing = new SharpTSArray([]);
                 result.Set(key, existing);
             }
-            ((SharpTSArray)existing).Elements.Add(element);
+            ((SharpTSArray)existing).Add(element);
         }
 
         return result;

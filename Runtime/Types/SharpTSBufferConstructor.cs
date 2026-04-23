@@ -52,7 +52,7 @@ public sealed class SharpTSBufferConstructor
         {
             string s => SharpTSBuffer.FromString(s, encoding),
             SharpTSBuffer buf => SharpTSBuffer.FromBuffer(buf),
-            SharpTSArray arr => SharpTSBuffer.FromArray(arr.Elements),
+            SharpTSArray arr => SharpTSBuffer.FromArray(arr),
             List<object?> list => SharpTSBuffer.FromArray(list),
             _ => throw new Exception($"Buffer.from: unsupported data type: {data.GetType().Name}")
         };
@@ -94,12 +94,12 @@ public sealed class SharpTSBufferConstructor
         if (args.Count == 0)
             return new SharpTSBuffer(0);
 
-        ICollection<object?> buffers;
+        IReadOnlyCollection<object?> buffers;
         if (args[0] is SharpTSArray arr)
         {
-            buffers = arr.Elements;
+            buffers = arr;
         }
-        else if (args[0] is ICollection<object?> coll)
+        else if (args[0] is IReadOnlyCollection<object?> coll)
         {
             buffers = coll;
         }

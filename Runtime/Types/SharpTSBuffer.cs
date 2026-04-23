@@ -77,7 +77,7 @@ public class SharpTSBuffer : ITypeCategorized
     /// <summary>
     /// Creates a Buffer from an array of numbers.
     /// </summary>
-    public static SharpTSBuffer FromArray(IList<object?> array)
+    public static SharpTSBuffer FromArray(IReadOnlyList<object?> array)
     {
         if (array == null)
             throw new ArgumentNullException(nameof(array));
@@ -142,7 +142,7 @@ public class SharpTSBuffer : ITypeCategorized
     /// <summary>
     /// Concatenates a list of Buffers into a single Buffer.
     /// </summary>
-    public static SharpTSBuffer Concat(ICollection<object?> buffers, int? totalLength = null)
+    public static SharpTSBuffer Concat(IReadOnlyCollection<object?> buffers, int? totalLength = null)
     {
         if (buffers == null || buffers.Count == 0)
             return new SharpTSBuffer(0);
@@ -161,7 +161,7 @@ public class SharpTSBuffer : ITypeCategorized
             else if (item is SharpTSArray arr)
             {
                 // Convert array to buffer
-                var converted = FromArray(arr.Elements);
+                var converted = FromArray(arr);
                 validBuffers.Add(converted);
                 calculatedLength += converted.Length;
             }

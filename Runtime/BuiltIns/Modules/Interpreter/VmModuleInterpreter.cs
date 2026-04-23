@@ -240,7 +240,7 @@ public static class VmModuleInterpreter
             if (args[1] is List<object?> paramList)
                 items = paramList;
             else if (args[1] is SharpTSArray paramArray)
-                items = paramArray.Elements;
+                items = paramArray;
             else
                 items = [];
 
@@ -278,7 +278,7 @@ public static class VmModuleInterpreter
                 if (ext is List<object?> extList)
                     contextExtensions = extList;
                 else if (ext is SharpTSArray extArray)
-                    contextExtensions = extArray.Elements.ToList();
+                    contextExtensions = extArray.ToList();
             }
         }
 

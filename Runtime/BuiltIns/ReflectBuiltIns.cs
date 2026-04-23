@@ -120,7 +120,7 @@ public static class ReflectBuiltIns
                     SharpTSObject obj => obj.HasProperty(propertyKey),
                     SharpTSInstance inst => inst.HasProperty(propertyKey),
                     SharpTSArray arr => propertyKey == "length"
-                        || (int.TryParse(propertyKey, out var idx) && idx >= 0 && idx < arr.Elements.Count),
+                        || (int.TryParse(propertyKey, out var idx) && idx >= 0 && idx < arr.Length),
                     Dictionary<string, object?> dict => dict.ContainsKey(propertyKey),
                     _ => false
                 };
@@ -339,7 +339,7 @@ public static class ReflectBuiltIns
                 }
                 else if (argsList is SharpTSArray tsArray)
                 {
-                    callArgs = new List<object?>(tsArray.Elements);
+                    callArgs = new List<object?>(tsArray);
                 }
                 else if (argsList is List<object?> list)
                 {
@@ -376,7 +376,7 @@ public static class ReflectBuiltIns
                 }
                 else if (argsList is SharpTSArray tsArray)
                 {
-                    callArgs = new List<object?>(tsArray.Elements);
+                    callArgs = new List<object?>(tsArray);
                 }
                 else if (argsList is List<object?> list)
                 {

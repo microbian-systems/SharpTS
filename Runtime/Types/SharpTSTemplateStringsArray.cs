@@ -25,7 +25,7 @@ public class SharpTSTemplateStringsArray : SharpTSArray, ISharpTSPropertyAccesso
         return name switch
         {
             "raw" => _rawStrings,
-            "length" => (double)Elements.Count,
+            "length" => (double)Length,
             _ => null
         };
     }
@@ -44,8 +44,8 @@ public class SharpTSTemplateStringsArray : SharpTSArray, ISharpTSPropertyAccesso
 
     public override string ToString()
     {
-        var cookedStr = string.Join(", ", Elements.Select(e => e == null ? "undefined" : $"\"{e}\""));
-        var rawStr = string.Join(", ", _rawStrings.Elements.Select(e => $"\"{e}\""));
+        var cookedStr = string.Join(", ", this.Select(e => e == null ? "undefined" : $"\"{e}\""));
+        var rawStr = string.Join(", ", _rawStrings.Select(e => $"\"{e}\""));
         return $"[{cookedStr}] (raw: [{rawStr}])";
     }
 }

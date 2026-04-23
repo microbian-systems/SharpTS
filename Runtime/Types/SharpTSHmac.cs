@@ -60,8 +60,8 @@ public class SharpTSHmac
     /// </summary>
     private static byte[] ConvertArrayToBytes(SharpTSArray arr)
     {
-        var bytes = new byte[arr.Elements.Count];
-        for (int i = 0; i < arr.Elements.Count; i++)
+        var bytes = new byte[arr.Length];
+        for (int i = 0; i < arr.Length; i++)
         {
             var element = arr.Get(i);
             bytes[i] = element switch

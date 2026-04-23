@@ -37,7 +37,7 @@ public static class StructuredClone
         // Process transfer list
         if (transfer != null)
         {
-            foreach (var item in transfer.Elements)
+            foreach (var item in transfer)
             {
                 if (item is SharpTSMessagePort)
                 {
@@ -237,10 +237,10 @@ public static class StructuredClone
         var result = new SharpTSArray();
         cloned[source] = result;
 
-        foreach (var element in source.Elements)
+        foreach (var element in source)
         {
             var clonedElement = CloneInternal(element, cloned, transferred);
-            result.Elements.Add(clonedElement);
+            result.Add(clonedElement);
         }
 
         return result;
@@ -495,7 +495,7 @@ public static class StructuredClone
                 return;
 
             case SharpTSArray array:
-                foreach (var element in array.Elements)
+                foreach (var element in array)
                     ValidateCloneable(element, seen);
                 return;
 

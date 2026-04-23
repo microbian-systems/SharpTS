@@ -37,7 +37,7 @@ public static class AbortSignalBuiltIns
                 if (args[0] is not SharpTSArray signalArray)
                     throw new Exception("Runtime Error: AbortSignal.any requires an array of AbortSignal instances");
 
-                var signals = signalArray.Elements
+                var signals = signalArray
                     .Where(e => e is SharpTSAbortSignal)
                     .Cast<SharpTSAbortSignal>();
                 return SharpTSAbortSignal.Any(signals);

@@ -245,7 +245,7 @@ public static class IteratorBuiltIns
     {
         if (value is SharpTSArray arr)
         {
-            foreach (var item in arr.Elements)
+            foreach (var item in arr)
                 yield return item;
         }
         else if (value is SharpTSIterator iter)

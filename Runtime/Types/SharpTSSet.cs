@@ -38,7 +38,7 @@ public class SharpTSSet : ITypeCategorized, IEnumerable<object?>
     public static SharpTSSet FromArray(SharpTSArray valuesArray)
     {
         var set = new SharpTSSet();
-        foreach (var value in valuesArray.Elements)
+        foreach (var value in valuesArray)
         {
             if (value != null)
             {

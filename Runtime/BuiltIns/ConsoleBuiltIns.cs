@@ -84,7 +84,7 @@ public static class ConsoleBuiltIns
         if (value is bool b) return b ? "true" : "false";
         if (value is SharpTSArray arr)
         {
-            return "[" + string.Join(", ", arr.Elements.Select(Stringify)) + "]";
+            return "[" + string.Join(", ", arr.Select(Stringify)) + "]";
         }
         if (value is SharpTSObject obj)
         {
@@ -276,7 +276,7 @@ public static class ConsoleBuiltIns
         if (value is string s) return $"\"{s.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"";
         if (value is SharpTSArray arr)
         {
-            return "[" + string.Join(",", arr.Elements.Select(FormatAsJson)) + "]";
+            return "[" + string.Join(",", arr.Select(FormatAsJson)) + "]";
         }
         if (value is SharpTSObject obj)
         {
@@ -474,7 +474,7 @@ public static class ConsoleBuiltIns
         List<string>? columns = null;
         if (args.Length > 1 && args[1].ToObject() is SharpTSArray colArr)
         {
-            columns = colArr.Elements.Select(e => Stringify(e)).ToList();
+            columns = colArr.Select(e => Stringify(e)).ToList();
         }
 
         // Handle array of objects
@@ -496,7 +496,7 @@ public static class ConsoleBuiltIns
 
     private static void RenderArrayTable(TextWriter writer, SharpTSArray arr, List<string>? columnFilter)
     {
-        if (arr.Elements.Count == 0)
+        if (arr.Length == 0)
         {
             WriteOutput(writer, "(empty array)");
             return;
@@ -506,10 +506,10 @@ public static class ConsoleBuiltIns
         var allColumns = new HashSet<string> { "(index)" };
         var rows = new List<Dictionary<string, string>>();
 
-        for (int i = 0; i < arr.Elements.Count; i++)
+        for (int i = 0; i < arr.Length; i++)
         {
             var row = new Dictionary<string, string> { ["(index)"] = i.ToString() };
-            var element = arr.Elements[i];
+            var element = arr[i];
 
             if (element is SharpTSObject obj)
             {
@@ -645,9 +645,9 @@ public static class ConsoleBuiltIns
 
         if (obj is SharpTSArray arr)
         {
-            if (arr.Elements.Count == 0) return "[]";
+            if (arr.Length == 0) return "[]";
             var sb = new StringBuilder("[\n");
-            foreach (var elem in arr.Elements)
+            foreach (var elem in arr)
             {
                 sb.Append(indent + "  " + InspectObject(elem, depth + 1) + ",\n");
             }

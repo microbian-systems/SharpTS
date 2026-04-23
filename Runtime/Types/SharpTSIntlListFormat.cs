@@ -237,7 +237,7 @@ public class SharpTSIntlListFormat
     {
         if (items is SharpTSArray arr)
         {
-            return arr.Elements.Select(e => e?.ToString() ?? "").ToList();
+            return arr.Select(e => e?.ToString() ?? "").ToList();
         }
         if (items is List<object?> list)
         {
@@ -267,7 +267,7 @@ public class SharpTSIntlListFormat
         var arr = GetFormattedParts(ToStringList(items));
         // Convert to compiled-mode representation: List<object?> of Dictionary<string,object?>
         var list = new List<object?>();
-        foreach (var elem in arr.Elements)
+        foreach (var elem in arr)
         {
             if (elem is SharpTSObject obj)
                 list.Add(new Dictionary<string, object?>(obj.Fields));

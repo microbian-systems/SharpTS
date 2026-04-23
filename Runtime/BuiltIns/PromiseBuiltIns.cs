@@ -217,14 +217,14 @@ public static class PromiseBuiltIns
         }
 
         // Empty array resolves immediately to empty array
-        if (array.Elements.Count == 0)
+        if (array.Length == 0)
         {
             return new SharpTSArray([]);
         }
 
         var tasks = new List<Task<object?>>();
 
-        foreach (var element in array.Elements)
+        foreach (var element in array)
         {
             if (element is SharpTSPromise promise)
             {
@@ -254,7 +254,7 @@ public static class PromiseBuiltIns
         }
 
         // Empty array never settles - return a promise that never resolves
-        if (array.Elements.Count == 0)
+        if (array.Length == 0)
         {
             // Create a TaskCompletionSource that never completes
             var neverCompletingTcs = new TaskCompletionSource<object?>();
@@ -263,7 +263,7 @@ public static class PromiseBuiltIns
 
         var tasks = new List<Task<object?>>();
 
-        foreach (var element in array.Elements)
+        foreach (var element in array)
         {
             if (element is SharpTSPromise promise)
             {
@@ -294,14 +294,14 @@ public static class PromiseBuiltIns
         }
 
         // Empty array resolves immediately to empty array
-        if (array.Elements.Count == 0)
+        if (array.Length == 0)
         {
             return new SharpTSArray([]);
         }
 
         List<object?> results = [];
 
-        foreach (var element in array.Elements)
+        foreach (var element in array)
         {
             try
             {
@@ -382,7 +382,7 @@ public static class PromiseBuiltIns
         }
 
         // Empty array rejects immediately with AggregateError
-        if (array.Elements.Count == 0)
+        if (array.Length == 0)
         {
             var aggregateError = new SharpTSObject(new Dictionary<string, object?>
             {
@@ -393,9 +393,9 @@ public static class PromiseBuiltIns
             throw new SharpTSPromiseRejectedException(aggregateError);
         }
 
-        var state = new AnyState { PendingCount = array.Elements.Count };
+        var state = new AnyState { PendingCount = array.Length };
 
-        foreach (var element in array.Elements)
+        foreach (var element in array)
         {
             if (element is SharpTSPromise promise)
             {

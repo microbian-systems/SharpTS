@@ -146,7 +146,7 @@ public static partial class RuntimeTypes
 
         if (signals is SharpTSArray arr)
         {
-            abortSignals = arr.Elements
+            abortSignals = arr
                 .Where(e => e is SharpTSAbortSignal)
                 .Cast<SharpTSAbortSignal>();
         }

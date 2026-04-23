@@ -72,7 +72,7 @@ public partial class Interpreter
         // Get elements based on iterable type
         IEnumerable<object?> items = iterable switch
         {
-            SharpTSArray arr => arr.Elements,
+            SharpTSArray arr => arr,
             SharpTSMap map => map.Entries().Elements,      // yields [key, value] arrays
             SharpTSSet set => set.Values().Elements,       // yields values
             SharpTSIterator iter => iter.Elements,
@@ -282,7 +282,7 @@ public partial class Interpreter
         {
             SharpTSObject o => o.Fields.Keys,
             SharpTSInstance inst => inst.GetFieldNames(),
-            SharpTSArray arr => Enumerable.Range(0, arr.Elements.Count).Select(i => i.ToString()),
+            SharpTSArray arr => Enumerable.Range(0, arr.Length).Select(i => i.ToString()),
             // Plain Dictionary<string, object?> from runtime helpers (e.g.,
             // Web Streams iterator results) — see SharpTSReadableStream.MakeReadResult.
             IDictionary<string, object?> d => d.Keys,

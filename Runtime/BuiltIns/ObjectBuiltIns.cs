@@ -120,7 +120,7 @@ public static class ObjectBuiltIns
 
         foreach (var element in elements)
         {
-            if (element is SharpTSArray pair && pair.Elements.Count >= 2)
+            if (element is SharpTSArray pair && pair.Length >= 2)
             {
                 string key = pair.Get(0)?.ToString() ?? "";
                 result[key] = pair.Get(1);
@@ -665,7 +665,7 @@ public static class ObjectBuiltIns
         List<object?> names = [];
 
         // Add numeric indices
-        for (int i = 0; i < arr.Elements.Count; i++)
+        for (int i = 0; i < arr.Length; i++)
         {
             names.Add(i.ToString());
         }
@@ -1672,9 +1672,9 @@ public static class ObjectBuiltIns
         var groups = new Dictionary<string, object?>();
         var callbackArgs = new List<object?> { null, null };
 
-        for (int i = 0; i < iterable.Elements.Count; i++)
+        for (int i = 0; i < iterable.Length; i++)
         {
-            var element = iterable.Elements[i];
+            var element = iterable[i];
             callbackArgs[0] = element;
             callbackArgs[1] = (double)i;
             var key = callback.Call(interp, callbackArgs);
@@ -1685,7 +1685,7 @@ public static class ObjectBuiltIns
                 existing = new SharpTSArray([]);
                 groups[keyStr] = existing;
             }
-            ((SharpTSArray)existing!).Elements.Add(element);
+            ((SharpTSArray)existing!).Add(element);
         }
 
         return new SharpTSObject(groups);

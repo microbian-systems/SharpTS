@@ -82,10 +82,10 @@ public static class JSONBuiltIns
         else if (value is SharpTSArray arr)
         {
             List<object?> newElements = [];
-            for (int i = 0; i < arr.Elements.Count; i++)
+            for (int i = 0; i < arr.Length; i++)
             {
                 // ApplyReviver already calls the reviver for each element
-                var result = ApplyReviver(interp, arr.Elements[i], (double)i, reviver);
+                var result = ApplyReviver(interp, arr[i], (double)i, reviver);
                 newElements.Add(result);
             }
             value = new SharpTSArray(newElements);
@@ -120,7 +120,7 @@ public static class JSONBuiltIns
 
         if (replacerArray != null)
         {
-            allowedKeys = replacerArray.Elements
+            allowedKeys = replacerArray
                 .OfType<string>()
                 .ToHashSet();
         }
@@ -217,25 +217,25 @@ public static class JSONBuiltIns
     private static void StringifyArray(Interpreter interp, SharpTSArray arr,
         ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb)
     {
-        if (arr.Elements.Count == 0)
+        if (arr.Length == 0)
         {
             sb.Append("[]");
             return;
         }
 
         sb.Append('[');
-        
+
         bool pretty = indentStr.Length > 0;
         string stepIndent = pretty ? "\n" + GetIndent(indentStr, depth + 1) : "";
         string separator = pretty ? "," + stepIndent : ",";
 
         if (pretty) sb.Append(stepIndent);
 
-        for (int i = 0; i < arr.Elements.Count; i++)
+        for (int i = 0; i < arr.Length; i++)
         {
             if (i > 0) sb.Append(separator);
-            
-            if (!StringifyValue(interp, arr.Elements[i], (double)i, replacer, allowedKeys, indentStr, depth + 1, sb))
+
+            if (!StringifyValue(interp, arr[i], (double)i, replacer, allowedKeys, indentStr, depth + 1, sb))
             {
                 sb.Append("null");
             }

@@ -231,7 +231,7 @@ public class SharpTSProxy : ISharpTSCallable
         if (_target is SharpTSArray arr)
         {
             // Handle array properties
-            if (prop == "length") return (double)arr.Elements.Count;
+            if (prop == "length") return (double)arr.Length;
             var member = BuiltInRegistry.Instance.GetInstanceMember(arr, prop);
             if (member is BuiltInMethod m) return m.Bind(arr);
             if (member is BuiltInAsyncMethod am) return am.Bind(arr);
@@ -286,7 +286,7 @@ public class SharpTSProxy : ISharpTSCallable
             if (double.TryParse(prop, out double index))
             {
                 int i = (int)index;
-                return i >= 0 && i < arr.Elements.Count;
+                return i >= 0 && i < arr.Length;
             }
             return false;
         }

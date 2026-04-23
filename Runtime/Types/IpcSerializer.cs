@@ -34,7 +34,7 @@ public static class IpcSerializer
             bool b => b,
             double d => d,
             string s => s,
-            SharpTSArray arr => arr.Elements.Select(ToJsonElement).ToList(),
+            SharpTSArray arr => arr.Select(ToJsonElement).ToList(),
             SharpTSObject obj => obj.Fields.ToDictionary(kv => kv.Key, kv => ToJsonElement(kv.Value)),
             List<object?> list => list.Select(ToJsonElement).ToList(),
             Dictionary<string, object?> dict => dict.ToDictionary(kv => kv.Key, kv => ToJsonElement(kv.Value)),
