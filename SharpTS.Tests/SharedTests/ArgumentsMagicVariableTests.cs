@@ -58,20 +58,16 @@ public class ArgumentsMagicVariableTests
         Assert.Equal("0\n1\n10\n", output);
     }
 
-    [Fact]
-    public void Arguments_InsideArrow_InheritsFromEnclosingFunction_Interpreted()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Arguments_InsideArrow_InheritsFromEnclosingFunction(ExecutionMode mode)
     {
         // Per JS spec: `arguments` in an arrow is a lexical reference to the
         // enclosing non-arrow function's binding — arrows never introduce
-        // their own `arguments`.
-        //
-        // Interpreter-only for now: the compiled-mode arrow path doesn't yet
-        // hoist `arguments` into the parent function's display class, so a
-        // nested arrow that reads it hits "Undefined variable 'arguments'".
-        // Tracked as a known limitation; real-world arrow bodies that read
-        // the enclosing function's `arguments` are extremely rare (arrows
-        // exist in part to fix the `this` wrinkle, not to revisit
-        // pre-rest-param variadics).
+        // their own `arguments`. Fixed for compiled mode in #64 by declaring
+        // `arguments` as a synthetic local in the closure analyzer and writing
+        // it into the enclosing function's display class so the arrow can read
+        // it through the standard captured-local pathway.
         var source = @"
             function outer(a: number, b: number): number {
                 const inner = (): number => {
@@ -85,8 +81,60 @@ public class ArgumentsMagicVariableTests
             }
             console.log(outer(7, 35));
         ";
-        var output = TestHarness.Run(source, ExecutionMode.Interpreted);
+        var output = TestHarness.Run(source, mode);
         Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Arguments_CapturesExtrasPastDeclaredArity(ExecutionMode mode)
+    {
+        // The lodash `overRest` pattern: a wrapper function declares zero (or
+        // fewer) parameters but is called with several — the only way to reach
+        // those extras from inside the body is `arguments`. Before #64 the
+        // compiled-mode prologue materialized `arguments` from declared params
+        // only, so extras silently disappeared. Fix: publish the raw caller
+        // args to `$TSFunction._currentArguments` (via either
+        // `$TSFunction.Invoke` or direct-call emitter) and copy them into the
+        // arguments list on entry.
+        var source = @"
+            function wrap(): any {
+                return function () {
+                    let total = 0;
+                    for (let i = 0; i < arguments.length; i++) {
+                        total += arguments[i] as number;
+                    }
+                    return total;
+                };
+            }
+            const f = wrap();
+            console.log(f(1, 2, 3));
+            console.log(f(10, 20, 30, 40));
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("6\n100\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Arguments_DirectCallWithZeroDeclaredParams_SeesExtras(ExecutionMode mode)
+    {
+        // Direct-call path (not through `$TSFunction.Invoke`): the emitter needs
+        // to publish caller args to the thread-static before `OpCodes.Call`
+        // because the callee's declared signature has no slots for the extras.
+        // Also exercises #65 — previously this call shape crashed with
+        // `InvalidProgramException` because every arg was pushed before a call
+        // to a zero-param method.
+        var source = @"
+            function test() {
+                console.log(arguments.length);
+                console.log(arguments[0]);
+                console.log(arguments[1]);
+            }
+            test('hello', 'world');
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2\nhello\nworld\n", output);
     }
 
     [Theory]

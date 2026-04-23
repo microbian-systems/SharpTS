@@ -207,6 +207,7 @@ public partial class ILCompiler
                 DisplayClassFields = _closures.DisplayClassFields,
                 DisplayClassConstructors = _closures.DisplayClassConstructors,
                 FunctionRestParams = _functions.RestParams,
+                FunctionsCapturingArguments = _functions.CapturingArguments,
                 EnumMembers = _enums.Members,
                 EnumReverse = _enums.Reverse,
                 EnumKinds = _enums.Kinds,

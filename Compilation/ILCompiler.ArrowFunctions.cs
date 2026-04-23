@@ -870,6 +870,7 @@ public partial class ILCompiler
             DisplayClassFields = _closures.DisplayClassFields,
             DisplayClassConstructors = _closures.DisplayClassConstructors,
             FunctionRestParams = _functions.RestParams,
+            FunctionsCapturingArguments = _functions.CapturingArguments,
             EnumMembers = _enums.Members,
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
@@ -1108,7 +1109,12 @@ public partial class ILCompiler
                 argParamTypes[i] = resolvedArrowParamTypes != null && i < resolvedArrowParamTypes.Length
                     ? resolvedArrowParamTypes[i] ?? _types.Object
                     : _types.Object;
-            EmitArgumentsLocalPrologueCore(il, ctx, arrow.Parameters, argParamTypes, paramArgBase);
+            // HasOwnThis methods declare __this as an explicit parameter, which means
+            // $TSFunction.InvokeWithThis prepends the receiver into the args array
+            // before calling Invoke. Strip that leading slot when reading from the
+            // thread-static so `arguments` reflects only what the user passed.
+            int leadingSkip = arrow.HasOwnThis ? 1 : 0;
+            EmitArgumentsLocalPrologueCore(il, ctx, arrow.Parameters, argParamTypes, paramArgBase, leadingSkip);
         }
 
         if (arrow.ExpressionBody != null)

@@ -103,6 +103,15 @@ public partial class ILCompiler
 
         _functions.Builders[qualifiedFunctionName] = methodBuilder;
 
+        // Flag eagerly (phase 3) so direct-call sites emitted in phase 7 can publish
+        // caller args to the thread-static before OpCodes.Call. Uses the same scanner
+        // the prologue consults, keeping the two sides in sync. Overload signatures
+        // (no body) can't reference `arguments`; skip them.
+        if (funcStmt.Body != null && ReferencesArgumentsIdentifier(funcStmt.Body))
+        {
+            _functions.CapturingArguments.Add(qualifiedFunctionName);
+        }
+
         // Generate overloads for functions with default parameters
         var overloadSignatures = OverloadGenerator.GetOverloadSignatures(
             funcStmt.Parameters, paramTypes);
@@ -221,6 +230,7 @@ public partial class ILCompiler
             DisplayClassConstructors = _closures.DisplayClassConstructors,
             FunctionRestParams = _functions.RestParams,
             FunctionOverloads = _functions.Overloads,
+            FunctionsCapturingArguments = _functions.CapturingArguments,
             EnumMembers = _enums.Members,
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
@@ -445,7 +455,7 @@ public partial class ILCompiler
         CompilationContext ctx,
         List<Stmt.Parameter> parameters,
         Type[] paramTypes)
-        => EmitArgumentsLocalPrologueCore(il, ctx, parameters, paramTypes, argBase: 0);
+        => EmitArgumentsLocalPrologueCore(il, ctx, parameters, paramTypes, argBase: 0, publishedArgsLeadingSkip: 0);
 
     /// <summary>
     /// Instance-method variant: `this` occupies arg slot 0, so parameters start
@@ -456,19 +466,109 @@ public partial class ILCompiler
         CompilationContext ctx,
         List<Stmt.Parameter> parameters,
         Type[] paramTypes)
-        => EmitArgumentsLocalPrologueCore(il, ctx, parameters, paramTypes, argBase: 1);
+        // Instance methods receive `this` as the MethodInfo.Invoke target, not in the args
+        // array, so _currentArguments published by $TSFunction.Invoke has no leading skip.
+        => EmitArgumentsLocalPrologueCore(il, ctx, parameters, paramTypes, argBase: 1, publishedArgsLeadingSkip: 0);
 
+    /// <param name="publishedArgsLeadingSkip">
+    /// Number of leading elements of <c>$TSFunction._currentArguments</c> to skip when
+    /// that thread-static is non-null. Non-zero for the function-expression / arrow-
+    /// with-<c>__this</c> case where <c>$TSFunction.InvokeWithThis</c> prepends
+    /// <c>thisArg</c> to <c>effectiveArgs</c> before calling <c>Invoke</c> — the
+    /// prepended slot is a synthetic receiver, not a user-supplied argument, so
+    /// <c>arguments</c> must not include it (JS spec).
+    /// </param>
     private void EmitArgumentsLocalPrologueCore(
         ILGenerator il,
         CompilationContext ctx,
         List<Stmt.Parameter> parameters,
         Type[] paramTypes,
-        int argBase)
+        int argBase,
+        int publishedArgsLeadingSkip = 0)
     {
         var listType = ctx.Types.ListOfObject;
         var argsLocal = il.DeclareLocal(listType);
         var addMethod = ctx.Types.GetMethod(listType, "Add", ctx.Types.Object);
 
+        // Fast-path: if $TSFunction._currentArguments is set (we were invoked via
+        // $TSFunction.Invoke, which publishes the full caller args before AdjustArgs
+        // truncates), rebuild `arguments` from that array so extras past the declared
+        // arity are visible — lodash overRest pattern from #64. Otherwise, fall through
+        // to the declared-parameter materialization below (covers the direct-call path
+        // where arity matches by construction).
+        var currentArgsField = ctx.Runtime?.CurrentArgumentsField;
+        var useDeclaredParamsLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        if (currentArgsField != null)
+        {
+            var currentArgsLocal = il.DeclareLocal(ctx.Types.ObjectArray);
+            il.Emit(OpCodes.Ldsfld, currentArgsField);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Stloc, currentArgsLocal);
+            il.Emit(OpCodes.Brfalse, useDeclaredParamsLabel);
+
+            if (publishedArgsLeadingSkip > 0)
+            {
+                // Skip the leading synthetic thisArg slot that $TSFunction.InvokeWithThis
+                // prepends when the method declares __this as a parameter. Use a manual
+                // copy loop rather than Skip/LINQ to keep emitted IL light: allocate
+                // the result sized to max(len - skip, 0) and element-copy from `skip`.
+                var lenLocal = il.DeclareLocal(ctx.Types.Int32);
+                var idxLocal = il.DeclareLocal(ctx.Types.Int32);
+                var loopStart = il.DefineLabel();
+                var loopEnd = il.DefineLabel();
+                var addMethodLocal = ctx.Types.GetMethod(listType, "Add", ctx.Types.Object);
+
+                il.Emit(OpCodes.Ldloc, currentArgsLocal);
+                il.Emit(OpCodes.Ldlen);
+                il.Emit(OpCodes.Conv_I4);
+                il.Emit(OpCodes.Stloc, lenLocal);
+
+                il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+                il.Emit(OpCodes.Stloc, argsLocal);
+
+                il.Emit(OpCodes.Ldc_I4, publishedArgsLeadingSkip);
+                il.Emit(OpCodes.Stloc, idxLocal);
+
+                il.MarkLabel(loopStart);
+                il.Emit(OpCodes.Ldloc, idxLocal);
+                il.Emit(OpCodes.Ldloc, lenLocal);
+                il.Emit(OpCodes.Bge, loopEnd);
+
+                il.Emit(OpCodes.Ldloc, argsLocal);
+                il.Emit(OpCodes.Ldloc, currentArgsLocal);
+                il.Emit(OpCodes.Ldloc, idxLocal);
+                il.Emit(OpCodes.Ldelem_Ref);
+                il.Emit(OpCodes.Callvirt, addMethodLocal);
+
+                il.Emit(OpCodes.Ldloc, idxLocal);
+                il.Emit(OpCodes.Ldc_I4_1);
+                il.Emit(OpCodes.Add);
+                il.Emit(OpCodes.Stloc, idxLocal);
+                il.Emit(OpCodes.Br, loopStart);
+
+                il.MarkLabel(loopEnd);
+            }
+            else
+            {
+                // arguments = new List<object>(_currentArguments)  — the List<T>(IEnumerable<T>)
+                // constructor handles the copy efficiently.
+                var listFromEnumerableCtor = listType.GetConstructor([ctx.Types.IEnumerableOfObject])!;
+                il.Emit(OpCodes.Ldloc, currentArgsLocal);
+                il.Emit(OpCodes.Newobj, listFromEnumerableCtor);
+                il.Emit(OpCodes.Stloc, argsLocal);
+            }
+
+            // Clear the slot so nested direct calls to other flagged functions don't
+            // see stale data — each new Invoke re-sets it, direct calls read null and
+            // fall back to their declared params.
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Stsfld, currentArgsField);
+            il.Emit(OpCodes.Br, doneLabel);
+        }
+
+        il.MarkLabel(useDeclaredParamsLabel);
         il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, argsLocal);
 
@@ -498,7 +598,23 @@ public partial class ILCompiler
             }
         }
 
+        il.MarkLabel(doneLabel);
         ctx.Locals.RegisterLocal("arguments", argsLocal);
+
+        // If a nested arrow captures `arguments`, the closure analyzer declared it
+        // as a captured local and a display-class field was allocated for it. Mirror
+        // the "initialize captured parameters into the function DC" step (see
+        // DefineFunctionBody) so the arrow's display-class read finds the populated
+        // List, not the default null. Without this, arrow bodies referencing
+        // `arguments` see null.length / null[i] at runtime.
+        if (ctx.CapturedFunctionLocals?.Contains("arguments") == true
+            && ctx.FunctionDisplayClassLocal != null
+            && ctx.FunctionDisplayClassFields?.TryGetValue("arguments", out var argsDCField) == true)
+        {
+            il.Emit(OpCodes.Ldloc, ctx.FunctionDisplayClassLocal);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Stfld, argsDCField);
+        }
     }
 
     /// <summary>
@@ -699,6 +815,7 @@ public partial class ILCompiler
             ClassExprBuilders = _classExprs.Builders,
             FunctionRestParams = _functions.RestParams,
             FunctionOverloads = _functions.Overloads,
+            FunctionsCapturingArguments = _functions.CapturingArguments,
             EnumMembers = _enums.Members,
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
@@ -926,6 +1043,7 @@ public partial class ILCompiler
             ClassExprBuilders = _classExprs.Builders,
             FunctionRestParams = _functions.RestParams,
             FunctionOverloads = _functions.Overloads,
+            FunctionsCapturingArguments = _functions.CapturingArguments,
             EnumMembers = _enums.Members,
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,

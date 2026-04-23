@@ -70,6 +70,7 @@ public partial class ILCompiler
             CurrentClassBuilder = typeBuilder,
             CurrentClassName = qualifiedClassName, // Required for static member access via 'this'
             FunctionRestParams = _functions.RestParams,
+            FunctionsCapturingArguments = _functions.CapturingArguments,
             EnumMembers = _enums.Members,
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
@@ -262,6 +263,7 @@ public partial class ILCompiler
             DisplayClassConstructors = _closures.DisplayClassConstructors,
             CurrentClassBuilder = typeBuilder,
             FunctionRestParams = _functions.RestParams,
+            FunctionsCapturingArguments = _functions.CapturingArguments,
             EnumMembers = _enums.Members,
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
@@ -484,6 +486,7 @@ public partial class ILCompiler
             DisplayClassConstructors = _closures.DisplayClassConstructors,
             CurrentClassBuilder = typeBuilder,
             FunctionRestParams = _functions.RestParams,
+            FunctionsCapturingArguments = _functions.CapturingArguments,
             EnumMembers = _enums.Members,
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,

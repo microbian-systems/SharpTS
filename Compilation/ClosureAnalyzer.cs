@@ -450,6 +450,18 @@ public class ClosureAnalyzer : AstVisitorBase
                 Visit(param.DefaultValue);
         }
 
+        // Pre-declare `arguments` as a synthetic local if the body (including nested
+        // arrows, but not nested non-arrow functions) references it. Without this, a
+        // nested arrow reading `arguments` would resolve against the (non-existent)
+        // outer scope and fail at IL emission; declaring it here routes the reference
+        // through the normal captured-local machinery so arrows get it via the display
+        // class (#64). Non-arrow nested functions declare their own `arguments` and
+        // shadow this one — matching JS spec.
+        if (ReferencesArgumentsIdentifierNonArrow(body))
+        {
+            DeclareVariable("arguments");
+        }
+
         // Hoist sibling function declarations so forward references in one sibling's
         // body resolve to another sibling declared later in source order.
         HoistFunctionDeclarations(body);
@@ -535,4 +547,49 @@ public class ClosureAnalyzer : AstVisitorBase
     }
 
     #endregion
+
+    /// <summary>
+    /// Returns true if any statement (directly or inside a nested arrow) references
+    /// the identifier <c>arguments</c>, stopping at nested non-arrow function boundaries
+    /// (those have their own <c>arguments</c> binding per JS spec, so a reference inside
+    /// them belongs to the nested function, not this one).
+    /// </summary>
+    private static bool ReferencesArgumentsIdentifierNonArrow(List<Stmt> stmts)
+    {
+        var scanner = new ArgumentsRefScanner();
+        foreach (var s in stmts)
+        {
+            scanner.Visit(s);
+            if (scanner.Found) return true;
+        }
+        return false;
+    }
+
+    private sealed class ArgumentsRefScanner : AstVisitorBase
+    {
+        public bool Found { get; private set; }
+
+        protected override void VisitVariable(Expr.Variable expr)
+        {
+            if (expr.Name.Lexeme == "arguments")
+            {
+                Found = true;
+                ShouldContinue = false;
+            }
+        }
+
+        // Nested non-arrow function declarations/expressions introduce their own
+        // `arguments` binding — references inside belong to that inner function,
+        // so stop descending.
+        protected override void VisitFunction(Stmt.Function stmt) { /* skip */ }
+
+        protected override void VisitArrowFunction(Expr.ArrowFunction expr)
+        {
+            // Function expressions (HasOwnThis=true) behave like declarations: their
+            // own `arguments` shadows ours. True arrow functions (HasOwnThis=false)
+            // inherit lexically, so we must recurse.
+            if (expr.HasOwnThis) return;
+            base.VisitArrowFunction(expr);
+        }
+    }
 }

@@ -6,6 +6,30 @@ namespace SharpTS.Compilation;
 
 public partial class RuntimeEmitter
 {
+    /// <summary>
+    /// Emits a tiny dedicated type <c>$ArgumentsContext</c> holding the thread-static
+    /// <c>_currentArguments</c> slot used to surface JS <c>arguments</c> in compiled
+    /// mode (#64). See call-site comment in <c>EmitAll</c> for why this isolation
+    /// matters — placing the field on <c>$TSFunction</c> or <c>$Runtime</c> alongside
+    /// other ThreadStatic slots regressed an Intl test in layout-dependent ways.
+    /// </summary>
+    private void EmitArgumentsContextClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$ArgumentsContext",
+            TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.Object
+        );
+        var field = typeBuilder.DefineField(
+            "_currentArguments",
+            _types.ObjectArray,
+            FieldAttributes.Public | FieldAttributes.Static);
+        var threadStaticCtor = typeof(ThreadStaticAttribute).GetConstructor(Type.EmptyTypes)!;
+        field.SetCustomAttribute(new CustomAttributeBuilder(threadStaticCtor, []));
+        runtime.CurrentArgumentsField = field;
+        typeBuilder.CreateType();
+    }
+
     private void EmitTSFunctionClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
         // Define class: public sealed class $TSFunction
@@ -42,6 +66,10 @@ public partial class RuntimeEmitter
         var threadStaticCtor = typeof(ThreadStaticAttribute).GetConstructor(Type.EmptyTypes)!;
         currentThisField.SetCustomAttribute(new CustomAttributeBuilder(threadStaticCtor, []));
         runtime.CurrentFunctionThisField = currentThisField;
+
+        // Note: the thread-static `_currentArguments` slot used for JS `arguments` is
+        // defined on $ArgumentsContext (emitted before this type) — see
+        // EmitArgumentsContextClass.
 
         // Static Constructor
         var cctorBuilder = typeBuilder.DefineConstructor(
@@ -207,6 +235,18 @@ public partial class RuntimeEmitter
         invokeIL.Emit(OpCodes.Ldfld, methodField);
         invokeIL.Emit(OpCodes.Ldloc, adjustedArgsLocal);
         invokeIL.Emit(OpCodes.Call, convertArgsMethod);
+
+        // Publish the un-adjusted caller args to the thread-static $Runtime._currentArguments
+        // slot so flagged function bodies (those that reference JS `arguments`) can see
+        // values beyond their declared arity — lodash overRest pattern from #64. No
+        // try/finally restore: the prologue on the callee side reads once at entry and
+        // clears immediately, and each new Invoke re-sets for its own callee, so the
+        // value never needs to be restored to a prior state here.
+        if (runtime.CurrentArgumentsField != null)
+        {
+            invokeIL.Emit(OpCodes.Ldarg_1);
+            invokeIL.Emit(OpCodes.Stsfld, runtime.CurrentArgumentsField);
+        }
 
         invokeIL.Emit(OpCodes.Ldarg_0);
         invokeIL.Emit(OpCodes.Ldfld, methodField);

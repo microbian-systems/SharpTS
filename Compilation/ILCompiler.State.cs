@@ -81,6 +81,15 @@ public partial class ILCompiler
         public Dictionary<string, (int RestParamIndex, int RegularParamCount)> RestParams { get; } = [];
         public Dictionary<string, GenericTypeParameterBuilder[]> GenericParams { get; } = [];
         public Dictionary<string, bool> IsGeneric { get; } = [];
+
+        /// <summary>
+        /// Qualified names of functions flagged at DefineFunction time as referencing
+        /// <c>arguments</c>. Propagated to each body-emission <c>CompilationContext</c>
+        /// so the direct-call emitter can publish caller args to the thread-static
+        /// before <c>OpCodes.Call</c> (see #64). Populated during phase 3; consumed
+        /// during phase 7 (body emission).
+        /// </summary>
+        public HashSet<string> CapturingArguments { get; } = [];
     }
 
     /// <summary>

@@ -25,6 +25,13 @@ public partial class RuntimeEmitter
         // Emit IUnionType marker interface first (union types need to implement this)
         EmitIUnionTypeInterface(moduleBuilder, runtime);
 
+        // Emit a tiny dedicated type holding the thread-static `_currentArguments` slot
+        // that $TSFunction.Invoke publishes so JS `arguments` capture can see caller
+        // values beyond declared arity. Lives on its own type — adding it to
+        // $TSFunction regressed Intl's formatRangeToParts test in opaque ways tied to
+        // that type's field layout; isolating keeps $TSFunction's layout unchanged.
+        EmitArgumentsContextClass(moduleBuilder, runtime);
+
         // Emit TSFunction class first (other methods depend on it)
         EmitTSFunctionClass(moduleBuilder, runtime);
 

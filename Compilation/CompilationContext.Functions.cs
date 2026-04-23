@@ -33,6 +33,17 @@ public partial class CompilationContext
     public Dictionary<string, bool>? IsGenericFunction { get; set; }
 
     /// <summary>
+    /// Qualified names of functions whose body references JS <c>arguments</c> (directly,
+    /// or through a nested arrow — arrows inherit their enclosing non-arrow's binding).
+    /// Direct call sites to any of these must publish the caller's raw arg array to the
+    /// <c>$TSFunction._currentArguments</c> thread-static before emitting <c>OpCodes.Call</c>,
+    /// so the prologue can materialize <c>arguments</c> including values past the declared
+    /// arity (lodash overRest pattern; #64). Indirect calls through <c>$TSFunction.Invoke</c>
+    /// publish automatically — this set only matters for in-module direct dispatch.
+    /// </summary>
+    public HashSet<string>? FunctionsCapturingArguments { get; set; }
+
+    /// <summary>
     /// Resolves a simple function name to its qualified name for lookup in the Functions dictionary.
     /// </summary>
     public string ResolveFunctionName(string simpleFunctionName)

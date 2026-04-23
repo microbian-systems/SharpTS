@@ -202,9 +202,41 @@ public abstract partial class ExpressionEmitterBase
                         callArgTemps.Add((temp, pType));
                     }
 
-                    // Load all args back onto stack for the call
-                    foreach (var (local, _) in callArgTemps)
-                        IL.Emit(OpCodes.Ldloc, local);
+                    // If the callee's body references JS `arguments`, publish the raw
+                    // user args (exactly what the caller wrote — no null padding for
+                    // optional slots, no declared-arity trimming) to the $TSFunction
+                    // thread-static so the callee's prologue can reconstruct the full
+                    // arguments object including extras past the declared arity (#64).
+                    // Done *before* loading args onto the stack so we don't disturb
+                    // the evaluation order for the call itself.
+                    if (Ctx.FunctionsCapturingArguments?.Contains(resolvedFuncName) == true &&
+                        Ctx.Runtime?.CurrentArgumentsField != null)
+                    {
+                        int publishCount = c.Arguments.Count;
+                        IL.Emit(OpCodes.Ldc_I4, publishCount);
+                        IL.Emit(OpCodes.Newarr, Types.Object);
+                        for (int i = 0; i < publishCount; i++)
+                        {
+                            IL.Emit(OpCodes.Dup);
+                            IL.Emit(OpCodes.Ldc_I4, i);
+                            IL.Emit(OpCodes.Ldloc, callArgTemps[i].Local);
+                            if (callArgTemps[i].ParamType.IsValueType)
+                                IL.Emit(OpCodes.Box, callArgTemps[i].ParamType);
+                            IL.Emit(OpCodes.Stelem_Ref);
+                        }
+                        IL.Emit(OpCodes.Stsfld, Ctx.Runtime.CurrentArgumentsField);
+                    }
+
+                    // Load args back onto stack for the call — but only up to the
+                    // callee's declared arity. Extras are still evaluated (temps
+                    // assigned above preserve side effects) but discarded per JS
+                    // spec: "any extra arguments are simply ignored." Without this
+                    // guard, passing more args than declared leaves orphans on
+                    // the stack and produces InvalidProgramException at load time
+                    // (#65, prerequisite for #64's zero-declared-param shape).
+                    int loadCount = Math.Min(callArgTemps.Count, paramCount);
+                    for (int i = 0; i < loadCount; i++)
+                        IL.Emit(OpCodes.Ldloc, callArgTemps[i].Local);
                 }
 
                 IL.Emit(OpCodes.Call, targetMethod);

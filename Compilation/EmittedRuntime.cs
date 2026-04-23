@@ -235,6 +235,17 @@ public class EmittedRuntime
     /// captured <c>this</c>.
     /// </summary>
     public FieldBuilder CurrentFunctionThisField { get; set; } = null!;
+
+    /// <summary>
+    /// Thread-static field holding the current call's full argument array (pre-AdjustArgs).
+    /// Set by <c>$TSFunction.Invoke</c>/<c>InvokeWithThis</c> around MethodInfo.Invoke so
+    /// that a flagged function body can reconstruct the JS <c>arguments</c> object with
+    /// every caller value — including extras the fixed method signature would otherwise
+    /// drop (the lodash <c>overRest</c> pattern that motivates #64). Read once in the
+    /// function prologue; null means "fall back to declared parameters" (the direct-call
+    /// fast path in compiled code where arity is exact).
+    /// </summary>
+    public FieldBuilder CurrentArgumentsField { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;
