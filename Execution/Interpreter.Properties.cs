@@ -915,6 +915,24 @@ public partial class Interpreter
                     return value;
                 throw new InterpreterException($"Cannot set property '{memberName}' on Error.");
 
+            case TypeCategory.Array when obj is SharpTSArray array:
+                if (memberName == "length")
+                {
+                    // ECMA-262: `a.length = N` truncates (if N < length) or extends
+                    // with holes (if N > length). SharpTSArray.SetLength handles both
+                    // paths and transitions to sparse storage for large extensions.
+                    if (value is double ld)
+                    {
+                        if (ld < 0 || ld > uint.MaxValue || Math.Floor(ld) != ld)
+                            throw new InterpreterException("RangeError: Invalid array length.");
+                        array.SetLength((int)ld);
+                        return value;
+                    }
+                    throw new InterpreterException("RangeError: Invalid array length.");
+                }
+                array.SetNamedProperty(memberName, value);
+                return value;
+
             default:
                 return EvaluateSetFallback(obj, memberName, value);
         }

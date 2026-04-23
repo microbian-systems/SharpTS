@@ -37,15 +37,12 @@ public sealed class SharpTSArrayGlobal : ISharpTSCallable
             if (d < 0 || d > uint.MaxValue || Math.Floor(d) != d)
                 throw new Exception("RangeError: Invalid array length.");
             int len = (int)d;
-            // Matches the guard in SharpTSArray.Set: until sparse storage lands
-            // we refuse to pre-allocate huge undefined-filled backing stores.
-            if (len > 1_000_000)
-                throw new Exception(
-                    $"RangeError: Array({len}) would require eagerly allocating {len} slots. " +
-                    "SharpTS does not yet implement sparse-array storage (see issue #73).");
-            var list = new List<object?>(len);
-            for (int i = 0; i < len; i++) list.Add(SharpTSUndefined.Instance);
-            return new SharpTSArray(list);
+            // new Array(N) gives an array of length N with N holes — not N
+            // explicit undefined values. Use SetLength so large N is sparse
+            // storage, not an eager allocation (see SharpTSArray #73 Stage B).
+            var arr = new SharpTSArray();
+            arr.SetLength(len);
+            return arr;
         }
         return new SharpTSArray(new List<object?>(arguments));
     }

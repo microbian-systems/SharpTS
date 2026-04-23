@@ -5,116 +5,357 @@ using SharpTS.TypeSystem;
 namespace SharpTS.Runtime.Types;
 
 /// <summary>
-/// Runtime wrapper for TypeScript arrays.
+/// Runtime wrapper for TypeScript arrays — dual-mode dense/sparse storage per ECMA-262.
 /// </summary>
 /// <remarks>
-/// Wraps a <c>Deque&lt;object?&gt;</c> to represent TypeScript arrays at runtime.
-/// Uses a circular buffer for O(1) shift/unshift operations.
-/// Provides indexed Get/Set access with bounds checking.
-/// Used by <see cref="Interpreter"/> when evaluating array literals and array operations
-/// (e.g., indexing, push, pop, map, filter).
 /// <para>
-/// Access API (Stage A of issue #73): callers should use <see cref="Length"/>, the
-/// indexer, <see cref="GetEnumerator"/>, and the mutation helpers on this type
-/// rather than reaching into <see cref="Elements"/>. <c>Elements</c> remains public
-/// during the migration so call sites can move incrementally; it will become
-/// private when the dual-mode (dense + sparse dictionary) backing store lands.
+/// <b>Storage model (issue #73 Stage B, 2026-04-22).</b>
+/// The array carries an explicit <see cref="Length"/> that is independent of physical
+/// slot count. Two backing stores cooperate:
+/// </para>
+/// <list type="bullet">
+///   <item><description>
+///     <c>_dense</c> — a <see cref="Deque{T}"/> holding the contiguous prefix
+///     <c>[0, _dense.Count)</c>. Used by typical array-as-list workloads (push,
+///     pop, map, forEach on small-to-medium arrays). O(1) unshift thanks to the
+///     circular buffer.
+///   </description></item>
+///   <item><description>
+///     <c>_sparse</c> — a <see cref="Dictionary{TKey, TValue}"/> keyed on
+///     <see cref="uint"/> index. Activated when an assignment would require
+///     padding more than <see cref="SparseThreshold"/> slots past the current
+///     length (e.g. <c>a[2**31] = 1</c>). When active, indices beyond
+///     <c>_dense.Count</c> live here; absent dictionary entries are holes.
+///   </description></item>
+/// </list>
+/// <para>
+/// When <c>_sparse == null</c> the array is purely dense and
+/// <c>_dense.Count == Length</c>. When <c>_sparse != null</c> the dense prefix
+/// may still hold the low indices (cheap to preserve; no up-front migration
+/// cost); any index <c>&gt;= _dense.Count</c> is looked up in the dictionary.
+/// </para>
+/// <para>
+/// <b>Holes vs. explicit undefined.</b> This stage conflates them: reads from
+/// unwritten positions return <see cref="SharpTSUndefined"/>.<c>Instance</c>,
+/// and dense extension pads with <c>Undefined</c>. ECMA-262 actually requires
+/// <c>forEach</c> to skip holes and <c>hasOwnProperty(i)</c> to return false
+/// for them — a correctness gap tracked for Stage C. Stage B delivers the
+/// scaling property (no OOM on sparse writes) without changing existing
+/// hole-vs-undefined behavior.
+/// </para>
+/// <para>
+/// <b>Structural mutations on sparse arrays.</b> <see cref="Insert"/>,
+/// <see cref="RemoveAt"/>, <see cref="AddFirst"/>, <see cref="ReverseInPlace"/>,
+/// and similar shift-everything operations call <see cref="MaterializeDense"/>
+/// first. This is O(Length) in the worst case and defeats the point of sparse
+/// storage for that particular operation; realistic code rarely mixes huge
+/// indices with splice-style edits. Stage C may add specialized paths.
 /// </para>
 /// </remarks>
 /// <seealso cref="SharpTSObject"/>
-public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnlyList<object?>
+public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
 {
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Array;
 
-    public Deque<object?> Elements { get; } = elements;
+    /// <summary>
+    /// Hole size (in slots) beyond which <see cref="Set"/> transitions from
+    /// dense padding to sparse dictionary storage. A conservative value (1024):
+    /// small enough that malicious inputs like <c>a[2**31] = 1</c> cannot allocate
+    /// billions of undefined slots; large enough that typical growth patterns
+    /// (e.g. repeatedly writing a[length]) stay on the dense fast path.
+    /// </summary>
+    private const int SparseThreshold = 1024;
+
+    private readonly Deque<object?> _dense;
+    private Dictionary<uint, object?>? _sparse;
+    private int _length;
 
     /// <summary>
-    /// ECMA-262 array length. Today this is identical to <see cref="Elements"/>.<c>Count</c>;
-    /// once sparse storage lands (issue #73) it becomes the authoritative length and
-    /// may exceed the physical slot count.
+    /// Read-only view over the dense prefix. Present for compatibility with
+    /// older callers and tests — normal code should iterate the array directly
+    /// or use <see cref="Length"/> / the indexer. Does NOT represent the full
+    /// array in sparse mode: only the contiguous prefix that hasn't been
+    /// sparse-promoted lives here.
     /// </summary>
-    public int Length => Elements.Count;
+    internal Deque<object?> Elements => _dense;
+
+    /// <summary>Creates an empty array.</summary>
+    public SharpTSArray() : this(new Deque<object?>()) { }
+
+    /// <summary>Creates an array from a deque (the deque becomes the dense backing).</summary>
+    public SharpTSArray(Deque<object?> elements)
+    {
+        _dense = elements;
+        _length = elements.Count;
+    }
+
+    /// <summary>Creates an array from any enumerable (copies into a new deque).</summary>
+    public SharpTSArray(IEnumerable<object?> elements) : this(new Deque<object?>(elements)) { }
+
+    /// <summary>
+    /// ECMA-262 array length. Independent of physical storage size — a sparse
+    /// assignment bumps <c>Length</c> without allocating intermediate slots.
+    /// </summary>
+    public int Length => _length;
 
     /// <summary>
     /// Collection count. Same as <see cref="Length"/> — present so the runtime can detect
     /// the array size cheaply (e.g. <c>new List&lt;object?&gt;(array)</c> preallocates capacity).
     /// </summary>
-    public int Count => Length;
+    public int Count => _length;
 
     /// <summary>
     /// Indexed access to an existing slot. Throws <see cref="ArgumentOutOfRangeException"/>
     /// for out-of-range reads and writes — use <see cref="Get(int)"/> / <see cref="Set(int, object?)"/>
-    /// for the JS-semantic variants (undefined on OOB read, extend-with-undefined on OOB write).
+    /// for the JS-semantic variants (undefined on OOB read, extend on OOB write).
     /// </summary>
     public object? this[int index]
     {
-        get => Elements[index];
-        set => Elements[index] = value;
+        get
+        {
+            if ((uint)index >= (uint)_length)
+                throw new ArgumentOutOfRangeException(nameof(index));
+            return GetCore(index);
+        }
+        set
+        {
+            if ((uint)index >= (uint)_length)
+                throw new ArgumentOutOfRangeException(nameof(index));
+            SetCore(index, value);
+        }
+    }
+
+    /// <summary>Reads the slot at the given index without mutating length or storage mode.</summary>
+    private object? GetCore(int index)
+    {
+        if (_sparse == null || index < _dense.Count)
+            return _dense[index];
+        return _sparse.TryGetValue((uint)index, out var v) ? v : SharpTSUndefined.Instance;
+    }
+
+    /// <summary>Writes the slot at the given index without mutating length or transitioning.</summary>
+    private void SetCore(int index, object? value)
+    {
+        if (_sparse == null || index < _dense.Count)
+            _dense[index] = value;
+        else
+            _sparse[(uint)index] = value;
     }
 
     /// <inheritdoc />
-    public IEnumerator<object?> GetEnumerator() => Elements.GetEnumerator();
+    public IEnumerator<object?> GetEnumerator()
+    {
+        int denseCount = _dense.Count;
+        int cap = Math.Min(denseCount, _length);
+        for (int i = 0; i < cap; i++)
+            yield return _dense[i];
+        if (_sparse != null || _length > denseCount)
+        {
+            for (int i = denseCount; i < _length; i++)
+            {
+                if (_sparse != null && _sparse.TryGetValue((uint)i, out var v))
+                    yield return v;
+                else
+                    yield return SharpTSUndefined.Instance;
+            }
+        }
+    }
 
-    IEnumerator IEnumerable.GetEnumerator() => Elements.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-    /// <summary>Appends an element. Does not check frozen/sealed state — callers that care must check.</summary>
-    public void Add(object? value) => Elements.Add(value);
+    // -----------------------------------------------------------------------
+    // Mutation helpers — the encapsulation API added in Stage A. All respect
+    // the dual-mode storage and where applicable fall back to MaterializeDense
+    // for shift-style operations.
+    // -----------------------------------------------------------------------
+
+    /// <summary>Appends an element. Does not check frozen/sealed state.</summary>
+    public void Add(object? value)
+    {
+        if (_sparse != null)
+        {
+            // Appending on a sparse array: write directly to the dict at _length.
+            _sparse[(uint)_length] = value;
+            _length++;
+            return;
+        }
+        _dense.Add(value);
+        _length = _dense.Count;
+    }
 
     /// <summary>Appends many elements. Does not check frozen/sealed state.</summary>
-    public void AddRange(IEnumerable<object?> values) => Elements.AddRange(values);
+    public void AddRange(IEnumerable<object?> values)
+    {
+        if (_sparse != null)
+        {
+            foreach (var v in values)
+            {
+                _sparse[(uint)_length] = v;
+                _length++;
+            }
+            return;
+        }
+        _dense.AddRange(values);
+        _length = _dense.Count;
+    }
 
-    /// <summary>Prepends an element (O(1) via Deque).</summary>
-    public void AddFirst(object? value) => Elements.AddFirst(value);
+    /// <summary>Prepends an element (O(1) in dense mode via Deque).</summary>
+    public void AddFirst(object? value)
+    {
+        MaterializeDense();
+        _dense.AddFirst(value);
+        _length = _dense.Count;
+    }
 
     /// <summary>Inserts at an index, shifting later elements right.</summary>
-    public void Insert(int index, object? value) => Elements.Insert(index, value);
+    public void Insert(int index, object? value)
+    {
+        MaterializeDense();
+        _dense.Insert(index, value);
+        _length = _dense.Count;
+    }
 
     /// <summary>Inserts many elements at an index.</summary>
-    public void InsertRange(int index, IEnumerable<object?> values) => Elements.InsertRange(index, values);
+    public void InsertRange(int index, IEnumerable<object?> values)
+    {
+        MaterializeDense();
+        _dense.InsertRange(index, values);
+        _length = _dense.Count;
+    }
 
     /// <summary>Removes and returns the last element.</summary>
-    public object? RemoveLast() => Elements.RemoveLast();
+    public object? RemoveLast()
+    {
+        if (_length == 0)
+            throw new InvalidOperationException("Array is empty.");
+        int last = _length - 1;
+        object? result;
+        if (_sparse != null && last >= _dense.Count)
+        {
+            if (!_sparse.TryGetValue((uint)last, out result))
+                result = SharpTSUndefined.Instance;
+            else
+                _sparse.Remove((uint)last);
+        }
+        else
+        {
+            result = _dense[last];
+            _dense.RemoveAt(last);
+        }
+        _length--;
+        TryCollapseSparse();
+        return result;
+    }
 
-    /// <summary>Removes and returns the first element (O(1) via Deque).</summary>
-    public object? RemoveFirst() => Elements.RemoveFirst();
+    /// <summary>Removes and returns the first element (O(1) in dense mode).</summary>
+    public object? RemoveFirst()
+    {
+        MaterializeDense();
+        var result = _dense.RemoveFirst();
+        _length = _dense.Count;
+        return result;
+    }
 
     /// <summary>Removes the element at the given index.</summary>
-    public void RemoveAt(int index) => Elements.RemoveAt(index);
+    public void RemoveAt(int index)
+    {
+        MaterializeDense();
+        _dense.RemoveAt(index);
+        _length = _dense.Count;
+    }
 
     /// <summary>Removes a contiguous range of elements.</summary>
-    public void RemoveRange(int index, int count) => Elements.RemoveRange(index, count);
+    public void RemoveRange(int index, int count)
+    {
+        MaterializeDense();
+        _dense.RemoveRange(index, count);
+        _length = _dense.Count;
+    }
 
     /// <summary>Clears all elements.</summary>
-    public void Clear() => Elements.Clear();
+    public void Clear()
+    {
+        _dense.Clear();
+        _sparse = null;
+        _length = 0;
+    }
 
     /// <summary>Reverses in place.</summary>
-    public void ReverseInPlace() => Elements.Reverse();
+    public void ReverseInPlace()
+    {
+        MaterializeDense();
+        _dense.Reverse();
+    }
 
     /// <summary>Returns a new <see cref="List{T}"/> containing the given slice.</summary>
-    public List<object?> GetRange(int index, int count) => Elements.GetRange(index, count);
+    public List<object?> GetRange(int index, int count)
+    {
+        if (index < 0 || count < 0 || index + count > _length)
+            throw new ArgumentOutOfRangeException();
+        if (_sparse == null && index + count <= _dense.Count)
+            return _dense.GetRange(index, count);
+        // Mixed or purely-sparse slice — build by iterating.
+        var result = new List<object?>(count);
+        for (int i = 0; i < count; i++)
+            result.Add(GetCore(index + i));
+        return result;
+    }
 
     /// <summary>Returns the last element without removing it.</summary>
-    public object? PeekLast() => Elements.PeekLast();
+    public object? PeekLast() => _length == 0 ? throw new InvalidOperationException("Array is empty.") : GetCore(_length - 1);
 
     /// <summary>Returns the first element without removing it.</summary>
-    public object? PeekFirst() => Elements.PeekFirst();
+    public object? PeekFirst() => _length == 0 ? throw new InvalidOperationException("Array is empty.") : GetCore(0);
 
     /// <summary>Returns true if the element is present (reference/Equals match).</summary>
-    public bool ContainsElement(object? item) => Elements.Contains(item);
+    public bool ContainsElement(object? item) => IndexOfElement(item) >= 0;
 
     /// <summary>Returns the first index of the element, or -1 if not found.</summary>
-    public int IndexOfElement(object? item) => Elements.IndexOf(item);
+    public int IndexOfElement(object? item)
+    {
+        for (int i = 0; i < _length; i++)
+        {
+            if (Equals(GetCore(i), item))
+                return i;
+        }
+        return -1;
+    }
 
     /// <summary>
-    /// Creates a SharpTSArray from any enumerable collection.
+    /// Flattens the sparse tail into the dense backing so shift-style operations
+    /// can run against a contiguous buffer. O(Length) in the worst case; used by
+    /// Insert / RemoveAt / Reverse / AddFirst on sparse arrays.
     /// </summary>
-    public SharpTSArray(IEnumerable<object?> elements) : this(new Deque<object?>(elements)) { }
+    private void MaterializeDense()
+    {
+        if (_sparse == null)
+            return;
+        while (_dense.Count < _length)
+        {
+            int i = _dense.Count;
+            if (_sparse.TryGetValue((uint)i, out var v))
+                _dense.Add(v);
+            else
+                _dense.Add(SharpTSUndefined.Instance);
+        }
+        _sparse = null;
+    }
 
     /// <summary>
-    /// Creates an empty SharpTSArray.
+    /// If the sparse dictionary is no longer needed (empty OR fully covered by
+    /// the dense prefix), release it. Called after operations that shrink length.
     /// </summary>
-    public SharpTSArray() : this(new Deque<object?>()) { }
+    private void TryCollapseSparse()
+    {
+        if (_sparse == null) return;
+        if (_sparse.Count == 0 || _length <= _dense.Count)
+            _sparse = null;
+    }
+
+    // -----------------------------------------------------------------------
+    // Frozen / sealed / extensible state
+    // -----------------------------------------------------------------------
 
     /// <summary>
     /// Whether this array is frozen (no element additions, removals, or modifications).
@@ -130,16 +371,6 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
     /// Whether this array is extensible (can have new elements/properties added).
     /// </summary>
     public bool IsExtensible { get; private set; } = true;
-
-    /// <summary>
-    /// Upper bound on the number of <c>undefined</c> slots <see cref="Set(int, object?)"/>
-    /// will pad when assigning beyond <see cref="Elements"/>.Count. ECMA-262 requires
-    /// assignments like <c>a[2**31] = 1</c> to be O(1) on a sparse backing store;
-    /// SharpTS currently uses a dense <see cref="Deque{T}"/>, so unbounded padding
-    /// OOMs the process (billions of object references). Until the sparse-array
-    /// refactor lands (issue #73) we throw <c>RangeError</c> past this threshold.
-    /// </summary>
-    private const int SparseGrowthLimit = 1_000_000;
 
     /// <summary>
     /// Freezes this array, preventing any element changes.
@@ -168,97 +399,174 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
         IsExtensible = false;
     }
 
+    // -----------------------------------------------------------------------
+    // JS-semantic Get / Set (out-of-range: undefined read, extending write)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// JS-semantic read. Returns <see cref="SharpTSUndefined"/>.<c>Instance</c>
+    /// for out-of-range indices and for holes. Does not distinguish between
+    /// explicit undefined and holes — that distinction is a Stage C concern.
+    /// </summary>
     public object? Get(int index)
     {
-        // JS semantics: out-of-range index access returns `undefined`
-        // rather than throwing.
-        if (index < 0 || index >= Elements.Count)
-        {
+        if ((uint)index >= (uint)_length)
             return SharpTSUndefined.Instance;
-        }
-        return Elements[index];
+        return GetCore(index);
     }
 
     public RuntimeValue GetRV(int index) => RuntimeValue.FromBoxed(Get(index));
 
+    /// <summary>
+    /// Upper bound on the length after any single write. ECMA-262 specifies the
+    /// uint32 range (2^32 - 1), but <see cref="_length"/> is stored as <c>int</c>
+    /// throughout the runtime, so we cap one below <see cref="int.MaxValue"/>
+    /// to avoid signed-overflow wraparound. Future work can widen to <c>uint</c>
+    /// across the API if needed.
+    /// </summary>
+    internal const int MaxLength = int.MaxValue - 1;
+
+    /// <summary>
+    /// JS-semantic write. Assignments beyond the current length extend the array;
+    /// intermediate positions become holes (currently rendered as undefined on read).
+    /// Transitions to sparse storage if the growth would exceed
+    /// <see cref="SparseThreshold"/> slots.
+    /// </summary>
     public void Set(int index, object? value)
     {
-        if (IsFrozen)
-        {
-            // Frozen arrays silently ignore element modifications (JavaScript behavior)
-            return;
-        }
+        if (IsFrozen) return;  // Frozen arrays silently ignore writes
+        if (index < 0) throw new Exception("RangeError: Index out of bounds.");
+        if (index >= MaxLength)
+            throw new Exception($"RangeError: Array index {index} exceeds supported maximum (int.MaxValue - 1).");
 
-        if (index < 0)
-        {
-            throw new Exception("RangeError: Index out of bounds.");
-        }
+        if (index >= _length && !IsExtensible) return;
 
-        // JS semantics: assigning to an index >= length extends the array,
-        // padding intermediate slots with undefined.
-        if (index >= Elements.Count)
-        {
-            if (!IsExtensible && index >= Elements.Count)
-            {
-                return;
-            }
-            GuardSparseGrowth(index);
-            while (Elements.Count <= index)
-            {
-                Elements.Add(SharpTSUndefined.Instance);
-            }
-        }
-        Elements[index] = value;
+        SetCoreWithExtend(index, value);
     }
 
     /// <summary>
-    /// Sets an element at the given index with strict mode behavior.
-    /// In strict mode, throws TypeError for modifications to frozen arrays.
+    /// JS-semantic write, strict-mode variant. Throws TypeError for writes to
+    /// frozen or non-extensible arrays instead of silently no-op'ing.
     /// </summary>
     public void SetStrict(int index, object? value, bool strictMode)
     {
         if (IsFrozen)
         {
             if (strictMode)
-            {
                 throw new Exception($"TypeError: Cannot assign to read only property '{index}' of array");
-            }
+            return;
+        }
+        if (index < 0) throw new Exception("RangeError: Index out of bounds.");
+        if (index >= MaxLength)
+            throw new Exception($"RangeError: Array index {index} exceeds supported maximum (int.MaxValue - 1).");
+
+        if (index >= _length && !IsExtensible)
+        {
+            if (strictMode)
+                throw new Exception($"TypeError: Cannot add property {index}, object is not extensible");
             return;
         }
 
-        if (index < 0)
-        {
-            throw new Exception("RangeError: Index out of bounds.");
-        }
-
-        if (index >= Elements.Count)
-        {
-            if (!IsExtensible)
-            {
-                if (strictMode)
-                    throw new Exception($"TypeError: Cannot add property {index}, object is not extensible");
-                return;
-            }
-            GuardSparseGrowth(index);
-            while (Elements.Count <= index)
-            {
-                Elements.Add(SharpTSUndefined.Instance);
-            }
-        }
-        Elements[index] = value;
+        SetCoreWithExtend(index, value);
     }
 
-    private void GuardSparseGrowth(int index)
+    /// <summary>
+    /// Shared storage-aware write path. Handles the dense fast path, sparse
+    /// transition on large holes, and writes within an already-sparse array.
+    /// </summary>
+    private void SetCoreWithExtend(int index, object? value)
     {
-        var growth = (long)index + 1 - Elements.Count;
-        if (growth > SparseGrowthLimit)
+        if (_sparse != null)
         {
-            throw new Exception(
-                $"RangeError: Array index {index} would require extending the backing store by " +
-                $"{growth} slots (limit {SparseGrowthLimit}). SharpTS does not yet implement " +
-                $"sparse-array storage (see issue #73).");
+            SetCore(index, value);
+            if (index >= _length) _length = index + 1;
+            return;
         }
+
+        // Pure-dense path.
+        if (index < _length)
+        {
+            _dense[index] = value;
+            return;
+        }
+
+        long growth = (long)index + 1 - _length;
+        if (growth <= SparseThreshold)
+        {
+            while (_dense.Count <= index)
+                _dense.Add(SharpTSUndefined.Instance);
+            _dense[index] = value;
+            _length = _dense.Count;
+            return;
+        }
+
+        // Transition to sparse: keep existing dense prefix, put the new write
+        // (and any future high-index writes) into the dictionary.
+        _sparse = new Dictionary<uint, object?> { [(uint)index] = value };
+        _length = index + 1;
     }
+
+    /// <summary>
+    /// Implements <c>array.length = N</c>. Truncates the array when N is less
+    /// than the current length (entries at index ≥ N are dropped) or extends
+    /// with holes when N is greater. Respects frozen state.
+    /// </summary>
+    public void SetLength(int newLength)
+    {
+        if (IsFrozen) return;
+        if (newLength < 0) throw new Exception("RangeError: Invalid array length.");
+        if (newLength > MaxLength)
+            throw new Exception($"RangeError: Array length {newLength} exceeds supported maximum (int.MaxValue - 1).");
+
+        if (newLength == _length) return;
+
+        if (newLength < _length)
+        {
+            // Truncate: drop entries at indices >= newLength.
+            if (_sparse != null)
+            {
+                List<uint>? toRemove = null;
+                foreach (var key in _sparse.Keys)
+                {
+                    if (key >= (uint)newLength)
+                    {
+                        toRemove ??= [];
+                        toRemove.Add(key);
+                    }
+                }
+                if (toRemove != null)
+                {
+                    foreach (var k in toRemove) _sparse.Remove(k);
+                }
+            }
+            while (_dense.Count > newLength)
+                _dense.RemoveAt(_dense.Count - 1);
+            _length = newLength;
+            TryCollapseSparse();
+            return;
+        }
+
+        // Extend: grow length. If we're already sparse, just bump _length and let
+        // reads return undefined. If dense and growth is small, pad with undefined
+        // (matches existing behavior of conflating holes with undefined). Large
+        // growth transitions to sparse and creates a true hole tail.
+        long growth = (long)newLength - _length;
+        if (_sparse != null || growth > SparseThreshold)
+        {
+            _sparse ??= new Dictionary<uint, object?>();
+            _length = newLength;
+            return;
+        }
+
+        while (_dense.Count < newLength)
+            _dense.Add(SharpTSUndefined.Instance);
+        _length = _dense.Count;
+    }
+
+    // -----------------------------------------------------------------------
+    // Legacy Try* mutators — same semantics as before, now routed through the
+    // dual-mode helpers so they stay correct on sparse arrays.
+    // -----------------------------------------------------------------------
 
     /// <summary>
     /// Adds an element to the end of the array. Respects frozen/sealed state.
@@ -266,11 +574,8 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
     /// <returns>True if the element was added, false if blocked by frozen/sealed state.</returns>
     public bool TryAdd(object? value)
     {
-        if (IsFrozen || IsSealed)
-        {
-            return false;
-        }
-        Elements.Add(value);
+        if (IsFrozen || IsSealed) return false;
+        Add(value);
         return true;
     }
 
@@ -283,12 +588,10 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
         if (IsFrozen || IsSealed)
         {
             if (strictMode)
-            {
                 throw new Exception($"TypeError: Cannot add elements to a frozen or sealed array");
-            }
             return false;
         }
-        Elements.Add(value);
+        Add(value);
         return true;
     }
 
@@ -298,13 +601,8 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
     /// <returns>The removed element, or null if blocked or empty.</returns>
     public object? TryPop()
     {
-        if (IsFrozen || IsSealed || Elements.Count == 0)
-        {
-            return null;
-        }
-        var last = Elements[^1];
-        Elements.RemoveAt(Elements.Count - 1);
-        return last;
+        if (IsFrozen || IsSealed || _length == 0) return null;
+        return RemoveLast();
     }
 
     /// <summary>
@@ -315,120 +613,93 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
     {
         if (IsFrozen || IsSealed)
         {
-            if (strictMode && Elements.Count > 0)
-            {
+            if (strictMode && _length > 0)
                 throw new Exception($"TypeError: Cannot remove elements from a frozen or sealed array");
-            }
             return null;
         }
-        if (Elements.Count == 0)
-        {
-            return null;
-        }
-        var last = Elements[^1];
-        Elements.RemoveAt(Elements.Count - 1);
-        return last;
+        if (_length == 0) return null;
+        return RemoveLast();
     }
 
     /// <summary>
-    /// Removes the first element. Respects frozen/sealed state. O(1) with Deque.
+    /// Removes the first element. Respects frozen/sealed state. O(1) with Deque (dense only).
     /// </summary>
     /// <returns>The removed element, or null if blocked or empty.</returns>
     public object? TryShift()
     {
-        if (IsFrozen || IsSealed || Elements.Count == 0)
-        {
-            return null;
-        }
-        return Elements.RemoveFirst();
+        if (IsFrozen || IsSealed || _length == 0) return null;
+        return RemoveFirst();
     }
 
     /// <summary>
-    /// Removes the first element with strict mode behavior. O(1) with Deque.
-    /// In strict mode, throws TypeError for removals from frozen/sealed arrays.
+    /// Removes the first element with strict mode behavior.
     /// </summary>
     public object? TryShiftStrict(bool strictMode)
     {
         if (IsFrozen || IsSealed)
         {
-            if (strictMode && Elements.Count > 0)
-            {
+            if (strictMode && _length > 0)
                 throw new Exception($"TypeError: Cannot remove elements from a frozen or sealed array");
-            }
             return null;
         }
-        if (Elements.Count == 0)
-        {
-            return null;
-        }
-        return Elements.RemoveFirst();
+        if (_length == 0) return null;
+        return RemoveFirst();
     }
 
     /// <summary>
-    /// Adds an element to the beginning. Respects frozen/sealed state. O(1) with Deque.
+    /// Adds an element to the beginning. Respects frozen/sealed state.
     /// </summary>
-    /// <returns>True if the element was added, false if blocked.</returns>
     public bool TryUnshift(object? value)
     {
-        if (IsFrozen || IsSealed)
-        {
-            return false;
-        }
-        Elements.AddFirst(value);
+        if (IsFrozen || IsSealed) return false;
+        AddFirst(value);
         return true;
     }
 
     /// <summary>
-    /// Adds an element to the beginning with strict mode behavior. O(1) with Deque.
-    /// In strict mode, throws TypeError for additions to frozen/sealed arrays.
+    /// Adds an element to the beginning with strict mode behavior.
     /// </summary>
     public bool TryUnshiftStrict(object? value, bool strictMode)
     {
         if (IsFrozen || IsSealed)
         {
             if (strictMode)
-            {
                 throw new Exception($"TypeError: Cannot add elements to a frozen or sealed array");
-            }
             return false;
         }
-        Elements.AddFirst(value);
+        AddFirst(value);
         return true;
     }
 
     /// <summary>
-    /// Reverses the array in place. Respects frozen state (sealed allows in-place modification).
+    /// Reverses the array in place. Respects frozen state.
     /// </summary>
-    /// <returns>True if reversed, false if frozen.</returns>
     public bool TryReverse()
     {
-        if (IsFrozen)
-        {
-            return false;
-        }
-        Elements.Reverse();
+        if (IsFrozen) return false;
+        ReverseInPlace();
         return true;
     }
 
     /// <summary>
     /// Reverses the array in place with strict mode behavior.
-    /// In strict mode, throws TypeError for modifications to frozen arrays.
     /// </summary>
     public bool TryReverseStrict(bool strictMode)
     {
         if (IsFrozen)
         {
             if (strictMode)
-            {
                 throw new Exception($"TypeError: Cannot modify a frozen array");
-            }
             return false;
         }
-        Elements.Reverse();
+        ReverseInPlace();
         return true;
     }
 
-    // Property descriptor storage for named properties (arrays can have non-numeric properties too)
+    // -----------------------------------------------------------------------
+    // Named properties and descriptors (unchanged from Stage A).
+    // -----------------------------------------------------------------------
+
     private Dictionary<string, object?>? _namedProperties;
     private Dictionary<string, PropertyDescriptorFlags>? _descriptors;
 
@@ -438,9 +709,7 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
     public object? GetNamedProperty(string name)
     {
         if (_namedProperties?.TryGetValue(name, out var value) == true)
-        {
             return value;
-        }
         return null;
     }
 
@@ -448,9 +717,7 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
     /// Checks if a named property exists on the array.
     /// </summary>
     public bool HasNamedProperty(string name)
-    {
-        return _namedProperties?.ContainsKey(name) ?? false;
-    }
+        => _namedProperties?.ContainsKey(name) ?? false;
 
     /// <summary>
     /// Sets a named property value on the array.
@@ -467,52 +734,36 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
     /// </summary>
     public bool DefineProperty(string name, SharpTSPropertyDescriptor descriptor)
     {
-        if (IsFrozen)
-        {
-            return false;
-        }
+        if (IsFrozen) return false;
 
-        // Check if it's a numeric index
+        // Numeric index path
         if (int.TryParse(name, out int index) && index >= 0)
         {
-            // For numeric indices, we only support data properties
-            if (descriptor.Get != null || descriptor.Set != null)
+            // Arrays don't support accessor properties on indices
+            if (descriptor.Get != null || descriptor.Set != null) return false;
+
+            // Extend if needed (respect sealed)
+            if (index >= _length)
             {
-                // Arrays don't support accessor properties on indices
-                return false;
+                if (IsSealed) return false;
+                SetCoreWithExtend(index, descriptor.Value);
+            }
+            else
+            {
+                SetCore(index, descriptor.Value);
             }
 
-            // Expand array if needed (but not if sealed and index is beyond current length)
-            if (index >= Elements.Count)
-            {
-                if (IsSealed)
-                {
-                    return false;
-                }
-                // Expand array with nulls
-                while (Elements.Count <= index)
-                {
-                    Elements.Add(null);
-                }
-            }
-
-            Elements[index] = descriptor.Value;
-
-            // Store descriptor flags
             _descriptors ??= new Dictionary<string, PropertyDescriptorFlags>();
             _descriptors[name] = PropertyDescriptorFlags.ForDefineProperty(
                 descriptor.Writable,
                 descriptor.Enumerable,
-                descriptor.Configurable
-            );
+                descriptor.Configurable);
             return true;
         }
 
-        // Named property (non-numeric)
+        // Named-property path
         if (IsSealed && (_namedProperties == null || !_namedProperties.ContainsKey(name)))
-        {
             return false;
-        }
 
         _namedProperties ??= new Dictionary<string, object?>();
         _namedProperties[name] = descriptor.Value;
@@ -521,8 +772,7 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
         _descriptors[name] = PropertyDescriptorFlags.ForDefineProperty(
             descriptor.Writable,
             descriptor.Enumerable,
-            descriptor.Configurable
-        );
+            descriptor.Configurable);
         return true;
     }
 
@@ -532,44 +782,37 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
     /// </summary>
     public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
     {
-        // Special case for 'length'
         if (name == "length")
         {
             return new SharpTSPropertyDescriptor
             {
-                Value = (double)Elements.Count,
+                Value = (double)_length,
                 Writable = true,
                 Enumerable = false,
                 Configurable = false
             };
         }
 
-        // Check if it's a numeric index
-        if (int.TryParse(name, out int index) && index >= 0 && index < Elements.Count)
+        if (int.TryParse(name, out int index) && index >= 0 && index < _length)
         {
             PropertyDescriptorFlags flags = default;
             if (_descriptors?.TryGetValue(name, out flags) != true)
-            {
                 flags = PropertyDescriptorFlags.Default;
-            }
 
             return new SharpTSPropertyDescriptor
             {
-                Value = Elements[index],
+                Value = GetCore(index),
                 Writable = flags.Writable,
                 Enumerable = flags.Enumerable,
                 Configurable = flags.Configurable
             };
         }
 
-        // Check named properties
         if (_namedProperties?.TryGetValue(name, out var value) == true)
         {
             PropertyDescriptorFlags flags = default;
             if (_descriptors?.TryGetValue(name, out flags) != true)
-            {
                 flags = PropertyDescriptorFlags.Default;
-            }
 
             return new SharpTSPropertyDescriptor
             {
@@ -583,5 +826,5 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized, IReadOnly
         return null;
     }
 
-    public override string ToString() => $"[{string.Join(", ", Elements.Select(e => e?.ToString() ?? "null"))}]";
+    public override string ToString() => $"[{string.Join(", ", this.Select(e => e?.ToString() ?? "null"))}]";
 }

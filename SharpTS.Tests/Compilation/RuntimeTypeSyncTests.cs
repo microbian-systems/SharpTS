@@ -111,12 +111,13 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
              // Encapsulation API introduced for issue #73 Stage A (sparse-array migration).
              // These collapse direct .Elements access in the interpreter; compiled-mode
              // emission still operates on List<object?> backing, so $Array has no need
-             // for them. They may go away in Stage B once storage is redesigned.
+             // for them. Stage B added SetLength for `array.length = N`.
              "Add", "AddRange", "AddFirst", "Insert", "InsertRange",
              "RemoveLast", "RemoveFirst", "RemoveAt", "RemoveRange",
              "Clear", "ReverseInPlace", "GetRange",
              "PeekLast", "PeekFirst",
-             "ContainsElement", "IndexOfElement"]),
+             "ContainsElement", "IndexOfElement",
+             "SetLength"]),
 
         new(typeof(SharpTSObject), "Object",
             [.. BaseIgnored, "GetMember",

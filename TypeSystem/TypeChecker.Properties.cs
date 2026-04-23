@@ -590,6 +590,21 @@ public partial class TypeChecker
         {
             return CheckExpr(set.Value);
         }
+        // Arrays accept `a.length = N` (truncate / extend) and arbitrary named
+        // properties (arrays are objects in JS). The runtime interpreter and
+        // compiler dispatch on SharpTSArray and route `length` to SetLength.
+        if (objType is TypeInfo.Array)
+        {
+            if (set.Name.Lexeme == "length")
+            {
+                TypeInfo valueType = CheckExpr(set.Value);
+                var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+                if (!IsCompatible(numberType, valueType))
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to array 'length' (expected number).");
+                return valueType;
+            }
+            return CheckExpr(set.Value);
+        }
         throw new TypeCheckException("Only instances and objects have properties.");
     }
 
