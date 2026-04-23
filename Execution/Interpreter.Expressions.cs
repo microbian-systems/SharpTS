@@ -713,7 +713,7 @@ public partial class Interpreter
     /// <returns>An IndexTarget discriminated union representing the resolved target.</returns>
     private static IndexTarget ResolveIndexTarget(object? obj, object? index) => (obj, index) switch
     {
-        (SharpTSArray array, double idx) => new IndexTarget.Array(array, (int)idx),
+        (SharpTSArray array, double idx) => new IndexTarget.Array(array, (long)idx),
         (SharpTSTypedArray typedArray, double typedIdx) => new IndexTarget.TypedArray(typedArray, (int)typedIdx),
         (SharpTSBuffer buffer, double bufIdx) => new IndexTarget.Buffer(buffer, (int)bufIdx),
         (SharpTSEnum enumObj, double enumIdx) => new IndexTarget.EnumReverse(enumObj, enumIdx),

@@ -11,7 +11,12 @@ public abstract record IndexTarget
     private IndexTarget() { }
 
     // Get/Set targets
-    public sealed record Array(SharpTSArray Target, int Index) : IndexTarget;
+    /// <summary>
+    /// Array index target — <c>Index</c> is <c>long</c> so JS literals like
+    /// <c>a[2147483648]</c> (which exceed int range but sit inside ECMA-262's
+    /// uint32 array index range) route correctly through SharpTSArray's long APIs.
+    /// </summary>
+    public sealed record Array(SharpTSArray Target, long Index) : IndexTarget;
     public sealed record TypedArray(SharpTSTypedArray Target, int Index) : IndexTarget;
     public sealed record Buffer(SharpTSBuffer Target, int Index) : IndexTarget;
     public sealed record ObjectString(SharpTSObject Target, string Key) : IndexTarget;

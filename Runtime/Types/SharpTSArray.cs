@@ -69,7 +69,14 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
 
     private readonly Deque<object?> _dense;
     private Dictionary<uint, object?>? _sparse;
-    private int _length;
+    /// <summary>
+    /// Full JS array length — up to <see cref="MaxLength"/> = 2^32 - 1 per ECMA-262.
+    /// Stored as <c>long</c> so arithmetic doesn't overflow; all arithmetic uses
+    /// the long path. Public <see cref="Length"/> clamps to <see cref="int.MaxValue"/>
+    /// for C# callers that assume int; <see cref="LongLength"/> exposes the true
+    /// value (used by the JS <c>length</c> property accessor).
+    /// </summary>
+    private long _length;
 
     /// <summary>
     /// Read-only view over the dense prefix. Present for compatibility with
@@ -94,38 +101,58 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     public SharpTSArray(IEnumerable<object?> elements) : this(new Deque<object?>(elements)) { }
 
     /// <summary>
-    /// ECMA-262 array length. Independent of physical storage size — a sparse
-    /// assignment bumps <c>Length</c> without allocating intermediate slots.
+    /// ECMA-262 array length clamped to <see cref="int.MaxValue"/>.
+    /// Most C# callers iterate <c>for (int i = 0; i &lt; arr.Length; i++)</c> and
+    /// assume int; keeping the signature int preserves source compatibility.
+    /// For arrays whose true length exceeds <see cref="int.MaxValue"/>, use
+    /// <see cref="LongLength"/> instead.
     /// </summary>
-    public int Length => _length;
+    public int Length => _length > int.MaxValue ? int.MaxValue : (int)_length;
 
     /// <summary>
-    /// Collection count. Same as <see cref="Length"/> — present so the runtime can detect
-    /// the array size cheaply (e.g. <c>new List&lt;object?&gt;(array)</c> preallocates capacity).
+    /// True ECMA-262 array length — up to 2^32 - 1. The JS <c>length</c> property
+    /// accessor reads through this so <c>arr.length === 4294967295</c> works for
+    /// arrays that use the full uint32 range.
     /// </summary>
-    public int Count => _length;
+    public long LongLength => _length;
+
+    /// <summary>
+    /// Collection count. Clamped to <see cref="int.MaxValue"/> for
+    /// <see cref="IReadOnlyCollection{T}"/> compatibility. Matches <see cref="Length"/>.
+    /// </summary>
+    public int Count => Length;
 
     /// <summary>
     /// Indexed access to an existing slot. Throws <see cref="ArgumentOutOfRangeException"/>
-    /// for out-of-range reads and writes — use <see cref="Get(int)"/> / <see cref="Set(int, object?)"/>
+    /// for out-of-range reads and writes — use <see cref="Get(long)"/> / <see cref="Set(long, object?)"/>
     /// for the JS-semantic variants (undefined on OOB read, extend on OOB write).
     /// Returns <see cref="SharpTSUndefined"/>.<c>Instance</c> for holes (user-facing);
-    /// use <see cref="GetRaw(int)"/> to see <see cref="ArrayHole"/>.<c>Instance</c>.
+    /// use <see cref="GetRaw(long)"/> to see <see cref="ArrayHole"/>.<c>Instance</c>.
+    /// <c>int</c> and <c>long</c> overloads are provided — most call sites pass
+    /// <c>int</c> and widen implicitly; the <c>long</c> path is what the interpreter's
+    /// index resolver uses when a JS literal like <c>a[2147483648]</c> exceeds int range.
     /// </summary>
-    public object? this[int index]
+    public object? this[long index]
     {
         get
         {
-            if ((uint)index >= (uint)_length)
+            if ((ulong)index >= (ulong)_length)
                 throw new ArgumentOutOfRangeException(nameof(index));
             return UnholeForRead(GetCore(index));
         }
         set
         {
-            if ((uint)index >= (uint)_length)
+            if ((ulong)index >= (ulong)_length)
                 throw new ArgumentOutOfRangeException(nameof(index));
             SetCore(index, value);
         }
+    }
+
+    /// <summary>int-indexed indexer — widens to the long path.</summary>
+    public object? this[int index]
+    {
+        get => this[(long)index];
+        set => this[(long)index] = value;
     }
 
     /// <summary>
@@ -135,46 +162,58 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     /// indices. Built-in array methods that distinguish holes from explicit undefined
     /// (forEach skips, map preserves, indexOf skips, includes does not) must use this.
     /// </summary>
-    public object? GetRaw(int index)
+    public object? GetRaw(long index)
     {
-        if ((uint)index >= (uint)_length) return SharpTSUndefined.Instance;
+        if ((ulong)index >= (ulong)_length) return SharpTSUndefined.Instance;
         return GetCore(index);
     }
+
+    /// <summary>int-indexed GetRaw — widens to long.</summary>
+    public object? GetRaw(int index) => GetRaw((long)index);
 
     /// <summary>
     /// Returns <c>true</c> if <paramref name="index"/> is a present (non-hole) slot.
     /// Equivalent to ECMA-262 <c>HasProperty</c> for numeric indices: <c>(String(i)) in arr</c>.
     /// </summary>
-    public bool HasIndex(int index)
+    public bool HasIndex(long index)
     {
-        if ((uint)index >= (uint)_length) return false;
-        if (_sparse == null) return index < _dense.Count && _dense[index] is not ArrayHole;
-        if (index < _dense.Count) return _dense[index] is not ArrayHole;
+        if ((ulong)index >= (ulong)_length) return false;
+        int denseCount = _dense.Count;
+        if (_sparse == null) return index < denseCount && _dense[(int)index] is not ArrayHole;
+        if (index < denseCount) return _dense[(int)index] is not ArrayHole;
+        if (index > uint.MaxValue) return false;
         return _sparse.ContainsKey((uint)index);
     }
+
+    /// <summary>int-indexed HasIndex — widens to long.</summary>
+    public bool HasIndex(int index) => HasIndex((long)index);
 
     /// <summary>
     /// Makes <paramref name="index"/> a hole (ECMA-262 <c>delete arr[i]</c>).
     /// Length is unchanged. No-op for out-of-range indices or frozen arrays.
     /// </summary>
-    public void DeleteAt(int index)
+    public void DeleteAt(long index)
     {
         if (IsFrozen) return;
-        if ((uint)index >= (uint)_length) return;
+        if ((ulong)index >= (ulong)_length) return;
         if (_sparse == null || index < _dense.Count)
-            _dense[index] = ArrayHole.Instance;
-        else
+            _dense[(int)index] = ArrayHole.Instance;
+        else if (index <= uint.MaxValue)
             _sparse.Remove((uint)index);
     }
+
+    /// <summary>int-indexed DeleteAt — widens to long.</summary>
+    public void DeleteAt(int index) => DeleteAt((long)index);
 
     /// <summary>Reads the slot at the given index without mutating length or storage mode.
     /// Returns <see cref="ArrayHole"/>.<c>Instance</c> for holes (positions not written).
     /// Callers that want JS-spec user-facing behavior (holes read as undefined) should
-    /// use <see cref="Get(int)"/> or convert via <see cref="UnholeForRead(object?)"/>.</summary>
-    private object? GetCore(int index)
+    /// use <see cref="Get(long)"/> or convert via <see cref="UnholeForRead(object?)"/>.</summary>
+    private object? GetCore(long index)
     {
         if (_sparse == null || index < _dense.Count)
-            return _dense[index];
+            return _dense[(int)index];
+        if (index > uint.MaxValue) return ArrayHole.Instance;
         return _sparse.TryGetValue((uint)index, out var v) ? v : ArrayHole.Instance;
     }
 
@@ -188,12 +227,12 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         => value is ArrayHole ? SharpTSUndefined.Instance : value;
 
     /// <summary>Writes the slot at the given index without mutating length or transitioning.</summary>
-    private void SetCore(int index, object? value)
+    private void SetCore(long index, object? value)
     {
         if (_sparse == null || index < _dense.Count)
-            _dense[index] = value;
+            _dense[(int)index] = value;
         else
-            _sparse[(uint)index] = value;
+            _sparse[(uint)index] = value;  // index <= uint.MaxValue guaranteed by MaxLength cap
     }
 
     /// <inheritdoc />
@@ -207,14 +246,17 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     public IEnumerator<object?> GetEnumerator()
     {
         int denseCount = _dense.Count;
-        int cap = Math.Min(denseCount, _length);
+        int cap = _length > denseCount ? denseCount : (int)_length;
         for (int i = 0; i < cap; i++)
             yield return UnholeForRead(_dense[i]);
         if (_sparse != null || _length > denseCount)
         {
-            for (int i = denseCount; i < _length; i++)
+            // Use long iteration so arrays with length > int.MaxValue enumerate
+            // correctly. Most built-ins go through HasIndex / indexed access and
+            // never hit this path with a huge _length.
+            for (long i = denseCount; i < _length; i++)
             {
-                if (_sparse != null && _sparse.TryGetValue((uint)i, out var v))
+                if (_sparse != null && i <= uint.MaxValue && _sparse.TryGetValue((uint)i, out var v))
                     yield return v;
                 else
                     yield return SharpTSUndefined.Instance;
@@ -289,19 +331,20 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     {
         if (_length == 0)
             throw new InvalidOperationException("Array is empty.");
-        int last = _length - 1;
+        long last = _length - 1;
         object? result;
         if (_sparse != null && last >= _dense.Count)
         {
-            if (!_sparse.TryGetValue((uint)last, out result))
+            uint key = (uint)last;  // safe: last <= MaxWriteIndex < uint.MaxValue
+            if (!_sparse.TryGetValue(key, out result))
                 result = SharpTSUndefined.Instance;
             else
-                _sparse.Remove((uint)last);
+                _sparse.Remove(key);
         }
         else
         {
-            result = _dense[last];
-            _dense.RemoveAt(last);
+            result = _dense[(int)last];
+            _dense.RemoveAt((int)last);
         }
         _length--;
         TryCollapseSparse();
@@ -374,10 +417,11 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     /// <summary>Returns the first index of the element, or -1 if not found.</summary>
     public int IndexOfElement(object? item)
     {
-        for (int i = 0; i < _length; i++)
+        long limit = _length > int.MaxValue ? int.MaxValue : _length;
+        for (long i = 0; i < limit; i++)
         {
             if (Equals(GetCore(i), item))
-                return i;
+                return (int)i;
         }
         return -1;
     }
@@ -391,6 +435,13 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     {
         if (_sparse == null)
             return;
+        // Materialization copies every sparse entry into the dense prefix. If
+        // _length exceeds int.MaxValue we can't represent that as a dense Deque.
+        // Structural mutations (Insert / RemoveAt / AddFirst / Reverse) that
+        // require a contiguous buffer are unsupported for such arrays; throw a
+        // clear RangeError rather than silently allocating 2B+ object slots.
+        if (_length > int.MaxValue)
+            throw new Exception("RangeError: Array operation requires materializing a sparse array whose length exceeds int.MaxValue.");
         while (_dense.Count < _length)
         {
             int i = _dense.Count;
@@ -467,26 +518,33 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     /// JS-semantic read for user-facing code. Returns <see cref="SharpTSUndefined"/>.<c>Instance</c>
     /// for out-of-range indices AND for holes — matching the observable behavior
     /// of <c>arr[i]</c> at the language level. Built-ins that need to distinguish
-    /// holes (forEach, indexOf, etc.) should use <see cref="GetRaw(int)"/> plus
-    /// <see cref="HasIndex(int)"/>.
+    /// holes (forEach, indexOf, etc.) should use <see cref="GetRaw(long)"/> plus
+    /// <see cref="HasIndex(long)"/>.
     /// </summary>
-    public object? Get(int index)
+    public object? Get(long index)
     {
-        if ((uint)index >= (uint)_length)
+        if ((ulong)index >= (ulong)_length)
             return SharpTSUndefined.Instance;
         return UnholeForRead(GetCore(index));
     }
 
-    public RuntimeValue GetRV(int index) => RuntimeValue.FromBoxed(Get(index));
+    /// <summary>int-indexed Get — widens to long.</summary>
+    public object? Get(int index) => Get((long)index);
+
+    public RuntimeValue GetRV(long index) => RuntimeValue.FromBoxed(Get(index));
+    public RuntimeValue GetRV(int index) => GetRV((long)index);
 
     /// <summary>
-    /// Upper bound on the length after any single write. ECMA-262 specifies the
-    /// uint32 range (2^32 - 1), but <see cref="_length"/> is stored as <c>int</c>
-    /// throughout the runtime, so we cap one below <see cref="int.MaxValue"/>
-    /// to avoid signed-overflow wraparound. Future work can widen to <c>uint</c>
-    /// across the API if needed.
+    /// Upper bound on an array index: ECMA-262 allows writable indices up to
+    /// <c>2^32 - 2</c> (the resulting length would be <c>2^32 - 1</c>, the
+    /// spec's <c>Array.length</c> maximum). Writes past this throw RangeError.
     /// </summary>
-    internal const int MaxLength = int.MaxValue - 1;
+    internal const long MaxWriteIndex = (long)uint.MaxValue - 1;
+
+    /// <summary>
+    /// Upper bound on <see cref="LongLength"/>: <c>2^32 - 1</c> per ECMA-262.
+    /// </summary>
+    internal const long MaxLength = (long)uint.MaxValue;
 
     /// <summary>
     /// JS-semantic write. Assignments beyond the current length extend the array;
@@ -494,23 +552,26 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     /// Transitions to sparse storage if the growth would exceed
     /// <see cref="SparseThreshold"/> slots.
     /// </summary>
-    public void Set(int index, object? value)
+    public void Set(long index, object? value)
     {
         if (IsFrozen) return;  // Frozen arrays silently ignore writes
         if (index < 0) throw new Exception("RangeError: Index out of bounds.");
-        if (index >= MaxLength)
-            throw new Exception($"RangeError: Array index {index} exceeds supported maximum (int.MaxValue - 1).");
+        if (index > MaxWriteIndex)
+            throw new Exception($"RangeError: Array index {index} exceeds ECMA-262 uint32 maximum.");
 
         if (index >= _length && !IsExtensible) return;
 
         SetCoreWithExtend(index, value);
     }
 
+    /// <summary>int-indexed Set — widens to long.</summary>
+    public void Set(int index, object? value) => Set((long)index, value);
+
     /// <summary>
     /// JS-semantic write, strict-mode variant. Throws TypeError for writes to
     /// frozen or non-extensible arrays instead of silently no-op'ing.
     /// </summary>
-    public void SetStrict(int index, object? value, bool strictMode)
+    public void SetStrict(long index, object? value, bool strictMode)
     {
         if (IsFrozen)
         {
@@ -519,8 +580,8 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
             return;
         }
         if (index < 0) throw new Exception("RangeError: Index out of bounds.");
-        if (index >= MaxLength)
-            throw new Exception($"RangeError: Array index {index} exceeds supported maximum (int.MaxValue - 1).");
+        if (index > MaxWriteIndex)
+            throw new Exception($"RangeError: Array index {index} exceeds ECMA-262 uint32 maximum.");
 
         if (index >= _length && !IsExtensible)
         {
@@ -532,11 +593,15 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         SetCoreWithExtend(index, value);
     }
 
+    /// <summary>int-indexed SetStrict — widens to long.</summary>
+    public void SetStrict(int index, object? value, bool strictMode)
+        => SetStrict((long)index, value, strictMode);
+
     /// <summary>
     /// Shared storage-aware write path. Handles the dense fast path, sparse
     /// transition on large holes, and writes within an already-sparse array.
     /// </summary>
-    private void SetCoreWithExtend(int index, object? value)
+    private void SetCoreWithExtend(long index, object? value)
     {
         if (_sparse != null)
         {
@@ -548,19 +613,19 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         // Pure-dense path.
         if (index < _length)
         {
-            _dense[index] = value;
+            _dense[(int)index] = value;
             return;
         }
 
-        long growth = (long)index + 1 - _length;
-        if (growth <= SparseThreshold)
+        long growth = index + 1 - _length;
+        if (growth <= SparseThreshold && index + 1 <= int.MaxValue)
         {
             // Pad intermediate positions with ArrayHole, not Undefined —
             // per ECMA-262, a[5] = 1 on an empty array creates holes at 0..4
             // that forEach skips, hasOwnProperty rejects, etc.
             while (_dense.Count <= index)
                 _dense.Add(ArrayHole.Instance);
-            _dense[index] = value;
+            _dense[(int)index] = value;
             _length = _dense.Count;
             return;
         }
@@ -576,12 +641,12 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     /// than the current length (entries at index ≥ N are dropped) or extends
     /// with holes when N is greater. Respects frozen state.
     /// </summary>
-    public void SetLength(int newLength)
+    public void SetLength(long newLength)
     {
         if (IsFrozen) return;
         if (newLength < 0) throw new Exception("RangeError: Invalid array length.");
         if (newLength > MaxLength)
-            throw new Exception($"RangeError: Array length {newLength} exceeds supported maximum (int.MaxValue - 1).");
+            throw new Exception($"RangeError: Array length {newLength} exceeds ECMA-262 uint32 maximum.");
 
         if (newLength == _length) return;
 
@@ -593,7 +658,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
                 List<uint>? toRemove = null;
                 foreach (var key in _sparse.Keys)
                 {
-                    if (key >= (uint)newLength)
+                    if ((long)key >= newLength)
                     {
                         toRemove ??= [];
                         toRemove.Add(key);
@@ -615,8 +680,8 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         // reads return undefined. If dense and growth is small, pad with undefined
         // (matches existing behavior of conflating holes with undefined). Large
         // growth transitions to sparse and creates a true hole tail.
-        long growth = (long)newLength - _length;
-        if (_sparse != null || growth > SparseThreshold)
+        long growth = newLength - _length;
+        if (_sparse != null || growth > SparseThreshold || newLength > int.MaxValue)
         {
             _sparse ??= new Dictionary<uint, object?>();
             _length = newLength;
@@ -628,6 +693,9 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
             _dense.Add(ArrayHole.Instance);
         _length = _dense.Count;
     }
+
+    /// <summary>int-based SetLength — widens to long.</summary>
+    public void SetLength(int newLength) => SetLength((long)newLength);
 
     // -----------------------------------------------------------------------
     // Legacy Try* mutators — same semantics as before, now routed through the
@@ -802,9 +870,10 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     {
         if (IsFrozen) return false;
 
-        // Numeric index path
-        if (int.TryParse(name, out int index) && index >= 0)
+        // Numeric index path — accept full uint32 range per ECMA-262.
+        if (uint.TryParse(name, out uint uindex))
         {
+            long index = uindex;
             // Arrays don't support accessor properties on indices
             if (descriptor.Get != null || descriptor.Set != null) return false;
 
@@ -852,15 +921,16 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         {
             return new SharpTSPropertyDescriptor
             {
-                Value = (double)_length,
+                Value = (double)_length,  // full long → double (accurate to 2^53)
                 Writable = true,
                 Enumerable = false,
                 Configurable = false
             };
         }
 
-        if (int.TryParse(name, out int index) && index >= 0 && index < _length)
+        if (uint.TryParse(name, out uint uindex) && (long)uindex < _length)
         {
+            long index = uindex;
             // Holes have no own property descriptor — ECMA-262 HasOwnProperty
             // returns false, and Object.getOwnPropertyDescriptor returns undefined.
             if (!HasIndex(index))
@@ -901,13 +971,17 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     {
         // Render holes as "undefined" for debug; public-facing toString/join
         // (which renders holes as empty string) live in the array built-ins.
+        // Cap rendering at int.MaxValue entries to avoid pathological ToString on
+        // huge sparse arrays — debug output doesn't need spec fidelity past that.
         var sb = new System.Text.StringBuilder("[");
-        for (int i = 0; i < _length; i++)
+        long limit = _length > int.MaxValue ? int.MaxValue : _length;
+        for (long i = 0; i < limit; i++)
         {
             if (i > 0) sb.Append(", ");
             var raw = GetCore(i);
             sb.Append(raw is ArrayHole ? "undefined" : raw?.ToString() ?? "null");
         }
+        if (_length > int.MaxValue) sb.Append(", ... (truncated)");
         sb.Append(']');
         return sb.ToString();
     }

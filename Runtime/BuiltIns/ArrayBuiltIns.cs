@@ -9,7 +9,7 @@ public static class ArrayBuiltIns
 {
     private static readonly BuiltInTypeMemberLookup<SharpTSArray> _lookup =
         BuiltInTypeBuilder<SharpTSArray>.ForInstanceType()
-            .Property("length", arr => (double)arr.Length)
+            .Property("length", arr => (double)arr.LongLength)
             .MethodV2("push", 1, int.MaxValue, PushV2)
             .MethodV2("pop", 0, PopV2)
             .MethodV2("shift", 0, ShiftV2)

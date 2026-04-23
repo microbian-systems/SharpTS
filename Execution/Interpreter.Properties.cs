@@ -923,9 +923,9 @@ public partial class Interpreter
                     // paths and transitions to sparse storage for large extensions.
                     if (value is double ld)
                     {
-                        if (ld < 0 || ld > uint.MaxValue || Math.Floor(ld) != ld)
+                        if (ld < 0 || ld > (double)uint.MaxValue || Math.Floor(ld) != ld)
                             throw new InterpreterException("RangeError: Invalid array length.");
-                        array.SetLength((int)ld);
+                        array.SetLength((long)ld);
                         return value;
                     }
                     throw new InterpreterException("RangeError: Invalid array length.");
