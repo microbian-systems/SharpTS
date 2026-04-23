@@ -101,14 +101,27 @@ public partial class ILEmitter
 
             int argIndex = i + argOffset;
 
-            // if (arg == null) { arg = <default>; }
+            // JS spec: defaults fire when the argument is `undefined` — missing or
+            // explicit. Callers pad missing args with the $Undefined singleton (see
+            // the direct-call emitter in ExpressionEmitterBase.CallHelpers.cs), which
+            // is a non-null reference — so a plain `brtrue` would skip the default.
+            // Treat both null and the $Undefined singleton as "fire the default."
+            var fireDefault = builder.DefineLabel($"fire_default_{i}");
             var skipDefault = builder.DefineLabel($"skip_default_{i}");
 
-            // Load argument and check if null
             IL.Emit(OpCodes.Ldarg, argIndex);
-            builder.Emit_Brtrue(skipDefault);
+            builder.Emit_Brfalse(fireDefault);
 
-            // Argument is null, emit default value and store
+            if (_ctx.Runtime?.UndefinedInstance != null)
+            {
+                IL.Emit(OpCodes.Ldarg, argIndex);
+                IL.Emit(OpCodes.Ldsfld, _ctx.Runtime.UndefinedInstance);
+                IL.Emit(OpCodes.Beq, fireDefault);
+            }
+
+            IL.Emit(OpCodes.Br, skipDefault);
+
+            builder.MarkLabel(fireDefault);
             EmitExpression(param.DefaultValue);
             EmitBoxIfNeeded(param.DefaultValue);
             IL.Emit(OpCodes.Starg, argIndex);
