@@ -43,6 +43,8 @@
   <ItemGroup>
     <Compile Remove="SharpTS.Tests/**" />
     <None Remove="SharpTS.Tests/**" />
+    <Compile Remove="SharpTS.Test262/**" />
+    <None Remove="SharpTS.Test262/**" />
     <Compile Remove="SharpTS.Benchmarks/**" />
     <None Remove="SharpTS.Benchmarks/**" />
     <Compile Remove="SharpTS.Example.Interop/**" />
@@ -55,6 +57,8 @@
     <None Remove="SharpTS.Sdk.Tasks/**" />
     <Compile Remove="scripts/**" />
     <None Remove="scripts/**" />
+    <Compile Remove="external/**" />
+    <None Remove="external/**" />
   </ItemGroup>
 
   <ItemGroup>
