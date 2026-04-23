@@ -27,6 +27,13 @@ public sealed class Test262Runner
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
 
+    // Memory watchdog: if an individual test drives process memory growth
+    // past this threshold we abort it. Catches runaway allocation paths we
+    // haven't explicitly guarded (Array.prototype methods, large string
+    // concat, etc.). Chosen to be well above any legitimate test's working
+    // set but well below the point where the OS kills the host.
+    private const long MemoryLimitBytes = 2L * 1024 * 1024 * 1024;
+
     // Serializes Console.Out/Error redirection across parallel test cases.
     private static readonly object ConsoleLock = new();
 
@@ -163,14 +170,32 @@ public sealed class Test262Runner
         { IsBackground = true };
 
         thread.Start();
-        if (!thread.Join(_timeout))
+        // Poll for either completion, deadline, or runaway memory. Polling
+        // at 100ms costs ~50 wakeups for a test that runs the full 5s; the
+        // overhead is trivial compared to the interpreter work.
+        var deadline = DateTime.UtcNow + _timeout;
+        var process = System.Diagnostics.Process.GetCurrentProcess();
+        var baselineMemory = process.WorkingSet64;
+        while (thread.IsAlive)
         {
-            cts.Cancel();
-            // Give the interpreter a short grace window to honor the token.
-            // If it doesn't, accept the leak — the thread is background so
-            // it dies with the process; we just won't see its result.
-            thread.Join(TimeSpan.FromMilliseconds(500));
-            return new Test262Result(Test262Outcome.Timeout, $"exceeded {_timeout.TotalSeconds}s", null);
+            if (thread.Join(100)) break;
+            if (DateTime.UtcNow > deadline)
+            {
+                cts.Cancel();
+                thread.Join(TimeSpan.FromMilliseconds(500));
+                return new Test262Result(Test262Outcome.Timeout, $"exceeded {_timeout.TotalSeconds}s", null);
+            }
+            process.Refresh();
+            if (process.WorkingSet64 - baselineMemory > MemoryLimitBytes)
+            {
+                cts.Cancel();
+                thread.Join(TimeSpan.FromMilliseconds(500));
+                // Force a GC so we don't carry the bloat into the next test's
+                // baseline measurement (and surface a moment of relief to the OS).
+                GC.Collect();
+                return new Test262Result(Test262Outcome.Timeout,
+                    $"memory watchdog fired (grew by {(process.WorkingSet64 - baselineMemory) / 1024 / 1024}MB)", null);
+            }
         }
 
         if (threadException is not null)
@@ -284,8 +309,27 @@ public sealed class Test262Runner
             }
         });
 
-        if (!task.Wait(_timeout))
-            return new Test262Result(Test262Outcome.Timeout, $"exceeded {_timeout.TotalSeconds}s", null);
+        // Poll for timeout or memory runaway. Compiled-mode tests run through
+        // the same process, so the watchdog threshold applies symmetrically.
+        // The orphaned Task can't be killed cooperatively (compiled code
+        // doesn't honor a cancellation token), so on watchdog fire we accept
+        // the memory pressure and move on; the process will GC opportunistically.
+        var deadline = DateTime.UtcNow + _timeout;
+        var process = System.Diagnostics.Process.GetCurrentProcess();
+        var baselineMemory = process.WorkingSet64;
+        while (!task.IsCompleted)
+        {
+            if (task.Wait(100)) break;
+            if (DateTime.UtcNow > deadline)
+                return new Test262Result(Test262Outcome.Timeout, $"exceeded {_timeout.TotalSeconds}s", null);
+            process.Refresh();
+            if (process.WorkingSet64 - baselineMemory > MemoryLimitBytes)
+            {
+                GC.Collect();
+                return new Test262Result(Test262Outcome.Timeout,
+                    $"memory watchdog fired (grew by {(process.WorkingSet64 - baselineMemory) / 1024 / 1024}MB)", null);
+            }
+        }
 
         return result ?? new Test262Result(Test262Outcome.RuntimeError, "runner produced no result", null);
     }

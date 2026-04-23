@@ -47,6 +47,16 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
     public bool IsExtensible { get; private set; } = true;
 
     /// <summary>
+    /// Upper bound on the number of <c>undefined</c> slots <see cref="Set(int, object?)"/>
+    /// will pad when assigning beyond <see cref="Elements"/>.Count. ECMA-262 requires
+    /// assignments like <c>a[2**31] = 1</c> to be O(1) on a sparse backing store;
+    /// SharpTS currently uses a dense <see cref="Deque{T}"/>, so unbounded padding
+    /// OOMs the process (billions of object references). Until the sparse-array
+    /// refactor lands (issue #73) we throw <c>RangeError</c> past this threshold.
+    /// </summary>
+    private const int SparseGrowthLimit = 1_000_000;
+
+    /// <summary>
     /// Freezes this array, preventing any element changes.
     /// </summary>
     public void Freeze()
@@ -107,6 +117,7 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
             {
                 return;
             }
+            GuardSparseGrowth(index);
             while (Elements.Count <= index)
             {
                 Elements.Add(SharpTSUndefined.Instance);
@@ -143,12 +154,25 @@ public class SharpTSArray(Deque<object?> elements) : ITypeCategorized
                     throw new Exception($"TypeError: Cannot add property {index}, object is not extensible");
                 return;
             }
+            GuardSparseGrowth(index);
             while (Elements.Count <= index)
             {
                 Elements.Add(SharpTSUndefined.Instance);
             }
         }
         Elements[index] = value;
+    }
+
+    private void GuardSparseGrowth(int index)
+    {
+        var growth = (long)index + 1 - Elements.Count;
+        if (growth > SparseGrowthLimit)
+        {
+            throw new Exception(
+                $"RangeError: Array index {index} would require extending the backing store by " +
+                $"{growth} slots (limit {SparseGrowthLimit}). SharpTS does not yet implement " +
+                $"sparse-array storage (see issue #73).");
+        }
     }
 
     /// <summary>

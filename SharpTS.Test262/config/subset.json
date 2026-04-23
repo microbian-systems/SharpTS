@@ -1,5 +1,5 @@
 {
-  "__comment__": "Milestone 2 starter subset minus Array. Array is deferred: several of its tests allocate in pathological tight loops (e.g. `new Array(2**32).fill(x)`) that outrun the VM timeout token, accumulate orphan-thread memory, and OOM the test process. Tracked in the `project_test262_scale` memory note.",
+  "__comment__": "Milestone 2 starter subset minus Array. Array folder is deferred on issue #73 (proper sparse-array storage). Growth guards in SharpTSArray.Set and SharpTSArrayGlobal.Call prevent the most common OOM path, but individual Array.prototype methods still drive process memory past the in-process runner's watchdog threshold on tests that exercise sparse semantics. Adding Array to this list without first shipping sparse storage will exhaust memory.",
   "folders": [
     "test/built-ins/Math",
     "test/built-ins/Number",
