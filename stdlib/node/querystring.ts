@@ -77,3 +77,5 @@ export function unescape(str: string): string {
 // Deprecated aliases retained for compatibility.
 export const decode = parse;
 export const encode = stringify;
+
+export default { parse, stringify, escape, unescape, decode, encode };

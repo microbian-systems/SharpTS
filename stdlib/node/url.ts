@@ -1634,4 +1634,8 @@ export function pathToFileURL(path: string): URL {
     return new URL('file://' + percentEncodeString(p, isPathPercentEncode));
 }
 
-// Named re-exports on the module namespace are the public API; no default export.
+export default {
+    URL, URLSearchParams,
+    parse, format, resolve,
+    fileURLToPath, pathToFileURL,
+};

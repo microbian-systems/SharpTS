@@ -126,3 +126,5 @@ export class Interface {
 export function createInterface(options?: any): Interface {
     return new Interface(options);
 }
+
+export default { questionSync, Interface, createInterface };

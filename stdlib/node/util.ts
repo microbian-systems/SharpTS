@@ -685,3 +685,13 @@ export function parseArgs(config?: any): any {
 
     return { values: values, positionals: positionals };
 }
+
+export default {
+    format, inspect, isDeepStrictEqual, toUSVString, stripVTControlCharacters,
+    getSystemErrorName, getSystemErrorMap,
+    deprecate, callbackify, promisify, inherits,
+    TextEncoder: _TextEncoder,
+    TextDecoder: _TextDecoder,
+    types,
+    parseArgs,
+};

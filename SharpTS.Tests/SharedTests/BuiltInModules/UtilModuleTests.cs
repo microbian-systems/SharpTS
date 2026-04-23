@@ -1637,4 +1637,24 @@ public class UtilModuleTests
     }
 
     #endregion
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Util_DefaultImport_ExposesNamespace(ExecutionMode mode)
+    {
+        // #66: default import from `node:util` needs to yield the namespace
+        // (format, inspect, types, ...) so the classic `import util from ...`
+        // pattern works.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import util from 'node:util';
+                console.log(util.format('%s-%d', 'x', 7));
+                console.log(typeof util.inspect === 'function');
+                console.log(util.types.isArray([1, 2]));
+                """
+        };
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("x-7\ntrue\ntrue\n", output);
+    }
 }

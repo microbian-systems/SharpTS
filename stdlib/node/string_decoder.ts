@@ -116,3 +116,5 @@ export class StringDecoder {
         return prefix + tail;
     }
 }
+
+export default { StringDecoder };

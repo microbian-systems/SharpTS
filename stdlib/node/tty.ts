@@ -12,3 +12,5 @@ import { isatty as __isatty } from 'primitive:tty';
 export function isatty(fd: number): boolean {
     return __isatty(fd);
 }
+
+export default { isatty };

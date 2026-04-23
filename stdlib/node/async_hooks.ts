@@ -67,3 +67,5 @@ export class AsyncLocalStorage {
         this._inner.disable();
     }
 }
+
+export default { AsyncLocalStorage };

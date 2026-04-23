@@ -284,3 +284,9 @@ export function doesNotThrow(fn: Function, message?: string | Error): void {
         );
     }
 }
+
+export default {
+    AssertionError,
+    ok, strictEqual, notStrictEqual, deepStrictEqual, notDeepStrictEqual,
+    equal, notEqual, fail, throws, doesNotThrow,
+};

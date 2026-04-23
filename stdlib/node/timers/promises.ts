@@ -31,3 +31,5 @@ export function setInterval(delay?: number, value?: any, options?: any): AsyncIt
     // belongs in the interpreter's function-boundary exception handling.
     return __setInterval(delay as any, value, options);
 }
+
+export default { setTimeout, setImmediate, setInterval };

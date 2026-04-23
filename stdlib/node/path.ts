@@ -839,3 +839,9 @@ export function parse(p: string): ParsedPath {
 export function format(obj: ParsedPath): string {
     return formatGeneric(IS_WIN ? '\\' : '/', obj);
 }
+
+export default {
+    posix, win32, sep, delimiter,
+    join, resolve, basename, dirname, extname, normalize,
+    isAbsolute, relative, parse, format,
+};

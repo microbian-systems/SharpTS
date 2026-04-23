@@ -196,3 +196,7 @@ export class EventEmitter {
         return this._maxListeners > 0 ? this._maxListeners : EventEmitter.defaultMaxListeners;
     }
 }
+
+// Node's `events` default export is the EventEmitter class itself, not a
+// namespace object: `const EE = require('events')` gives you the class.
+export default EventEmitter;

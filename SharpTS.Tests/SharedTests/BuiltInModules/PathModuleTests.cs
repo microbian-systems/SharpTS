@@ -532,4 +532,22 @@ public class PathModuleTests
     }
 
     #endregion
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Path_DefaultImport_ExposesNamespace(ExecutionMode mode)
+    {
+        // #66: default import from `node:path` needs to yield the namespace,
+        // matching Node's ESM/CJS interop.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import path from 'node:path';
+                console.log(path.posix.join('a', 'b', 'c'));
+                console.log(typeof path.sep === 'string');
+                """
+        };
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("a/b/c\ntrue\n", output);
+    }
 }

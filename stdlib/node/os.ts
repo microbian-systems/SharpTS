@@ -79,3 +79,8 @@ export function networkInterfaces(): any { return __networkInterfaces(); }
 
 /** The operating system-specific end-of-line marker ('\n' on POSIX, '\r\n' on Windows). */
 export const EOL: string = __EOL;
+
+export default {
+    platform, arch, hostname, homedir, tmpdir, type, release,
+    cpus, totalmem, freemem, userInfo, loadavg, networkInterfaces, EOL,
+};

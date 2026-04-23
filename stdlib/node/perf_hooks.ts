@@ -179,3 +179,5 @@ export class PerformanceObserver {
         this._reg.connected = false;
     }
 }
+
+export default { performance, PerformanceObserver };

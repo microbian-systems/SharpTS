@@ -429,4 +429,24 @@ public class OsModuleTests
         var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Equal("true\ntrue\ntrue\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Os_DefaultImport_ExposesNamespace(ExecutionMode mode)
+    {
+        // #66: `import os from 'node:os'` used to fail type-checking with
+        // "no default export" because the facade only had named exports.
+        // Runs against `node:os` specifically to pin the node-prefixed form.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import os from 'node:os';
+                const platform = os.platform();
+                console.log(platform === 'win32' || platform === 'linux' || platform === 'darwin');
+                console.log(typeof os.EOL === 'string');
+                """
+        };
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
 }

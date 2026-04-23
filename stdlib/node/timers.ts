@@ -81,3 +81,9 @@ export function setImmediate(callback: any, ...args: any[]): any {
 export function clearImmediate(handle?: any): void {
     __clearImmediate(handle);
 }
+
+export default {
+    setTimeout, clearTimeout,
+    setInterval, clearInterval,
+    setImmediate, clearImmediate,
+};
