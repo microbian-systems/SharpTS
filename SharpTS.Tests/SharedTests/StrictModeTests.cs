@@ -31,7 +31,7 @@ public class StrictModeTests
             obj.x = 2;
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("TypeError", ex.Message);
         Assert.Contains("Cannot assign to read only property", ex.Message);
     }
@@ -61,7 +61,7 @@ public class StrictModeTests
             obj.y = 2;
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("TypeError", ex.Message);
         Assert.Contains("Cannot add property", ex.Message);
     }
@@ -107,7 +107,7 @@ public class StrictModeTests
             arr[0] = 10;
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("TypeError", ex.Message);
     }
 
@@ -160,7 +160,7 @@ public class StrictModeTests
             strictFunc();
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("TypeError", ex.Message);
     }
 
@@ -182,7 +182,7 @@ public class StrictModeTests
             outer();
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("TypeError", ex.Message);
     }
 
@@ -237,7 +237,7 @@ public class StrictModeTests
             p.x = 10;
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("TypeError", ex.Message);
     }
 
@@ -252,7 +252,7 @@ public class StrictModeTests
             delete x;
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("SyntaxError", ex.Message);
         Assert.Contains("Delete of unqualified identifier", ex.Message);
     }
@@ -286,7 +286,7 @@ public class StrictModeTests
             }
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("SyntaxError", ex.Message);
         Assert.Contains("Duplicate parameter name", ex.Message);
     }
@@ -303,7 +303,7 @@ public class StrictModeTests
             }
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("SyntaxError", ex.Message);
         Assert.Contains("Duplicate parameter name", ex.Message);
     }
@@ -322,7 +322,7 @@ public class StrictModeTests
             eval = 1;
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("SyntaxError", ex.Message);
         Assert.Contains("eval or arguments", ex.Message);
     }
@@ -337,7 +337,7 @@ public class StrictModeTests
             arguments = 1;
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("SyntaxError", ex.Message);
         Assert.Contains("eval or arguments", ex.Message);
     }
@@ -351,7 +351,7 @@ public class StrictModeTests
             const x = 0777;
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("SyntaxError", ex.Message);
         Assert.Contains("Legacy octal literals are not allowed", ex.Message);
     }
@@ -377,7 +377,7 @@ public class StrictModeTests
         // \1 is an octal escape - not allowed
         var source = "const x = \"\\1\";";
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("SyntaxError", ex.Message);
         Assert.Contains("Octal escape sequences are not allowed", ex.Message);
     }
@@ -440,7 +440,7 @@ public class StrictModeTests
             delete obj.x;
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("TypeError", ex.Message);
         Assert.Contains("Cannot delete property", ex.Message);
     }
@@ -475,7 +475,7 @@ public class StrictModeTests
             f();
             """;
 
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("TypeError", ex.Message);
     }
 }

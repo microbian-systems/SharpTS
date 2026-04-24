@@ -168,7 +168,7 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
             // string, which breaks `e.message`/`e.name` at any .NET-interop boundary
             // (delegate callbacks, reflected calls) where the error can't round-trip
             // through ExecutionResult.
-            throw new ThrowException(result.Value.ToObject());
+            throw ThrowException.FromResult(result.Value.ToObject());
         }
 
         return null;
@@ -275,7 +275,12 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
         }
         if (result.Type == ExecutionResult.ResultType.Throw)
         {
-            throw new Exception(interpreter.Stringify(result.Value.ToObject()));
+            // Propagate the original throw value (SharpTSError, SharpTSInstance,
+            // string, etc.) through ThrowException so try/catch blocks up the
+            // stack see the actual thrown object rather than a stringified
+            // message. Without this, `catch (e) { e.constructor === TypeError }`
+            // breaks for any throw that crosses a function-call boundary.
+            throw ThrowException.FromResult(result.Value.ToObject());
         }
 
         return RuntimeValue.Undefined;
@@ -445,7 +450,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
             if (result.Type == ExecutionResult.ResultType.Throw)
             {
                 // See SharpTSFunction.Call — preserve original thrown value.
-                throw new ThrowException(result.Value.ToObject());
+                throw ThrowException.FromResult(result.Value.ToObject());
             }
         }
 
@@ -507,7 +512,12 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
             }
             if (result.Type == ExecutionResult.ResultType.Throw)
             {
-                throw new Exception(interpreter.Stringify(result.Value.ToObject()));
+                // Propagate the original throw value (SharpTSError, SharpTSInstance,
+            // string, etc.) through ThrowException so try/catch blocks up the
+            // stack see the actual thrown object rather than a stringified
+            // message. Without this, `catch (e) { e.constructor === TypeError }`
+            // breaks for any throw that crosses a function-call boundary.
+            throw ThrowException.FromResult(result.Value.ToObject());
             }
         }
 

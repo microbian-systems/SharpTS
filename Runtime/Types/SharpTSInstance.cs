@@ -103,6 +103,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         Field,       // Resolved to an instance field (read from _fields)
         Method,      // Resolved to a method (bind on access)
         AutoAccessor,// Resolved to an auto-accessor (TypeScript 4.9+)
+        ClassSelf,   // The special `constructor` property — returns the class
         NotFound     // Property doesn't exist (cache negative lookups)
     }
 
@@ -116,6 +117,17 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
     private PropertyResolution ResolveProperty(string name)
     {
+        // JS spec: instance.constructor returns the class (function) itself,
+        // not whatever was registered as a "constructor" method on the class.
+        // Without this short-circuit, `err.constructor === TypeError` fails
+        // because FindMethod returns ErrorConstructorCallable (a distinct
+        // callable per access), breaking Test262's assert.throws identity
+        // check.
+        if (name == "constructor")
+        {
+            return new PropertyResolution { Type = ResolutionType.ClassSelf };
+        }
+
         // Check for auto-accessor first (TypeScript 4.9+)
         // Auto-accessors take precedence since they're a specific declaration
         if (_klass.HasInstanceAutoAccessor(name))
@@ -174,6 +186,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             ResolutionType.Getter => ((SharpTSFunction)resolution.Function!).Bind(this).Call(_interpreter!, []),
             ResolutionType.Field => _fields[propName],
             ResolutionType.Method => GetOrCreateBoundMethod(propName, resolution.Function!),
+            ResolutionType.ClassSelf => _klass,
             ResolutionType.NotFound => SharpTSUndefined.Instance, // JavaScript semantics: missing properties return undefined
             _ => throw new InvalidOperationException("Unknown resolution type")
         };

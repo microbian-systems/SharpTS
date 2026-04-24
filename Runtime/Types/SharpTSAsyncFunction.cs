@@ -91,7 +91,9 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable
         }
         if (result.Type == ExecutionResult.ResultType.Throw)
         {
-            throw new Exception(interpreter.Stringify(result.Value.ToObject()));
+            // Propagate the original throw value through ThrowException — see
+            // SharpTSFunction.Call for the full rationale.
+            throw ThrowException.FromResult(result.Value.ToObject());
         }
 
         return null;
@@ -222,7 +224,9 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable
             }
             if (result.Type == ExecutionResult.ResultType.Throw)
             {
-                throw new Exception(interpreter.Stringify(result.Value.ToObject()));
+                // Propagate the original throw value through ThrowException — see
+            // SharpTSFunction.Call for the full rationale.
+            throw ThrowException.FromResult(result.Value.ToObject());
             }
         }
 

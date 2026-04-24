@@ -119,7 +119,9 @@ public class SharpTSAsyncGenerator : ITypeCategorized
             }
             else if (result.Type == ExecutionResult.ResultType.Throw)
             {
-                throw new Exception(_interpreter.Stringify(result.Value.ToObject()));
+                // Propagate the original throw value through ThrowException —
+                // see SharpTSFunction.Call for the full rationale.
+                throw ThrowException.FromResult(result.Value.ToObject());
             }
         }
         finally

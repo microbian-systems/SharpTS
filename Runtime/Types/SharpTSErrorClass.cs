@@ -23,6 +23,27 @@ public class SharpTSErrorClass : SharpTSClass
     private readonly string _errorTypeName;
 
     /// <summary>
+    /// Global registry of built-in Error constructor classes keyed by error
+    /// type name. Populated lazily on construction. Native <see cref="SharpTSError"/>
+    /// instances (thrown from C# via <see cref="Exceptions.ThrowException"/>)
+    /// don't know their class reference directly; this registry lets
+    /// <c>ErrorBuiltIns.GetMember</c> resolve <c>.constructor</c> back to the
+    /// same <see cref="SharpTSErrorClass"/> instance that the global
+    /// <c>TypeError</c>/<c>RangeError</c>/... identifier resolves to, so
+    /// <c>err.constructor === TypeError</c> holds. Single-interpreter
+    /// assumption is acceptable — Test262 and the REPL both use a single
+    /// interpreter per run.
+    /// </summary>
+    private static readonly Dictionary<string, SharpTSErrorClass> _builtInRegistry = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Returns the registered built-in Error constructor for the given type
+    /// name (e.g. "TypeError"), or null if none has been registered.
+    /// </summary>
+    public static SharpTSErrorClass? GetBuiltInClass(string errorTypeName)
+        => _builtInRegistry.TryGetValue(errorTypeName, out var cls) ? cls : null;
+
+    /// <summary>
     /// Creates a built-in Error constructor class (Error, TypeError, etc.) with no user-defined methods.
     /// </summary>
     public SharpTSErrorClass(string errorTypeName, SharpTSErrorClass? superclass)
@@ -38,6 +59,7 @@ public class SharpTSErrorClass : SharpTSClass
             staticProperties: [])
     {
         _errorTypeName = errorTypeName;
+        _builtInRegistry[errorTypeName] = this;
     }
 
     /// <summary>
