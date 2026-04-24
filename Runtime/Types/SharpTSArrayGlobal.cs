@@ -68,14 +68,14 @@ public sealed class SharpTSArrayGlobal : ISharpTSCallable
 /// </summary>
 public sealed class SharpTSArrayPrototype
 {
-    // Seven methods historically had bespoke SharpTSArrayUnboundMethod
-    // implementations that tolerate non-array receivers (treating args[0] as
-    // the target when `this` isn't an array). Replacing them with the
-    // BuiltInMethod path would tighten receiver handling but also regress
-    // Test262 tests that pass those unusual receivers. Keep the bespoke
-    // methods for that subset; route every other name through ArrayBuiltIns
-    // so the full Array.prototype surface (every/map/filter/forEach/reduce/...)
-    // shares one implementation with instance-method dispatch.
+    // Mutating methods (push/pop/shift/unshift) keep the bespoke
+    // SharpTSArrayUnboundMethod path because spec-compliant array-like
+    // mutation would require writing indexed properties back onto the
+    // original receiver — a larger refactor. Non-mutating methods
+    // (slice/concat — pure reads returning new arrays, plus indexOf) are
+    // routed through ArrayBuiltIns, so they share one implementation with
+    // instance-method dispatch and inherit the array-like receiver
+    // coercion in ArrayPrototypeMethodWrapper.
     public object? GetMember(string name)
     {
         var legacy = name switch
@@ -84,9 +84,6 @@ public sealed class SharpTSArrayPrototype
             "pop" => SharpTSArrayUnboundMethod.Pop,
             "shift" => SharpTSArrayUnboundMethod.Shift,
             "unshift" => SharpTSArrayUnboundMethod.Unshift,
-            "slice" => SharpTSArrayUnboundMethod.Slice,
-            "concat" => SharpTSArrayUnboundMethod.Concat,
-            "indexOf" => SharpTSArrayUnboundMethod.IndexOf,
             _ => null,
         };
         if (legacy is not null) return legacy;
@@ -156,7 +153,7 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
         // argument so the callback sees the ORIGINAL receiver as its final
         // "array" parameter — per spec, callbacks get O, not the internal
         // materialization.
-        if (TryMaterializeArrayLike(_receiver, out var tempArr))
+        if (TryMaterializeArrayLike(_receiver, interpreter, out var tempArr))
         {
             var wrappedArgs = WrapCallbackArguments(arguments, tempArr, _receiver);
             return _inner.Bind(tempArr).Call(interpreter, wrappedArgs);
@@ -175,20 +172,27 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
     /// Caps length at 1M to protect against accidental runaway allocation
     /// from a stray <c>length: 2**53-1</c> configuration.
     /// </summary>
-    private static bool TryMaterializeArrayLike(object? receiver, out SharpTSArray tempArr)
+    private static bool TryMaterializeArrayLike(object? receiver, Interp interpreter, out SharpTSArray tempArr)
     {
         tempArr = null!;
         switch (receiver)
         {
             case SharpTSObject obj:
             {
-                long len = ToLength(obj.GetProperty("length"));
+                // Read `length` — invoking an accessor getter if one is defined
+                // (Object.defineProperty(obj, "length", { get: ... })). Per spec,
+                // a throwing length getter aborts the whole method; we propagate
+                // by letting the ThrowException escape to the caller.
+                long len = ToLength(ReadArrayLikeProperty(obj, "length", interpreter));
                 len = Math.Min(len, 1 << 20);
                 var list = new List<object?>((int)len);
                 for (int i = 0; i < len; i++)
                 {
                     var key = i.ToString();
-                    list.Add(obj.HasProperty(key) ? obj.GetProperty(key) : ArrayHole.Instance);
+                    if (obj.HasGetter(key))
+                        list.Add(ReadArrayLikeProperty(obj, key, interpreter));
+                    else
+                        list.Add(obj.HasProperty(key) ? obj.GetProperty(key) : ArrayHole.Instance);
                 }
                 tempArr = new SharpTSArray(list);
                 return true;
@@ -204,6 +208,21 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Reads a property from a SharpTSObject, invoking an accessor getter if
+    /// present. Matches the `Get(O, P)` abstract operation used by
+    /// Array.prototype.* methods. If the getter throws, the exception
+    /// propagates — spec-compliant short-circuit for things like
+    /// <c>Object.defineProperty(obj, "length", { get: () => { throw ... } })</c>.
+    /// </summary>
+    private static object? ReadArrayLikeProperty(SharpTSObject obj, string name, Interp interpreter)
+    {
+        var getter = obj.GetGetter(name);
+        if (getter != null)
+            return getter.Call(interpreter, new List<object?>());
+        return obj.GetProperty(name);
     }
 
     /// <summary>

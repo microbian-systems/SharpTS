@@ -25,7 +25,8 @@ public static class ArrayBuiltIns
             .MethodV2("reduce", 1, 2, ReduceV2)
             .MethodV2("reduceRight", 1, 2, ReduceRightV2)
             .MethodV2("includes", 1, IncludesV2)
-            .MethodV2("indexOf", 1, IndexOfV2)
+            .MethodV2("indexOf", 1, 2, IndexOfV2)
+            .MethodV2("lastIndexOf", 1, 2, LastIndexOfV2)
             .MethodV2("join", 0, 1, JoinV2)
             // Array.prototype.concat accepts any number of args (variadic).
             .MethodV2("concat", 0, int.MaxValue, ConcatV2)
@@ -393,16 +394,75 @@ public static class ArrayBuiltIns
     private static RuntimeValue IndexOfV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
         // ECMA-262 23.1.3.17: skips holes. Uses strict equality (===) which never
-        // matches a hole.
+        // matches a hole. Optional `fromIndex` clamps the starting index; negative
+        // values are relative to length.
         var searchElement = args[0].ToObject();
         int len = arr.Length;
-        for (int idx = 0; idx < len; idx++)
+        int start = 0;
+        if (args.Length > 1)
+        {
+            double fromIndex = ToIntegerOrInfinity(args[1].ToObject());
+            if (double.IsPositiveInfinity(fromIndex)) return RuntimeValue.FromNumber(-1);
+            if (double.IsNegativeInfinity(fromIndex)) start = 0;
+            else if (fromIndex >= 0) start = (int)Math.Min(fromIndex, len);
+            else start = (int)Math.Max(len + fromIndex, 0);
+        }
+        for (int idx = start; idx < len; idx++)
         {
             if (!arr.HasIndex(idx)) continue;
             if (IsEqual(arr[idx], searchElement))
                 return RuntimeValue.FromNumber(idx);
         }
         return RuntimeValue.FromNumber(-1);
+    }
+
+    private static RuntimeValue LastIndexOfV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    {
+        // ECMA-262 23.1.3.18: skips holes. Searches backwards from `fromIndex`
+        // (default: length - 1). Negative fromIndex is relative to length;
+        // NaN becomes 0 → returns -1.
+        var searchElement = args[0].ToObject();
+        int len = arr.Length;
+        int start;
+        if (args.Length > 1)
+        {
+            double fromIndex = ToIntegerOrInfinity(args[1].ToObject());
+            if (double.IsNegativeInfinity(fromIndex)) return RuntimeValue.FromNumber(-1);
+            if (fromIndex >= 0) start = (int)Math.Min(fromIndex, len - 1);
+            else start = (int)(len + fromIndex);
+        }
+        else
+        {
+            start = len - 1;
+        }
+        for (int idx = start; idx >= 0; idx--)
+        {
+            if (!arr.HasIndex(idx)) continue;
+            if (IsEqual(arr[idx], searchElement))
+                return RuntimeValue.FromNumber(idx);
+        }
+        return RuntimeValue.FromNumber(-1);
+    }
+
+    /// <summary>
+    /// ECMA-262 7.1.5 ToIntegerOrInfinity — coerces to integer, keeping
+    /// ±Infinity and mapping NaN to 0.
+    /// </summary>
+    private static double ToIntegerOrInfinity(object? value)
+    {
+        double d = value switch
+        {
+            double n => n,
+            bool b => b ? 1.0 : 0.0,
+            string s => double.TryParse(s, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : double.NaN,
+            null => 0,
+            SharpTSUndefined => double.NaN,
+            _ => double.NaN,
+        };
+        if (double.IsNaN(d)) return 0;
+        if (double.IsInfinity(d)) return d;
+        return Math.Truncate(d);
     }
 
     private static RuntimeValue JoinV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)

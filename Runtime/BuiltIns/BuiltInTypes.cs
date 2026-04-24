@@ -129,7 +129,8 @@ public static class BuiltInTypes
                 [new TypeInfo.Function([AnyType, elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 2), AnyType],
                 AnyType, RequiredParams: 1), // initialValue is optional
             "includes" => new TypeInfo.Function([elementType], BooleanType),
-            "indexOf" => new TypeInfo.Function([elementType], NumberType),
+            "indexOf" => new TypeInfo.Function([elementType, NumberType], NumberType, RequiredParams: 1),
+            "lastIndexOf" => new TypeInfo.Function([elementType, NumberType], NumberType, RequiredParams: 1),
             "join" => new TypeInfo.Function([StringType], StringType, RequiredParams: 0),  // separator is optional
             "concat" => new TypeInfo.Function(
                 [new TypeInfo.Array(elementType)],
