@@ -58,6 +58,16 @@ public static class StringBuiltIns
     public static object? GetStaticMember(string name)
         => _staticLookup.GetMember(name);
 
+    /// <summary>
+    /// Returns the unbound <see cref="BuiltInMethod"/> for a
+    /// String.prototype.* method, or null if no such method exists. Used by
+    /// <see cref="Types.SharpTSStringPrototype"/> so
+    /// <c>String.prototype.trim.call(value)</c> resolves to the same
+    /// implementation as <c>"...".trim()</c>.
+    /// </summary>
+    public static BuiltInMethod? GetPrototypeMethod(string name)
+        => _lookup.GetMethod(name);
+
     private static RuntimeValue ReplaceV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
     {
         var replacement = args[1].ToObject()?.ToString() ?? "";

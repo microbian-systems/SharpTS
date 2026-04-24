@@ -1,5 +1,6 @@
 using System.Collections;
 using SharpTS.Runtime;
+using SharpTS.Runtime.Exceptions;
 using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
@@ -644,7 +645,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     public void SetLength(long newLength)
     {
         if (IsFrozen) return;
-        if (newLength < 0) throw new Exception("RangeError: Invalid array length.");
+        if (newLength < 0) throw new ThrowException(new SharpTSRangeError("Invalid array length."));
         if (newLength > MaxLength)
             throw new Exception($"RangeError: Array length {newLength} exceeds ECMA-262 uint32 maximum.");
 

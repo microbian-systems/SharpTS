@@ -173,6 +173,14 @@ public static class FunctionBuiltIns
             return arrayProto.Bind(thisArg).Call(interp, args);
         }
 
+        // String.prototype adapter — same pattern. Rebind so
+        // `String.prototype.trim.call(x)` sees `x` as the receiver for ToString
+        // coercion + dispatch.
+        if (callable is Types.StringPrototypeMethodWrapper stringProto)
+        {
+            return stringProto.Bind(thisArg).Call(interp, args);
+        }
+
         // For other callables, just call directly
         return callable.Call(interp, args);
     }

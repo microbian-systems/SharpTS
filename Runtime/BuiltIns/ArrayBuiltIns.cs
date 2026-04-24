@@ -468,8 +468,14 @@ public static class ArrayBuiltIns
     private static RuntimeValue JoinV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
         // ECMA-262 23.1.3.16: holes (and null/undefined values) render as empty
-        // string. The default separator is ",".
-        var separator = args.Length > 0 ? Stringify(args[0].ToObject()) : ",";
+        // string. Separator defaults to "," when absent OR explicitly
+        // undefined — `arr.join(undefined)` is equivalent to `arr.join()` per
+        // step 3 of the spec.
+        string separator;
+        if (args.Length == 0 || args[0].ToObject() is SharpTSUndefined)
+            separator = ",";
+        else
+            separator = Stringify(args[0].ToObject());
         int len = arr.Length;
         if (len == 0) return RuntimeValue.EmptyString;
         var sb = new System.Text.StringBuilder();

@@ -1,4 +1,6 @@
 using SharpTS.Execution;
+using SharpTS.Runtime.BuiltIns;
+using SharpTS.Runtime.Exceptions;
 
 namespace SharpTS.Runtime.Types;
 
@@ -24,7 +26,110 @@ public class SharpTSStringNamespace : ISharpTSCallable
         return arg.ToString() ?? "";
     }
 
+    /// <summary>
+    /// Returns <c>String.prototype</c> so real-world patterns like
+    /// <c>String.prototype.trim.call(x)</c> resolve correctly; built-in static
+    /// methods (String.raw, String.fromCharCode, ...) fall through to the
+    /// registry lookup.
+    /// </summary>
+    public object? GetMember(string name)
+    {
+        if (name == "prototype") return SharpTSStringPrototype.Instance;
+        return StringBuiltIns.GetStaticMember(name);
+    }
+
     public override string ToString() => "function String() { [native code] }";
+}
+
+/// <summary>
+/// <c>String.prototype</c>. Exposes every registered String method as an
+/// unbound <see cref="BuiltInMethod"/> via <see cref="StringBuiltIns"/>,
+/// wrapped so <c>String.prototype.trim.call(value)</c> throws a proper
+/// TypeError on null/undefined receivers and ToString-coerces every other
+/// receiver per ECMA-262 before dispatch.
+/// </summary>
+public sealed class SharpTSStringPrototype
+{
+    public static readonly SharpTSStringPrototype Instance = new();
+    private SharpTSStringPrototype() { }
+
+    public object? GetMember(string name)
+    {
+        var method = StringBuiltIns.GetPrototypeMethod(name);
+        if (method is null) return null;
+        return new StringPrototypeMethodWrapper(name, method);
+    }
+
+    public override string ToString() => "[object String]";
+}
+
+/// <summary>
+/// Adapter around a String <see cref="BuiltInMethod"/>. Throws TypeError for
+/// null/undefined receivers and otherwise coerces the receiver to a string
+/// (ToString — the abstract operation, not the method) before binding and
+/// dispatching.
+/// </summary>
+internal sealed class StringPrototypeMethodWrapper : ISharpTSCallable
+{
+    private readonly string _name;
+    private readonly BuiltInMethod _inner;
+    private readonly object? _receiver;
+    private readonly bool _hasReceiver;
+
+    public StringPrototypeMethodWrapper(string name, BuiltInMethod inner)
+    {
+        _name = name;
+        _inner = inner;
+    }
+
+    private StringPrototypeMethodWrapper(string name, BuiltInMethod inner, object? receiver)
+    {
+        _name = name;
+        _inner = inner;
+        _receiver = receiver;
+        _hasReceiver = true;
+    }
+
+    public int Arity() => _inner.MinArity;
+
+    public StringPrototypeMethodWrapper Bind(object? receiver)
+        => new(_name, _inner, receiver);
+
+    public object? Call(Interpreter interpreter, List<object?> arguments)
+    {
+        if (!_hasReceiver || _receiver is null or SharpTSUndefined)
+        {
+            throw new ThrowException(new SharpTSTypeError(
+                $"String.prototype.{_name} called on null or undefined"));
+        }
+
+        var coerced = CoerceToString(_receiver);
+        return _inner.Bind(coerced).Call(interpreter, arguments);
+    }
+
+    /// <summary>
+    /// ECMA-262 ToString abstract operation — mapped to the receiver types
+    /// our interpreter actually hands to string methods. Symbols throw
+    /// TypeError per spec (ToString(Symbol) is an abrupt completion). Wrapper
+    /// objects (<c>new Number(1)</c>, <c>new Boolean(true)</c>) aren't yet
+    /// wrappers here, so non-primitive/non-Symbol receivers fall through to
+    /// <c>Object.prototype.toString</c> (lossy but adequate for Test262).
+    /// </summary>
+    private static string CoerceToString(object? receiver)
+    {
+        if (receiver is SharpTSSymbol)
+            throw new ThrowException(new SharpTSTypeError(
+                "Cannot convert a Symbol value to a string"));
+        return receiver switch
+        {
+            string s => s,
+            double d => SharpTS.Compilation.RuntimeTypes.Stringify(d),
+            bool b => b ? "true" : "false",
+            _ => receiver?.ToString() ?? "",
+        };
+    }
+
+    public override string ToString() => $"function {_name}() {{ [native code] }}";
 }
 
 /// <summary>

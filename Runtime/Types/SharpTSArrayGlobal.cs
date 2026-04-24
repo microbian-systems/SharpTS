@@ -36,7 +36,7 @@ public sealed class SharpTSArrayGlobal : ISharpTSCallable
         if (arguments.Count == 1 && arguments[0] is double d)
         {
             if (d < 0 || d > uint.MaxValue || Math.Floor(d) != d)
-                throw new Exception("RangeError: Invalid array length.");
+                throw new ThrowException(new SharpTSRangeError("Invalid array length."));
             int len = (int)d;
             // new Array(N) gives an array of length N with N holes — not N
             // explicit undefined values. Use SetLength so large N is sparse

@@ -460,6 +460,16 @@ public sealed class BuiltInRegistry
             SingletonFactory: () => Types.SharpTSStringNamespace.Instance,
             GetMethod: name => StringBuiltIns.GetStaticMember(name) as BuiltInMethod
         ));
+        // Property access on the String identifier — forwards `String.prototype`
+        // to the prototype object and static methods to StringBuiltIns.
+        registry.RegisterInstanceType(typeof(Types.SharpTSStringNamespace), (instance, name) =>
+            ((Types.SharpTSStringNamespace)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(Types.SharpTSStringPrototype), (instance, name) =>
+            ((Types.SharpTSStringPrototype)instance).GetMember(name));
+        // Allow StringPrototypeMethodWrapper to expose bind/call/apply like
+        // every other callable — mirror ArrayPrototypeMethodWrapper below.
+        registry.RegisterInstanceType(typeof(Types.StringPrototypeMethodWrapper), (instance, name) =>
+            FunctionBuiltIns.GetMember((ISharpTSCallable)instance, name));
     }
 
     private static void RegisterBooleanNamespace(BuiltInRegistry registry)

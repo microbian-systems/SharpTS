@@ -935,11 +935,11 @@ public partial class Interpreter
                     if (value is double ld)
                     {
                         if (ld < 0 || ld > (double)uint.MaxValue || Math.Floor(ld) != ld)
-                            throw new InterpreterException("RangeError: Invalid array length.");
+                            throw new ThrowException(new SharpTSRangeError("Invalid array length."));
                         array.SetLength((long)ld);
                         return value;
                     }
-                    throw new InterpreterException("RangeError: Invalid array length.");
+                    throw new ThrowException(new SharpTSRangeError("Invalid array length."));
                 }
                 array.SetNamedProperty(memberName, value);
                 return value;

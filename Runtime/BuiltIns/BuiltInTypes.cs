@@ -131,7 +131,12 @@ public static class BuiltInTypes
             "includes" => new TypeInfo.Function([elementType], BooleanType),
             "indexOf" => new TypeInfo.Function([elementType, NumberType], NumberType, RequiredParams: 1),
             "lastIndexOf" => new TypeInfo.Function([elementType, NumberType], NumberType, RequiredParams: 1),
-            "join" => new TypeInfo.Function([StringType], StringType, RequiredParams: 0),  // separator is optional
+            // ECMA-262 23.1.3.16: separator is optional; undefined is treated
+            // as ","; every other value is coerced via ToString. Widen the
+            // static signature to `Any` so the type checker accepts both
+            // `arr.join()` and `arr.join(undefined)`/`arr.join(null)` without
+            // rejecting them ahead of the spec coercion.
+            "join" => new TypeInfo.Function([AnyType], StringType, RequiredParams: 0),
             "concat" => new TypeInfo.Function(
                 [new TypeInfo.Array(elementType)],
                 new TypeInfo.Array(elementType)),
