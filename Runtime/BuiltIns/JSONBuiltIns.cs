@@ -126,7 +126,11 @@ public static class JSONBuiltIns
         }
 
         var sb = new StringBuilder();
-        if (StringifyValue(interp, value, "", replacerFunc, allowedKeys, indentStr, 0, sb))
+        // ECMA-262 25.5.2.3: SerializeJSONProperty maintains a stack of currently-
+        // serializing objects/arrays. A cycle throws TypeError. Reference equality
+        // (not .Equals) is the spec's notion of identity.
+        var seen = new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        if (StringifyValue(interp, value, "", replacerFunc, allowedKeys, indentStr, 0, sb, seen))
         {
             return sb.ToString();
         }
@@ -135,7 +139,7 @@ public static class JSONBuiltIns
     }
 
     private static bool StringifyValue(Interpreter interp, object? value, object? key,
-        ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb)
+        ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb, HashSet<object> seen)
     {
         if (replacer != null)
         {
@@ -164,13 +168,13 @@ public static class JSONBuiltIns
             case SharpTSBigInt:
                 throw new ThrowException("TypeError: BigInt value can't be serialized in JSON");
             case SharpTSArray arr:
-                StringifyArray(interp, arr, replacer, allowedKeys, indentStr, depth, sb);
+                StringifyArray(interp, arr, replacer, allowedKeys, indentStr, depth, sb, seen);
                 return true;
             case SharpTSObject obj:
-                StringifyObject(interp, obj, replacer, allowedKeys, indentStr, depth, sb);
+                StringifyObject(interp, obj, replacer, allowedKeys, indentStr, depth, sb, seen);
                 return true;
             case SharpTSInstance inst:
-                StringifyInstance(interp, inst, replacer, allowedKeys, indentStr, depth, sb);
+                StringifyInstance(interp, inst, replacer, allowedKeys, indentStr, depth, sb, seen);
                 return true;
             // Plain Dictionary<string, object?> — used by runtime helpers like
             // Web Streams iterator results that produce JS-object-shaped data.
@@ -180,7 +184,7 @@ public static class JSONBuiltIns
             // and is handled separately by SharpTSMap-specific paths, so this
             // branch is unambiguous.
             case IReadOnlyDictionary<string, object?> dict:
-                StringifyDictionary(interp, dict, replacer, allowedKeys, indentStr, depth, sb);
+                StringifyDictionary(interp, dict, replacer, allowedKeys, indentStr, depth, sb, seen);
                 return true;
             default:
                 return false;
@@ -215,38 +219,49 @@ public static class JSONBuiltIns
     }
 
     private static void StringifyArray(Interpreter interp, SharpTSArray arr,
-        ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb)
+        ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb, HashSet<object> seen)
     {
-        if (arr.Length == 0)
+        // ECMA-262 25.5.2.5 SerializeJSONArray — throw if we're re-entering
+        // the same array mid-serialization (cycle).
+        if (!seen.Add(arr))
+            throw new ThrowException("TypeError: Converting circular structure to JSON");
+        try
         {
-            sb.Append("[]");
-            return;
-        }
-
-        sb.Append('[');
-
-        bool pretty = indentStr.Length > 0;
-        string stepIndent = pretty ? "\n" + GetIndent(indentStr, depth + 1) : "";
-        string separator = pretty ? "," + stepIndent : ",";
-
-        if (pretty) sb.Append(stepIndent);
-
-        for (int i = 0; i < arr.Length; i++)
-        {
-            if (i > 0) sb.Append(separator);
-
-            if (!StringifyValue(interp, arr[i], (double)i, replacer, allowedKeys, indentStr, depth + 1, sb))
+            if (arr.Length == 0)
             {
-                sb.Append("null");
+                sb.Append("[]");
+                return;
             }
-        }
 
-        if (pretty)
-        {
-            sb.Append('\n');
-            sb.Append(GetIndent(indentStr, depth));
+            sb.Append('[');
+
+            bool pretty = indentStr.Length > 0;
+            string stepIndent = pretty ? "\n" + GetIndent(indentStr, depth + 1) : "";
+            string separator = pretty ? "," + stepIndent : ",";
+
+            if (pretty) sb.Append(stepIndent);
+
+            for (int i = 0; i < arr.Length; i++)
+            {
+                if (i > 0) sb.Append(separator);
+
+                if (!StringifyValue(interp, arr[i], (double)i, replacer, allowedKeys, indentStr, depth + 1, sb, seen))
+                {
+                    sb.Append("null");
+                }
+            }
+
+            if (pretty)
+            {
+                sb.Append('\n');
+                sb.Append(GetIndent(indentStr, depth));
+            }
+            sb.Append(']');
         }
-        sb.Append(']');
+        finally
+        {
+            seen.Remove(arr);
+        }
     }
 
     /// <summary>
@@ -257,180 +272,201 @@ public static class JSONBuiltIns
     /// interpreter relies on.
     /// </summary>
     private static void StringifyDictionary(Interpreter interp, IReadOnlyDictionary<string, object?> dict,
-        ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb)
+        ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb, HashSet<object> seen)
     {
-        IEnumerable<KeyValuePair<string, object?>> fields = dict;
-        if (allowedKeys != null)
+        if (!seen.Add(dict))
+            throw new ThrowException("TypeError: Converting circular structure to JSON");
+        try
         {
-            fields = fields.Where(kv => allowedKeys.Contains(kv.Key));
-        }
-
-        var fieldList = fields.ToList();
-        if (fieldList.Count == 0)
-        {
-            sb.Append("{}");
-            return;
-        }
-
-        sb.Append('{');
-
-        bool pretty = indentStr.Length > 0;
-        string stepIndent = pretty ? "\n" + GetIndent(indentStr, depth + 1) : "";
-
-        if (pretty) sb.Append(stepIndent);
-
-        bool first = true;
-        foreach (var kv in fieldList)
-        {
-            int mark = sb.Length;
-
-            if (!first)
+            IEnumerable<KeyValuePair<string, object?>> fields = dict;
+            if (allowedKeys != null)
             {
-                sb.Append(',');
-                if (pretty) sb.Append(stepIndent);
+                fields = fields.Where(kv => allowedKeys.Contains(kv.Key));
             }
 
-            sb.Append(JsonSerializer.Serialize(kv.Key));
-            sb.Append(':');
-            if (pretty) sb.Append(' ');
+            var fieldList = fields.ToList();
+            if (fieldList.Count == 0)
+            {
+                sb.Append("{}");
+                return;
+            }
 
-            if (StringifyValue(interp, kv.Value, kv.Key, replacer, allowedKeys, indentStr, depth + 1, sb))
+            sb.Append('{');
+
+            bool pretty = indentStr.Length > 0;
+            string stepIndent = pretty ? "\n" + GetIndent(indentStr, depth + 1) : "";
+
+            if (pretty) sb.Append(stepIndent);
+
+            bool first = true;
+            foreach (var kv in fieldList)
             {
-                first = false;
+                int mark = sb.Length;
+
+                if (!first)
+                {
+                    sb.Append(',');
+                    if (pretty) sb.Append(stepIndent);
+                }
+
+                sb.Append(JsonSerializer.Serialize(kv.Key));
+                sb.Append(':');
+                if (pretty) sb.Append(' ');
+
+                if (StringifyValue(interp, kv.Value, kv.Key, replacer, allowedKeys, indentStr, depth + 1, sb, seen))
+                {
+                    first = false;
+                }
+                else
+                {
+                    sb.Length = mark;
+                }
             }
-            else
+
+            if (pretty)
             {
-                sb.Length = mark;
+                sb.Append('\n');
+                sb.Append(GetIndent(indentStr, depth));
             }
+            sb.Append('}');
         }
-
-        if (pretty)
+        finally
         {
-            sb.Append('\n');
-            sb.Append(GetIndent(indentStr, depth));
+            seen.Remove(dict);
         }
-        sb.Append('}');
     }
 
     private static void StringifyObject(Interpreter interp, SharpTSObject obj,
-        ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb)
+        ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb, HashSet<object> seen)
     {
-        var fields = obj.Fields;
-        if (allowedKeys != null)
+        if (!seen.Add(obj))
+            throw new ThrowException("TypeError: Converting circular structure to JSON");
+        try
         {
-            fields = fields.Where(kv => allowedKeys.Contains(kv.Key))
-                .ToDictionary(kv => kv.Key, kv => kv.Value);
-        }
-
-        if (fields.Count == 0)
-        {
-            sb.Append("{}");
-            return;
-        }
-
-        sb.Append('{');
-
-        bool pretty = indentStr.Length > 0;
-        string stepIndent = pretty ? "\n" + GetIndent(indentStr, depth + 1) : "";
-        
-        if (pretty) sb.Append(stepIndent);
-
-        bool first = true;
-        foreach (var kv in fields)
-        {
-            int mark = sb.Length;
-
-            if (!first)
+            var fields = obj.Fields;
+            if (allowedKeys != null)
             {
-                sb.Append(',');
-                if (pretty) sb.Append(stepIndent);
+                fields = fields.Where(kv => allowedKeys.Contains(kv.Key))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value);
             }
-            
-            sb.Append(JsonSerializer.Serialize(kv.Key));
-            sb.Append(':');
-            if (pretty) sb.Append(' ');
 
-            if (StringifyValue(interp, kv.Value, kv.Key, replacer, allowedKeys, indentStr, depth + 1, sb))
+            if (fields.Count == 0)
             {
-                first = false;
+                sb.Append("{}");
+                return;
             }
-            else
+
+            sb.Append('{');
+
+            bool pretty = indentStr.Length > 0;
+            string stepIndent = pretty ? "\n" + GetIndent(indentStr, depth + 1) : "";
+
+            if (pretty) sb.Append(stepIndent);
+
+            bool first = true;
+            foreach (var kv in fields)
             {
-                // Value is undefined, revert this entry
-                sb.Length = mark;
-                
-                // If we reverted, and it was NOT the first element, we might have added a comma + indentation 
-                // at the beginning of this iteration. 
-                // Wait, if !first, we added comma. We need to revert that too?
-                // The `mark` is taken BEFORE adding the comma. So resetting to `mark` removes the comma too.
-                // So `first` remains whatever it was before this iteration.
-                // Correct.
+                int mark = sb.Length;
+
+                if (!first)
+                {
+                    sb.Append(',');
+                    if (pretty) sb.Append(stepIndent);
+                }
+
+                sb.Append(JsonSerializer.Serialize(kv.Key));
+                sb.Append(':');
+                if (pretty) sb.Append(' ');
+
+                if (StringifyValue(interp, kv.Value, kv.Key, replacer, allowedKeys, indentStr, depth + 1, sb, seen))
+                {
+                    first = false;
+                }
+                else
+                {
+                    // Value is undefined — rewind this entry (including the comma
+                    // added above, since `mark` was captured before it).
+                    sb.Length = mark;
+                }
             }
+
+            if (pretty)
+            {
+                sb.Append('\n');
+                sb.Append(GetIndent(indentStr, depth));
+            }
+            sb.Append('}');
         }
-
-        if (pretty)
+        finally
         {
-            sb.Append('\n');
-            sb.Append(GetIndent(indentStr, depth));
+            seen.Remove(obj);
         }
-        sb.Append('}');
     }
 
     private static void StringifyInstance(Interpreter interp, SharpTSInstance inst,
-        ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb)
+        ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb, HashSet<object> seen)
     {
-        IEnumerable<string> fieldNames = inst.GetFieldNames();
-        if (allowedKeys != null)
+        if (!seen.Add(inst))
+            throw new ThrowException("TypeError: Converting circular structure to JSON");
+        try
         {
-            fieldNames = fieldNames.Where(k => allowedKeys.Contains(k));
-        }
-
-        var namesList = fieldNames.ToList();
-        if (namesList.Count == 0)
-        {
-            sb.Append("{}");
-            return;
-        }
-
-        sb.Append('{');
-
-        bool pretty = indentStr.Length > 0;
-        string stepIndent = pretty ? "\n" + GetIndent(indentStr, depth + 1) : "";
-        
-        if (pretty) sb.Append(stepIndent);
-
-        bool first = true;
-        foreach (var name in namesList)
-        {
-            int mark = sb.Length;
-
-            if (!first)
+            IEnumerable<string> fieldNames = inst.GetFieldNames();
+            if (allowedKeys != null)
             {
-                sb.Append(',');
-                if (pretty) sb.Append(stepIndent);
+                fieldNames = fieldNames.Where(k => allowedKeys.Contains(k));
             }
-            
-            sb.Append(JsonSerializer.Serialize(name));
-            sb.Append(':');
-            if (pretty) sb.Append(' ');
 
-            var fieldValue = inst.GetRawField(name);
-            if (StringifyValue(interp, fieldValue, name, replacer, allowedKeys, indentStr, depth + 1, sb))
+            var namesList = fieldNames.ToList();
+            if (namesList.Count == 0)
             {
-                first = false;
+                sb.Append("{}");
+                return;
             }
-            else
+
+            sb.Append('{');
+
+            bool pretty = indentStr.Length > 0;
+            string stepIndent = pretty ? "\n" + GetIndent(indentStr, depth + 1) : "";
+
+            if (pretty) sb.Append(stepIndent);
+
+            bool first = true;
+            foreach (var name in namesList)
             {
-                sb.Length = mark;
+                int mark = sb.Length;
+
+                if (!first)
+                {
+                    sb.Append(',');
+                    if (pretty) sb.Append(stepIndent);
+                }
+
+                sb.Append(JsonSerializer.Serialize(name));
+                sb.Append(':');
+                if (pretty) sb.Append(' ');
+
+                var fieldValue = inst.GetRawField(name);
+                if (StringifyValue(interp, fieldValue, name, replacer, allowedKeys, indentStr, depth + 1, sb, seen))
+                {
+                    first = false;
+                }
+                else
+                {
+                    sb.Length = mark;
+                }
             }
+
+            if (pretty)
+            {
+                sb.Append('\n');
+                sb.Append(GetIndent(indentStr, depth));
+            }
+            sb.Append('}');
         }
-
-        if (pretty)
+        finally
         {
-            sb.Append('\n');
-            sb.Append(GetIndent(indentStr, depth));
+            seen.Remove(inst);
         }
-        sb.Append('}');
     }
 
     private static string GetIndent(string indentStr, int depth)

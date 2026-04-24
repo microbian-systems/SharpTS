@@ -1,7 +1,10 @@
 {
-  "__comment__": "Milestone 2 subset — Array folder in both interpreter and compiled paths. Stage E.2 M1-M4 (2026-04-23) landed the full compile-mode sparse/hole-aware port: $Array inherits List<object?>, creation helpers produce $Array, runtime dispatch uses long-indexed API, built-in emitters honor ECMA-262 hole semantics (forEach/map/filter/reduce/reduceRight/every/some/flat/flatMap/indexOf/includes/toReversed/with/toSpliced/at/join). `compiledExcludeFolders` cleared; baseline regen planned.",
+  "__comment__": "Committed Test262 subset. Rollout cadence tracked on issue #69: each PR adds folder(s), regenerates baselines, triages new failures. Current rollout step (2026-04-23) adds Boolean/Error/JSON — small, simple types, low triage burden.",
   "folders": [
     "test/built-ins/Array",
+    "test/built-ins/Boolean",
+    "test/built-ins/Error",
+    "test/built-ins/JSON",
     "test/built-ins/Math",
     "test/built-ins/Number",
     "test/built-ins/String",
