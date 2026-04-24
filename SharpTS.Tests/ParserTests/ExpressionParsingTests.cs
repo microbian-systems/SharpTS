@@ -388,6 +388,178 @@ public class ExpressionParsingTests
         Assert.Single(obj.Properties);
     }
 
+    [Fact]
+    public void ObjectLiteral_GetterWithNumberKey()
+    {
+        // test262 pattern: `get 3() { return arrLike }` in array-like fixtures.
+        var expr = ParseExpression("({ get 3() { return 42; } });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        var prop = Assert.Single(obj.Properties);
+        Assert.Equal(Expr.ObjectPropertyKind.Getter, prop.Kind);
+        var lit = Assert.IsType<Expr.LiteralKey>(prop.Key);
+        Assert.Equal(TokenType.NUMBER, lit.Literal.Type);
+    }
+
+    [Fact]
+    public void ObjectLiteral_GetterWithStringKey()
+    {
+        var expr = ParseExpression("({ get \"weird name\"() { return 1; } });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        var prop = Assert.Single(obj.Properties);
+        Assert.Equal(Expr.ObjectPropertyKind.Getter, prop.Kind);
+        var lit = Assert.IsType<Expr.LiteralKey>(prop.Key);
+        Assert.Equal(TokenType.STRING, lit.Literal.Type);
+        Assert.Equal("weird name", (string)lit.Literal.Literal!);
+    }
+
+    [Fact]
+    public void ObjectLiteral_GetterWithComputedKey()
+    {
+        var expr = ParseExpression("({ get [k]() { return 1; } });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        var prop = Assert.Single(obj.Properties);
+        Assert.Equal(Expr.ObjectPropertyKind.Getter, prop.Kind);
+        Assert.IsType<Expr.ComputedKey>(prop.Key);
+    }
+
+    [Fact]
+    public void ObjectLiteral_SetterWithNumberKey()
+    {
+        var expr = ParseExpression("({ set 3(v) { } });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        var prop = Assert.Single(obj.Properties);
+        Assert.Equal(Expr.ObjectPropertyKind.Setter, prop.Kind);
+        var lit = Assert.IsType<Expr.LiteralKey>(prop.Key);
+        Assert.Equal(TokenType.NUMBER, lit.Literal.Type);
+        Assert.NotNull(prop.SetterParam);
+    }
+
+    [Fact]
+    public void ObjectLiteral_MethodShorthandWithStringKey()
+    {
+        var expr = ParseExpression("({ \"toString\"() { return \"hi\"; } });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        var prop = Assert.Single(obj.Properties);
+        var lit = Assert.IsType<Expr.LiteralKey>(prop.Key);
+        Assert.Equal(TokenType.STRING, lit.Literal.Type);
+        Assert.IsType<Expr.ArrowFunction>(prop.Value);
+    }
+
+    [Fact]
+    public void ObjectLiteral_MethodShorthandWithNumberKey()
+    {
+        var expr = ParseExpression("({ 3() { return 42; } });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        var prop = Assert.Single(obj.Properties);
+        var lit = Assert.IsType<Expr.LiteralKey>(prop.Key);
+        Assert.Equal(TokenType.NUMBER, lit.Literal.Type);
+        Assert.IsType<Expr.ArrowFunction>(prop.Value);
+    }
+
+    [Fact]
+    public void ObjectLiteral_MethodShorthandWithComputedKey()
+    {
+        // The existing computed-key method path; ensure it still works through the helper.
+        var expr = ParseExpression("({ [key]() { return 1; } });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        var prop = Assert.Single(obj.Properties);
+        Assert.IsType<Expr.ComputedKey>(prop.Key);
+        Assert.IsType<Expr.ArrowFunction>(prop.Value);
+    }
+
+    [Fact]
+    public void ObjectLiteral_GetAndSetAsShorthandProperties()
+    {
+        // `{ get, set }` must remain valid shorthand (not accessor).
+        var expr = ParseExpression("({ get, set });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        Assert.Equal(2, obj.Properties.Count);
+        foreach (var prop in obj.Properties)
+        {
+            Assert.Equal(Expr.ObjectPropertyKind.Value, prop.Kind);
+            var ik = Assert.IsType<Expr.IdentifierKey>(prop.Key);
+            Assert.IsType<Expr.Variable>(prop.Value);
+            Assert.Contains(ik.Name.Lexeme, new[] { "get", "set" });
+        }
+    }
+
+    [Fact]
+    public void ObjectLiteral_GetAndSetAsMethodShorthand()
+    {
+        // `{ get() {}, set() {} }` — methods literally named 'get' and 'set'.
+        var expr = ParseExpression("({ get() { return 1; }, set() { return 2; } });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        Assert.Equal(2, obj.Properties.Count);
+        foreach (var prop in obj.Properties)
+        {
+            Assert.Equal(Expr.ObjectPropertyKind.Value, prop.Kind);
+            Assert.IsType<Expr.ArrowFunction>(prop.Value);
+        }
+    }
+
+    [Fact]
+    public void Call_TrailingComma()
+    {
+        // ES2017 trailing comma in call args.
+        var expr = ParseExpression("f(1, 2, 3,);");
+        var call = Assert.IsType<Expr.Call>(expr);
+        Assert.Equal(3, call.Arguments.Count);
+    }
+
+    [Fact]
+    public void Call_TrailingCommaAfterSpread()
+    {
+        var expr = ParseExpression("f(...xs,);");
+        var call = Assert.IsType<Expr.Call>(expr);
+        var arg = Assert.Single(call.Arguments);
+        Assert.IsType<Expr.Spread>(arg);
+    }
+
+    [Fact]
+    public void Call_SingleArgTrailingComma()
+    {
+        var expr = ParseExpression("f(x,);");
+        var call = Assert.IsType<Expr.Call>(expr);
+        Assert.Single(call.Arguments);
+    }
+
+    [Fact]
+    public void Call_EmptyArgsNoBareComma()
+    {
+        // `f(,)` is still a syntax error.
+        Assert.Throws<Exception>(() => ParseExpression("f(,);"));
+    }
+
+    [Fact]
+    public void New_TrailingComma()
+    {
+        var expr = ParseExpression("new Foo(1, 2,);");
+        var newExpr = Assert.IsType<Expr.New>(expr);
+        Assert.Equal(2, newExpr.Arguments.Count);
+    }
+
+    [Fact]
+    public void ObjectLiteral_MixedAccessorAndMethodShorthand()
+    {
+        // test262 array-like-objects-nested.js pattern.
+        var expr = ParseExpression("({ length: 4, 0: 'a', get 3() { return 1; }, toString() { return 'obj'; } });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        Assert.Equal(4, obj.Properties.Count);
+        Assert.Equal(Expr.ObjectPropertyKind.Getter, obj.Properties[2].Kind);
+        Assert.Equal(Expr.ObjectPropertyKind.Value, obj.Properties[3].Kind);
+        Assert.IsType<Expr.ArrowFunction>(obj.Properties[3].Value);
+    }
+
     #endregion
 
     #region New Expressions

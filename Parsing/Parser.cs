@@ -283,6 +283,22 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
     };
 
     /// <summary>
+    /// Returns true if the token type can begin an object/class property name:
+    /// IDENTIFIER, STRING, NUMBER, LEFT_BRACKET (computed), or any keyword usable
+    /// as a property name. Used to disambiguate accessor shorthand
+    /// (<c>get foo() {}</c>, <c>get "x"() {}</c>, <c>get 3() {}</c>,
+    /// <c>get [sym]() {}</c>) from a property literally named <c>get</c>/<c>set</c>.
+    /// </summary>
+    private static bool IsPropertyNameStart(TokenType type) => type switch
+    {
+        TokenType.IDENTIFIER => true,
+        TokenType.STRING => true,
+        TokenType.NUMBER => true,
+        TokenType.LEFT_BRACKET => true,
+        _ => IsKeyword(type) || IsContextualKeyword(type),
+    };
+
+    /// <summary>
     /// Token types that, following an identifier in a class body, mark
     /// the declaration as a field (not a method). Includes `;` (bare ES
     /// class field), `=` (initialized field), `:` (typed field), `?`/`!`

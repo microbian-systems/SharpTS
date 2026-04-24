@@ -394,10 +394,13 @@ public partial class Parser
             {
                 if (!Check(TokenType.RIGHT_PAREN))
                 {
-                    do
+                    while (true)
                     {
                         arguments.Add(Expression());
-                    } while (Match(TokenType.COMMA));
+                        if (!Match(TokenType.COMMA)) break;
+                        // ES2017 trailing comma: `new X(a, b,)`.
+                        if (Check(TokenType.RIGHT_PAREN)) break;
+                    }
                 }
                 Consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments.");
             }
@@ -450,7 +453,7 @@ public partial class Parser
                         List<Expr> args = [];
                         if (!Check(TokenType.RIGHT_PAREN))
                         {
-                            do
+                            while (true)
                             {
                                 if (Match(TokenType.DOT_DOT_DOT))
                                 {
@@ -460,7 +463,10 @@ public partial class Parser
                                 {
                                     args.Add(Expression());
                                 }
-                            } while (Match(TokenType.COMMA));
+                                if (!Match(TokenType.COMMA)) break;
+                                // ES2017 trailing comma.
+                                if (Check(TokenType.RIGHT_PAREN)) break;
+                            }
                         }
                         Consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments.");
                         expr = new Expr.CallPrivate(expr, name, args);
@@ -568,7 +574,7 @@ public partial class Parser
         List<Expr> arguments = [];
         if (!Check(TokenType.RIGHT_PAREN))
         {
-            do
+            while (true)
             {
                 if (Match(TokenType.DOT_DOT_DOT))
                 {
@@ -578,7 +584,10 @@ public partial class Parser
                 {
                     arguments.Add(Expression());
                 }
-            } while (Match(TokenType.COMMA));
+                if (!Match(TokenType.COMMA)) break;
+                // ES2017 trailing comma: `f(a, b,)` — swallow the comma and stop.
+                if (Check(TokenType.RIGHT_PAREN)) break;
+            }
         }
 
         Token paren = Consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments.");
@@ -756,79 +765,99 @@ public partial class Parser
                         continue;
                     }
 
-                    // Check for computed property key: { [expr]: value } or method shorthand { [expr]() {} }
+                    // Accessor shorthand: { get foo() {} }, { set foo(v) {} }.
+                    // Disambiguate from a property literally named `get`/`set`:
+                    //   { get }       shorthand            (next is `,` or `}`)
+                    //   { get: v }    explicit property    (next is `:`)
+                    //   { get() {} }  method shorthand     (next is `(`)
+                    // Only enter the accessor path when `get`/`set` is followed by
+                    // a property-name starter (identifier, keyword, string, number,
+                    // or `[` for a computed key).
+                    if ((Check(TokenType.GET) || Check(TokenType.SET)) && IsPropertyNameStart(PeekNext().Type))
+                    {
+                        var kindToken = Advance(); // consume 'get' or 'set'
+                        bool isGetter = kindToken.Type == TokenType.GET;
+
+                        Expr.PropertyKey accessorKey;
+                        if (Match(TokenType.LEFT_BRACKET))
+                        {
+                            Expr keyExpr = Expression();
+                            Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed accessor key.");
+                            accessorKey = new Expr.ComputedKey(keyExpr);
+                        }
+                        else if (Match(TokenType.STRING) || Match(TokenType.NUMBER))
+                        {
+                            accessorKey = new Expr.LiteralKey(Previous());
+                        }
+                        else
+                        {
+                            Token propName = ConsumePropertyName("Expect property name after 'get'/'set'.");
+                            accessorKey = new Expr.IdentifierKey(propName);
+                        }
+
+                        Consume(TokenType.LEFT_PAREN, isGetter
+                            ? "Expect '(' after getter name."
+                            : "Expect '(' after setter name.");
+
+                        List<Stmt.Parameter> accessorParams = [];
+                        Stmt.Parameter? setterParam = null;
+                        if (isGetter)
+                        {
+                            Consume(TokenType.RIGHT_PAREN, "Expect ')' after getter parameters (getters take no parameters).");
+                        }
+                        else
+                        {
+                            Token paramName = ConsumeIdentifierName("Expect setter parameter name.");
+                            string? paramType = null;
+                            if (Match(TokenType.COLON))
+                            {
+                                paramType = ParseTypeAnnotation();
+                            }
+                            setterParam = new Stmt.Parameter(paramName, paramType, null, false);
+                            accessorParams.Add(setterParam);
+                            Consume(TokenType.RIGHT_PAREN, "Expect ')' after setter parameter.");
+                        }
+
+                        string? accessorReturnType = null;
+                        if (Match(TokenType.COLON))
+                        {
+                            accessorReturnType = ParseTypeAnnotation();
+                        }
+
+                        Consume(TokenType.LEFT_BRACE, isGetter
+                            ? "Expect '{' before getter body."
+                            : "Expect '{' before setter body.");
+                        List<Stmt> accessorBody = Block();
+                        accessorBody = VarHoister.Hoist(accessorBody);
+
+                        var accessorExpr = new Expr.ArrowFunction(
+                            Name: null,
+                            TypeParams: null,
+                            ThisType: null,
+                            Parameters: accessorParams,
+                            ExpressionBody: null,
+                            BlockBody: accessorBody,
+                            ReturnType: accessorReturnType,
+                            HasOwnThis: true
+                        );
+                        properties.Add(new Expr.Property(
+                            accessorKey,
+                            accessorExpr,
+                            IsSpread: false,
+                            Kind: isGetter ? Expr.ObjectPropertyKind.Getter : Expr.ObjectPropertyKind.Setter,
+                            SetterParam: setterParam));
+                        continue;
+                    }
+
+                    // Computed property key: { [expr]: value } or method shorthand { [expr]() {} }
                     if (Match(TokenType.LEFT_BRACKET))
                     {
                         Expr keyExpr = Expression();
                         Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed property key.");
 
-                        // Check for method shorthand: { [Symbol.iterator]() {} }
-                        if (Match(TokenType.LEFT_PAREN))
+                        if (Check(TokenType.LEFT_PAREN))
                         {
-                            List<Stmt.Parameter> parameters = [];
-
-                            // Check for 'this' parameter in computed method
-                            string? thisType = null;
-                            if (Check(TokenType.THIS))
-                            {
-                                Advance(); // consume 'this'
-                                Consume(TokenType.COLON, "Expect ':' after 'this' in this parameter.");
-                                thisType = ParseTypeAnnotation();
-                                if (Check(TokenType.COMMA))
-                                {
-                                    Advance(); // consume ','
-                                }
-                            }
-
-                            if (!Check(TokenType.RIGHT_PAREN))
-                            {
-                                do
-                                {
-                                    // Check for rest parameter
-                                    bool isRest = Match(TokenType.DOT_DOT_DOT);
-                                    Token paramName = ConsumeIdentifierName("Expect parameter name.");
-                                    bool isOptional = Match(TokenType.QUESTION);
-                                    string? paramType = null;
-                                    if (Match(TokenType.COLON))
-                                    {
-                                        paramType = ParseTypeAnnotation();
-                                    }
-                                    Expr? defaultValue = null;
-                                    if (Match(TokenType.EQUAL))
-                                    {
-                                        defaultValue = Expression();
-                                    }
-                                    parameters.Add(new Stmt.Parameter(paramName, paramType, defaultValue, isRest, IsOptional: isOptional));
-
-                                    // Rest parameter must be last
-                                    if (isRest && Check(TokenType.COMMA))
-                                    {
-                                        throw new Exception("Parse Error: Rest parameter must be last.");
-                                    }
-                                } while (Match(TokenType.COMMA));
-                            }
-                            Consume(TokenType.RIGHT_PAREN, "Expect ')' after method parameters.");
-
-                            string? returnType = null;
-                            if (Match(TokenType.COLON))
-                            {
-                                returnType = ParseTypeAnnotation();
-                            }
-
-                            Consume(TokenType.LEFT_BRACE, "Expect '{' before method body.");
-                            List<Stmt> body = Block();
-                            body = VarHoister.Hoist(body);
-
-                            var methodExpr = new Expr.ArrowFunction(
-                                Name: null,
-                                TypeParams: null,
-                                ThisType: thisType,
-                                Parameters: parameters,
-                                ExpressionBody: null,
-                                BlockBody: body,
-                                ReturnType: returnType,
-                                HasOwnThis: true
-                            );
+                            var methodExpr = ParseObjectMethodShorthand();
                             properties.Add(new Expr.Property(new Expr.ComputedKey(keyExpr), methodExpr));
                             continue;
                         }
@@ -840,221 +869,52 @@ public partial class Parser
                         continue;
                     }
 
-                    // Check for string literal key: { "key": value }
+                    // String literal key: { "key": value } or method shorthand { "key"() {} }
                     if (Match(TokenType.STRING))
                     {
                         Token stringKey = Previous();
+                        var key = new Expr.LiteralKey(stringKey);
+
+                        if (Check(TokenType.LEFT_PAREN))
+                        {
+                            var methodExpr = ParseObjectMethodShorthand();
+                            properties.Add(new Expr.Property(key, methodExpr));
+                            continue;
+                        }
+
                         Consume(TokenType.COLON, "Expect ':' after string property key.");
                         Expr stringValue = Expression();
-                        properties.Add(new Expr.Property(new Expr.LiteralKey(stringKey), stringValue));
+                        properties.Add(new Expr.Property(key, stringValue));
                         continue;
                     }
 
-                    // Check for number literal key: { 123: value }
+                    // Number literal key: { 123: value } or method shorthand { 123() {} }
                     if (Match(TokenType.NUMBER))
                     {
                         Token numberKey = Previous();
+                        var key = new Expr.LiteralKey(numberKey);
+
+                        if (Check(TokenType.LEFT_PAREN))
+                        {
+                            var methodExpr = ParseObjectMethodShorthand();
+                            properties.Add(new Expr.Property(key, methodExpr));
+                            continue;
+                        }
+
                         Consume(TokenType.COLON, "Expect ':' after number property key.");
                         Expr numberValue = Expression();
-                        properties.Add(new Expr.Property(new Expr.LiteralKey(numberKey), numberValue));
+                        properties.Add(new Expr.Property(key, numberValue));
                         continue;
                     }
 
-                    // Check for getter: { get prop() { ... } }
-                    // GET is a keyword so we need to check for it specifically
-                    // Use lookahead to avoid consuming GET token prematurely
-                    if (Check(TokenType.GET) && CheckNext(TokenType.IDENTIFIER))
-                    {
-                        Advance(); // Consume the GET token
-                        Token propName = Advance();
-                        Consume(TokenType.LEFT_PAREN, "Expect '(' after getter name.");
-                        Consume(TokenType.RIGHT_PAREN, "Expect ')' after getter parameters (getters take no parameters).");
-
-                        string? returnType = null;
-                        if (Match(TokenType.COLON))
-                        {
-                            returnType = ParseTypeAnnotation();
-                        }
-
-                        Consume(TokenType.LEFT_BRACE, "Expect '{' before getter body.");
-                        List<Stmt> body = Block();
-                        body = VarHoister.Hoist(body);
-
-                        var getterExpr = new Expr.ArrowFunction(
-                            Name: null,
-                            TypeParams: null,
-                            ThisType: null,
-                            Parameters: [],
-                            ExpressionBody: null,
-                            BlockBody: body,
-                            ReturnType: returnType,
-                            HasOwnThis: true
-                        );
-                        properties.Add(new Expr.Property(
-                            new Expr.IdentifierKey(propName),
-                            getterExpr,
-                            IsSpread: false,
-                            Kind: Expr.ObjectPropertyKind.Getter));
-                        continue;
-                    }
-
-                    // Check for setter: { set prop(value) { ... } }
-                    // SET is a keyword so we need to check for it specifically
-                    // Use lookahead to avoid consuming SET token prematurely
-                    if (Check(TokenType.SET) && CheckNext(TokenType.IDENTIFIER))
-                    {
-                        Advance(); // Consume the SET token
-                        Token propName = Advance();
-                        Consume(TokenType.LEFT_PAREN, "Expect '(' after setter name.");
-
-                        // Parse the single setter parameter
-                        Token paramName = Consume(TokenType.IDENTIFIER, "Expect setter parameter name.");
-                        string? paramType = null;
-                        if (Match(TokenType.COLON))
-                        {
-                            paramType = ParseTypeAnnotation();
-                        }
-                        var setterParam = new Stmt.Parameter(paramName, paramType, null, false);
-
-                        Consume(TokenType.RIGHT_PAREN, "Expect ')' after setter parameter.");
-
-                        string? returnType = null;
-                        if (Match(TokenType.COLON))
-                        {
-                            returnType = ParseTypeAnnotation();
-                        }
-
-                        Consume(TokenType.LEFT_BRACE, "Expect '{' before setter body.");
-                        List<Stmt> body = Block();
-                        body = VarHoister.Hoist(body);
-
-                        var setterExpr = new Expr.ArrowFunction(
-                            Name: null,
-                            TypeParams: null,
-                            ThisType: null,
-                            Parameters: [setterParam],
-                            ExpressionBody: null,
-                            BlockBody: body,
-                            ReturnType: returnType,
-                            HasOwnThis: true
-                        );
-                        properties.Add(new Expr.Property(
-                            new Expr.IdentifierKey(propName),
-                            setterExpr,
-                            IsSpread: false,
-                            Kind: Expr.ObjectPropertyKind.Setter,
-                            SetterParam: setterParam));
-                        continue;
-                    }
-
-                    // Parse regular identifier (including 'get' and 'set' when not followed by another identifier)
+                    // Parse regular identifier (including 'get' and 'set' as property names)
                     Token name = ConsumePropertyName("Expect property name.");
                     Expr value;
 
-                    if (Match(TokenType.LEFT_PAREN))
+                    if (Check(TokenType.LEFT_PAREN))
                     {
                         // Method shorthand: { fn() {} }
-                        string? thisType = null;
-                        List<Stmt.Parameter> parameters = [];
-                        List<(Token SynthName, DestructurePattern Pattern)> destructuredParams = [];
-
-                        // Check for 'this' parameter in object method
-                        if (Check(TokenType.THIS))
-                        {
-                            Advance(); // consume 'this'
-                            Consume(TokenType.COLON, "Expect ':' after 'this' in this parameter.");
-                            thisType = ParseTypeAnnotation();
-                            if (Check(TokenType.COMMA))
-                            {
-                                Advance(); // consume ','
-                            }
-                        }
-
-                        if (!Check(TokenType.RIGHT_PAREN))
-                        {
-                            do
-                            {
-                                // Destructuring patterns in object-method parameters
-                                // (used by e.g. yaml's `stringify({source, value}, ctx) {...}`).
-                                if (Check(TokenType.LEFT_BRACKET))
-                                {
-                                    int line = Peek().Line;
-                                    Consume(TokenType.LEFT_BRACKET, "");
-                                    var pattern = ParseArrayPattern();
-                                    Token synthName = new Token(TokenType.IDENTIFIER, $"_param{parameters.Count}", null, line);
-                                    string? pType = Match(TokenType.COLON) ? ParseTypeAnnotation() : null;
-                                    Expr? pDefault = Match(TokenType.EQUAL) ? Expression() : null;
-                                    parameters.Add(new Stmt.Parameter(synthName, pType, pDefault));
-                                    destructuredParams.Add((synthName, pattern));
-                                    continue;
-                                }
-                                if (Check(TokenType.LEFT_BRACE))
-                                {
-                                    int line = Peek().Line;
-                                    Consume(TokenType.LEFT_BRACE, "");
-                                    var pattern = ParseObjectPattern();
-                                    Token synthName = new Token(TokenType.IDENTIFIER, $"_param{parameters.Count}", null, line);
-                                    string? pType = Match(TokenType.COLON) ? ParseTypeAnnotation() : null;
-                                    Expr? pDefault = Match(TokenType.EQUAL) ? Expression() : null;
-                                    parameters.Add(new Stmt.Parameter(synthName, pType, pDefault));
-                                    destructuredParams.Add((synthName, pattern));
-                                    continue;
-                                }
-
-                                // Check for rest parameter
-                                bool isRest = Match(TokenType.DOT_DOT_DOT);
-                                Token paramName = ConsumeIdentifierName("Expect parameter name.");
-                                bool isOptional = Match(TokenType.QUESTION);
-                                string? paramType = null;
-                                if (Match(TokenType.COLON))
-                                {
-                                    paramType = ParseTypeAnnotation();
-                                }
-                                Expr? defaultValue = null;
-                                if (Match(TokenType.EQUAL))
-                                {
-                                    defaultValue = Expression();
-                                }
-                                parameters.Add(new Stmt.Parameter(paramName, paramType, defaultValue, isRest, IsOptional: isOptional));
-
-                                // Rest parameter must be last
-                                if (isRest && Check(TokenType.COMMA))
-                                {
-                                    throw new Exception("Parse Error: Rest parameter must be last.");
-                                }
-                            } while (Match(TokenType.COMMA));
-                        }
-                        Consume(TokenType.RIGHT_PAREN, "Expect ')' after method parameters.");
-
-                        string? returnType = null;
-                        if (Match(TokenType.COLON))
-                        {
-                            returnType = ParseTypeAnnotation();
-                        }
-
-                        Consume(TokenType.LEFT_BRACE, "Expect '{' before method body.");
-                        List<Stmt> body = Block();
-
-                        // Prepend destructuring desugar statements.
-                        if (destructuredParams.Count > 0)
-                        {
-                            var prologue = new List<Stmt>();
-                            foreach (var (synthName, pattern) in destructuredParams)
-                            {
-                                var paramVar = new Expr.Variable(synthName);
-                                Stmt desugar = pattern switch
-                                {
-                                    ArrayPattern ap => DesugarArrayPattern(ap, paramVar),
-                                    ObjectPattern op => DesugarObjectPattern(op, paramVar),
-                                    _ => throw new Exception("Unknown pattern type")
-                                };
-                                prologue.Add(desugar);
-                            }
-                            body = prologue.Concat(body).ToList();
-                        }
-
-                        body = VarHoister.Hoist(body);
-                        value = new Expr.ArrowFunction(Name: null, TypeParams: null, ThisType: thisType, Parameters: parameters, ExpressionBody: null, BlockBody: body, ReturnType: returnType, HasOwnThis: true);
+                        value = ParseObjectMethodShorthand();
                     }
                     else if (Match(TokenType.COLON))
                     {
@@ -1118,6 +978,126 @@ public partial class Parser
         }
 
         throw new Exception("Expect expression.");
+    }
+
+    /// <summary>
+    /// Parses an object-literal method-shorthand tail starting at <c>(</c>:
+    /// the parameter list, optional return-type annotation, and brace body.
+    /// Supports array/object destructuring patterns, rest parameters, default
+    /// values, and an optional <c>this:</c> parameter (TypeScript).
+    /// Returns an ArrowFunction with <c>HasOwnThis=true</c>.
+    /// </summary>
+    private Expr.ArrowFunction ParseObjectMethodShorthand()
+    {
+        Consume(TokenType.LEFT_PAREN, "Expect '(' in method shorthand.");
+
+        string? thisType = null;
+        List<Stmt.Parameter> parameters = [];
+        List<(Token SynthName, DestructurePattern Pattern)> destructuredParams = [];
+
+        // Optional `this:` annotation parameter (TS).
+        if (Check(TokenType.THIS))
+        {
+            Advance();
+            Consume(TokenType.COLON, "Expect ':' after 'this' in this parameter.");
+            thisType = ParseTypeAnnotation();
+            if (Check(TokenType.COMMA))
+            {
+                Advance();
+            }
+        }
+
+        if (!Check(TokenType.RIGHT_PAREN))
+        {
+            do
+            {
+                // Destructuring patterns in method parameters
+                // (e.g. yaml's `stringify({source, value}, ctx) {...}`).
+                if (Check(TokenType.LEFT_BRACKET))
+                {
+                    int line = Peek().Line;
+                    Consume(TokenType.LEFT_BRACKET, "");
+                    var pattern = ParseArrayPattern();
+                    Token synthName = new Token(TokenType.IDENTIFIER, $"_param{parameters.Count}", null, line);
+                    string? pType = Match(TokenType.COLON) ? ParseTypeAnnotation() : null;
+                    Expr? pDefault = Match(TokenType.EQUAL) ? Expression() : null;
+                    parameters.Add(new Stmt.Parameter(synthName, pType, pDefault));
+                    destructuredParams.Add((synthName, pattern));
+                    continue;
+                }
+                if (Check(TokenType.LEFT_BRACE))
+                {
+                    int line = Peek().Line;
+                    Consume(TokenType.LEFT_BRACE, "");
+                    var pattern = ParseObjectPattern();
+                    Token synthName = new Token(TokenType.IDENTIFIER, $"_param{parameters.Count}", null, line);
+                    string? pType = Match(TokenType.COLON) ? ParseTypeAnnotation() : null;
+                    Expr? pDefault = Match(TokenType.EQUAL) ? Expression() : null;
+                    parameters.Add(new Stmt.Parameter(synthName, pType, pDefault));
+                    destructuredParams.Add((synthName, pattern));
+                    continue;
+                }
+
+                bool isRest = Match(TokenType.DOT_DOT_DOT);
+                Token paramName = ConsumeIdentifierName("Expect parameter name.");
+                bool isOptional = Match(TokenType.QUESTION);
+                string? paramType = null;
+                if (Match(TokenType.COLON))
+                {
+                    paramType = ParseTypeAnnotation();
+                }
+                Expr? defaultValue = null;
+                if (Match(TokenType.EQUAL))
+                {
+                    defaultValue = Expression();
+                }
+                parameters.Add(new Stmt.Parameter(paramName, paramType, defaultValue, isRest, IsOptional: isOptional));
+
+                if (isRest && Check(TokenType.COMMA))
+                {
+                    throw new Exception("Parse Error: Rest parameter must be last.");
+                }
+            } while (Match(TokenType.COMMA));
+        }
+        Consume(TokenType.RIGHT_PAREN, "Expect ')' after method parameters.");
+
+        string? returnType = null;
+        if (Match(TokenType.COLON))
+        {
+            returnType = ParseTypeAnnotation();
+        }
+
+        Consume(TokenType.LEFT_BRACE, "Expect '{' before method body.");
+        List<Stmt> body = Block();
+
+        if (destructuredParams.Count > 0)
+        {
+            var prologue = new List<Stmt>();
+            foreach (var (synthName, pattern) in destructuredParams)
+            {
+                var paramVar = new Expr.Variable(synthName);
+                Stmt desugar = pattern switch
+                {
+                    ArrayPattern ap => DesugarArrayPattern(ap, paramVar),
+                    ObjectPattern op => DesugarObjectPattern(op, paramVar),
+                    _ => throw new Exception("Unknown pattern type")
+                };
+                prologue.Add(desugar);
+            }
+            body = prologue.Concat(body).ToList();
+        }
+
+        body = VarHoister.Hoist(body);
+
+        return new Expr.ArrowFunction(
+            Name: null,
+            TypeParams: null,
+            ThisType: thisType,
+            Parameters: parameters,
+            ExpressionBody: null,
+            BlockBody: body,
+            ReturnType: returnType,
+            HasOwnThis: true);
     }
 
     private Expr ParseTemplateLiteral()
