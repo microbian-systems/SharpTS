@@ -1,5 +1,5 @@
 {
-  "__comment__": "Committed Test262 subset. Rollout cadence tracked on issue #69: each PR adds folder(s), regenerates baselines, triages new failures. Current rollout step (2026-04-23) adds Boolean/Error/JSON — small, simple types, low triage burden.",
+  "__comment__": "Committed Test262 subset. Rollout cadence tracked on issue #69. Promise added 2026-04-23 for interpreter only — compiledExcludeFolders holds it out of compile mode because several Promise tests hang on compile-mode cancellation: the runner's timeout token works for code that checks it, but pure CPU / microtask-chain loops in emitted IL never check it (same limitation as REPL Ctrl+C on tight loops). Needs a structural fix for compile-mode cooperative cancellation before compiled-Promise can join the subset.",
   "folders": [
     "test/built-ins/Array",
     "test/built-ins/Boolean",
@@ -7,10 +7,13 @@
     "test/built-ins/JSON",
     "test/built-ins/Math",
     "test/built-ins/Number",
+    "test/built-ins/Promise",
     "test/built-ins/String",
     "test/language/expressions/new"
   ],
-  "compiledExcludeFolders": [],
+  "compiledExcludeFolders": [
+    "test/built-ins/Promise"
+  ],
   "timeoutSeconds": 5,
   "skipFeaturesFile": "skip-features.txt"
 }
