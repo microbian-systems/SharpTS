@@ -155,7 +155,25 @@ public static class FunctionBuiltIns
             return objUnbound.BindTo(thisArg).Call(interp, args);
         }
 
-        // For built-in methods and other callables, just call directly
+        // BuiltInMethod (e.g. Array.prototype.every exposed via
+        // SharpTSArrayPrototype) must rebind the receiver on every .call/.apply
+        // so that Array.prototype.every.call(arr, cb) targets `arr`. Without
+        // this, the invocation inherits whatever receiver was bound earlier
+        // (typically null), and the implementation sees a null receiver.
+        if (callable is BuiltInMethod builtIn)
+        {
+            return builtIn.Bind(thisArg).Call(interp, args);
+        }
+
+        // Array.prototype adapter — same rebind story. Without this,
+        // `Array.prototype.map.call(null, cb)` would invoke the wrapper with
+        // no receiver, silently skipping the spec-mandated ToObject / TypeError.
+        if (callable is Types.ArrayPrototypeMethodWrapper arrayProto)
+        {
+            return arrayProto.Bind(thisArg).Call(interp, args);
+        }
+
+        // For other callables, just call directly
         return callable.Call(interp, args);
     }
 }

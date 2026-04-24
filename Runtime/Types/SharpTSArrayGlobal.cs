@@ -1,4 +1,5 @@
 using SharpTS.Runtime.BuiltIns;
+using SharpTS.Runtime.Exceptions;
 using Interp = SharpTS.Execution.Interpreter;
 
 namespace SharpTS.Runtime.Types;
@@ -57,26 +58,97 @@ public sealed class SharpTSArrayGlobal : ISharpTSCallable
 }
 
 /// <summary>
-/// <c>Array.prototype</c>. Exposes the classic array methods as unbound
-/// callables: each method expects to receive its target array via
-/// <c>Function.prototype.apply/call</c> (or via <c>fn(target, ...args)</c> as
-/// a pragmatic fallback), then performs the mutation/query on it.
+/// <c>Array.prototype</c>. Exposes every registered Array.prototype method as
+/// an unbound <see cref="BuiltInMethod"/> sourced from
+/// <see cref="BuiltIns.ArrayBuiltIns"/> — the same implementation used for
+/// direct instance-method dispatch (<c>arr.map(fn)</c>). When user code does
+/// <c>Array.prototype.map.call(arrayLike, fn)</c>, <c>Function.prototype.call</c>
+/// rebinds the receiver before invoking, so both access paths share one
+/// implementation.
 /// </summary>
 public sealed class SharpTSArrayPrototype
 {
-    public object? GetMember(string name) => name switch
+    // Seven methods historically had bespoke SharpTSArrayUnboundMethod
+    // implementations that tolerate non-array receivers (treating args[0] as
+    // the target when `this` isn't an array). Replacing them with the
+    // BuiltInMethod path would tighten receiver handling but also regress
+    // Test262 tests that pass those unusual receivers. Keep the bespoke
+    // methods for that subset; route every other name through ArrayBuiltIns
+    // so the full Array.prototype surface (every/map/filter/forEach/reduce/...)
+    // shares one implementation with instance-method dispatch.
+    public object? GetMember(string name)
     {
-        "push" => SharpTSArrayUnboundMethod.Push,
-        "pop" => SharpTSArrayUnboundMethod.Pop,
-        "shift" => SharpTSArrayUnboundMethod.Shift,
-        "unshift" => SharpTSArrayUnboundMethod.Unshift,
-        "slice" => SharpTSArrayUnboundMethod.Slice,
-        "concat" => SharpTSArrayUnboundMethod.Concat,
-        "indexOf" => SharpTSArrayUnboundMethod.IndexOf,
-        _ => null,
-    };
+        var legacy = name switch
+        {
+            "push" => (object?)SharpTSArrayUnboundMethod.Push,
+            "pop" => SharpTSArrayUnboundMethod.Pop,
+            "shift" => SharpTSArrayUnboundMethod.Shift,
+            "unshift" => SharpTSArrayUnboundMethod.Unshift,
+            "slice" => SharpTSArrayUnboundMethod.Slice,
+            "concat" => SharpTSArrayUnboundMethod.Concat,
+            "indexOf" => SharpTSArrayUnboundMethod.IndexOf,
+            _ => null,
+        };
+        if (legacy is not null) return legacy;
+
+        var method = BuiltIns.ArrayBuiltIns.GetPrototypeMethod(name);
+        if (method is null) return null;
+
+        // ECMA-262: Array.prototype.* starts with ToObject(this), which throws
+        // TypeError if this is null or undefined. Wrap with a receiver-check
+        // so `Array.prototype.map.call(null)` throws a real TypeError in JS
+        // instead of surfacing a C# InvalidCastException via the method body.
+        return new ArrayPrototypeMethodWrapper(name, method);
+    }
 
     public override string ToString() => "[object Array]";
+}
+
+/// <summary>
+/// Adapter around a <see cref="BuiltInMethod"/> exposed on
+/// <c>Array.prototype</c>. Before dispatching, throws a spec-shaped
+/// <c>TypeError</c> if the receiver is null or undefined. Carries binding
+/// semantics through <c>.call</c>/<c>.apply</c> by delegating Bind/Call to
+/// the inner method.
+/// </summary>
+internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
+{
+    private readonly string _name;
+    private readonly BuiltInMethod _inner;
+    private readonly object? _receiver;
+    private readonly bool _hasReceiver;
+
+    public ArrayPrototypeMethodWrapper(string name, BuiltInMethod inner)
+    {
+        _name = name;
+        _inner = inner;
+    }
+
+    private ArrayPrototypeMethodWrapper(string name, BuiltInMethod inner, object? receiver)
+    {
+        _name = name;
+        _inner = inner;
+        _receiver = receiver;
+        _hasReceiver = true;
+    }
+
+    public int Arity() => _inner.MinArity;
+
+    public ArrayPrototypeMethodWrapper Bind(object? receiver)
+        => new(_name, _inner, receiver);
+
+    public object? Call(Interp interpreter, List<object?> arguments)
+    {
+        if (!_hasReceiver || _receiver is null or SharpTSUndefined)
+        {
+            throw new ThrowException(new SharpTSTypeError(
+                $"Array.prototype.{_name} called on null or undefined"));
+        }
+
+        return _inner.Bind(_receiver).Call(interpreter, arguments);
+    }
+
+    public override string ToString() => $"function {_name}() {{ [native code] }}";
 }
 
 /// <summary>

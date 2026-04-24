@@ -756,6 +756,8 @@ public sealed class BuiltInRegistry
             FunctionBuiltIns.GetMember((ISharpTSCallable)instance, name));
         registry.RegisterInstanceType(typeof(BuiltInMethod), (instance, name) =>
             FunctionBuiltIns.GetMember((ISharpTSCallable)instance, name));
+        registry.RegisterInstanceType(typeof(ArrayPrototypeMethodWrapper), (instance, name) =>
+            FunctionBuiltIns.GetMember((ISharpTSCallable)instance, name));
     }
 
     private static void RegisterBufferNamespace(BuiltInRegistry registry)

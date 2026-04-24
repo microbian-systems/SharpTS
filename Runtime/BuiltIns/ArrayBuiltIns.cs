@@ -51,6 +51,16 @@ public static class ArrayBuiltIns
     public static object? GetMember(SharpTSArray receiver, string name)
         => _lookup.GetMember(receiver, name);
 
+    /// <summary>
+    /// Returns the unbound <see cref="BuiltInMethod"/> for an Array.prototype
+    /// method, or null if no such method exists. Used by
+    /// <see cref="SharpTSArrayPrototype"/> to expose the full instance-method
+    /// set — so <c>Array.prototype.every.call(arr, cb)</c> in user code
+    /// resolves to the same implementation as <c>arr.every(cb)</c>.
+    /// </summary>
+    public static BuiltInMethod? GetPrototypeMethod(string name)
+        => _lookup.GetMethod(name);
+
     private static object? Flat(Interpreter _, SharpTSArray arr, List<object?> args)
     {
         // ECMA-262 23.1.3.13: skips holes.
