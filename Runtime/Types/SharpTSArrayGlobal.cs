@@ -145,10 +145,145 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
                 $"Array.prototype.{_name} called on null or undefined"));
         }
 
+        // Fast path: receiver is a real array.
+        if (_receiver is SharpTSArray arr)
+            return _inner.Bind(arr).Call(interpreter, arguments);
+
+        // Slow path: receiver is array-like (object with `length` + indexed
+        // props, or a string). ECMA-262 spec: ToObject(this), then iterate via
+        // LengthOfArrayLike(O) / HasProperty(O, i) / Get(O, i). Materialize
+        // into a temp SharpTSArray for dispatch, but wrap any callable
+        // argument so the callback sees the ORIGINAL receiver as its final
+        // "array" parameter — per spec, callbacks get O, not the internal
+        // materialization.
+        if (TryMaterializeArrayLike(_receiver, out var tempArr))
+        {
+            var wrappedArgs = WrapCallbackArguments(arguments, tempArr, _receiver);
+            return _inner.Bind(tempArr).Call(interpreter, wrappedArgs);
+        }
+
+        // Fallback: receiver type we can't coerce — let the inner method try.
+        // It will likely throw a meaningful error.
         return _inner.Bind(_receiver).Call(interpreter, arguments);
     }
 
+    /// <summary>
+    /// Attempts to build a temp <see cref="SharpTSArray"/> matching the
+    /// array-like's length and indexed values. Preserves ECMA-262 holes
+    /// (<see cref="ArrayHole"/>.<c>Instance</c>) at absent indices so
+    /// hole-aware methods (map/filter/forEach/...) behave correctly.
+    /// Caps length at 1M to protect against accidental runaway allocation
+    /// from a stray <c>length: 2**53-1</c> configuration.
+    /// </summary>
+    private static bool TryMaterializeArrayLike(object? receiver, out SharpTSArray tempArr)
+    {
+        tempArr = null!;
+        switch (receiver)
+        {
+            case SharpTSObject obj:
+            {
+                long len = ToLength(obj.GetProperty("length"));
+                len = Math.Min(len, 1 << 20);
+                var list = new List<object?>((int)len);
+                for (int i = 0; i < len; i++)
+                {
+                    var key = i.ToString();
+                    list.Add(obj.HasProperty(key) ? obj.GetProperty(key) : ArrayHole.Instance);
+                }
+                tempArr = new SharpTSArray(list);
+                return true;
+            }
+            case string s:
+            {
+                var list = new List<object?>(s.Length);
+                for (int i = 0; i < s.Length; i++)
+                    list.Add(s[i].ToString());
+                tempArr = new SharpTSArray(list);
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Returns <paramref name="arguments"/> with any <see cref="ISharpTSCallable"/>
+    /// argument wrapped so every reference to <paramref name="tempArr"/> in the
+    /// callback's arg list is substituted with the original receiver before the
+    /// user callback runs. Callers that don't take a callback (<c>join</c>,
+    /// <c>slice</c>) return the list unchanged.
+    /// </summary>
+    private static List<object?> WrapCallbackArguments(
+        List<object?> arguments, SharpTSArray tempArr, object? originalReceiver)
+    {
+        if (arguments.Count == 0) return arguments;
+        if (arguments[0] is not ISharpTSCallable userCb) return arguments;
+
+        var result = new List<object?>(arguments.Count)
+        {
+            new ReceiverSubstitutingCallback(userCb, tempArr, originalReceiver)
+        };
+        for (int i = 1; i < arguments.Count; i++) result.Add(arguments[i]);
+        return result;
+    }
+
+    /// <summary>
+    /// ECMA-262 7.1.20 ToLength: coerces <paramref name="value"/> to a
+    /// non-negative integer length, clamped to <c>2^53 − 1</c>. NaN/negative
+    /// input becomes 0; non-numeric strings parse to NaN → 0.
+    /// </summary>
+    private static long ToLength(object? value)
+    {
+        double n = value switch
+        {
+            double d => d,
+            bool b => b ? 1.0 : 0.0,
+            string s => double.TryParse(s, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : double.NaN,
+            null => 0.0,
+            SharpTSUndefined => double.NaN,
+            _ => double.NaN,
+        };
+        if (double.IsNaN(n) || n <= 0) return 0;
+        if (double.IsPositiveInfinity(n)) return (1L << 53) - 1;
+        return (long)Math.Min(Math.Truncate(n), (double)((1L << 53) - 1));
+    }
+
     public override string ToString() => $"function {_name}() {{ [native code] }}";
+
+    /// <summary>
+    /// Wraps a user callback so every position in its argument list that
+    /// references the internal <see cref="SharpTSArray"/> materialization is
+    /// substituted with the original array-like receiver. Mutates in place —
+    /// the pooled arg list is reused across iterations, and only the element
+    /// and index positions get reset each call, so the substitution sticks.
+    /// </summary>
+    private sealed class ReceiverSubstitutingCallback : ISharpTSCallable
+    {
+        private readonly ISharpTSCallable _inner;
+        private readonly SharpTSArray _tempArr;
+        private readonly object? _originalReceiver;
+
+        public ReceiverSubstitutingCallback(
+            ISharpTSCallable inner, SharpTSArray tempArr, object? originalReceiver)
+        {
+            _inner = inner;
+            _tempArr = tempArr;
+            _originalReceiver = originalReceiver;
+        }
+
+        public int Arity() => _inner.Arity();
+
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            for (int i = 0; i < arguments.Count; i++)
+            {
+                if (ReferenceEquals(arguments[i], _tempArr))
+                    arguments[i] = _originalReceiver;
+            }
+            return _inner.Call(interpreter, arguments);
+        }
+    }
 }
 
 /// <summary>
