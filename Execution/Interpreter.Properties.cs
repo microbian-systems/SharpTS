@@ -859,6 +859,17 @@ public partial class Interpreter
             return value;
         }
 
+        // Math is an extensible object per ECMA-262 — user code is allowed
+        // to attach arbitrary properties to it (Test262 tests exercise this
+        // pattern by assigning `Math.length` / `Math[i]` before calling
+        // Array.prototype.* with Math as the receiver). Route to the
+        // backing dictionary on SharpTSMath.
+        if (obj is SharpTSMath math)
+        {
+            math.SetExtra(set.Name.Lexeme, value);
+            return value;
+        }
+
         var category = TypeCategoryResolver.ClassifyRuntime(obj);
         string memberName = set.Name.Lexeme;
         bool strictMode = _environment.IsStrictMode;

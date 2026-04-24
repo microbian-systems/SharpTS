@@ -197,6 +197,22 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
                 tempArr = new SharpTSArray(list);
                 return true;
             }
+            case SharpTSMath math:
+            {
+                // Math is an extensible namespace object — Test262 tests set
+                // `Math.length` and `Math[i]` before invoking Array.prototype.*
+                // on Math, expecting array-like semantics.
+                long len = ToLength(math.HasExtra("length") ? math.TryGetExtra("length") : null);
+                len = Math.Min(len, 1 << 20);
+                var list = new List<object?>((int)len);
+                for (int i = 0; i < len; i++)
+                {
+                    var key = i.ToString();
+                    list.Add(math.HasExtra(key) ? math.TryGetExtra(key) : ArrayHole.Instance);
+                }
+                tempArr = new SharpTSArray(list);
+                return true;
+            }
             case string s:
             {
                 var list = new List<object?>(s.Length);

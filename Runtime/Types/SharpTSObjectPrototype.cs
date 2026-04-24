@@ -102,12 +102,18 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable
 
     private static object? ToStringImpl(object? target, List<object?> args)
     {
+        // ECMA-262 20.1.3.6: toString uses the @@toStringTag tag of the
+        // receiver. Kept conservative — extending this to every built-in tag
+        // broke Lodash's typeof detection (it uses `Object.prototype.toString.call`
+        // on functions and expected "[object Object]" back). Add new tags
+        // only when a specific spec test needs them.
         if (target == null) return "[object Null]";
         if (target is SharpTSUndefined) return "[object Undefined]";
         if (target is string) return "[object String]";
         if (target is double or int) return "[object Number]";
         if (target is bool) return "[object Boolean]";
         if (target is SharpTSArray) return "[object Array]";
+        if (target is SharpTSMath) return "[object Math]";
         return "[object Object]";
     }
 

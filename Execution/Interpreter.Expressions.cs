@@ -781,6 +781,15 @@ public partial class Interpreter
             return EvaluateGetOnObject(syntheticGet, obj);
         }
 
+        // Math[n] (numeric index) should behave the same as Math.n — strings
+        // and doubles are both legal keys on an extensible object.
+        if (obj is SharpTSMath math)
+        {
+            var key = Stringify(index);
+            if (math.HasExtra(key)) return RuntimeValue.FromBoxed(math.TryGetExtra(key));
+            return RuntimeValue.FromBoxed(Runtime.BuiltIns.MathBuiltIns.GetMember(key) ?? SharpTSUndefined.Instance);
+        }
+
         return RuntimeValue.FromBoxed(ResolveIndexTarget(obj, index) switch
         {
             IndexTarget.Array t => t.Target.Get(t.Index),
@@ -830,6 +839,13 @@ public partial class Interpreter
         if (obj is SharpTSFunction fn)
         {
             fn.SetProperty(index?.ToString() ?? "", value);
+            return RuntimeValue.FromBoxed(value);
+        }
+
+        // Math is an extensible object — allow Math[n] = v alongside Math.foo = v.
+        if (obj is SharpTSMath math)
+        {
+            math.SetExtra(index?.ToString() ?? "", value);
             return RuntimeValue.FromBoxed(value);
         }
 

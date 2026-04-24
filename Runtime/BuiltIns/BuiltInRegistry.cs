@@ -400,9 +400,16 @@ public sealed class BuiltInRegistry
 
     private static void RegisterMathType(BuiltInRegistry registry)
     {
-        // Math members accessed via property access (Math.PI, Math.abs)
-        registry.RegisterInstanceType(typeof(SharpTSMath), (_, name) =>
-            MathBuiltIns.GetMember(name));
+        // Math members accessed via property access (Math.PI, Math.abs).
+        // User-assigned extras (Math[0] = x, Math.length = n — allowed per
+        // ECMA-262 since Math is an extensible object) take precedence over
+        // built-ins on read so assignment round-trips properly.
+        registry.RegisterInstanceType(typeof(SharpTSMath), (instance, name) =>
+        {
+            var math = (SharpTSMath)instance;
+            if (math.HasExtra(name)) return math.TryGetExtra(name);
+            return MathBuiltIns.GetMember(name);
+        });
     }
 
     private static void RegisterObjectType(BuiltInRegistry registry)

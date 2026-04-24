@@ -874,6 +874,12 @@ public partial class Interpreter
             }
             return value;
         }
+        // Math[n] = v — Math is extensible per ECMA-262.
+        if (obj is SharpTSMath math)
+        {
+            math.SetExtra(Stringify(index), value);
+            return value;
+        }
         throw new InterpreterException("Index assignment not supported on this type.");
     }
 }
