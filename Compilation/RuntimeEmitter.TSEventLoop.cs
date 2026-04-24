@@ -259,12 +259,23 @@ public partial class RuntimeEmitter
         // while (true) {
         il.MarkLabel(loopTop);
 
+        // Cooperative cancellation check — issue #74. Lets the Test262 runner
+        // unwind a never-settling promise chain by flipping _cancelRequested.
+        // At worst we wait the inner ManualResetEventSlim.Wait(100) period
+        // before checking; that's the timeout resolution.
+        if (runtime.CheckCancellationMethod != null)
+            il.Emit(OpCodes.Call, runtime.CheckCancellationMethod);
+
         // waitMs = -1 (no timers by default)
         il.Emit(OpCodes.Ldc_I4_M1);
         il.Emit(OpCodes.Stloc, waitMsLocal);
 
         // Inner drain loop: while (_queue.TryDequeue(out action)) { action.Invoke(); }
         il.MarkLabel(drainTop);
+        // Also check cancellation inside the drain loop so a flood of
+        // microtasks doesn't prevent timely cancellation.
+        if (runtime.CheckCancellationMethod != null)
+            il.Emit(OpCodes.Call, runtime.CheckCancellationMethod);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _eventLoopQueueField);
         il.Emit(OpCodes.Ldloca, actionLocal);

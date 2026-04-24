@@ -261,7 +261,15 @@ public sealed class Test262Runner
             if (mainMethod is null)
                 return new Test262Result(Test262Outcome.HarnessError, "$Program.Main not found in compiled assembly", null);
 
-            return InvokeCompiledMain(mainMethod, harnessLength);
+            // Resolve the per-assembly $Runtime._cancelRequested field up-front
+            // so InvokeCompiledMain can flip it on timeout. Each test compiles
+            // its own assembly with its own $Runtime type — this keeps the
+            // cancellation flag scoped to the running test. See issue #74.
+            var runtimeType = assembly.GetType("$Runtime");
+            var cancelField = runtimeType?.GetField("_cancelRequested",
+                BindingFlags.Public | BindingFlags.Static);
+
+            return InvokeCompiledMain(mainMethod, harnessLength, cancelField);
         }
         finally
         {
@@ -269,7 +277,7 @@ public sealed class Test262Runner
         }
     }
 
-    private Test262Result InvokeCompiledMain(MethodInfo mainMethod, int harnessLength)
+    private Test262Result InvokeCompiledMain(MethodInfo mainMethod, int harnessLength, FieldInfo? cancelField)
     {
         // Serialize Console redirection; multiple compiled tests can run in
         // parallel xUnit cases but must not cross-contaminate stdout.
@@ -311,9 +319,11 @@ public sealed class Test262Runner
 
         // Poll for timeout or memory runaway. Compiled-mode tests run through
         // the same process, so the watchdog threshold applies symmetrically.
-        // The orphaned Task can't be killed cooperatively (compiled code
-        // doesn't honor a cancellation token), so on watchdog fire we accept
-        // the memory pressure and move on; the process will GC opportunistically.
+        // When the deadline hits, we flip $Runtime._cancelRequested (the per-
+        // assembly cooperative cancellation flag emitted per issue #74); the
+        // next loop backedge in the compiled IL sees it and throws
+        // OperationCanceledException, unwinding the task within ~100ms (the
+        // event loop's Wait resolution) to a full iteration of the hot loop.
         var deadline = DateTime.UtcNow + _timeout;
         var process = System.Diagnostics.Process.GetCurrentProcess();
         var baselineMemory = process.WorkingSet64;
@@ -321,10 +331,14 @@ public sealed class Test262Runner
         {
             if (task.Wait(100)) break;
             if (DateTime.UtcNow > deadline)
+            {
+                TripCancelAndJoin(cancelField, task);
                 return new Test262Result(Test262Outcome.Timeout, $"exceeded {_timeout.TotalSeconds}s", null);
+            }
             process.Refresh();
             if (process.WorkingSet64 - baselineMemory > MemoryLimitBytes)
             {
+                TripCancelAndJoin(cancelField, task);
                 GC.Collect();
                 return new Test262Result(Test262Outcome.Timeout,
                     $"memory watchdog fired (grew by {(process.WorkingSet64 - baselineMemory) / 1024 / 1024}MB)", null);
@@ -332,6 +346,30 @@ public sealed class Test262Runner
         }
 
         return result ?? new Test262Result(Test262Outcome.RuntimeError, "runner produced no result", null);
+    }
+
+    /// <summary>
+    /// Flips <c>$Runtime._cancelRequested</c> on the timed-out test's assembly
+    /// and gives the task a short grace period to unwind. If the emitted IL is
+    /// at a loop backedge (the common case) or inside the event-loop drain, the
+    /// next cancellation-check call will throw <see cref="OperationCanceledException"/>
+    /// and the task completes cleanly. Without this, an orphan task keeps
+    /// consuming CPU and holding assembly memory until the process exits —
+    /// which is what caused the Promise rollout (#69) to hang in compile mode.
+    /// </summary>
+    private static void TripCancelAndJoin(FieldInfo? cancelField, Task task)
+    {
+        if (cancelField is null) return;
+        try
+        {
+            cancelField.SetValue(null, true);
+            task.Wait(TimeSpan.FromSeconds(1));
+        }
+        catch
+        {
+            // Best-effort; if Wait or SetValue throws we fall through to
+            // returning Timeout anyway.
+        }
     }
 
     /// <summary>

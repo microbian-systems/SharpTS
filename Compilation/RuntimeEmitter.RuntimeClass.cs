@@ -45,6 +45,40 @@ public partial class RuntimeEmitter
         runtime.RuntimeType = typeBuilder;
         _runtimeTypeBuilder = typeBuilder;
 
+        // Cooperative cancellation flag — tripped by the Test262 runner
+        // (or any embedder) via reflection to unwind compiled IL on timeout.
+        // See issue #74. Public so the runner can SetValue via reflection;
+        // polled by loop-backedge emissions via CheckCancellation below.
+        var cancelRequestedField = typeBuilder.DefineField(
+            "_cancelRequested",
+            _types.Boolean,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.CancelRequestedField = cancelRequestedField;
+
+        // CheckCancellation(): if (_cancelRequested) throw new
+        //   OperationCanceledException("Compiled execution cancelled.");
+        // Called by loop emitters at each backedge. Method body is emitted
+        // here so the token is available as soon as EmitRuntimeClass starts;
+        // later emitters can reference runtime.CheckCancellationMethod.
+        var checkCancellation = typeBuilder.DefineMethod(
+            "CheckCancellation",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            Type.EmptyTypes);
+        runtime.CheckCancellationMethod = checkCancellation;
+        {
+            var il = checkCancellation.GetILGenerator();
+            var returnLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldsfld, cancelRequestedField);
+            il.Emit(OpCodes.Brfalse, returnLabel);
+            il.Emit(OpCodes.Ldstr, "Compiled execution cancelled.");
+            il.Emit(OpCodes.Newobj,
+                typeof(OperationCanceledException).GetConstructor([typeof(string)])!);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(returnLabel);
+            il.Emit(OpCodes.Ret);
+        }
+
         // Static field for Random
         var randomField = typeBuilder.DefineField("_random", _types.Random, FieldAttributes.Private | FieldAttributes.Static);
 

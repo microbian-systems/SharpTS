@@ -1,5 +1,5 @@
 {
-  "__comment__": "Committed Test262 subset. Rollout cadence tracked on issue #69. Promise added 2026-04-23 for interpreter only — compiledExcludeFolders holds it out of compile mode because several Promise tests hang on compile-mode cancellation: the runner's timeout token works for code that checks it, but pure CPU / microtask-chain loops in emitted IL never check it (same limitation as REPL Ctrl+C on tight loops). Needs a structural fix for compile-mode cooperative cancellation before compiled-Promise can join the subset.",
+  "__comment__": "Committed Test262 subset. Rollout cadence tracked on issue #69. Compile-mode cooperative cancellation landed via #74 — loop backedges + event-loop drain now call $Runtime.CheckCancellation so infinite loops unwind on timeout. Promise is still held out of compile mode (compiledExcludeFolders) because the compiled baseline regen still runs excessively long in practice; likely per-test IL compile/load overhead dominates, not cancellation. Needs profiling before Promise-compile joins the subset.",
   "folders": [
     "test/built-ins/Array",
     "test/built-ins/Boolean",

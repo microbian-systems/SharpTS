@@ -276,6 +276,7 @@ public partial class ILEmitter
             _ctx.EnterLoop(endLabel, continueLabel);
 
             builder.MarkLabel(startLabel);
+            EmitCancellationCheck();
 
             if (f.Condition != null)
             {
@@ -349,6 +350,19 @@ public partial class ILEmitter
         builder.MarkLabel(endLabel);
     }
 
+    /// <summary>
+    /// Emits a `call $Runtime.CheckCancellation()` — one IL instruction that
+    /// polls the cooperative cancellation flag. Called at each loop backedge
+    /// so compiled hang tests (infinite loops, never-settling promise chains)
+    /// unwind within one iteration after the Test262 runner flips the flag.
+    /// See issue #74.
+    /// </summary>
+    private void EmitCancellationCheck()
+    {
+        if (_ctx.Runtime?.CheckCancellationMethod != null)
+            IL.Emit(OpCodes.Call, _ctx.Runtime.CheckCancellationMethod);
+    }
+
     protected override void EmitWhile(Stmt.While w)
     {
         // Array hoist preamble before loop
@@ -361,6 +375,7 @@ public partial class ILEmitter
         _ctx.EnterLoop(endLabel, startLabel);
 
         builder.MarkLabel(startLabel);
+        EmitCancellationCheck();
         EmitConditionCheck(w.Condition);
         builder.Emit_Brfalse(endLabel);
 
@@ -425,6 +440,7 @@ public partial class ILEmitter
 
         // Body executes at least once
         builder.MarkLabel(startLabel);
+        EmitCancellationCheck();
         EmitStatement(dw.Body);
 
         // Continue target is after the body, before condition check
@@ -537,6 +553,7 @@ public partial class ILEmitter
             var current = _ctx.Types.IEnumerator.GetProperty("Current")!.GetGetMethod()!;
 
             builder.MarkLabel(iterStartLabel);
+            EmitCancellationCheck();
 
             // Call MoveNext
             IL.Emit(OpCodes.Ldloc, enumLocal);
@@ -585,6 +602,7 @@ public partial class ILEmitter
             var indexLoopVar = _ctx.Locals.DeclareLocal(f.Variable.Lexeme, _ctx.Types.Object);
 
             builder.MarkLabel(startLabel);
+            EmitCancellationCheck();
 
             // Check if index < length
             IL.Emit(OpCodes.Ldloc, indexLocal);
@@ -641,6 +659,7 @@ public partial class ILEmitter
         var loopVar = _ctx.Locals.DeclareLocal(f.Variable.Lexeme, _ctx.Types.Object);
 
         builder.MarkLabel(startLabel);
+        EmitCancellationCheck();
 
         // Call MoveNext
         IL.Emit(OpCodes.Ldloc, enumLocal);
@@ -685,6 +704,7 @@ public partial class ILEmitter
         var loopVar = _ctx.Locals.DeclareLocal(f.Variable.Lexeme, _ctx.Types.Object);
 
         builder.MarkLabel(startLabel);
+        EmitCancellationCheck();
 
         IL.Emit(OpCodes.Ldloc, enumLocal);
         IL.Emit(OpCodes.Callvirt, moveNext);
@@ -729,6 +749,7 @@ public partial class ILEmitter
         var loopVar = _ctx.Locals.DeclareLocal(f.Variable.Lexeme, _ctx.Types.Object);
 
         builder.MarkLabel(startLabel);
+        EmitCancellationCheck();
 
         // Check if index < keys.Count
         IL.Emit(OpCodes.Ldloc, indexLocal);

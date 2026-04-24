@@ -48,6 +48,16 @@ public class EmittedRuntime
     // Sentinel object for null/undefined Map keys (Dictionary<object,object?> can't use null keys)
     public FieldBuilder MapNullSentinel { get; set; } = null!;
 
+    // Cooperative cancellation for the Test262 runner (issue #74): a static
+    // `bool _cancelRequested` on $Runtime that the runner flips via reflection
+    // on timeout, plus a `CheckCancellation()` helper that throws
+    // OperationCanceledException if the flag is set. Loop emitters call the
+    // helper at each backedge so long-running / hanging tests unwind within
+    // one iteration of the runner setting the flag. Pure IL, no SharpTS.dll
+    // reference — each emitted assembly has its own field.
+    public FieldBuilder CancelRequestedField { get; set; } = null!;
+    public MethodBuilder CheckCancellationMethod { get; set; } = null!;
+
     // The emitted runtime helper class
     public TypeBuilder RuntimeType { get; set; } = null!;
 
