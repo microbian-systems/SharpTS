@@ -1344,14 +1344,42 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stfld, _tsArrayLengthField);
         il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(negThrowLabel);
-        il.Emit(OpCodes.Ldstr, "RangeError: Invalid array length.");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
+        // Throw a real $RangeError instance wrapped in a CLR Exception so
+        // catch blocks unwrap to a RangeError per ECMA-262 22.1.5.4. The
+        // wrapping is inlined here because CreateException isn't yet emitted
+        // at TSArray-time. Uses Exception.Data["__tsValue"] = $RangeError so
+        // WrapException's existing __tsValue path returns the error instance.
+        EmitInlineThrowError(il, runtime, "Invalid array length.", runtime.TSRangeErrorCtor, negThrowLabel);
+        EmitInlineThrowError(il, runtime, "Array length exceeds ECMA-262 uint32 maximum.", runtime.TSRangeErrorCtor, tooBigThrowLabel);
+    }
 
-        il.MarkLabel(tooBigThrowLabel);
-        il.Emit(OpCodes.Ldstr, "RangeError: Array length exceeds ECMA-262 uint32 maximum.");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+    /// <summary>
+    /// Inlined equivalent of `$Runtime.CreateException(new $XError(message))`
+    /// + Throw. Used by emitters that run before $Runtime is built (e.g.
+    /// $Array, $TSObject). Stores the original `$XError` instance in
+    /// `ex.Data["__tsValue"]` so `WrapException` returns it on catch.
+    /// </summary>
+    private void EmitInlineThrowError(ILGenerator il, EmittedRuntime runtime, string message, ConstructorBuilder errorCtor, System.Reflection.Emit.Label markLabel)
+    {
+        il.MarkLabel(markLabel);
+        // var err = new $XError(message)
+        var errLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldstr, message);
+        il.Emit(OpCodes.Newobj, errorCtor);
+        il.Emit(OpCodes.Stloc, errLocal);
+        // var ex = new Exception(message)
+        var exLocal2 = il.DeclareLocal(_types.Exception);
+        il.Emit(OpCodes.Ldstr, message);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Stloc, exLocal2);
+        // ex.Data["__tsValue"] = err
+        il.Emit(OpCodes.Ldloc, exLocal2);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Data").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__tsValue");
+        il.Emit(OpCodes.Ldloc, errLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "set_Item"));
+        // throw ex
+        il.Emit(OpCodes.Ldloc, exLocal2);
         il.Emit(OpCodes.Throw);
     }
 
