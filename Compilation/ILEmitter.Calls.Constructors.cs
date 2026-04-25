@@ -196,26 +196,60 @@ public partial class ILEmitter
             return;
         }
 
-        var local = _ctx.Locals.GetLocal(className);
-        if (local != null)
+        // Function declarations take priority over resolver/locals. The
+        // resolver can spuriously claim ownership of names that match function
+        // declarations (closure-analyzer-driven captures that resolve to null
+        // at runtime). Function declarations are always reachable as static
+        // methods on the Program class, so the explicit Functions check wins.
+        // With Stage 0b (auto-prototype) + Stage 0c (NewOnFunction sets
+        // prototype, instanceof walks chain), the yallist/semver
+        // `if (!(this instanceof F)) return new F(args)` idiom no longer
+        // recurses — the inner `new F(args)` constructs an instance whose
+        // prototype chain links to F.prototype, so `this instanceof F` is
+        // true on the outer recursive call and the redirect short-circuits.
+        if (_ctx.Functions.TryGetValue(_ctx.ResolveFunctionName(className), out var funcMethod))
         {
-            IL.Emit(OpCodes.Ldloc, local);
-        }
-        else if (_resolver.TryLoadVariable(className) != null)
-        {
-            // Variable loaded onto stack by the resolver
+            IL.Emit(OpCodes.Ldnull); // target (static method)
+            IL.Emit(OpCodes.Ldtoken, funcMethod);
+            if (_ctx.ProgramType != null)
+            {
+                IL.Emit(OpCodes.Ldtoken, _ctx.ProgramType);
+                IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.MethodBase, "GetMethodFromHandle", _ctx.Types.RuntimeMethodHandle, _ctx.Types.RuntimeTypeHandle));
+            }
+            else
+            {
+                IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.MethodBase, "GetMethodFromHandle", _ctx.Types.RuntimeMethodHandle));
+            }
+            IL.Emit(OpCodes.Castclass, _ctx.Types.MethodInfo);
+            int arity = 0;
+            foreach (var param in funcMethod.GetParameters())
+            {
+                if (param.IsOptional) continue;
+                if (param.ParameterType == typeof(List<object>)) continue;
+                if (param.Name?.StartsWith("__") == true) continue;
+                arity++;
+            }
+            IL.Emit(OpCodes.Ldstr, className);
+            IL.Emit(OpCodes.Ldc_I4, arity);
+            IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSFunctionCtorWithCache);
         }
         else
         {
-            // The callee didn't resolve to a local or a resolvable variable. Preserve
-            // the legacy Ldnull behavior for this path — the primary #54 repro
-            // (`const F = ...; new F(...)`) routes through the Ldloc branch above,
-            // which IS rewired at notTypeLabel. Routing this branch through
-            // NewOnFunction causes the `if (!(this instanceof F)) return new F(args)`
-            // idiom (yallist, semver) to recurse because function-identity and
-            // instanceof aren't yet aligned in compiled mode.
-            IL.Emit(OpCodes.Ldnull);
-            return;
+            var local = _ctx.Locals.GetLocal(className);
+            if (local != null)
+            {
+                IL.Emit(OpCodes.Ldloc, local);
+            }
+            else if (_resolver.TryLoadVariable(className) != null)
+            {
+                // Variable loaded onto stack by the resolver
+            }
+            else
+            {
+                // The callee didn't resolve anywhere — preserve legacy Ldnull.
+                IL.Emit(OpCodes.Ldnull);
+                return;
+            }
         }
 
         // The loaded value is statically typed as `object` (DC fields, top-level static vars,

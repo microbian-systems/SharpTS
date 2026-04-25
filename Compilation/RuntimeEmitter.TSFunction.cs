@@ -43,6 +43,7 @@ public partial class RuntimeEmitter
         // Fields
         var targetField = typeBuilder.DefineField("_target", _types.Object, FieldAttributes.Private);
         var methodField = typeBuilder.DefineField("_method", _types.MethodInfo, FieldAttributes.Private);
+        runtime.TSFunctionMethodField = methodField;
         // Cached name and length for functions where reflection doesn't work (e.g., MethodBuilder tokens)
         var cachedNameField = typeBuilder.DefineField("_cachedName", _types.String, FieldAttributes.Private);
         var cachedLengthField = typeBuilder.DefineField("_cachedLength", _types.Int32, FieldAttributes.Private);
@@ -51,6 +52,38 @@ public partial class RuntimeEmitter
         // used to avoid reflection overhead in BindThis
         var fieldCacheType = _types.MakeGenericType(_types.ConcurrentDictionaryOpen, _types.Type, _types.FieldInfo);
         var fieldCacheField = typeBuilder.DefineField("_thisFieldCache", fieldCacheType, FieldAttributes.Private | FieldAttributes.Static | FieldAttributes.InitOnly);
+
+        // Static instance cache keyed by MethodInfo. Every reference to a
+        // function declaration (`function f(){}` followed by `f` used as a value)
+        // previously created a fresh $TSFunction wrapper — breaking
+        // identity-keyed property storage in PropertyDescriptorStore. Result:
+        // `fn.x = 42` wrote under wrapper A's identity, `fn.x` read under a new
+        // wrapper B → returned null. Most visibly, the test262 harness does
+        // `function assert(...){}; assert.sameValue = function(...){}` and
+        // then silently failed to dispatch `assert.sameValue(a, b)` (typeof
+        // returned "object"), turning real spec failures into false-positive
+        // Passes. Caching by MethodInfo makes every reference to the same
+        // function declaration return the same $TSFunction instance so PDS
+        // read/write use the same key. Only applies to target=null wrappers
+        // (static function declarations) — bound/closure wrappers carry state
+        // and must stay fresh.
+        var instanceCacheType = _types.MakeGenericType(_types.ConcurrentDictionaryOpen, _types.MethodInfo, typeBuilder);
+        var instanceCacheField = typeBuilder.DefineField("_instanceCache", instanceCacheType, FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly);
+        runtime.TSFunctionInstanceCacheField = instanceCacheField;
+
+        // Static prototype cache keyed by MethodInfo. Per JS spec every
+        // function has a `.prototype` object whose identity persists across
+        // references: `fn.prototype === fn.prototype` holds. Keying by
+        // MethodInfo (rather than $TSFunction instance) means two wrappers
+        // for the same declaration return the SAME prototype — even when
+        // the instance-level cache isn't in use. This unblocks `fn.prototype.x = v`
+        // and `this instanceof fn` correctness without requiring the wider
+        // identity cache to be wired up at both emit sites. Value-type is
+        // object rather than $TSObject so there's no TypeBuilder generic-arg
+        // issue at cctor time — the runtime value is always a $TSObject.
+        var prototypeCacheType = _types.MakeGenericType(_types.ConcurrentDictionaryOpen, _types.MethodInfo, _types.Object);
+        var prototypeCacheField = typeBuilder.DefineField("_prototypeCache", prototypeCacheType, FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly);
+        runtime.TSFunctionPrototypeCacheField = prototypeCacheField;
 
         // Thread-static "current function this" slot. Reads in compiled function bodies
         // (LocalVariableResolver.LoadThis's final fallback path) pick this up when the
@@ -80,6 +113,16 @@ public partial class RuntimeEmitter
         var cctorIL = cctorBuilder.GetILGenerator();
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(fieldCacheType));
         cctorIL.Emit(OpCodes.Stsfld, fieldCacheField);
+        // Generic ConcurrentDictionary whose value-type is the enclosing TypeBuilder —
+        // member resolution on such a constructed type must go through
+        // TypeBuilder.GetConstructor/GetMethod rather than .GetConstructor directly.
+        var concurrentDictOpenCtor = typeof(System.Collections.Concurrent.ConcurrentDictionary<,>).GetConstructor(Type.EmptyTypes)!;
+        cctorIL.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(instanceCacheType, concurrentDictOpenCtor));
+        cctorIL.Emit(OpCodes.Stsfld, instanceCacheField);
+        // Prototype cache: ConcurrentDictionary<MethodInfo, object> — generic args
+        // are both concrete CLR types, so the constructor resolves directly.
+        cctorIL.Emit(OpCodes.Newobj, prototypeCacheType.GetConstructor(Type.EmptyTypes)!);
+        cctorIL.Emit(OpCodes.Stsfld, prototypeCacheField);
         cctorIL.Emit(OpCodes.Ret);
 
         // Constructor: public $TSFunction(object target, MethodInfo method)
@@ -142,6 +185,82 @@ public partial class RuntimeEmitter
         ctorCacheIL.Emit(OpCodes.Ldarg, 4);  // 4th argument (0-indexed: 0=this, 1=target, 2=method, 3=name, 4=length)
         ctorCacheIL.Emit(OpCodes.Stfld, cachedLengthField);
         ctorCacheIL.Emit(OpCodes.Ret);
+
+        // Static factory: public static $TSFunction GetOrCreate(MethodInfo method, string name, int length).
+        // Returns a cached $TSFunction for the given MethodInfo, creating one if
+        // not present. Used only for function DECLARATIONS (target=null), where
+        // identity must be stable across references for PropertyDescriptorStore
+        // to work (`fn.x = v` → `fn.x` roundtrips). name/length are used only
+        // on first create (subsequent calls return the cached instance whose
+        // name/length were fixed at that first-create moment). Cached values
+        // are required because MethodBuilder tokens don't reflect at runtime.
+        var getOrCreateBuilder = typeBuilder.DefineMethod(
+            "GetOrCreate",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeBuilder,
+            [_types.MethodInfo, _types.String, _types.Int32]
+        );
+        runtime.TSFunctionGetOrCreate = getOrCreateBuilder;
+        var gocIL = getOrCreateBuilder.GetILGenerator();
+
+        var existingLocal = gocIL.DeclareLocal(typeBuilder);
+        var newInstLocal = gocIL.DeclareLocal(typeBuilder);
+
+        // Resolve methods via TypeBuilder.GetMethod because the value-type is
+        // still an open TypeBuilder at emit time.
+        var concurrentDictOpen = typeof(System.Collections.Concurrent.ConcurrentDictionary<,>);
+        var openTryGet = concurrentDictOpen.GetMethod("TryGetValue")!;
+        var openGetOrAdd = concurrentDictOpen.GetMethods()
+            .First(m => m.Name == "GetOrAdd" && m.GetParameters().Length == 2
+                 && m.GetParameters()[1].ParameterType == m.DeclaringType!.GetGenericArguments()[1]);
+        var tryGetValueM = TypeBuilder.GetMethod(instanceCacheType, openTryGet);
+        var getOrAddM = TypeBuilder.GetMethod(instanceCacheType, openGetOrAdd);
+
+        // if (_instanceCache.TryGetValue(method, out existing)) return existing;
+        gocIL.Emit(OpCodes.Ldsfld, instanceCacheField);
+        gocIL.Emit(OpCodes.Ldarg_0);
+        gocIL.Emit(OpCodes.Ldloca, existingLocal);
+        gocIL.Emit(OpCodes.Callvirt, tryGetValueM);
+        var notFound = gocIL.DefineLabel();
+        gocIL.Emit(OpCodes.Brfalse, notFound);
+        gocIL.Emit(OpCodes.Ldloc, existingLocal);
+        gocIL.Emit(OpCodes.Ret);
+
+        // Not in cache: create new via the cached-name/length constructor
+        // (MethodBuilder tokens don't reflect at runtime), try to add, return
+        // cache value (handles races).
+        gocIL.MarkLabel(notFound);
+        gocIL.Emit(OpCodes.Ldnull);            // target = null (static method)
+        gocIL.Emit(OpCodes.Ldarg_0);           // method
+        gocIL.Emit(OpCodes.Ldarg_1);           // name
+        gocIL.Emit(OpCodes.Ldarg_2);           // length
+        gocIL.Emit(OpCodes.Newobj, ctorWithCacheBuilder);
+        gocIL.Emit(OpCodes.Stloc, newInstLocal);
+
+        // return _instanceCache.GetOrAdd(method, newInst)
+        gocIL.Emit(OpCodes.Ldsfld, instanceCacheField);
+        gocIL.Emit(OpCodes.Ldarg_0);
+        gocIL.Emit(OpCodes.Ldloc, newInstLocal);
+        gocIL.Emit(OpCodes.Callvirt, getOrAddM);
+        gocIL.Emit(OpCodes.Ret);
+
+        // Public getter for the internal _method field so sibling classes
+        // (e.g., $Runtime.GetFunctionMethod's prototype cache) can read the
+        // MethodInfo key without a FieldAccessException. A method is used
+        // instead of making the field Public so SharpTSProxy.InvokeTrap's
+        // reflection-based `_method` lookup (BindingFlags.NonPublic) keeps
+        // working unchanged.
+        var getMethodInfoBuilder = typeBuilder.DefineMethod(
+            "GetMethodInfo",
+            MethodAttributes.Public,
+            _types.MethodInfo,
+            Type.EmptyTypes
+        );
+        runtime.TSFunctionGetMethodInfo = getMethodInfoBuilder;
+        var gmIL = getMethodInfoBuilder.GetILGenerator();
+        gmIL.Emit(OpCodes.Ldarg_0);
+        gmIL.Emit(OpCodes.Ldfld, methodField);
+        gmIL.Emit(OpCodes.Ret);
 
         // Helper method: private static object[] AdjustArgs(MethodInfo method, object[] args)
         var adjustArgsMethod = EmitTSFunctionAdjustArgsHelper(typeBuilder, runtime);

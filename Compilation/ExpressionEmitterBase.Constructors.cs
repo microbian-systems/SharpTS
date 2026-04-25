@@ -254,6 +254,57 @@ public abstract partial class ExpressionEmitterBase
                 EmitNewDateConstructor(arguments);
                 return true;
 
+            // --- String / Number / Boolean primitive wrappers ---
+            // ECMA-262: `new String(v)` / `new Number(v)` / `new Boolean(v)`
+            // construct boxed primitive wrappers. Most test262 tests using
+            // these don't care about the wrapper identity — they just need
+            // `.length`, `.charAt`, etc. to work. Returning the coerced
+            // primitive matches how compiled-mode strings/numbers/booleans
+            // already dispatch to the same prototype methods.
+            case "String":
+                if (arguments.Count == 0)
+                    IL.Emit(OpCodes.Ldstr, "");
+                else
+                {
+                    EmitExpression(arguments[0]);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Call, Ctx.Runtime!.ToJsString);
+                }
+                SetStackUnknown();
+                return true;
+
+            case "Number":
+                if (arguments.Count == 0)
+                {
+                    IL.Emit(OpCodes.Ldc_R8, 0.0);
+                    IL.Emit(OpCodes.Box, Ctx.Types.Double);
+                }
+                else
+                {
+                    EmitExpression(arguments[0]);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Call, Ctx.Runtime!.ToNumber);
+                    IL.Emit(OpCodes.Box, Ctx.Types.Double);
+                }
+                SetStackUnknown();
+                return true;
+
+            case "Boolean":
+                if (arguments.Count == 0)
+                {
+                    IL.Emit(OpCodes.Ldc_I4_0);
+                    IL.Emit(OpCodes.Box, Ctx.Types.Boolean);
+                }
+                else
+                {
+                    EmitExpression(arguments[0]);
+                    EnsureBoxed();
+                    IL.Emit(OpCodes.Call, Ctx.Runtime!.IsTruthy);
+                    IL.Emit(OpCodes.Box, Ctx.Types.Boolean);
+                }
+                SetStackUnknown();
+                return true;
+
             // --- Map/Set with optional entries ---
             case "Map":
                 if (arguments.Count == 0)

@@ -393,6 +393,59 @@ public sealed class Test262Runner
         if (msg.Contains("Test262Error", StringComparison.Ordinal))
             return new Test262Result(Test262Outcome.Fail, msg, null);
 
+        // Compiled mode: user-thrown JS values are preserved in Exception.Data["__tsValue"].
+        // For `throw new Test262Error(msg)`, the value is a Dictionary or $Object whose
+        // `name` field is "Test262Error". Check that before falling back to RuntimeError.
+        if (ex.Data.Contains("__tsValue"))
+        {
+            var tsValue = ex.Data["__tsValue"];
+            string? name = null;
+            string? userMessage = null;
+            if (tsValue is System.Collections.Generic.IDictionary<string, object?> d)
+            {
+                if (d.TryGetValue("name", out var n) && n is string ns) name = ns;
+                if (d.TryGetValue("message", out var m) && m is string ms) userMessage = ms;
+            }
+            else if (tsValue != null)
+            {
+                // $Object / $Error subclass — read "name"/"message" via the emitted
+                // $IHasFields interface (compiled $Object implements it). Fall back
+                // to private `_fields` dictionary, then to ToString.
+                try
+                {
+                    var t = tsValue.GetType();
+                    var iface = t.GetInterface("$IHasFields");
+                    System.Reflection.MethodInfo? getProp = iface?.GetMethod("GetProperty", [typeof(string)]);
+                    if (getProp != null)
+                    {
+                        name = getProp.Invoke(tsValue, ["name"]) as string;
+                        userMessage = getProp.Invoke(tsValue, ["message"]) as string;
+                    }
+                    if (name == null)
+                    {
+                        // Try private _fields dictionary directly.
+                        var fieldsField = t.GetField("_fields",
+                            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                        if (fieldsField?.GetValue(tsValue) is System.Collections.Generic.IDictionary<string, object?> fd)
+                        {
+                            if (fd.TryGetValue("name", out var fn) && fn is string fns) name = fns;
+                            if (fd.TryGetValue("message", out var fm) && fm is string fms) userMessage = fms;
+                        }
+                    }
+                }
+                catch { }
+                // Last-resort: stringify-like check
+                if (name == null)
+                {
+                    var s = tsValue.ToString();
+                    if (s != null && s.StartsWith("Test262Error", StringComparison.Ordinal))
+                        name = "Test262Error";
+                }
+            }
+            if (name == "Test262Error")
+                return new Test262Result(Test262Outcome.Fail, userMessage ?? msg, null);
+        }
+
         return new Test262Result(Test262Outcome.RuntimeError, msg, null);
     }
 }

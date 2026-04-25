@@ -321,6 +321,26 @@ public partial class ILEmitter
                 // Variable is a top-level static var
                 IL.Emit(OpCodes.Ldsfld, topLevelField);
             }
+            else if (_ctx.Functions.TryGetValue(_ctx.ResolveFunctionName(capturedVar), out var capturedFuncMethod))
+            {
+                // Variable references an outer function declaration — wrap as $TSFunction
+                // so the captured value matches what `callbackfn` resolves to in the
+                // enclosing scope. Without this, capturing falls through to Ldnull and
+                // the inner body sees `null` (typeof === "object") instead of a function.
+                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Ldtoken, capturedFuncMethod);
+                if (_ctx.ProgramType != null)
+                {
+                    IL.Emit(OpCodes.Ldtoken, _ctx.ProgramType);
+                    IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.MethodBase, "GetMethodFromHandle", _ctx.Types.RuntimeMethodHandle, _ctx.Types.RuntimeTypeHandle));
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.MethodBase, "GetMethodFromHandle", _ctx.Types.RuntimeMethodHandle));
+                }
+                IL.Emit(OpCodes.Castclass, _ctx.Types.MethodInfo);
+                IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSFunctionCtor);
+            }
             else
             {
                 var local = _ctx.Locals.GetLocal(capturedVar);

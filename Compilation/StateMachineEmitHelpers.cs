@@ -604,7 +604,18 @@ public class StateMachineEmitHelpers
     {
         emitOperand();
         EnsureBoxed();
-        _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
+        // Prefer $Runtime.ConvertToNumber when available — it handles JS-spec
+        // coercion (hex strings, "Infinity", booleans) per ECMA-262 21.1.1.1.
+        // Falls back to Convert.ToDouble for state-machine emit contexts where
+        // the runtime helper isn't yet available.
+        if (_runtime != null)
+        {
+            _il.Emit(OpCodes.Call, _runtime.ConvertToNumber);
+        }
+        else
+        {
+            _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
+        }
         _il.Emit(OpCodes.Box, _types.Double);
         SetStackUnknown();
     }

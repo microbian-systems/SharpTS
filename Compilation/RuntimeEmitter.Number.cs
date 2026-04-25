@@ -952,36 +952,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_R8, double.NaN);
         il.Emit(OpCodes.Stloc, valueLocal);
 
-        // Get digits (default 0)
+        // ECMA-262 21.1.3.3: digits = ToIntegerOrInfinity(digits, 0). Coerces
+        // bool/string via ToNumber.
         il.MarkLabel(getDigitsLabel);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, afterDigitsLabel); // null -> 0
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        il.Emit(OpCodes.Brtrue, digitsFromDoubleLabel);
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Int32);
-        il.Emit(OpCodes.Brtrue, digitsFromIntLabel);
-
-        il.Emit(OpCodes.Br, afterDigitsLabel); // unknown type -> 0
-
-        il.MarkLabel(digitsFromDoubleLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Stloc, digitsLocal);
-        il.Emit(OpCodes.Br, validDigitsLabel);
-
-        il.MarkLabel(digitsFromIntLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Unbox_Any, _types.Int32);
-        il.Emit(OpCodes.Stloc, digitsLocal);
-        il.Emit(OpCodes.Br, validDigitsLabel);
-
-        il.MarkLabel(afterDigitsLabel);
         il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.Emit(OpCodes.Stloc, digitsLocal);
 
         // Validate digits 0-100
@@ -1063,30 +1039,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [typeof(IFormatProvider)])!);
         il.Emit(OpCodes.Ret);
 
-        // Get precision from arg1
+        // ECMA-262 21.1.3.5: precision = ToIntegerOrInfinity(precision). Coerces
+        // bool/string/array via ToNumber then truncates. Without this,
+        // `(123.456).toPrecision(true)` failed because true wasn't unboxed as Double.
         il.MarkLabel(afterPrecisionLabel);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        il.Emit(OpCodes.Brtrue, precisionFromDoubleLabel);
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Int32);
-        il.Emit(OpCodes.Brtrue, precisionFromIntLabel);
-
-        il.Emit(OpCodes.Ldc_I4_0); // default
-        il.Emit(OpCodes.Stloc, precisionLocal);
-        il.Emit(OpCodes.Br, validatePrecisionLabel);
-
-        il.MarkLabel(precisionFromDoubleLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Stloc, precisionLocal);
-        il.Emit(OpCodes.Br, validatePrecisionLabel);
-
-        il.MarkLabel(precisionFromIntLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Unbox_Any, _types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.Emit(OpCodes.Stloc, precisionLocal);
 
         // Validate precision 1-100
@@ -1134,7 +1093,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "-Infinity");
         il.Emit(OpCodes.Ret);
 
-        // return value.ToString($"G{precision}", CultureInfo.InvariantCulture).Replace("E", "e")
+        // return Regex.Replace(value.ToString($"G{precision}", InvariantCulture).Replace("E","e"),
+        //                      @"e([+-])0+(?=\d)", "e$1");
+        // The regex strips leading zeros from the exponent so .NET's "1E+02" matches
+        // JS spec's "1e+2".
         il.MarkLabel(formatLabel);
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Ldstr, "G");
@@ -1146,6 +1108,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "E");
         il.Emit(OpCodes.Ldstr, "e");
         il.Emit(OpCodes.Call, _types.String.GetMethod("Replace", [_types.String, _types.String])!);
+        // Strip leading zeros from exponent.
+        il.Emit(OpCodes.Ldstr, @"e([+-])0+(?=\d)");
+        il.Emit(OpCodes.Ldstr, "e$1");
+        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Replace", [_types.String, _types.String, _types.String])!);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1222,31 +1188,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(IFormatProvider)])!);
         il.Emit(OpCodes.Ret);
 
-        // Get digits from arg1
+        // ECMA-262 21.1.3.2: digits = ToIntegerOrInfinity(digits, 6). Coerces
+        // bool/string via ToNumber.
         il.MarkLabel(digitsFromDoubleLabel);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        il.Emit(OpCodes.Brfalse, digitsFromIntLabel);
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Stloc, digitsLocal);
-        il.Emit(OpCodes.Br, validateDigitsLabel);
-
-        il.MarkLabel(digitsFromIntLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Int32);
-        var useDefaultDigitsLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, useDefaultDigitsLabel);
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Unbox_Any, _types.Int32);
-        il.Emit(OpCodes.Stloc, digitsLocal);
-        il.Emit(OpCodes.Br, validateDigitsLabel);
-
-        il.MarkLabel(useDefaultDigitsLabel);
-        il.Emit(OpCodes.Ldc_I4_6); // default 6
+        il.Emit(OpCodes.Ldc_I4_6);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.Emit(OpCodes.Stloc, digitsLocal);
 
         // Validate digits 0-100
@@ -1268,7 +1215,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
         il.Emit(OpCodes.Throw);
 
-        // return value.ToString($"e{digits}", CultureInfo.InvariantCulture)
+        // return Regex.Replace(value.ToString($"e{digits}", InvariantCulture),
+        //                      @"e([+-])0+(?=\d)", "e$1");
+        // .NET's "1.2e+002" → JS spec's "1.2e+2".
         il.MarkLabel(notTooLargeLabel);
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Ldstr, "e");
@@ -1277,6 +1226,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.Object])!);
         il.Emit(OpCodes.Call, typeof(CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
         il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(IFormatProvider)])!);
+        il.Emit(OpCodes.Ldstr, @"e([+-])0+(?=\d)");
+        il.Emit(OpCodes.Ldstr, "e$1");
+        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Replace", [_types.String, _types.String, _types.String])!);
         il.Emit(OpCodes.Ret);
     }
 

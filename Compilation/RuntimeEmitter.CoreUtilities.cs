@@ -1621,6 +1621,128 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    // ToJsString — ECMA-262 ToString protocol. For Dictionary/$Object receivers
+    // with a user-defined "toString" function, invoke it and use the result.
+    // Falls back to Stringify for primitives. Used by String.prototype methods
+    // that take an object argument (search/indexOf/etc.).
+    private void EmitToJsString(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ToJsString",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]
+        );
+        runtime.ToJsString = method;
+
+        var il = method.GetILGenerator();
+        var fallbackLabel = il.DefineLabel();
+
+        // null / undefined → handled by Stringify ("null" / "undefined")
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, fallbackLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, fallbackLabel);
+
+        // Already a string → return as-is (avoid CLR ToString round-trip).
+        var alreadyStringLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, alreadyStringLabel);
+
+        // Only attempt JS-toString invocation for Dictionary or $Object receivers.
+        var isObjectLikeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, isObjectLikeLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, isObjectLikeLabel);
+        il.Emit(OpCodes.Br, fallbackLabel);
+
+        il.MarkLabel(isObjectLikeLabel);
+
+        // emptyArgs = new object[0]
+        var emptyArgsLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, emptyArgsLocal);
+
+        // ECMA-262 ToPrimitive(O, "string"): try toString, then valueOf.
+        void TryInvoke(string name, Label afterLabel)
+        {
+            var fnLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Stloc, fnLocal);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Brfalse, afterLabel);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brtrue, afterLabel);
+
+            // result = $Runtime.InvokeMethodValue(receiver, fn, emptyArgs)
+            var resultLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Ldloc, emptyArgsLocal);
+            il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            // If primitive (string / number / bool / null / undefined), Stringify
+            // and return. Per ECMA-262 ToPrimitive, all primitive types — including
+            // undefined and null — are valid OrdinaryToPrimitive results.
+            var resultIsString = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Brfalse, resultIsString); // null primitive
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brtrue, resultIsString); // undefined primitive
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Brtrue, resultIsString);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Isinst, _types.Double);
+            il.Emit(OpCodes.Brtrue, resultIsString);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Isinst, _types.Boolean);
+            il.Emit(OpCodes.Brtrue, resultIsString);
+            // Not primitive → continue to next attempt.
+            il.Emit(OpCodes.Br, afterLabel);
+
+            il.MarkLabel(resultIsString);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Call, runtime.Stringify);
+            il.Emit(OpCodes.Ret);
+        }
+
+        var afterToString = il.DefineLabel();
+        TryInvoke("toString", afterToString);
+        il.MarkLabel(afterToString);
+        var afterValueOf = il.DefineLabel();
+        TryInvoke("valueOf", afterValueOf);
+        il.MarkLabel(afterValueOf);
+
+        // No usable toString/valueOf on this object — fall back to "[object Object]"
+        // per ECMA-262 19.1.3.6 (Object.prototype.toString returns this for plain objects).
+        // Skips $TSObject-specific dict-format Stringify behavior so `String({})`
+        // matches spec.
+        il.Emit(OpCodes.Ldstr, "[object Object]");
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(alreadyStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(fallbackLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitToNumber(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
@@ -1633,6 +1755,105 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var resultLocal = il.DeclareLocal(_types.Double);
+
+        // ECMA-262 ToNumber: strings with "0x"/"0X" prefix parse as hex. Convert.ToDouble
+        // throws on those, so special-case before the fallback. Without this, tests that
+        // set `length: "0x0002"` on array-likes surface as NaN → 0 → empty iteration.
+        var tryParseInt64 = _types.GetMethod(_types.Int64, "Parse", _types.String, typeof(System.Globalization.NumberStyles), typeof(System.IFormatProvider));
+        var notHexLabel = il.DefineLabel();
+        var strLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, strLocal);
+        il.Emit(OpCodes.Brfalse, notHexLabel);
+
+        // if (strLocal.Length >= 2 && (strLocal[0] == '0') && (strLocal[1] == 'x' || strLocal[1] == 'X'))
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Blt, notHexLabel);
+
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, (int)'0');
+        il.Emit(OpCodes.Bne_Un, notHexLabel);
+
+        // second char == 'x' or 'X': compare with OR'd check. Use (ch | 0x20) == 'x'.
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, 0x20);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Ldc_I4, (int)'x');
+        il.Emit(OpCodes.Bne_Un, notHexLabel);
+
+        // Hex-parse: strLocal.Substring(2), try Int64.Parse with HexNumber style.
+        il.BeginExceptionBlock();
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Substring", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Globalization.NumberStyles.HexNumber);
+        // CultureInfo.InvariantCulture — property getter, not a static field. Use Call.
+        il.Emit(OpCodes.Call, typeof(System.Globalization.CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, tryParseInt64);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.EndExceptionBlock();
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notHexLabel);
+
+        // Handle "Infinity"/"+Infinity"/"-Infinity" strings before Convert.ToDouble
+        // (which throws FormatException on those — caught below as NaN, but
+        // ECMA-262 specifies +Infinity/-Infinity numeric values).
+        var notInfStrLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Brfalse, notInfStrLabel);
+
+        // Trim and check
+        var trimmedLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Trim", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, trimmedLocal);
+
+        // "Infinity" → +Inf
+        var notPlainInf = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Ldstr, "Infinity");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("op_Equality", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Brfalse, notPlainInf);
+        il.Emit(OpCodes.Ldc_R8, double.PositiveInfinity);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notPlainInf);
+
+        // "+Infinity" → +Inf
+        var notPlusInf = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Ldstr, "+Infinity");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("op_Equality", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Brfalse, notPlusInf);
+        il.Emit(OpCodes.Ldc_R8, double.PositiveInfinity);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notPlusInf);
+
+        // "-Infinity" → -Inf
+        var notMinusInf = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Ldstr, "-Infinity");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("op_Equality", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Brfalse, notMinusInf);
+        il.Emit(OpCodes.Ldc_R8, double.NegativeInfinity);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notMinusInf);
+
+        il.MarkLabel(notInfStrLabel);
 
         // Use Convert.ToDouble with try-catch fallback to NaN
         il.BeginExceptionBlock();
@@ -1820,8 +2041,45 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_R8, 0.0);
         il.Emit(OpCodes.Ret);
 
-        // double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out result)
+        // ECMA-262 21.1.1.1 / 7.1.4: numeric string can be hex ("0x..."/"0X..."),
+        // Infinity (already short-circuited by ToNumber), or float. Try hex first.
         il.MarkLabel(nonEmptyLabel);
+        var notHexInConvLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Blt, notHexInConvLabel);
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, (int)'0');
+        il.Emit(OpCodes.Bne_Un, notHexInConvLabel);
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, 0x20);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Ldc_I4, (int)'x');
+        il.Emit(OpCodes.Bne_Un, notHexInConvLabel);
+        il.BeginExceptionBlock();
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Substring", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Globalization.NumberStyles.HexNumber);
+        il.Emit(OpCodes.Call, typeof(System.Globalization.CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, typeof(long).GetMethod("Parse", [typeof(string), typeof(System.Globalization.NumberStyles), typeof(IFormatProvider)])!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.EndExceptionBlock();
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notHexInConvLabel);
+        // double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out result)
         il.Emit(OpCodes.Ldloc, trimmedLocal);
         il.Emit(OpCodes.Ldc_I4, (int)System.Globalization.NumberStyles.Float);
         il.Emit(OpCodes.Call, typeof(System.Globalization.CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
@@ -2132,6 +2390,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var falseLabel = il.DefineLabel();
+        var trueLabel = il.DefineLabel();
 
         // if (instance == null || classType == null) return false
         il.Emit(OpCodes.Ldarg_0);
@@ -2139,7 +2398,61 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, falseLabel);
 
-        // Get type of instance and check IsAssignableFrom
+        // Per JS spec, `instance instanceof F` where F is a user function walks
+        // instance's prototype chain looking for F.prototype. Compiled mode's
+        // legacy InstanceOf used .NET IsAssignableFrom, which is type-system
+        // semantics — wrong for $TSFunction callees (every $TSFunction has the
+        // same .NET type, so the check was meaningless). With Stage 0b/0c
+        // landed, F.prototype is a real $Object and `new F()` links newObj's
+        // prototype to it; walking the chain via PDSGetPrototype now produces
+        // the correct answer.
+        var notTSFuncLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notTSFuncLabel);
+
+        // F.prototype = $Runtime.GetFunctionMethod(F, "prototype")
+        var targetProtoLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, runtime.GetFunctionMethod);
+        il.Emit(OpCodes.Stloc, targetProtoLocal);
+
+        // If F has no .prototype somehow (e.g., bound function), fall back to
+        // false rather than walking — JS spec actually throws TypeError, but
+        // returning false matches what the previous implementation produced.
+        il.Emit(OpCodes.Ldloc, targetProtoLocal);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+
+        // Walk: current = PDSGetPrototype(instance); while (current != null) {
+        //   if (current === F.prototype) return true;
+        //   current = PDSGetPrototype(current); }
+        // return false
+        var currentLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSGetPrototype);
+        il.Emit(OpCodes.Stloc, currentLocal);
+
+        var loopLabel = il.DefineLabel();
+        il.MarkLabel(loopLabel);
+        il.Emit(OpCodes.Ldloc, currentLocal);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+
+        // current === F.prototype ?
+        il.Emit(OpCodes.Ldloc, currentLocal);
+        il.Emit(OpCodes.Ldloc, targetProtoLocal);
+        il.Emit(OpCodes.Beq, trueLabel);
+
+        // current = PDSGetPrototype(current)
+        il.Emit(OpCodes.Ldloc, currentLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPrototype);
+        il.Emit(OpCodes.Stloc, currentLocal);
+        il.Emit(OpCodes.Br, loopLabel);
+
+        il.MarkLabel(notTSFuncLabel);
+
+        // Get type of instance and check IsAssignableFrom (legacy path for
+        // .NET-typed class-reference instanceof checks).
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.Type);
         var notTypeLabel = il.DefineLabel();
@@ -2160,6 +2473,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(trueLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(falseLabel);

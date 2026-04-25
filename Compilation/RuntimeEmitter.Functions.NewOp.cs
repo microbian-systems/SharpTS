@@ -48,6 +48,38 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, runtime.TSObjectCtor);
         il.Emit(OpCodes.Stloc, newObjLocal);
 
+        // Per JS spec, `new F()` links the freshly-created object to F.prototype:
+        //   newObj.[[Prototype]] = F.prototype
+        // Store via PDSSetPrototype so a subsequent `instance instanceof F`
+        // walks the prototype chain via PDSGetPrototype and finds F.prototype.
+        // Without this, yallist/semver's `if (!(this instanceof F)) return new F(args)`
+        // recurses infinitely. Stage 0b makes F.prototype real (lazy-creates an
+        // empty $Object on first read); this stage links newObj to it. Only
+        // applies to $TSFunction callees ($BoundTSFunction / non-callable callees
+        // skip the prototype link).
+        var skipProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, skipProtoLabel);
+
+        // Read F.prototype via $Runtime.GetFunctionMethod(fn, "prototype") so
+        // the lazy-init + cache from Stage 0b is reused (no fresh $Object per
+        // construct, identity stable across invocations).
+        var fnProtoLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, runtime.GetFunctionMethod);
+        il.Emit(OpCodes.Stloc, fnProtoLocal);
+
+        // PDSSetPrototype(newObj, fnProto) — only when fnProto is non-null.
+        il.Emit(OpCodes.Ldloc, fnProtoLocal);
+        il.Emit(OpCodes.Brfalse, skipProtoLabel);
+        il.Emit(OpCodes.Ldloc, newObjLocal);
+        il.Emit(OpCodes.Ldloc, fnProtoLocal);
+        il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
+
+        il.MarkLabel(skipProtoLabel);
+
         // Save current thread-local this so nested `new F()` inside `new G()` doesn't
         // leak G's newObj to F. Restored in the finally below.
         il.Emit(OpCodes.Ldsfld, currentThisField);
@@ -105,12 +137,20 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(afterTry);
 
-        // Non-callable callee → null (matches legacy `new <not-a-function>` behavior).
+        // Non-callable callee → throw TypeError per ECMA-262 (spec: `new <not a constructor>`
+        // throws TypeError). Previously returned null silently, which masked test262
+        // checks like `try { new String.prototype.match } catch (e) { ... }` —
+        // those tests EXPECT the throw and have no other passing path. The legacy
+        // null-return only "worked" when downstream `throw new Test262Error(...)`
+        // was *also* broken (Test262Error was a function declaration whose `new`
+        // returned null, so `throw null` propagated benignly). With Stage 0b/0c
+        // Test262Error throws properly, exposing the broken silent-null path.
         var notCallableSkip = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, notCallableLocal);
         il.Emit(OpCodes.Brfalse, notCallableSkip);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Ldstr, "TypeError: not a constructor");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(typeof(Exception), _types.String));
+        il.Emit(OpCodes.Throw);
         il.MarkLabel(notCallableSkip);
 
         // Per JS: return result if it's an object, else newObj.

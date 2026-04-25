@@ -1224,6 +1224,12 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.StringIndexOf);
                 IL.Emit(OpCodes.Box, typeof(double));
                 break;
+            case "lastIndexOf":
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); IL.Emit(OpCodes.Castclass, typeof(string)); }
+                else { IL.Emit(OpCodes.Ldstr, ""); }
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.StringLastIndexOf);
+                IL.Emit(OpCodes.Box, typeof(double));
+                break;
             case "slice":
                 IL.Emit(OpCodes.Ldc_I4, arguments.Count);
                 IL.Emit(OpCodes.Ldc_I4, arguments.Count);
@@ -1262,8 +1268,10 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Box, typeof(bool));
                 break;
             case "indexOf":
+            case "lastIndexOf":
                 if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.ArrayIndexOf);
+                if (arguments.Count > 1) { EmitExpression(arguments[1]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+                IL.Emit(OpCodes.Call, methodName == "indexOf" ? Ctx.Runtime!.ArrayIndexOf : Ctx.Runtime!.ArrayLastIndexOf);
                 IL.Emit(OpCodes.Box, typeof(double));
                 break;
             case "slice":

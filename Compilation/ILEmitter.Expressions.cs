@@ -69,7 +69,15 @@ public partial class ILEmitter
         // Fallback: pseudo-variables (Math, process, classes, functions, namespaces)
         if (name == "Math")
         {
-            EmitNullConstant(); // Math is handled specially in property access
+            // Bare `Math` resolves to a shared Dictionary<string, object>
+            // singleton so `Math.length = 1; Math[0] = 1` and iteration via
+            // `Array.prototype.X.call(Math, cb)` work per ECMA-262 (Math is an
+            // ordinary extensible object). `Math.PI`/`Math.floor`/etc. still
+            // route through MathStaticEmitter's compile-time interception
+            // *before* this bare-reference path, so static-member dispatch is
+            // unaffected.
+            IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.MathSingletonField);
+            SetStackUnknown();
             return;
         }
 

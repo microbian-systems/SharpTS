@@ -551,19 +551,9 @@ public partial class RuntimeEmitter
         // String pattern fallback
         il.MarkLabel(isStringPatternLabel);
 
-        // var search = pattern?.ToString() ?? ""
-        var patternNullLabel = il.DefineLabel();
-        var afterSearchLabel = il.DefineLabel();
+        // ECMA-262 ToString protocol — handles objects with custom toString.
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, patternNullLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
-        il.Emit(OpCodes.Br, afterSearchLabel);
-
-        il.MarkLabel(patternNullLabel);
-        il.Emit(OpCodes.Ldstr, "");
-
-        il.MarkLabel(afterSearchLabel);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, searchLocal);
 
         // var idx = str.IndexOf(search)
@@ -639,20 +629,10 @@ public partial class RuntimeEmitter
         // String pattern fallback
         il.MarkLabel(isStringPatternLabel);
 
-        var patternNullLabel = il.DefineLabel();
-        var afterPatternLabel = il.DefineLabel();
         var escapedLocal = il.DeclareLocal(_types.String);
-
+        // ECMA-262 ToString protocol — handles objects with custom toString.
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, patternNullLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
-        il.Emit(OpCodes.Br, afterPatternLabel);
-
-        il.MarkLabel(patternNullLabel);
-        il.Emit(OpCodes.Ldstr, "");
-
-        il.MarkLabel(afterPatternLabel);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Call, typeof(Regex).GetMethod("Escape", [_types.String])!);
         il.Emit(OpCodes.Stloc, escapedLocal);
 
@@ -847,19 +827,9 @@ public partial class RuntimeEmitter
         // String pattern fallback
         il.MarkLabel(isStringPatternLabel);
 
-        // var search = pattern?.ToString() ?? ""
-        var patternNullLabel = il.DefineLabel();
-        var afterSearchLabel = il.DefineLabel();
+        // ECMA-262 ToString protocol — handles objects with custom toString.
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, patternNullLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
-        il.Emit(OpCodes.Br, afterSearchLabel);
-
-        il.MarkLabel(patternNullLabel);
-        il.Emit(OpCodes.Ldstr, "");
-
-        il.MarkLabel(afterSearchLabel);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, searchLocal);
 
         // var idx = str.IndexOf(search)
@@ -928,22 +898,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Ret);
 
-        // String pattern fallback
+        // String pattern fallback — coerce via ECMA-262 ToString protocol so
+        // objects with custom toString return the user-defined string.
         il.MarkLabel(isStringPatternLabel);
 
-        // var search = pattern?.ToString() ?? ""
-        var patternNullLabel = il.DefineLabel();
-        var afterSearchLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, patternNullLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
-        il.Emit(OpCodes.Br, afterSearchLabel);
-
-        il.MarkLabel(patternNullLabel);
-        il.Emit(OpCodes.Ldstr, "");
-
-        il.MarkLabel(afterSearchLabel);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, searchLocal);
 
         // return (double)str.IndexOf(search)
@@ -1020,22 +980,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 
-        // String pattern fallback
+        // String pattern fallback — coerce via ECMA-262 ToString protocol.
         il.MarkLabel(isStringPatternLabel);
 
-        // var sep = separator?.ToString() ?? ""
-        var sepNullLabel = il.DefineLabel();
-        var afterSepLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, sepNullLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
-        il.Emit(OpCodes.Br, afterSepLabel);
-
-        il.MarkLabel(sepNullLabel);
-        il.Emit(OpCodes.Ldstr, "");
-
-        il.MarkLabel(afterSepLabel);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, sepLocal);
 
         // Handle empty separator: split into characters

@@ -67,18 +67,21 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // start = Math.Max(0, (int)(double)args[0])
+        // ECMA-262 22.1.3.22: ToIntegerOrInfinity on each arg (NaN → 0,
+        // ±Infinity → ±IntMax). Without this, Conv_I4 on NaN/Infinity is
+        // undefined behavior — e.g. `s.substring(NaN, Infinity)` returns ""
+        // instead of the full string per spec.
         var startLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Max", _types.Int32, _types.Int32));
         il.Emit(OpCodes.Stloc, startLocal);
 
-        // end = args.Length > 1 ? (int)(double)args[1] : str.Length
+        // end = args.Length > 1 && args[1] != undefined ? ToIntegerOrInfinity(args[1], len) : str.Length
         var endLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldlen);
@@ -94,41 +97,46 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.MarkLabel(afterEnd);
         il.Emit(OpCodes.Stloc, endLocal);
 
-        // Clamp end to str.Length
+        // Clamp start to [0, len] and end to [0, len]
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Min", _types.Int32, _types.Int32));
+        il.Emit(OpCodes.Stloc, startLocal);
+
+        // Clamp end: if negative (e.g. ToIntegerOrInfinity(-Inf) = int.MinValue), use 0.
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Max", _types.Int32, _types.Int32));
+        il.Emit(OpCodes.Stloc, endLocal);
         il.Emit(OpCodes.Ldloc, endLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Min", _types.Int32, _types.Int32));
         il.Emit(OpCodes.Stloc, endLocal);
 
-        // if (start >= str.Length || end <= start) return ""
-        var validRange = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, startLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
-        il.Emit(OpCodes.Blt, validRange);
-        il.Emit(OpCodes.Ldstr, "");
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(validRange);
-        var validRange2 = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, endLocal);
-        il.Emit(OpCodes.Ldloc, startLocal);
-        il.Emit(OpCodes.Bgt, validRange2);
-        il.Emit(OpCodes.Ldstr, "");
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(validRange2);
-        // return str.Substring(start, end - start)
-        il.Emit(OpCodes.Ldarg_0);
+        // ECMA-262: from = min(start, end); to = max(start, end). Swap if start > end.
+        var fromLocal = il.DeclareLocal(_types.Int32);
+        var toLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldloc, startLocal);
         il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Min", _types.Int32, _types.Int32));
+        il.Emit(OpCodes.Stloc, fromLocal);
         il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Max", _types.Int32, _types.Int32));
+        il.Emit(OpCodes.Stloc, toLocal);
+
+        // return str.Substring(from, to - from)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, fromLocal);
+        il.Emit(OpCodes.Ldloc, toLocal);
+        il.Emit(OpCodes.Ldloc, fromLocal);
         il.Emit(OpCodes.Sub);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Substring", _types.Int32, _types.Int32));
         il.Emit(OpCodes.Ret);
@@ -528,26 +536,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
         il.Emit(OpCodes.Stloc, lengthLocal);
 
-        // start = (int)(double)args[0]
+        // start = ToIntegerOrInfinity(args[0], 0). Handles NaN/±Infinity per spec
+        // (NaN→0, +Inf→intMax, -Inf→intMin). Conv_I4 alone is undefined behavior
+        // for those values.
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.Emit(OpCodes.Stloc, startLocal);
 
-        // end = argCount > 1 ? (int)(double)args[1] : length
+        // end = argCount > 1 ? ToIntegerOrInfinity(args[1], 0) : length
         var noEndArg = il.DefineLabel();
         var endArgDone = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ble, noEndArg);
-        // has end arg
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.Emit(OpCodes.Stloc, endLocal);
         il.Emit(OpCodes.Br, endArgDone);
         il.MarkLabel(noEndArg);
@@ -1121,16 +1130,37 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, lengthLocal);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        // chars[i] = (char)((int)(double)args[i] & 0xFFFF)
+        // chars[i] = (char)(ToUint16(args[i]) & 0xFFFF)
+        // ECMA-262 ToUint16: NaN/Infinity → 0; otherwise (int)d & 0xFFFF.
+        // Conv_I4 on NaN/Infinity is undefined in CLR — branch on IsFinite first.
+        var dLocal = il.DeclareLocal(_types.Double);
+        var notFiniteLabel = il.DefineLabel();
+        var afterCoerceLabel = il.DefineLabel();
+
         il.Emit(OpCodes.Ldloc, charsLocal);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Ldc_I4, 0xFFFF);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, dLocal);
+
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsFinite", _types.Double));
+        il.Emit(OpCodes.Brfalse, notFiniteLabel);
+        // finite: ECMA-262 ToUint16 — truncate towards zero, then mod 2^16.
+        // Use long (Conv_I8) so 4294967294 doesn't overflow int. -1 stays as -1
+        // and `& 0xFFFF` produces 65535 per spec.
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Ldc_I8, 0xFFFFL);
         il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Br, afterCoerceLabel);
+        // NaN / ±Infinity → 0
+        il.MarkLabel(notFiniteLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.MarkLabel(afterCoerceLabel);
         il.Emit(OpCodes.Conv_U2);  // Convert to char
         il.Emit(OpCodes.Stelem_I2);
 

@@ -715,6 +715,14 @@ public partial class ILCompiler
             il.Emit(OpCodes.Initobj, returnType);
             il.Emit(OpCodes.Ldloc, local);
         }
+        else if (returnType == typeof(object))
+        {
+            // ECMA-262: function with no explicit return returns undefined.
+            // Emit $Undefined.Instance only for untyped object returns; typed
+            // reference returns (specific class types) keep their null default
+            // since interpreter treats explicit `T | null` returns as null too.
+            il.Emit(OpCodes.Ldsfld, _runtime.UndefinedInstance);
+        }
         else
         {
             // Reference types default to null

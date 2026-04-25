@@ -6,6 +6,45 @@ namespace SharpTS.Compilation;
 public partial class RuntimeEmitter
 {
     /// <summary>
+    /// Emits: <c>if (callback == null || callback is $Undefined) throw new TypeError(...);</c>.
+    /// ECMA-262 23.1.3.* require iterator-helper callbacks to be callable.
+    /// Without this, our ArrayMap/ArrayEvery/etc. silently invoke null and
+    /// throw NullReferenceException instead of TypeError. Caller passes the
+    /// argument-index of the callback (most are arg1).
+    /// </summary>
+    private void EmitThrowIfCallbackNotCallable(ILGenerator il, EmittedRuntime runtime, int argIndex, string methodName)
+    {
+        var okLabel = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+        OpCode loadOp = argIndex switch
+        {
+            0 => OpCodes.Ldarg_0,
+            1 => OpCodes.Ldarg_1,
+            2 => OpCodes.Ldarg_2,
+            3 => OpCodes.Ldarg_3,
+            _ => throw new InvalidOperationException("EmitThrowIfCallbackNotCallable: unsupported argIndex")
+        };
+        il.Emit(loadOp);
+        il.Emit(OpCodes.Brfalse, throwLabel);
+        il.Emit(loadOp);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, throwLabel);
+        il.Emit(OpCodes.Br, okLabel);
+
+        il.MarkLabel(throwLabel);
+        // Build a real $TypeError instance + wrap in .NET Exception via CreateException
+        // (matches the pattern used elsewhere — Object.defineProperty etc.). This is
+        // important because test262 harness's `assert.throws(TypeError, fn)` checks
+        // `e instanceof TypeError`, and only $TypeError instances satisfy that.
+        il.Emit(OpCodes.Ldstr, methodName + " callback is not callable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(okLabel);
+    }
+
+    /// <summary>
     /// Emits: <c>if (list[indexLocal] is $ArrayHole) goto skipLabel;</c>.
     /// Used by Stage E.2 M4 to skip holes in forEach/filter/reduce/every/
     /// some/flat/flatMap/indexOf/lastIndexOf per ECMA-262. Expects
@@ -86,10 +125,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Stelem_Ref);
 
-        // args[2] = list
+        // args[2] = $Runtime._currentArrayLikeReceiver ?? list
+        // Per ECMA-262, the callback's 3rd arg (O in the spec) is ToObject(this).
+        // When the pattern matcher rewrites `Array.prototype.X.call(receiver, ...)`
+        // into a helper call, it sets the thread-static field to the original
+        // receiver — we pick that up here. Direct `arr.forEach(cb)` leaves the
+        // field null; we fall back to the List (legacy behavior).
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldsfld, runtime.CurrentArrayLikeReceiverField);
+        var useOriginalLabel = il.DefineLabel();
+        var afterReceiverLabel = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, useOriginalLabel);
+        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Br, afterReceiverLabel);
+        il.MarkLabel(useOriginalLabel);
+        // original is on the stack
+        il.MarkLabel(afterReceiverLabel);
         il.Emit(OpCodes.Stelem_Ref);
 
         // InvokeMethodValue(null /* thisArg */, callback, args)
@@ -112,6 +166,7 @@ public partial class RuntimeEmitter
         runtime.ArrayMap = method;
 
         var il = method.GetILGenerator();
+        EmitThrowIfCallbackNotCallable(il, runtime, 1, "Array.prototype.map");
 
         // var result = new List<object>()
         var resultLocal = il.DeclareLocal(_types.ListOfObject);
@@ -182,6 +237,7 @@ public partial class RuntimeEmitter
         runtime.ArrayFilter = method;
 
         var il = method.GetILGenerator();
+        EmitThrowIfCallbackNotCallable(il, runtime, 1, "Array.prototype.filter");
 
         // var result = new List<object>()
         var resultLocal = il.DeclareLocal(_types.ListOfObject);
@@ -248,6 +304,7 @@ public partial class RuntimeEmitter
         runtime.ArrayForEach = method;
 
         var il = method.GetILGenerator();
+        EmitThrowIfCallbackNotCallable(il, runtime, 1, "Array.prototype.forEach");
 
         // var i = 0
         var indexLocal = il.DeclareLocal(_types.Int32);
@@ -388,6 +445,7 @@ public partial class RuntimeEmitter
         runtime.ArraySome = method;
 
         var il = method.GetILGenerator();
+        EmitThrowIfCallbackNotCallable(il, runtime, 1, "Array.prototype.some");
 
         var indexLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -438,6 +496,7 @@ public partial class RuntimeEmitter
         runtime.ArrayEvery = method;
 
         var il = method.GetILGenerator();
+        EmitThrowIfCallbackNotCallable(il, runtime, 1, "Array.prototype.every");
 
         var indexLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -600,11 +659,36 @@ public partial class RuntimeEmitter
         var indexLocal = il.DeclareLocal(_types.Int32);
         var callbackLocal = il.DeclareLocal(_types.Object);
 
+        // ECMA-262 23.1.3.21: throw TypeError if callback is missing or not callable.
+        // Check args.Length > 0 FIRST — otherwise Ldelem_Ref throws IndexOutOfRange
+        // for `Array.prototype.reduce.call(obj)` with zero args, which we want to
+        // surface as a TypeError matching spec (and what the caller's assert.throws
+        // expects).
+        var reduceCallableOk = il.DefineLabel();
+        var reduceCallableThrow = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brfalse, reduceCallableThrow);
+
         // callback = args[0]
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stloc, callbackLocal);
+
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Brfalse, reduceCallableThrow);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, reduceCallableThrow);
+        il.Emit(OpCodes.Br, reduceCallableOk);
+        il.MarkLabel(reduceCallableThrow);
+        il.Emit(OpCodes.Ldstr, "Array.prototype.reduce callback is not callable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(reduceCallableOk);
 
         // Check if initial value provided (args.Length > 1)
         var hasInitial = il.DefineLabel();
@@ -705,9 +789,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Stelem_Ref);
 
+        // args[3] = $Runtime._currentArrayLikeReceiver ?? list (mirror the
+        // EmitCallbackArgsAndInvoke logic — when the pattern matcher invoked
+        // reduce via Array.prototype.reduce.call(receiver, ...), we want the
+        // callback's 4th arg to be the original receiver per ECMA-262).
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Ldsfld, runtime.CurrentArrayLikeReceiverField);
+        var redUseOriginal = il.DefineLabel();
+        var redAfterReceiver = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, redUseOriginal);
+        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Br, redAfterReceiver);
+        il.MarkLabel(redUseOriginal);
+        il.MarkLabel(redAfterReceiver);
         il.Emit(OpCodes.Stelem_Ref);
 
         var argsLocal = il.DeclareLocal(_types.ObjectArray);
@@ -747,11 +844,32 @@ public partial class RuntimeEmitter
         var indexLocal = il.DeclareLocal(_types.Int32);
         var callbackLocal = il.DeclareLocal(_types.Object);
 
+        // ECMA-262 23.1.3.22: throw TypeError if callback is missing or not callable.
+        var reduceRCallableOk = il.DefineLabel();
+        var reduceRCallableThrow = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brfalse, reduceRCallableThrow);
+
         // callback = args[0]
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stloc, callbackLocal);
+
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Brfalse, reduceRCallableThrow);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, reduceRCallableThrow);
+        il.Emit(OpCodes.Br, reduceRCallableOk);
+        il.MarkLabel(reduceRCallableThrow);
+        il.Emit(OpCodes.Ldstr, "Array.prototype.reduceRight callback is not callable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(reduceRCallableOk);
 
         // Check if initial value provided (args.Length > 1)
         var hasInitial = il.DefineLabel();
@@ -856,9 +974,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Stelem_Ref);
 
+        // args[3] = $Runtime._currentArrayLikeReceiver ?? list (per ECMA-262
+        // the callback's 4th arg is the original receiver, not the materialized
+        // temp list; mirrors the EmitCallbackArgsAndInvoke + ArrayReduce fix).
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Ldsfld, runtime.CurrentArrayLikeReceiverField);
+        var rrUseOriginal = il.DefineLabel();
+        var rrAfterReceiver = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, rrUseOriginal);
+        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Br, rrAfterReceiver);
+        il.MarkLabel(rrUseOriginal);
+        il.MarkLabel(rrAfterReceiver);
         il.Emit(OpCodes.Stelem_Ref);
 
         var argsLocal = il.DeclareLocal(_types.ObjectArray);

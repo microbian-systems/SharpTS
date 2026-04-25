@@ -307,7 +307,9 @@ public partial class ILEmitter
                 else
                 {
                     EmitBoxIfNeeded(u.Right);
-                    IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Convert, "ToDouble", _ctx.Types.Object));
+                    // ECMA-262 21.1.1.1 ToNumber: handles hex strings ("0x..."),
+                    // "Infinity", boolean coercion. Convert.ToDouble doesn't.
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.ConvertToNumber);
                     EmitBoxDouble();
                 }
                 break;

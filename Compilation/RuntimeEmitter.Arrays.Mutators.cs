@@ -141,12 +141,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(emptyLabel);
-        il.Emit(OpCodes.Ldnull);
+        // ECMA-262 23.1.3.20 Array.prototype.pop: returns undefined for empty
+        // arrays (was null → broke `arr.pop() === undefined` checks).
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
 
-        // Frozen/sealed return path - return null without removing
+        // Frozen/sealed return path - return undefined without removing
         il.MarkLabel(frozenLabel);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
     }
 
@@ -190,12 +192,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(emptyLabel);
-        il.Emit(OpCodes.Ldnull);
+        // ECMA-262 23.1.3.21 Array.prototype.shift: returns undefined for empty.
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
 
-        // Frozen/sealed return path - return null without removing
+        // Frozen/sealed return path - return undefined without removing
         il.MarkLabel(frozenLabel);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
     }
 
@@ -940,12 +943,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ble, incrementI);
 
-        // Check compareFn (arg1)
+        // Check compareFn (arg1) — must accept null AND $Undefined.Instance as
+        // "no comparator" per ECMA-262. `arr.sort(undefined)` passed
+        // $Undefined.Instance through which is non-null → Brtrue used to
+        // route to InvokeValue(undefined) and silently returned garbage.
         var hasCompareFn = il.DefineLabel();
+        var noCompareFn = il.DefineLabel();
         var checkCompareResult = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brtrue, hasCompareFn);
+        il.Emit(OpCodes.Brfalse, noCompareFn);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, noCompareFn);
+        il.Emit(OpCodes.Br, hasCompareFn);
+        il.MarkLabel(noCompareFn);
 
         // Default comparison: Stringify(a).CompareTo(Stringify(b)) using String.CompareOrdinal
         // str1 = Stringify(defined[j-1])
@@ -1148,15 +1160,87 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnDefault);
 
-        // if (value is double d)
+        // if (value is $Undefined) return defaultValue
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        il.Emit(OpCodes.Brfalse, returnDefault);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, returnDefault);
 
-        // Get the double value
-        var doubleLocal = il.DeclareLocal(_types.Double);
+        // ECMA-262 ToPrimitive("number"): for Dictionary/$TSObject receivers,
+        // try valueOf then toString. Without this, callers (like
+        // Array.prototype.indexOf's fromIndex) silently treat
+        // `{ valueOf: () => 0 }` as a non-numeric Dictionary → default,
+        // skipping the spec-required side effect.
+        var coercedLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Stloc, coercedLocal);
+
+        var notObjectLabel = il.DefineLabel();
+        var isObjectLikeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, coercedLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, isObjectLikeLabel);
+        il.Emit(OpCodes.Ldloc, coercedLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, isObjectLikeLabel);
+        il.Emit(OpCodes.Br, notObjectLabel);
+
+        il.MarkLabel(isObjectLikeLabel);
+        var primEmptyArgsLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, primEmptyArgsLocal);
+
+        void TryInvokePrim(string name, Label afterLabel)
+        {
+            var fnLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldloc, coercedLocal);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Stloc, fnLocal);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Brfalse, afterLabel);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brtrue, afterLabel);
+
+            var invResultLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldloc, coercedLocal);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Ldloc, primEmptyArgsLocal);
+            il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+            il.Emit(OpCodes.Stloc, invResultLocal);
+
+            il.Emit(OpCodes.Ldloc, invResultLocal);
+            il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+            il.Emit(OpCodes.Brtrue, afterLabel);
+            il.Emit(OpCodes.Ldloc, invResultLocal);
+            il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+            il.Emit(OpCodes.Brtrue, afterLabel);
+            il.Emit(OpCodes.Ldloc, invResultLocal);
+            il.Emit(OpCodes.Stloc, coercedLocal);
+        }
+
+        var afterValueOf = il.DefineLabel();
+        TryInvokePrim("valueOf", afterValueOf);
+        il.MarkLabel(afterValueOf);
+        var stillObjectLabel = il.DefineLabel();
+        var afterToString = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, coercedLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, stillObjectLabel);
+        il.Emit(OpCodes.Ldloc, coercedLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, afterToString);
+        il.MarkLabel(stillObjectLabel);
+        TryInvokePrim("toString", afterToString);
+        il.MarkLabel(afterToString);
+
+        il.MarkLabel(notObjectLabel);
+
+        // Now coercedLocal is hopefully a primitive — coerce via ToNumber.
+        var doubleLocal = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldloc, coercedLocal);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Stloc, doubleLocal);
 
         // if (double.IsNaN(d)) return 0

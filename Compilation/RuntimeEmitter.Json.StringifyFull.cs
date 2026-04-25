@@ -233,6 +233,18 @@ public partial class RuntimeEmitter
         var dictLabel = il.DefineLabel();
         var classInstanceLabel = il.DefineLabel();
 
+        // Depth cap — recursive cycles (`a.self = a`) would otherwise recurse
+        // unbounded and stack-overflow. ECMA-262 requires TypeError; the cap
+        // is sized well above any legitimate nesting (512). Arg 4 = depth.
+        var depthOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg, 4);
+        il.Emit(OpCodes.Ldc_I4, 512);
+        il.Emit(OpCodes.Blt, depthOkLabel);
+        il.Emit(OpCodes.Ldstr, "TypeError: Converting circular structure to JSON");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(typeof(Exception), _types.String));
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(depthOkLabel);
+
         // Store value in local
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Stloc, valueLocal);

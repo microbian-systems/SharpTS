@@ -494,9 +494,73 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
         il.Emit(OpCodes.Stloc, pdsDescLocal);
         il.Emit(OpCodes.Ldloc, pdsDescLocal);
-        il.Emit(OpCodes.Brfalse, nullLabel);
+        var checkProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, checkProtoLabel);
         il.Emit(OpCodes.Ldloc, pdsDescLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+
+        // PDS lookup failed. Per JS spec every function auto-creates an empty
+        // `.prototype` object on first read, with identity stable across
+        // references: `fn.prototype === fn.prototype` must be true. The
+        // MethodInfo-keyed `_prototypeCache` ensures any two $TSFunction
+        // wrappers for the same underlying method return the same prototype
+        // object — without this, `Foo.prototype.x = v` silently no-ops
+        // because each Foo reference creates a fresh $TSFunction with its
+        // own PDS key.
+        il.MarkLabel(checkProtoLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // Only auto-create for actual $TSFunction callees (has an inner _method
+        // field). Other callable shapes ($BoundArrayMethod, $FunctionCallWrapper,
+        // etc.) don't have a meaningful prototype and fall through to null.
+        var tsfuncLocal = il.DeclareLocal(runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, tsfuncLocal);
+        il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // methodKey = tsfuncLocal.GetMethodInfo()  (public getter — avoids
+        // field-access violation from accessing private _method across
+        // TypeBuilder boundaries at JIT time).
+        var prototypeCacheType = runtime.TSFunctionPrototypeCacheField.FieldType;
+        var tryGetValueM = prototypeCacheType.GetMethod("TryGetValue", [_types.MethodInfo, _types.Object.MakeByRefType()])!;
+        var prototypeCacheGetOrAdd = prototypeCacheType.GetMethods()
+            .First(m => m.Name == "GetOrAdd"
+                 && m.GetParameters().Length == 2
+                 && m.GetParameters()[1].ParameterType == _types.Object);
+
+        var cachedProto = il.DeclareLocal(_types.Object);
+        var newProto = il.DeclareLocal(runtime.TSObjectType);
+        var methodKeyLocal = il.DeclareLocal(_types.MethodInfo);
+        il.Emit(OpCodes.Ldloc, tsfuncLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionGetMethodInfo);
+        il.Emit(OpCodes.Stloc, methodKeyLocal);
+
+        // if (_prototypeCache.TryGetValue(methodKey, out cached)) return cached
+        il.Emit(OpCodes.Ldsfld, runtime.TSFunctionPrototypeCacheField);
+        il.Emit(OpCodes.Ldloc, methodKeyLocal);
+        il.Emit(OpCodes.Ldloca, cachedProto);
+        il.Emit(OpCodes.Callvirt, tryGetValueM);
+        var needCreate = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, needCreate);
+        il.Emit(OpCodes.Ldloc, cachedProto);
+        il.Emit(OpCodes.Ret);
+
+        // Create a fresh $Object and GetOrAdd it (handles races).
+        il.MarkLabel(needCreate);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Newobj, runtime.TSObjectCtor);
+        il.Emit(OpCodes.Stloc, newProto);
+
+        il.Emit(OpCodes.Ldsfld, runtime.TSFunctionPrototypeCacheField);
+        il.Emit(OpCodes.Ldloc, methodKeyLocal);
+        il.Emit(OpCodes.Ldloc, newProto);
+        il.Emit(OpCodes.Callvirt, prototypeCacheGetOrAdd);
         il.Emit(OpCodes.Ret);
 
         // bind: return new $FunctionBindWrapper(func)

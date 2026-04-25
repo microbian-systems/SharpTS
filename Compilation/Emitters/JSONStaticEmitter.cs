@@ -20,15 +20,32 @@ public sealed class JSONStaticEmitter : IStaticTypeEmitterStrategy
         switch (methodName)
         {
             case "parse":
-                // Arg 0: text (required)
+                // Arg 0: text — coerce via ECMA-262 ToString (JS-style "true"/"false")
+                // before parsing. Without this, `JSON.parse(false)` round-trips through
+                // CLR ToString → "False" → SyntaxError. Also throw TypeError early for
+                // Symbol arguments (ToString throws on Symbol per spec).
                 if (arguments.Count > 0)
                 {
                     emitter.EmitExpression(arguments[0]);
                     emitter.EmitBoxIfNeeded(arguments[0]);
+                    var argLocal = il.DeclareLocal(ctx.Types.Object);
+                    il.Emit(OpCodes.Stloc, argLocal);
+                    // if (arg is $TSSymbol) throw TypeError
+                    var notSymbolLabel = il.DefineLabel();
+                    il.Emit(OpCodes.Ldloc, argLocal);
+                    il.Emit(OpCodes.Isinst, ctx.Runtime!.TSSymbolType);
+                    il.Emit(OpCodes.Brfalse, notSymbolLabel);
+                    il.Emit(OpCodes.Ldstr, "Cannot convert a Symbol value to a string");
+                    il.Emit(OpCodes.Newobj, ctx.Runtime!.TSTypeErrorCtor);
+                    il.Emit(OpCodes.Call, ctx.Runtime!.CreateException);
+                    il.Emit(OpCodes.Throw);
+                    il.MarkLabel(notSymbolLabel);
+                    il.Emit(OpCodes.Ldloc, argLocal);
+                    il.Emit(OpCodes.Call, ctx.Runtime!.Stringify);
                 }
                 else
                 {
-                    il.Emit(OpCodes.Ldstr, "null");
+                    il.Emit(OpCodes.Ldstr, "undefined");
                 }
 
                 // Arg 1: reviver (optional)

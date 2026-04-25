@@ -216,7 +216,7 @@ public partial class ILEmitter
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.ToJsString);
                 }
                 else
                 {
@@ -246,7 +246,7 @@ public partial class ILEmitter
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.ToJsString);
                 }
                 else
                 {

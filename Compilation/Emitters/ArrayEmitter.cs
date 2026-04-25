@@ -146,8 +146,19 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 break;
 
             case "indexOf":
+            case "lastIndexOf":
+                // searchElement (arg 0) + optional fromIndex (arg 1).
                 EmitSingleArgOrNull(emitter, arguments);
-                il.Emit(OpCodes.Call, ctx.Runtime!.ArrayIndexOf);
+                if (arguments.Count >= 2)
+                {
+                    emitter.EmitExpression(arguments[1]);
+                    emitter.EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, methodName == "indexOf" ? ctx.Runtime!.ArrayIndexOf : ctx.Runtime!.ArrayLastIndexOf);
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 break;
 

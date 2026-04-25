@@ -306,9 +306,38 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Stloc, strLocal);
+        // Coerce index via Double-or-string parsing — Convert.ToInt32 throws on
+        // non-numeric strings ("foo"), but per JS spec `"hello"["foo"]` returns
+        // undefined rather than throwing. Use TryParse with fallback.
+        // First check if arg1 is double: unbox + Conv_I4. Otherwise TryParse string.
+        var idxFromDoubleLabel = il.DefineLabel();
+        var idxFromStringLabel = il.DefineLabel();
+        var idxParseDoneLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, idxFromDoubleLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, idxFromStringLabel);
+        // Other type → out of bounds (return undefined)
+        il.Emit(OpCodes.Br, strOobLabel);
+
+        il.MarkLabel(idxFromDoubleLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Stloc, intIdxLocal);
+        il.Emit(OpCodes.Br, idxParseDoneLabel);
+
+        il.MarkLabel(idxFromStringLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldloca, intIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+        // If parse failed, return undefined.
+        il.Emit(OpCodes.Brfalse, strOobLabel);
+
+        il.MarkLabel(idxParseDoneLabel);
         // Bounds check: if idx < 0 || idx >= length, return undefined (JS semantics)
         il.Emit(OpCodes.Ldloc, intIdxLocal);
         il.Emit(OpCodes.Ldc_I4_0);

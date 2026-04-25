@@ -81,6 +81,21 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Box, _ctx.Types.Double);
                 break;
 
+            case "lastIndexOf":
+                if (arguments.Count > 0)
+                {
+                    EmitExpression(arguments[0]);
+                    EmitBoxIfNeeded(arguments[0]);
+                    IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldstr, "");
+                }
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.StringLastIndexOf);
+                IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                break;
+
             case "slice":
                 // str.slice(start, end?) - with negative index support
                 // StringSlice(string str, int argCount, object[] args)
@@ -197,6 +212,7 @@ public partial class ILEmitter
                 break;
 
             case "indexOf":
+            case "lastIndexOf":
                 if (arguments.Count > 0)
                 {
                     EmitExpression(arguments[0]);
@@ -206,7 +222,16 @@ public partial class ILEmitter
                 {
                     IL.Emit(OpCodes.Ldnull);
                 }
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.ArrayIndexOf);
+                if (arguments.Count > 1)
+                {
+                    EmitExpression(arguments[1]);
+                    EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldnull);
+                }
+                IL.Emit(OpCodes.Call, methodName == "indexOf" ? _ctx.Runtime!.ArrayIndexOf : _ctx.Runtime!.ArrayLastIndexOf);
                 IL.Emit(OpCodes.Box, _ctx.Types.Double);
                 break;
 

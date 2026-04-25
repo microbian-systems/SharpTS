@@ -129,8 +129,12 @@ public static class BuiltInTypes
                 [new TypeInfo.Function([AnyType, elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 2), AnyType],
                 AnyType, RequiredParams: 1), // initialValue is optional
             "includes" => new TypeInfo.Function([elementType], BooleanType),
-            "indexOf" => new TypeInfo.Function([elementType, NumberType], NumberType, RequiredParams: 1),
-            "lastIndexOf" => new TypeInfo.Function([elementType, NumberType], NumberType, RequiredParams: 1),
+            // ECMA-262 23.1.3.17 / 23.1.3.18: fromIndex is coerced via
+            // ToIntegerOrInfinity — accepts objects (with valueOf/toString),
+            // strings ("Infinity"), booleans, etc. Signature widened to Any so
+            // the type checker doesn't reject ahead of the spec coercion.
+            "indexOf" => new TypeInfo.Function([elementType, AnyType], NumberType, RequiredParams: 1),
+            "lastIndexOf" => new TypeInfo.Function([elementType, AnyType], NumberType, RequiredParams: 1),
             // ECMA-262 23.1.3.16: separator is optional; undefined is treated
             // as ","; every other value is coerced via ToString. Widen the
             // static signature to `Any` so the type checker accepts both

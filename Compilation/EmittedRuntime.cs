@@ -96,6 +96,7 @@ public class EmittedRuntime
 
     // Type coercion methods
     public MethodBuilder Stringify { get; set; } = null!;
+    public MethodBuilder ToJsString { get; set; } = null!;
     public MethodBuilder ToNumber { get; set; } = null!;
     public MethodBuilder ConvertToNumber { get; set; } = null!;
     public MethodBuilder JsToInt32 { get; set; } = null!;
@@ -166,6 +167,7 @@ public class EmittedRuntime
     public MethodBuilder ArrayReduceRight { get; set; } = null!;
     public MethodBuilder ArrayIncludes { get; set; } = null!;
     public MethodBuilder ArrayIndexOf { get; set; } = null!;
+    public MethodBuilder ArrayLastIndexOf { get; set; } = null!;
     public MethodBuilder ArrayJoin { get; set; } = null!;
     public MethodBuilder ArrayConcat { get; set; } = null!;
     public MethodBuilder ArrayReverse { get; set; } = null!;
@@ -187,6 +189,15 @@ public class EmittedRuntime
     public MethodBuilder ArrayEntries { get; set; } = null!;
     public MethodBuilder ArrayKeys { get; set; } = null!;
     public MethodBuilder ArrayValues { get; set; } = null!;
+    public MethodBuilder ArrayLikeMaterialize { get; set; } = null!;
+
+    // $TSFunction static factory + instance cache: stable identity for
+    // function-declaration references (see RuntimeEmitter.TSFunction.cs).
+    public MethodBuilder TSFunctionGetOrCreate { get; set; } = null!;
+    public FieldBuilder TSFunctionInstanceCacheField { get; set; } = null!;
+    public FieldBuilder TSFunctionPrototypeCacheField { get; set; } = null!;
+    public FieldBuilder TSFunctionMethodField { get; set; } = null!;
+    public MethodBuilder TSFunctionGetMethodInfo { get; set; } = null!;
 
     // String methods
     public MethodBuilder StringCharAt { get; set; } = null!;
@@ -256,6 +267,20 @@ public class EmittedRuntime
     /// fast path in compiled code where arity is exact).
     /// </summary>
     public FieldBuilder CurrentArgumentsField { get; set; } = null!;
+
+    // Thread-static "original array-like receiver" slot. The Array.prototype.X.call(receiver, ...)
+    // pattern matcher sets it before invoking the runtime helper; EmitCallbackArgsAndInvoke
+    // reads it when populating the callback's 4th argument (so the callback sees the ORIGINAL
+    // receiver per ECMA-262, not the materialized temp list). Null when no prototype.call
+    // context is active — direct `arr.forEach(cb)` calls keep passing the List as the 4th arg.
+    public FieldBuilder CurrentArrayLikeReceiverField { get; set; } = null!;
+
+    // Math singleton (Dictionary<string, object>). ECMA-262 treats Math as an
+    // ordinary extensible object — user code can assign `Math.length = 1;
+    // Math[0] = 1` and then iterate via `Array.prototype.X.call(Math, cb)`.
+    // Pre-fix, bare `Math` in compiled mode evaluated to null, so writes
+    // silently vanished.
+    public FieldBuilder MathSingletonField { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;

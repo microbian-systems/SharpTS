@@ -923,6 +923,43 @@ public partial class RuntimeEmitter
             il.MarkLabel(skipLabel);
         }
 
+        // Case: runtime.Method(_list, args[0], args[1]?) — indexOf/lastIndexOf.
+        // Second slot is fromIndex; null if args.Length < 2.
+        void EmitSearchCase(string methodName, MethodBuilder runtimeMethod)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, methodNameField);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, listField);
+            EmitArgZeroOrNull();
+
+            // args[1] if args.Length >= 2, else null
+            var noSecond = il.DefineLabel();
+            var afterSecond = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Blt, noSecond);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Br, afterSecond);
+            il.MarkLabel(noSecond);
+            il.Emit(OpCodes.Ldnull);
+            il.MarkLabel(afterSecond);
+
+            il.Emit(OpCodes.Call, runtimeMethod);
+            EmitReturnBoxing(runtimeMethod);
+
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+
         // Case: push/unshift — JS-variadic. Loop over args calling the single-arg
         // helper for each. This makes `boundPush(1, 2, 3)` and `push.apply(arr, [1,2,3])`
         // behave the same as JS `arr.push(1, 2, 3)`.
@@ -1017,7 +1054,9 @@ public partial class RuntimeEmitter
         // Single-arg methods (runtime helper takes `object`, not `object[]`).
         // Aligns with Emitters/ArrayEmitter.cs which also uses EmitSingleArgOrNull
         // for these methods, so dynamic bound dispatch matches the direct-call path.
-        EmitSingleArgCase("indexOf", runtime.ArrayIndexOf);
+        // indexOf/lastIndexOf take searchElement + optional fromIndex.
+        EmitSearchCase("indexOf", runtime.ArrayIndexOf);
+        EmitSearchCase("lastIndexOf", runtime.ArrayLastIndexOf);
         EmitSingleArgCase("includes", runtime.ArrayIncludes);
         EmitSingleArgCase("concat", runtime.ArrayConcat);
         EmitSingleArgCase("join", runtime.ArrayJoin);

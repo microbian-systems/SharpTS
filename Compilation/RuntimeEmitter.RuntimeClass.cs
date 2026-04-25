@@ -55,6 +55,29 @@ public partial class RuntimeEmitter
             FieldAttributes.Public | FieldAttributes.Static);
         runtime.CancelRequestedField = cancelRequestedField;
 
+        // Thread-static "original array-like receiver" — see EmittedRuntime for
+        // full rationale. Set by the Array.prototype.X.call(receiver, ...) pattern
+        // matcher; read by EmitCallbackArgsAndInvoke when populating the callback's
+        // 4th argument.
+        var currentArrayLikeReceiverField = typeBuilder.DefineField(
+            "_currentArrayLikeReceiver",
+            _types.Object,
+            FieldAttributes.Public | FieldAttributes.Static);
+        var threadStaticCtor = typeof(ThreadStaticAttribute).GetConstructor(Type.EmptyTypes)!;
+        currentArrayLikeReceiverField.SetCustomAttribute(new CustomAttributeBuilder(threadStaticCtor, []));
+        runtime.CurrentArrayLikeReceiverField = currentArrayLikeReceiverField;
+
+        // Math singleton — a shared Dictionary<string, object> that user code
+        // can mutate (`Math.length = 1`). `Math.PI` etc. still go through
+        // MathStaticEmitter's compile-time interception, which fires *before*
+        // this bare-reference path — so this field only surfaces when Math is
+        // used as a receiver (e.g., `Array.prototype.every.call(Math, cb)`).
+        var mathSingletonField = typeBuilder.DefineField(
+            "_mathSingleton",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.MathSingletonField = mathSingletonField;
+
         // CheckCancellation(): if (_cancelRequested) throw new
         //   OperationCanceledException("Compiled execution cancelled.");
         // Called by loop emitters at each backedge. Method body is emitted
@@ -158,6 +181,10 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.Random));
         cctorIL.Emit(OpCodes.Stsfld, randomField);
 
+        // Initialize _mathSingleton = new Dictionary<string, object>()
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Stsfld, mathSingletonField);
+
         // Initialize _symbolStorage = new ConditionalWeakTable<object, Dictionary<object, object?>>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(symbolStorageType));
         cctorIL.Emit(OpCodes.Stsfld, symbolStorageField);
@@ -217,13 +244,16 @@ public partial class RuntimeEmitter
         EmitJsToInt32(typeBuilder, runtime);
         EmitIsTruthy(typeBuilder, runtime);
         EmitTypeOf(typeBuilder, runtime);
-        EmitInstanceOf(typeBuilder, runtime);
         EmitAdd(typeBuilder, runtime);
         EmitEquals(typeBuilder, runtime);
         // Object methods - must come BEFORE iterator methods since GetProperty, InvokeMethodValue are needed
         EmitCreateObject(typeBuilder, runtime);
         EmitGetArrayMethod(typeBuilder, runtime);
         EmitGetFunctionMethod(typeBuilder, runtime);  // For bind/call/apply on functions
+        // InstanceOf walks the prototype chain via GetFunctionMethod (for the
+        // `F.prototype` fetch) — must be emitted AFTER GetFunctionMethod so
+        // `runtime.GetFunctionMethod` is populated when InstanceOf references it.
+        EmitInstanceOf(typeBuilder, runtime);
         EmitToPascalCase(typeBuilder, runtime);  // Must be emitted before GetFieldsProperty/SetFieldsProperty
         EmitSafeGetMethod(typeBuilder, runtime); // Must be emitted before GetFieldsProperty/SetFieldsProperty
         // Promise callback types must be created before InvokeValue (which dispatches to them)
@@ -254,6 +284,8 @@ public partial class RuntimeEmitter
         // TypedArray detection helpers must come before GetProperty (which uses IsTypedArrayMethod)
         EmitTypedArrayDetectionHelpers(typeBuilder, runtime);
         EmitGetProperty(typeBuilder, runtime);
+        // ToJsString depends on GetProperty + InvokeMethodValue + Stringify; emit after those.
+        EmitToJsString(typeBuilder, runtime);
         EmitSetProperty(typeBuilder, runtime);
         EmitSetPropertyStrict(typeBuilder, runtime);
         EmitDeleteProperty(typeBuilder, runtime);
@@ -346,7 +378,16 @@ public partial class RuntimeEmitter
         EmitArrayReduce(typeBuilder, runtime);
         EmitArrayReduceRight(typeBuilder, runtime);
         EmitArrayIncludes(typeBuilder, runtime);
+        // indexOf/lastIndexOf use ToIntegerOrInfinity for spec-compliant fromIndex clamping.
+        EmitToIntegerOrInfinityHelper(typeBuilder, runtime);
         EmitArrayIndexOf(typeBuilder, runtime);
+        EmitArrayLastIndexOf(typeBuilder, runtime);
+        // ECMA-262 Array.prototype.* accepts any array-like (length + indexed
+        // props) as receiver — materializer unpacks objects/strings/TSArrays.
+        // Not currently called from any emit path (see ILEmitter.Calls.cs
+        // Stage 3 deferral note). Kept in the runtime class so a future
+        // full-prototype-surface implementation can wire it up.
+        EmitArrayLikeMaterialize(typeBuilder, runtime);
         EmitArrayJoin(typeBuilder, runtime);
         EmitArrayConcat(typeBuilder, runtime);
         EmitArrayReverse(typeBuilder, runtime);
@@ -359,7 +400,7 @@ public partial class RuntimeEmitter
         // MethodBuilder is available to InvokeValue's Type-callee dispatch.
         EmitArraySort(typeBuilder, runtime);
         EmitArrayToSorted(typeBuilder, runtime);
-        EmitToIntegerOrInfinityHelper(typeBuilder, runtime); // Must be before EmitArraySplice/EmitArrayWith
+        // ToIntegerOrInfinity now emitted earlier (before EmitArrayIndexOf).
         EmitArraySplice(typeBuilder, runtime);
         EmitArrayToSpliced(typeBuilder, runtime);
         EmitArrayToReversed(typeBuilder, runtime);

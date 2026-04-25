@@ -223,6 +223,53 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // ECMA-262: `error.constructor` should return the constructor that built it.
+        // For $Error subclasses (and $Error itself), return the instance's runtime
+        // type as a System.Type. Compiled-mode `TypeError` resolves to the same
+        // System.Type, so `caught.constructor === TypeError` strict-equality works.
+        // Without this, test262's `assert.throws(TypeError, fn)` fails because
+        // `thrown.constructor === expectedErrorConstructor` reads `undefined`.
+        var afterErrorCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSErrorType);
+        il.Emit(OpCodes.Brfalse, afterErrorCtorLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, afterErrorCtorLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(afterErrorCtorLabel);
+
+        // ECMA-262: `(42).constructor === Number`, `true.constructor === Boolean`.
+        // Compiled `Number` resolves to typeof(double); `Boolean` to typeof(bool).
+        // (String is handled inline in EmitGetProperty's stringLabel branch.)
+        var afterPrimCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, afterPrimCtorLabel);
+        // double?
+        var notDoubleCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, notDoubleCtorLabel);
+        il.Emit(OpCodes.Ldtoken, _types.Double);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notDoubleCtorLabel);
+        // bool?
+        var notBoolCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, notBoolCtorLabel);
+        il.Emit(OpCodes.Ldtoken, _types.Boolean);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBoolCtorLabel);
+        il.MarkLabel(afterPrimCtorLabel);
+
         // Special case: HashSet<object?>.size for compiled Sets
         // Compiled code uses HashSet<object?> for Sets, and structuredClone returns the same type.
         // When accessing .size, we need to return HashSet.Count.
@@ -1058,7 +1105,7 @@ public partial class RuntimeEmitter
         // (RuntimeEmitter.Arrays.cs) and ArrayEmitter.cs static dispatch.
         string[] methodNames = [
             "join", "push", "pop", "shift", "unshift", "slice", "splice",
-            "indexOf", "includes", "concat", "reverse", "sort", "map", "filter", "forEach",
+            "indexOf", "lastIndexOf", "includes", "concat", "reverse", "sort", "map", "filter", "forEach",
             "find", "findIndex", "findLast", "findLastIndex", "some", "every",
             "reduce", "reduceRight",
             "flat", "flatMap", "at",
@@ -1295,6 +1342,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brtrue, listLabel);
+
+        // object[] (compiled `arguments` representation) - check for "length"
+        var objectArrayLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ObjectArray);
+        il.Emit(OpCodes.Brtrue, objectArrayLabel);
 
         // String - check for "length"
         il.Emit(OpCodes.Ldarg_0);
@@ -1838,6 +1891,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(returnUndefinedLabel);
+        // ECMA-262: `({}).constructor === Object`. If user hasn't set a custom
+        // constructor and no prototype overrides it, return typeof(object) which
+        // matches what compiled-mode `Object` resolves to via globalThis.
+        var notDictCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notDictCtorLabel);
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notDictCtorLabel);
         // Return $Undefined.Instance for non-existent properties (JavaScript semantics)
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
@@ -1908,11 +1973,64 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notLengthLabel);
+        // ECMA-262: `[].constructor === Array`. Compiled `Array` resolves to
+        // typeof(IList<object>) — return that here.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        var notListCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notListCtorLabel);
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notListCtorLabel);
         // For other properties on List (like methods push, pop, etc.), use GetListProperty
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.ListOfObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.GetListProperty);
+        il.Emit(OpCodes.Ret);
+
+        // object[] handler — `arguments`-shape receiver. "length" → array.Length;
+        // numeric-string indexes return the element; anything else → undefined.
+        il.MarkLabel(objectArrayLabel);
+        var objArrNotLengthLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, objArrNotLengthLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ObjectArray);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(objArrNotLengthLabel);
+        // Try numeric-string index: int.TryParse(name, out i)
+        var objArrIdxLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, objArrIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+        var objArrNotIndexLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, objArrNotIndexLabel);
+        // Bounds check: i >= 0 && i < arr.Length
+        il.Emit(OpCodes.Ldloc, objArrIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, objArrNotIndexLabel);
+        il.Emit(OpCodes.Ldloc, objArrIdxLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ObjectArray);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Bge, objArrNotIndexLabel);
+        // Read element at index
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ObjectArray);
+        il.Emit(OpCodes.Ldloc, objArrIdxLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(objArrNotIndexLabel);
+        // Other property → undefined
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
 
         // $Array handler - access Elements.Count for "length"
@@ -1931,6 +2049,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notSharpTSArrayLengthLabel);
+        // ECMA-262: `[].constructor === Array`. Mirror the listLabel branch.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        var notTSArrayCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notTSArrayCtorLabel);
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSArrayCtorLabel);
         // For other properties on $Array (method names like push/pop/sort/etc.),
         // reuse GetListProperty — it returns the $BoundArrayMethod wrapper, and
         // $Array IS a List<object?> by inheritance, so the cast works.
@@ -2122,6 +2250,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notStrLenLabel);
+        // ECMA-262: `"hello".constructor === String`. Compiled mode resolves
+        // bare `String` to `typeof(string)` — returning that here makes the
+        // strict-equality check hold.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        var notStrCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notStrCtorLabel);
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notStrCtorLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
     }
