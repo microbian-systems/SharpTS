@@ -1280,31 +1280,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [typeof(IFormatProvider)])!);
         il.Emit(OpCodes.Ret);
 
-        // Get radix from arg1
+        // ECMA-262 21.1.3.6: radix coerced via ToIntegerOrInfinity (default 10).
+        // Handles bool/string/array via the helper's ToPrimitive path.
         il.MarkLabel(radixFromDoubleLabel);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        il.Emit(OpCodes.Brfalse, radixFromIntLabel);
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Stloc, radixLocal);
-        il.Emit(OpCodes.Br, validateRadixLabel);
-
-        il.MarkLabel(radixFromIntLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Int32);
-        var useDefaultRadixLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, useDefaultRadixLabel);
-
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Unbox_Any, _types.Int32);
-        il.Emit(OpCodes.Stloc, radixLocal);
-        il.Emit(OpCodes.Br, validateRadixLabel);
-
-        il.MarkLabel(useDefaultRadixLabel);
         il.Emit(OpCodes.Ldc_I4, 10);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.Emit(OpCodes.Stloc, radixLocal);
 
         // Validate radix 2-36
