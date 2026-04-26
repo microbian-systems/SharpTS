@@ -2939,7 +2939,7 @@ test/built-ins/Array/prototype/toLocaleString/S15.4.4.3_A3_T1.js TypeCheckError
 test/built-ins/Array/prototype/toLocaleString/invoke-element-tolocalestring.js TypeCheckError
 test/built-ins/Array/prototype/toLocaleString/length.js TypeCheckError
 test/built-ins/Array/prototype/toLocaleString/name.js TypeCheckError
-test/built-ins/Array/prototype/toLocaleString/not-a-constructor.js RuntimeError
+test/built-ins/Array/prototype/toLocaleString/not-a-constructor.js Pass
 test/built-ins/Array/prototype/toLocaleString/primitive_this_value.js TypeCheckError
 test/built-ins/Array/prototype/toLocaleString/primitive_this_value_getter.js TypeCheckError
 test/built-ins/Array/prototype/toLocaleString/prop-desc.js TypeCheckError
@@ -3023,7 +3023,7 @@ test/built-ins/Array/prototype/toString/call-with-boolean.js Pass
 test/built-ins/Array/prototype/toString/length.js TypeCheckError
 test/built-ins/Array/prototype/toString/name.js TypeCheckError
 test/built-ins/Array/prototype/toString/non-callable-join-string-tag.js Pass
-test/built-ins/Array/prototype/toString/not-a-constructor.js RuntimeError
+test/built-ins/Array/prototype/toString/not-a-constructor.js Pass
 test/built-ins/Array/prototype/toString/prop-desc.js TypeCheckError
 test/built-ins/Array/prototype/unshift/S15.4.4.13_A1_T1.js Pass
 test/built-ins/Array/prototype/unshift/S15.4.4.13_A1_T2.js Pass
@@ -4361,7 +4361,7 @@ test/built-ins/String/prototype/indexOf/searchstring-tostring.js TypeCheckError
 test/built-ins/String/prototype/indexOf/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/isWellFormed/length.js TypeCheckError
 test/built-ins/String/prototype/isWellFormed/name.js TypeCheckError
-test/built-ins/String/prototype/isWellFormed/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/isWellFormed/not-a-constructor.js Pass
 test/built-ins/String/prototype/isWellFormed/prop-desc.js TypeCheckError
 test/built-ins/String/prototype/isWellFormed/return-abrupt-from-this.js Pass
 test/built-ins/String/prototype/isWellFormed/returns-boolean.js TypeCheckError
@@ -4451,7 +4451,7 @@ test/built-ins/String/prototype/match/duplicate-named-indices-groups-properties.
 test/built-ins/String/prototype/match/invoke-builtin-match.js RuntimeError
 test/built-ins/String/prototype/match/length.js TypeCheckError
 test/built-ins/String/prototype/match/name.js TypeCheckError
-test/built-ins/String/prototype/match/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/match/not-a-constructor.js Pass
 test/built-ins/String/prototype/match/regexp-prototype-match-v-u-flag.js Skipped:skip-feature:regexp-v-flag
 test/built-ins/String/prototype/match/this-val-bool.js RuntimeError
 test/built-ins/String/prototype/match/this-val-obj.js RuntimeError
@@ -4464,7 +4464,7 @@ test/built-ins/String/prototype/matchAll/flags-nonglobal-throws.js Pass
 test/built-ins/String/prototype/matchAll/flags-undefined-throws.js Pass
 test/built-ins/String/prototype/matchAll/length.js TypeCheckError
 test/built-ins/String/prototype/matchAll/name.js TypeCheckError
-test/built-ins/String/prototype/matchAll/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/matchAll/not-a-constructor.js Pass
 test/built-ins/String/prototype/matchAll/prop-desc.js TypeCheckError
 test/built-ins/String/prototype/matchAll/regexp-get-matchAll-throws.js RuntimeError
 test/built-ins/String/prototype/matchAll/regexp-is-null.js Pass
@@ -4676,7 +4676,7 @@ test/built-ins/String/prototype/search/cstm-search-on-string-primitive.js Runtim
 test/built-ins/String/prototype/search/invoke-builtin-search-searcher-undef.js RuntimeError
 test/built-ins/String/prototype/search/invoke-builtin-search.js RuntimeError
 test/built-ins/String/prototype/search/name.js TypeCheckError
-test/built-ins/String/prototype/search/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/search/not-a-constructor.js Pass
 test/built-ins/String/prototype/search/regexp-prototype-search-v-flag.js Skipped:skip-feature:regexp-v-flag
 test/built-ins/String/prototype/search/regexp-prototype-search-v-u-flag.js Skipped:skip-feature:regexp-v-flag
 test/built-ins/String/prototype/search/this-value-not-obj-coercible.js Pass
@@ -4928,7 +4928,7 @@ test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A7.js Pass
 test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A8.js RuntimeError
 test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A9.js RuntimeError
 test/built-ins/String/prototype/toLocaleLowerCase/name.js TypeCheckError
-test/built-ins/String/prototype/toLocaleLowerCase/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/toLocaleLowerCase/not-a-constructor.js Pass
 test/built-ins/String/prototype/toLocaleLowerCase/special_casing.js TypeCheckError
 test/built-ins/String/prototype/toLocaleLowerCase/special_casing_conditional.js TypeCheckError
 test/built-ins/String/prototype/toLocaleLowerCase/supplementary_plane.js TypeCheckError
@@ -4955,7 +4955,7 @@ test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A7.js Pass
 test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A8.js RuntimeError
 test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A9.js RuntimeError
 test/built-ins/String/prototype/toLocaleUpperCase/name.js TypeCheckError
-test/built-ins/String/prototype/toLocaleUpperCase/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/toLocaleUpperCase/not-a-constructor.js Pass
 test/built-ins/String/prototype/toLocaleUpperCase/special_casing.js TypeCheckError
 test/built-ins/String/prototype/toLocaleUpperCase/supplementary_plane.js TypeCheckError
 test/built-ins/String/prototype/toLocaleUpperCase/this-value-not-obj-coercible.js Pass
@@ -4982,7 +4982,7 @@ test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A7.js Pass
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A8.js RuntimeError
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A9.js RuntimeError
 test/built-ins/String/prototype/toLowerCase/name.js TypeCheckError
-test/built-ins/String/prototype/toLowerCase/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/toLowerCase/not-a-constructor.js Pass
 test/built-ins/String/prototype/toLowerCase/special_casing.js Pass
 test/built-ins/String/prototype/toLowerCase/special_casing_conditional.js Pass
 test/built-ins/String/prototype/toLowerCase/supplementary_plane.js Pass
@@ -4993,7 +4993,7 @@ test/built-ins/String/prototype/toString/length.js TypeCheckError
 test/built-ins/String/prototype/toString/name.js TypeCheckError
 test/built-ins/String/prototype/toString/non-generic-realm.js TypeCheckError
 test/built-ins/String/prototype/toString/non-generic.js TypeCheckError
-test/built-ins/String/prototype/toString/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/toString/not-a-constructor.js Pass
 test/built-ins/String/prototype/toString/string-object.js Pass
 test/built-ins/String/prototype/toString/string-primitive.js RuntimeError
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A10.js TypeCheckError
@@ -5018,13 +5018,13 @@ test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A7.js Pass
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A8.js RuntimeError
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A9.js RuntimeError
 test/built-ins/String/prototype/toUpperCase/name.js TypeCheckError
-test/built-ins/String/prototype/toUpperCase/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/toUpperCase/not-a-constructor.js Pass
 test/built-ins/String/prototype/toUpperCase/special_casing.js Pass
 test/built-ins/String/prototype/toUpperCase/supplementary_plane.js Pass
 test/built-ins/String/prototype/toUpperCase/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/toWellFormed/length.js TypeCheckError
 test/built-ins/String/prototype/toWellFormed/name.js TypeCheckError
-test/built-ins/String/prototype/toWellFormed/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/toWellFormed/not-a-constructor.js Pass
 test/built-ins/String/prototype/toWellFormed/prop-desc.js TypeCheckError
 test/built-ins/String/prototype/toWellFormed/return-abrupt-from-this.js Pass
 test/built-ins/String/prototype/toWellFormed/returns-well-formed-string.js TypeCheckError
@@ -5157,11 +5157,11 @@ test/built-ins/String/prototype/trim/15.5.4.20-4-6.js Pass
 test/built-ins/String/prototype/trim/15.5.4.20-4-60.js Pass
 test/built-ins/String/prototype/trim/15.5.4.20-4-8.js Pass
 test/built-ins/String/prototype/trim/name.js TypeCheckError
-test/built-ins/String/prototype/trim/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/trim/not-a-constructor.js Pass
 test/built-ins/String/prototype/trim/u180e.js Pass
 test/built-ins/String/prototype/trimEnd/length.js TypeCheckError
 test/built-ins/String/prototype/trimEnd/name.js TypeCheckError
-test/built-ins/String/prototype/trimEnd/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/trimEnd/not-a-constructor.js Pass
 test/built-ins/String/prototype/trimEnd/prop-desc.js TypeCheckError
 test/built-ins/String/prototype/trimEnd/this-value-boolean.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-line-terminator.js Pass
@@ -5184,7 +5184,7 @@ test/built-ins/String/prototype/trimEnd/this-value-symbol-typeerror.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-whitespace.js Pass
 test/built-ins/String/prototype/trimStart/length.js TypeCheckError
 test/built-ins/String/prototype/trimStart/name.js TypeCheckError
-test/built-ins/String/prototype/trimStart/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/trimStart/not-a-constructor.js Pass
 test/built-ins/String/prototype/trimStart/prop-desc.js TypeCheckError
 test/built-ins/String/prototype/trimStart/this-value-boolean.js Pass
 test/built-ins/String/prototype/trimStart/this-value-line-terminator.js Pass
@@ -5209,7 +5209,7 @@ test/built-ins/String/prototype/valueOf/length.js TypeCheckError
 test/built-ins/String/prototype/valueOf/name.js TypeCheckError
 test/built-ins/String/prototype/valueOf/non-generic-realm.js TypeCheckError
 test/built-ins/String/prototype/valueOf/non-generic.js Pass
-test/built-ins/String/prototype/valueOf/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/valueOf/not-a-constructor.js Pass
 test/built-ins/String/prototype/valueOf/string-object.js Pass
 test/built-ins/String/prototype/valueOf/string-primitive.js TypeCheckError
 test/built-ins/String/raw/length.js TypeCheckError
