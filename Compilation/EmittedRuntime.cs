@@ -294,6 +294,8 @@ public class EmittedRuntime
     public FieldBuilder NumberPrototypeField { get; set; } = null!;
     /// <summary>String.prototype singleton; mirror of <see cref="BooleanPrototypeField"/> for primitive strings.</summary>
     public FieldBuilder StringPrototypeField { get; set; } = null!;
+    /// <summary>JSON singleton — `typeof JSON === "object"` per ECMA-262.</summary>
+    public FieldBuilder JsonSingletonField { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;

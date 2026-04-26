@@ -81,6 +81,17 @@ public partial class ILEmitter
             return;
         }
 
+        if (name == "JSON")
+        {
+            // Stage 4z3: bare `JSON` resolves to a singleton Dictionary so
+            // `typeof JSON === "object"` per ECMA-262 24.5. Compile-time
+            // static dispatch (JSON.parse / JSON.stringify) intercepts before
+            // this bare-reference path so behavior is preserved.
+            IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.JsonSingletonField);
+            SetStackUnknown();
+            return;
+        }
+
         if (name == "process")
         {
             EmitNullConstant(); // process is handled specially in property access

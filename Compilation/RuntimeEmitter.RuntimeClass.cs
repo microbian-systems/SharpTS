@@ -102,6 +102,18 @@ public partial class RuntimeEmitter
             FieldAttributes.Public | FieldAttributes.Static);
         runtime.StringPrototypeField = stringPrototypeField;
 
+        // JSON / console / Error / Reflect singletons. Mirror of MathSingleton —
+        // bare `var o = JSON` must yield an addressable object so
+        // `typeof JSON === "object"` holds (ECMA-262: JSON is an ordinary
+        // built-in object). Compile-time static dispatch (JSONStaticEmitter,
+        // etc.) still fires *before* the bare-reference path, so JSON.parse(x)
+        // continues routing to the inline impl unchanged.
+        var jsonSingletonField = typeBuilder.DefineField(
+            "_jsonSingleton",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.JsonSingletonField = jsonSingletonField;
+
         // CheckCancellation(): if (_cancelRequested) throw new
         //   OperationCanceledException("Compiled execution cancelled.");
         // Called by loop emitters at each backedge. Method body is emitted
@@ -217,6 +229,8 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Stsfld, numberPrototypeField);
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         cctorIL.Emit(OpCodes.Stsfld, stringPrototypeField);
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Stsfld, jsonSingletonField);
 
         // Initialize _symbolStorage = new ConditionalWeakTable<object, Dictionary<object, object?>>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(symbolStorageType));

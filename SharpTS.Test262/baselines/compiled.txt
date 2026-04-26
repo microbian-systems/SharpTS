@@ -194,7 +194,7 @@ test/built-ins/Array/isArray/15.4.3.2-0-6.js Pass
 test/built-ins/Array/isArray/15.4.3.2-0-7.js Pass
 test/built-ins/Array/isArray/15.4.3.2-1-1.js Pass
 test/built-ins/Array/isArray/15.4.3.2-1-10.js Pass
-test/built-ins/Array/isArray/15.4.3.2-1-11.js RuntimeError
+test/built-ins/Array/isArray/15.4.3.2-1-11.js Pass
 test/built-ins/Array/isArray/15.4.3.2-1-12.js Pass
 test/built-ins/Array/isArray/15.4.3.2-1-13.js Pass
 test/built-ins/Array/isArray/15.4.3.2-1-15.js Pass
@@ -415,7 +415,7 @@ test/built-ins/Array/prototype/every/15.4.4.16-1-1.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-1-10.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-1-11.js TypeCheckError
 test/built-ins/Array/prototype/every/15.4.4.16-1-12.js TypeCheckError
-test/built-ins/Array/prototype/every/15.4.4.16-1-13.js RuntimeError
+test/built-ins/Array/prototype/every/15.4.4.16-1-13.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-1-14.js TypeCheckError
 test/built-ins/Array/prototype/every/15.4.4.16-1-15.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-1-2.js Pass
@@ -594,7 +594,7 @@ test/built-ins/Array/prototype/every/15.4.4.16-7-c-iii-2.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-iii-20.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-iii-21.js TypeCheckError
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-iii-22.js TypeCheckError
-test/built-ins/Array/prototype/every/15.4.4.16-7-c-iii-23.js RuntimeError
+test/built-ins/Array/prototype/every/15.4.4.16-7-c-iii-23.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-iii-24.js TypeCheckError
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-iii-25.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-iii-27.js RuntimeError
@@ -655,7 +655,7 @@ test/built-ins/Array/prototype/filter/15.4.4.20-1-1.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-1-10.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-1-11.js TypeCheckError
 test/built-ins/Array/prototype/filter/15.4.4.20-1-12.js TypeCheckError
-test/built-ins/Array/prototype/filter/15.4.4.20-1-13.js RuntimeError
+test/built-ins/Array/prototype/filter/15.4.4.20-1-13.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-1-14.js TypeCheckError
 test/built-ins/Array/prototype/filter/15.4.4.20-1-15.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-1-2.js Pass
@@ -855,7 +855,7 @@ test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-20.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-21.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-22.js TypeCheckError
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-23.js TypeCheckError
-test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-24.js RuntimeError
+test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-24.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-25.js TypeCheckError
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-26.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-28.js Pass
@@ -1254,7 +1254,7 @@ test/built-ins/Array/prototype/indexOf/15.4.4.14-1-1.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-10.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-11.js TypeCheckError
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-12.js TypeCheckError
-test/built-ins/Array/prototype/indexOf/15.4.4.14-1-13.js RuntimeError
+test/built-ins/Array/prototype/indexOf/15.4.4.14-1-13.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-14.js TypeCheckError
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-15.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-2.js Pass
@@ -1490,7 +1490,7 @@ test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-1.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-10.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-11.js TypeCheckError
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-12.js TypeCheckError
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-13.js RuntimeError
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-13.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-14.js TypeCheckError
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-15.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-2.js Pass
@@ -1689,7 +1689,7 @@ test/built-ins/Array/prototype/map/15.4.4.19-1-1.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-1-10.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-1-11.js TypeCheckError
 test/built-ins/Array/prototype/map/15.4.4.19-1-12.js TypeCheckError
-test/built-ins/Array/prototype/map/15.4.4.19-1-13.js RuntimeError
+test/built-ins/Array/prototype/map/15.4.4.19-1-13.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-1-14.js TypeCheckError
 test/built-ins/Array/prototype/map/15.4.4.19-1-15.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-1-2.js Pass
@@ -2192,7 +2192,7 @@ test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-3.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-30.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-31.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-32.js Pass
-test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-33.js RuntimeError
+test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-33.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-34.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-35.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-37.js Pass
@@ -2451,7 +2451,7 @@ test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-3.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-30.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-31.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-32.js Pass
-test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-33.js RuntimeError
+test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-33.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-34.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-35.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-37.js Pass
@@ -2765,7 +2765,7 @@ test/built-ins/Array/prototype/some/15.4.4.17-7-c-iii-2.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-iii-20.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-iii-21.js TypeCheckError
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-iii-22.js TypeCheckError
-test/built-ins/Array/prototype/some/15.4.4.17-7-c-iii-23.js RuntimeError
+test/built-ins/Array/prototype/some/15.4.4.17-7-c-iii-23.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-iii-24.js TypeCheckError
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-iii-25.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-iii-26.js RuntimeError
@@ -3022,7 +3022,7 @@ test/built-ins/Array/prototype/toString/S15.4.4.2_A3_T1.js TypeCheckError
 test/built-ins/Array/prototype/toString/call-with-boolean.js Pass
 test/built-ins/Array/prototype/toString/length.js TypeCheckError
 test/built-ins/Array/prototype/toString/name.js TypeCheckError
-test/built-ins/Array/prototype/toString/non-callable-join-string-tag.js RuntimeError
+test/built-ins/Array/prototype/toString/non-callable-join-string-tag.js Pass
 test/built-ins/Array/prototype/toString/not-a-constructor.js Pass
 test/built-ins/Array/prototype/toString/prop-desc.js TypeCheckError
 test/built-ins/Array/prototype/unshift/S15.4.4.13_A1_T1.js Pass
@@ -3189,10 +3189,10 @@ test/built-ins/Error/prototype/toString/undefined-props.js Pass
 test/built-ins/Error/the-initial-value-of-errorprototypemessage-is-the-empty-string.js TypeCheckError
 test/built-ins/Error/tostring-1.js Pass
 test/built-ins/Error/tostring-2.js Pass
-test/built-ins/JSON/15.12-0-1.js RuntimeError
-test/built-ins/JSON/15.12-0-2.js RuntimeError
-test/built-ins/JSON/15.12-0-3.js RuntimeError
-test/built-ins/JSON/15.12-0-4.js RuntimeError
+test/built-ins/JSON/15.12-0-1.js Pass
+test/built-ins/JSON/15.12-0-2.js Pass
+test/built-ins/JSON/15.12-0-3.js Pass
+test/built-ins/JSON/15.12-0-4.js Pass
 test/built-ins/JSON/Symbol.toStringTag.js TypeCheckError
 test/built-ins/JSON/isRawJSON/basic.js RuntimeError
 test/built-ins/JSON/isRawJSON/builtin.js TypeCheckError
@@ -3278,7 +3278,7 @@ test/built-ins/JSON/parse/text-non-string-primitive.js Pass
 test/built-ins/JSON/parse/text-object-abrupt.js Pass
 test/built-ins/JSON/parse/text-object.js RuntimeError
 test/built-ins/JSON/prop-desc.js TypeCheckError
-test/built-ins/JSON/rawJSON/basic.js RuntimeError
+test/built-ins/JSON/rawJSON/basic.js Pass
 test/built-ins/JSON/rawJSON/bigint-raw-json-can-be-stringified.js RuntimeError
 test/built-ins/JSON/rawJSON/builtin.js TypeCheckError
 test/built-ins/JSON/rawJSON/illegal-empty-and-start-end-chars.js Pass
