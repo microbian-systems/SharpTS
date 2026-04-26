@@ -4165,7 +4165,7 @@ test/built-ins/String/prototype/at/returns-item.js Pass
 test/built-ins/String/prototype/at/returns-undefined-for-out-of-range-index.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A1.1.js TypeCheckError
 test/built-ins/String/prototype/charAt/S15.5.4.4_A10.js TypeCheckError
-test/built-ins/String/prototype/charAt/S15.5.4.4_A11.js RuntimeError
+test/built-ins/String/prototype/charAt/S15.5.4.4_A11.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A1_T1.js RuntimeError
 test/built-ins/String/prototype/charAt/S15.5.4.4_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/charAt/S15.5.4.4_A1_T2.js TypeCheckError
@@ -4183,7 +4183,7 @@ test/built-ins/String/prototype/charAt/S15.5.4.4_A4_T3.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A5.js RuntimeError
 test/built-ins/String/prototype/charAt/S15.5.4.4_A6.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A7.js Pass
-test/built-ins/String/prototype/charAt/S15.5.4.4_A8.js RuntimeError
+test/built-ins/String/prototype/charAt/S15.5.4.4_A8.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A9.js RuntimeError
 test/built-ins/String/prototype/charAt/S9.4_A1.js TypeCheckError
 test/built-ins/String/prototype/charAt/S9.4_A2.js Pass
@@ -4195,7 +4195,7 @@ test/built-ins/String/prototype/charAt/pos-rounding.js Pass
 test/built-ins/String/prototype/charAt/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1.1.js TypeCheckError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A10.js TypeCheckError
-test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A11.js RuntimeError
+test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A11.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T1.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T2.js TypeCheckError
@@ -4210,7 +4210,7 @@ test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A3.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A4.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A6.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A7.js Pass
-test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A8.js RuntimeError
+test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A8.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A9.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/name.js TypeCheckError
 test/built-ins/String/prototype/charCodeAt/not-a-constructor.js Pass
@@ -4235,7 +4235,7 @@ test/built-ins/String/prototype/codePointAt/returns-undefined-on-position-less-t
 test/built-ins/String/prototype/codePointAt/this-is-null-throws.js Pass
 test/built-ins/String/prototype/codePointAt/this-is-undefined-throws.js Pass
 test/built-ins/String/prototype/concat/S15.5.4.6_A10.js TypeCheckError
-test/built-ins/String/prototype/concat/S15.5.4.6_A11.js RuntimeError
+test/built-ins/String/prototype/concat/S15.5.4.6_A11.js Pass
 test/built-ins/String/prototype/concat/S15.5.4.6_A1_T1.js RuntimeError
 test/built-ins/String/prototype/concat/S15.5.4.6_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/concat/S15.5.4.6_A1_T2.js TypeCheckError
@@ -4251,7 +4251,7 @@ test/built-ins/String/prototype/concat/S15.5.4.6_A4_T1.js TypeCheckError
 test/built-ins/String/prototype/concat/S15.5.4.6_A4_T2.js TypeCheckError
 test/built-ins/String/prototype/concat/S15.5.4.6_A6.js Pass
 test/built-ins/String/prototype/concat/S15.5.4.6_A7.js Pass
-test/built-ins/String/prototype/concat/S15.5.4.6_A8.js RuntimeError
+test/built-ins/String/prototype/concat/S15.5.4.6_A8.js Pass
 test/built-ins/String/prototype/concat/S15.5.4.6_A9.js RuntimeError
 test/built-ins/String/prototype/concat/name.js TypeCheckError
 test/built-ins/String/prototype/concat/not-a-constructor.js Pass
@@ -4313,7 +4313,7 @@ test/built-ins/String/prototype/includes/searchstring-not-found-without-position
 test/built-ins/String/prototype/includes/this-is-null-throws.js Pass
 test/built-ins/String/prototype/includes/this-is-undefined-throws.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A10.js TypeCheckError
-test/built-ins/String/prototype/indexOf/S15.5.4.7_A11.js RuntimeError
+test/built-ins/String/prototype/indexOf/S15.5.4.7_A11.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T1.js RuntimeError
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T12.js Pass
@@ -4344,7 +4344,7 @@ test/built-ins/String/prototype/indexOf/S15.5.4.7_A5_T5.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A5_T6.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A6.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A7.js Pass
-test/built-ins/String/prototype/indexOf/S15.5.4.7_A8.js RuntimeError
+test/built-ins/String/prototype/indexOf/S15.5.4.7_A8.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A9.js RuntimeError
 test/built-ins/String/prototype/indexOf/name.js TypeCheckError
 test/built-ins/String/prototype/indexOf/not-a-constructor.js Pass
@@ -4368,7 +4368,7 @@ test/built-ins/String/prototype/isWellFormed/returns-boolean.js TypeCheckError
 test/built-ins/String/prototype/isWellFormed/to-string-primitive.js TypeCheckError
 test/built-ins/String/prototype/isWellFormed/to-string.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A10.js TypeCheckError
-test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A11.js RuntimeError
+test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A11.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T1.js RuntimeError
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T12.js Pass
@@ -4386,7 +4386,7 @@ test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A4_T4.js RuntimeError
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A4_T5.js RuntimeError
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A6.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A7.js Pass
-test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A8.js RuntimeError
+test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A8.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A9.js RuntimeError
 test/built-ins/String/prototype/lastIndexOf/name.js TypeCheckError
 test/built-ins/String/prototype/lastIndexOf/not-a-constructor.js Pass
@@ -4395,12 +4395,12 @@ test/built-ins/String/prototype/lastIndexOf/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/localeCompare/15.5.4.9_3.js RuntimeError
 test/built-ins/String/prototype/localeCompare/15.5.4.9_CE.js RuntimeError
 test/built-ins/String/prototype/localeCompare/S15.5.4.9_A10.js TypeCheckError
-test/built-ins/String/prototype/localeCompare/S15.5.4.9_A11.js RuntimeError
+test/built-ins/String/prototype/localeCompare/S15.5.4.9_A11.js Pass
 test/built-ins/String/prototype/localeCompare/S15.5.4.9_A1_T1.js Pass
 test/built-ins/String/prototype/localeCompare/S15.5.4.9_A1_T2.js Pass
 test/built-ins/String/prototype/localeCompare/S15.5.4.9_A6.js Pass
 test/built-ins/String/prototype/localeCompare/S15.5.4.9_A7.js Pass
-test/built-ins/String/prototype/localeCompare/S15.5.4.9_A8.js RuntimeError
+test/built-ins/String/prototype/localeCompare/S15.5.4.9_A8.js Pass
 test/built-ins/String/prototype/localeCompare/S15.5.4.9_A9.js RuntimeError
 test/built-ins/String/prototype/localeCompare/name.js TypeCheckError
 test/built-ins/String/prototype/localeCompare/not-a-constructor.js Pass
@@ -4437,7 +4437,7 @@ test/built-ins/String/prototype/match/S15.5.4.10_A2_T8.js TypeCheckError
 test/built-ins/String/prototype/match/S15.5.4.10_A2_T9.js TypeCheckError
 test/built-ins/String/prototype/match/S15.5.4.10_A6.js Pass
 test/built-ins/String/prototype/match/S15.5.4.10_A7.js Pass
-test/built-ins/String/prototype/match/S15.5.4.10_A8.js RuntimeError
+test/built-ins/String/prototype/match/S15.5.4.10_A8.js Pass
 test/built-ins/String/prototype/match/S15.5.4.10_A9.js RuntimeError
 test/built-ins/String/prototype/match/cstm-matcher-get-err.js RuntimeError
 test/built-ins/String/prototype/match/cstm-matcher-invocation.js Pass
@@ -4639,7 +4639,7 @@ test/built-ins/String/prototype/replaceAll/this-tostring-abrupt.js Pass
 test/built-ins/String/prototype/replaceAll/this-tostring.js Pass
 test/built-ins/String/prototype/search/S15.5.4.12_A1.1_T1.js Pass
 test/built-ins/String/prototype/search/S15.5.4.12_A10.js TypeCheckError
-test/built-ins/String/prototype/search/S15.5.4.12_A11.js RuntimeError
+test/built-ins/String/prototype/search/S15.5.4.12_A11.js Pass
 test/built-ins/String/prototype/search/S15.5.4.12_A1_T1.js RuntimeError
 test/built-ins/String/prototype/search/S15.5.4.12_A1_T10.js Pass
 test/built-ins/String/prototype/search/S15.5.4.12_A1_T11.js Pass
@@ -4664,7 +4664,7 @@ test/built-ins/String/prototype/search/S15.5.4.12_A3_T1.js Pass
 test/built-ins/String/prototype/search/S15.5.4.12_A3_T2.js Pass
 test/built-ins/String/prototype/search/S15.5.4.12_A6.js Pass
 test/built-ins/String/prototype/search/S15.5.4.12_A7.js Pass
-test/built-ins/String/prototype/search/S15.5.4.12_A8.js RuntimeError
+test/built-ins/String/prototype/search/S15.5.4.12_A8.js Pass
 test/built-ins/String/prototype/search/S15.5.4.12_A9.js RuntimeError
 test/built-ins/String/prototype/search/cstm-search-get-err.js RuntimeError
 test/built-ins/String/prototype/search/cstm-search-invocation.js Pass
@@ -4681,7 +4681,7 @@ test/built-ins/String/prototype/search/regexp-prototype-search-v-flag.js Skipped
 test/built-ins/String/prototype/search/regexp-prototype-search-v-u-flag.js Skipped:skip-feature:regexp-v-flag
 test/built-ins/String/prototype/search/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/slice/S15.5.4.13_A10.js TypeCheckError
-test/built-ins/String/prototype/slice/S15.5.4.13_A11.js RuntimeError
+test/built-ins/String/prototype/slice/S15.5.4.13_A11.js Pass
 test/built-ins/String/prototype/slice/S15.5.4.13_A1_T1.js RuntimeError
 test/built-ins/String/prototype/slice/S15.5.4.13_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/slice/S15.5.4.13_A1_T11.js TypeCheckError
@@ -4711,7 +4711,7 @@ test/built-ins/String/prototype/slice/S15.5.4.13_A3_T3.js TypeCheckError
 test/built-ins/String/prototype/slice/S15.5.4.13_A3_T4.js RuntimeError
 test/built-ins/String/prototype/slice/S15.5.4.13_A6.js Pass
 test/built-ins/String/prototype/slice/S15.5.4.13_A7.js Pass
-test/built-ins/String/prototype/slice/S15.5.4.13_A8.js RuntimeError
+test/built-ins/String/prototype/slice/S15.5.4.13_A8.js Pass
 test/built-ins/String/prototype/slice/S15.5.4.13_A9.js RuntimeError
 test/built-ins/String/prototype/slice/name.js TypeCheckError
 test/built-ins/String/prototype/slice/not-a-constructor.js Pass
@@ -4790,9 +4790,9 @@ test/built-ins/String/prototype/split/call-split-x-instance-is-string-hello.js P
 test/built-ins/String/prototype/split/checking-by-using-eval.js TypeCheckError
 test/built-ins/String/prototype/split/checking-if-creating-the-string-prototype-split-object-fails.js Pass
 test/built-ins/String/prototype/split/checking-if-deleting-the-string-prototype-split-length-property-fails.js RuntimeError
-test/built-ins/String/prototype/split/checking-if-enumerating-the-string-prototype-split-length-property-fails.js RuntimeError
+test/built-ins/String/prototype/split/checking-if-enumerating-the-string-prototype-split-length-property-fails.js Pass
 test/built-ins/String/prototype/split/checking-if-varying-the-string-prototype-split-length-property-fails.js TypeCheckError
-test/built-ins/String/prototype/split/checking-string-prototype-split-length.js RuntimeError
+test/built-ins/String/prototype/split/checking-string-prototype-split-length.js Pass
 test/built-ins/String/prototype/split/checking-string-prototype-split-prototype.js Pass
 test/built-ins/String/prototype/split/cstm-split-get-err.js RuntimeError
 test/built-ins/String/prototype/split/cstm-split-invocation.js TypeCheckError
@@ -4860,7 +4860,7 @@ test/built-ins/String/prototype/startsWith/startsWith.js TypeCheckError
 test/built-ins/String/prototype/startsWith/this-is-null-throws.js Pass
 test/built-ins/String/prototype/startsWith/this-is-undefined-throws.js Pass
 test/built-ins/String/prototype/substring/S15.5.4.15_A10.js TypeCheckError
-test/built-ins/String/prototype/substring/S15.5.4.15_A11.js RuntimeError
+test/built-ins/String/prototype/substring/S15.5.4.15_A11.js Pass
 test/built-ins/String/prototype/substring/S15.5.4.15_A1_T1.js RuntimeError
 test/built-ins/String/prototype/substring/S15.5.4.15_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/substring/S15.5.4.15_A1_T11.js TypeCheckError
@@ -4898,7 +4898,7 @@ test/built-ins/String/prototype/substring/S15.5.4.15_A3_T8.js RuntimeError
 test/built-ins/String/prototype/substring/S15.5.4.15_A3_T9.js RuntimeError
 test/built-ins/String/prototype/substring/S15.5.4.15_A6.js Pass
 test/built-ins/String/prototype/substring/S15.5.4.15_A7.js Pass
-test/built-ins/String/prototype/substring/S15.5.4.15_A8.js RuntimeError
+test/built-ins/String/prototype/substring/S15.5.4.15_A8.js Pass
 test/built-ins/String/prototype/substring/S15.5.4.15_A9.js RuntimeError
 test/built-ins/String/prototype/substring/name.js TypeCheckError
 test/built-ins/String/prototype/substring/not-a-constructor.js Pass
@@ -4907,7 +4907,7 @@ test/built-ins/String/prototype/substring/this-value-tostring-throws-symbol.js P
 test/built-ins/String/prototype/substring/this-value-tostring-throws-toprimitive.js Pass
 test/built-ins/String/prototype/toLocaleLowerCase/Final_Sigma_U180E.js TypeCheckError
 test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A10.js TypeCheckError
-test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A11.js RuntimeError
+test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A11.js Pass
 test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A1_T1.js RuntimeError
 test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A1_T11.js TypeCheckError
@@ -4925,7 +4925,7 @@ test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A1_T9.js TypeCheckE
 test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A2_T1.js TypeCheckError
 test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A6.js Pass
 test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A7.js Pass
-test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A8.js RuntimeError
+test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A8.js Pass
 test/built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A9.js RuntimeError
 test/built-ins/String/prototype/toLocaleLowerCase/name.js TypeCheckError
 test/built-ins/String/prototype/toLocaleLowerCase/not-a-constructor.js Pass
@@ -4934,7 +4934,7 @@ test/built-ins/String/prototype/toLocaleLowerCase/special_casing_conditional.js 
 test/built-ins/String/prototype/toLocaleLowerCase/supplementary_plane.js TypeCheckError
 test/built-ins/String/prototype/toLocaleLowerCase/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A10.js TypeCheckError
-test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A11.js RuntimeError
+test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A11.js Pass
 test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A1_T1.js RuntimeError
 test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A1_T11.js TypeCheckError
@@ -4952,7 +4952,7 @@ test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A1_T9.js TypeCheckE
 test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A2_T1.js TypeCheckError
 test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A6.js Pass
 test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A7.js Pass
-test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A8.js RuntimeError
+test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A8.js Pass
 test/built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A9.js RuntimeError
 test/built-ins/String/prototype/toLocaleUpperCase/name.js TypeCheckError
 test/built-ins/String/prototype/toLocaleUpperCase/not-a-constructor.js Pass
@@ -4961,7 +4961,7 @@ test/built-ins/String/prototype/toLocaleUpperCase/supplementary_plane.js TypeChe
 test/built-ins/String/prototype/toLocaleUpperCase/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/toLowerCase/Final_Sigma_U180E.js Pass
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A10.js TypeCheckError
-test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A11.js RuntimeError
+test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A11.js Pass
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T1.js RuntimeError
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T11.js TypeCheckError
@@ -4979,7 +4979,7 @@ test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T9.js TypeCheckError
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A2_T1.js RuntimeError
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A6.js Pass
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A7.js Pass
-test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A8.js RuntimeError
+test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A8.js Pass
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A9.js RuntimeError
 test/built-ins/String/prototype/toLowerCase/name.js TypeCheckError
 test/built-ins/String/prototype/toLowerCase/not-a-constructor.js Pass
@@ -4997,7 +4997,7 @@ test/built-ins/String/prototype/toString/not-a-constructor.js Pass
 test/built-ins/String/prototype/toString/string-object.js Pass
 test/built-ins/String/prototype/toString/string-primitive.js RuntimeError
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A10.js TypeCheckError
-test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A11.js RuntimeError
+test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A11.js Pass
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T1.js RuntimeError
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T11.js TypeCheckError
@@ -5015,7 +5015,7 @@ test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T9.js TypeCheckError
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A2_T1.js RuntimeError
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A6.js Pass
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A7.js Pass
-test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A8.js RuntimeError
+test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A8.js Pass
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A9.js RuntimeError
 test/built-ins/String/prototype/toUpperCase/name.js TypeCheckError
 test/built-ins/String/prototype/toUpperCase/not-a-constructor.js Pass
