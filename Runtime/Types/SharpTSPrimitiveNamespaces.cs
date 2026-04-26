@@ -262,5 +262,82 @@ public class SharpTSBooleanNamespace : ISharpTSCallable
         return SharpTS.Compilation.RuntimeTypes.IsTruthy(arg);
     }
 
+    /// <summary>
+    /// Returns <c>Boolean.prototype</c>. Boolean has no static members worth
+    /// exposing here, so an unknown name returns null (= undefined to user).
+    /// </summary>
+    public object? GetMember(string name)
+    {
+        if (name == "prototype") return SharpTSBooleanPrototype.Instance;
+        return null;
+    }
+
     public override string ToString() => "function Boolean() { [native code] }";
+}
+
+/// <summary>
+/// <c>Boolean.prototype</c>. Exposes <c>toString</c> and <c>valueOf</c>
+/// per ECMA-262 as wrapper callables that throw TypeError on non-boolean
+/// receivers.
+/// </summary>
+public sealed class SharpTSBooleanPrototype
+{
+    public static readonly SharpTSBooleanPrototype Instance = new();
+    private SharpTSBooleanPrototype() { }
+
+    public object? GetMember(string name) => name switch
+    {
+        "toString" => BooleanPrototypeMethodWrapper.ToStringInstance,
+        "valueOf" => BooleanPrototypeMethodWrapper.ValueOfInstance,
+        _ => null,
+    };
+
+    public override string ToString() => "[object Boolean]";
+}
+
+/// <summary>
+/// Adapter for Boolean.prototype.toString/valueOf. Throws TypeError on non-
+/// boolean receivers per ECMA-262 (<c>thisBooleanValue</c>); returns the JS
+/// string form ("true"/"false") or the primitive otherwise.
+/// </summary>
+internal sealed class BooleanPrototypeMethodWrapper : ISharpTSCallable
+{
+    public static readonly BooleanPrototypeMethodWrapper ToStringInstance = new("toString", isToString: true);
+    public static readonly BooleanPrototypeMethodWrapper ValueOfInstance = new("valueOf", isToString: false);
+
+    private readonly string _name;
+    private readonly bool _isToString;
+    private readonly object? _receiver;
+    private readonly bool _hasReceiver;
+
+    private BooleanPrototypeMethodWrapper(string name, bool isToString)
+    {
+        _name = name;
+        _isToString = isToString;
+    }
+
+    private BooleanPrototypeMethodWrapper(string name, bool isToString, object? receiver)
+    {
+        _name = name;
+        _isToString = isToString;
+        _receiver = receiver;
+        _hasReceiver = true;
+    }
+
+    public int Arity() => 0;
+
+    public BooleanPrototypeMethodWrapper Bind(object? receiver)
+        => new(_name, _isToString, receiver);
+
+    public object? Call(Interpreter interpreter, List<object?> arguments)
+    {
+        if (!_hasReceiver || _receiver is not bool b)
+        {
+            throw new ThrowException(new SharpTSTypeError(
+                $"Boolean.prototype.{_name} requires that 'this' be a Boolean"));
+        }
+        return _isToString ? (b ? "true" : "false") : (object)b;
+    }
+
+    public override string ToString() => $"function {_name}() {{ [native code] }}";
 }

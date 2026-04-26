@@ -484,6 +484,7 @@ public partial class Interpreter
         is ArrayPrototypeMethodWrapper
         or StringPrototypeMethodWrapper
         or NumberPrototypeMethodWrapper
+        or BooleanPrototypeMethodWrapper
         or SharpTSObjectUnboundMethod
         or ErrorToStringCallable;
 

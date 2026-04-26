@@ -495,6 +495,13 @@ public sealed class BuiltInRegistry
             SingletonFactory: () => Types.SharpTSBooleanNamespace.Instance,
             GetMethod: _ => null
         ));
+        // Property access on Boolean / Boolean.prototype / wrapper.
+        registry.RegisterInstanceType(typeof(Types.SharpTSBooleanNamespace), (instance, name) =>
+            ((Types.SharpTSBooleanNamespace)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(Types.SharpTSBooleanPrototype), (instance, name) =>
+            ((Types.SharpTSBooleanPrototype)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(Types.BooleanPrototypeMethodWrapper), (instance, name) =>
+            FunctionBuiltIns.GetMember((ISharpTSCallable)instance, name));
     }
 
     private static void RegisterDoubleType(BuiltInRegistry registry)
@@ -502,6 +509,15 @@ public sealed class BuiltInRegistry
         // Handle instance methods on boxed doubles: (123).toFixed(2)
         registry.RegisterInstanceType(typeof(double), (instance, name) =>
             NumberBuiltIns.GetInstanceMember((double)instance, name));
+        // Handle instance methods on boxed booleans: (true).toString().
+        // Boolean has only two methods, so dispatch inline rather than
+        // building a separate BuiltInTypeMemberLookup<bool>.
+        registry.RegisterInstanceType(typeof(bool), (instance, name) => name switch
+        {
+            "toString" => Types.BooleanPrototypeMethodWrapper.ToStringInstance.Bind(instance),
+            "valueOf" => Types.BooleanPrototypeMethodWrapper.ValueOfInstance.Bind(instance),
+            _ => null
+        });
     }
 
     private static void RegisterDateNamespace(BuiltInRegistry registry)

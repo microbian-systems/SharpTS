@@ -187,6 +187,12 @@ public static class FunctionBuiltIns
             return numberProto.Bind(thisArg).Call(interp, args);
         }
 
+        // Boolean.prototype adapter — same pattern.
+        if (callable is Types.BooleanPrototypeMethodWrapper boolProto)
+        {
+            return boolProto.Bind(thisArg).Call(interp, args);
+        }
+
         // For other callables, just call directly
         return callable.Call(interp, args);
     }

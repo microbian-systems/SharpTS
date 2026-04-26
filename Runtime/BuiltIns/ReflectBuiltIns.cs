@@ -437,6 +437,7 @@ public static class ReflectBuiltIns
         if (value is SharpTS.Runtime.Types.ArrayPrototypeMethodWrapper
             or SharpTS.Runtime.Types.StringPrototypeMethodWrapper
             or SharpTS.Runtime.Types.NumberPrototypeMethodWrapper
+            or SharpTS.Runtime.Types.BooleanPrototypeMethodWrapper
             or SharpTS.Runtime.Types.SharpTSObjectUnboundMethod
             or BoundFunction)
             return true;
