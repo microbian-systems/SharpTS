@@ -115,6 +115,13 @@ public sealed class ArrayStaticEmitter : IStaticTypeEmitterStrategy
         var method = propertyName switch
         {
             "isArray" => runtime.IsArray,
+            // Stage 4y: Array.from / Array.of as values. Array.from goes
+            // through an adapter (ArrayFrom has a 4-arg internal signature
+            // that includes spec-fixed Symbol.iterator + runtime type;
+            // ArrayFromAdapter wraps with a 2-arg public surface). Array.of
+            // is already (object[])->$Array which TSFunction can dispatch.
+            "from"    => runtime.ArrayFromAdapter,
+            "of"      => runtime.ArrayOf,
             _ => null
         };
         if (method == null) return false;

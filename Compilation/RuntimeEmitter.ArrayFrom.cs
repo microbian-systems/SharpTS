@@ -142,6 +142,76 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Stage 4y: adapter wrapping ArrayFrom for value-form access.
+    /// `let f = Array.from; f(iterable, mapFn)` — TSFunction.Invoke maps
+    /// args[0]/[1] to (iterable, mapFn) and we supply the spec-fixed
+    /// SymbolIterator + runtime-Type internally. Signature: object(object[]).
+    /// </summary>
+    private void EmitArrayFromAdapter(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ArrayFromAdapter",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.ObjectArray]
+        );
+        runtime.ArrayFromAdapter = method;
+
+        var il = method.GetILGenerator();
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var iterableLocal = il.DeclareLocal(_types.Object);
+        var mapFnLocal = il.DeclareLocal(_types.Object);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, argsLocal);
+
+        // iterable = args.Length > 0 ? args[0] : null
+        var hasIterable = il.DefineLabel();
+        var iterableSet = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bgt, hasIterable);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, iterableLocal);
+        il.Emit(OpCodes.Br, iterableSet);
+        il.MarkLabel(hasIterable);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, iterableLocal);
+        il.MarkLabel(iterableSet);
+
+        // mapFn = args.Length > 1 ? args[1] : null
+        var hasMapFn = il.DefineLabel();
+        var mapFnSet = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Bgt, hasMapFn);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, mapFnLocal);
+        il.Emit(OpCodes.Br, mapFnSet);
+        il.MarkLabel(hasMapFn);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, mapFnLocal);
+        il.MarkLabel(mapFnSet);
+
+        // return ArrayFrom(iterable, mapFn, SymbolIterator, typeof($Runtime))
+        il.Emit(OpCodes.Ldloc, iterableLocal);
+        il.Emit(OpCodes.Ldloc, mapFnLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolIterator);
+        il.Emit(OpCodes.Ldtoken, runtime.RuntimeType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Call, runtime.ArrayFrom);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits the ECMAScript <c>Array</c> constructor (issue #61):
     /// <list type="bullet">
     /// <item><c>Array()</c> / <c>new Array()</c> → empty <c>$Array</c>.</item>

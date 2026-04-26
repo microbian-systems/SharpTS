@@ -77,7 +77,7 @@ test/built-ins/Array/from/iter-set-length.js TypeCheckError
 test/built-ins/Array/from/mapfn-is-not-callable-typeerror.js Pass
 test/built-ins/Array/from/mapfn-is-symbol-throws.js Pass
 test/built-ins/Array/from/mapfn-throws-exception.js Pass
-test/built-ins/Array/from/not-a-constructor.js RuntimeError
+test/built-ins/Array/from/not-a-constructor.js Pass
 test/built-ins/Array/from/proto-from-ctor-realm.js TypeCheckError
 test/built-ins/Array/from/source-array-boundary.js Pass
 test/built-ins/Array/from/source-object-constructor.js Pass
@@ -88,7 +88,7 @@ test/built-ins/Array/from/source-object-length-set-elem-prop-non-writable.js Typ
 test/built-ins/Array/from/source-object-length.js Pass
 test/built-ins/Array/from/source-object-missing.js Pass
 test/built-ins/Array/from/source-object-without.js Pass
-test/built-ins/Array/from/this-null.js RuntimeError
+test/built-ins/Array/from/this-null.js Pass
 test/built-ins/Array/fromAsync/async-iterable-async-mapped-awaits-once.js Skipped:async-done-deferred
 test/built-ins/Array/fromAsync/async-iterable-input-does-not-await-input.js Skipped:async-done-deferred
 test/built-ins/Array/fromAsync/async-iterable-input-iteration-err.js Skipped:async-done-deferred
@@ -252,11 +252,11 @@ test/built-ins/Array/of/does-not-use-prototype-properties.js Pass
 test/built-ins/Array/of/does-not-use-set-for-indices.js TypeCheckError
 test/built-ins/Array/of/length.js TypeCheckError
 test/built-ins/Array/of/name.js TypeCheckError
-test/built-ins/Array/of/not-a-constructor.js RuntimeError
+test/built-ins/Array/of/not-a-constructor.js Pass
 test/built-ins/Array/of/of.js TypeCheckError
 test/built-ins/Array/of/proto-from-ctor-realm.js TypeCheckError
 test/built-ins/Array/of/return-a-custom-instance.js RuntimeError
-test/built-ins/Array/of/return-a-new-array-object.js RuntimeError
+test/built-ins/Array/of/return-a-new-array-object.js Pass
 test/built-ins/Array/of/return-abrupt-from-contructor.js Pass
 test/built-ins/Array/of/return-abrupt-from-data-property-using-proxy.js Pass
 test/built-ins/Array/of/return-abrupt-from-data-property.js Pass

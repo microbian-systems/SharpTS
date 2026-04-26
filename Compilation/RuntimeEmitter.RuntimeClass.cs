@@ -431,6 +431,7 @@ public partial class RuntimeEmitter
         EmitArrayFlatMap(typeBuilder, runtime);
         EmitArrayFrom(typeBuilder, runtime);
         EmitArrayOf(typeBuilder, runtime);
+        EmitArrayFromAdapter(typeBuilder, runtime);
         // EmitArrayConstructor is emitted earlier (before InvokeValue) so its
         // MethodBuilder is available to InvokeValue's Type-callee dispatch.
         EmitArraySort(typeBuilder, runtime);

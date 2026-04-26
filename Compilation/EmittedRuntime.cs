@@ -141,6 +141,8 @@ public class EmittedRuntime
     public MethodBuilder GetEntries { get; set; } = null!;
     public MethodBuilder IsArray { get; set; } = null!;
     public MethodBuilder ArrayFrom { get; set; } = null!;
+    /// <summary>Stage 4y: ArrayFrom wrapped for value-form (object[] adapter).</summary>
+    public MethodBuilder ArrayFromAdapter { get; set; } = null!;
     public MethodBuilder ArrayOf { get; set; } = null!;
     // Array(…) / new Array(…) dispatch (issue #61).
     public MethodBuilder ArrayConstructor { get; set; } = null!;
