@@ -39,12 +39,16 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
             }
             else
             {
-                // Emit first argument
-                emitter.EmitExpressionAsDouble(arguments[0]);
-                // Chain remaining arguments with min/max calls
+                // Same ToNumber routing as the unary-Math loop below — handles
+                // \`Math.max(undefined, 1)\` returning NaN (spec) instead of crashing.
+                emitter.EmitExpression(arguments[0]);
+                emitter.EnsureBoxed();
+                il.Emit(OpCodes.Call, ctx.Runtime!.ToNumber);
                 for (int i = 1; i < arguments.Count; i++)
                 {
-                    emitter.EmitExpressionAsDouble(arguments[i]);
+                    emitter.EmitExpression(arguments[i]);
+                    emitter.EnsureBoxed();
+                    il.Emit(OpCodes.Call, ctx.Runtime!.ToNumber);
                     il.Emit(OpCodes.Call, minMaxMethod);
                 }
             }
@@ -52,10 +56,16 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
             return true;
         }
 
-        // Emit all arguments as doubles
+        // Emit all arguments as doubles. Per ECMA-262, Math.* methods coerce
+        // each arg via ToNumber — undefined → NaN, null → +0, "abc" → NaN, etc.
+        // Pre-fix EmitExpressionAsDouble used Convert.ToDouble(object) which
+        // threw InvalidCastException on $Undefined.Instance. Routing through
+        // $Runtime.ToNumber gives spec semantics for all primitives.
         foreach (var arg in arguments)
         {
-            emitter.EmitExpressionAsDouble(arg);
+            emitter.EmitExpression(arg);
+            emitter.EnsureBoxed();
+            il.Emit(OpCodes.Call, ctx.Runtime!.ToNumber);
         }
 
         if (methodName == "round")
