@@ -1470,6 +1470,45 @@ public partial class RuntimeEmitter
         // classes are emitted as System.Type tokens, so static access must walk the Type.
         il.MarkLabel(typeGetLabel);
         {
+            // Boolean/Number/String.prototype — return the per-type singleton
+            // Dictionary so writes/reads round-trip. Stage 4w: required for
+            // test262 patterns like `Boolean.prototype[0] = true; Boolean.prototype.length = 1;
+            // Array.prototype.every.call(false, cb)` to surface the customization
+            // when the materializer falls back to the prototype for primitive
+            // receivers. Check first, before PDS lookup, so the singleton wins
+            // over any user-stored "prototype" descriptor.
+            var notProtoNameLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "prototype");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, notProtoNameLabel);
+            // typeof Boolean
+            var notBoolLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldtoken, _types.Boolean);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Bne_Un, notBoolLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notBoolLabel);
+            var notDoubleLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldtoken, _types.Double);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Bne_Un, notDoubleLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notDoubleLabel);
+            var notStringLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldtoken, _types.String);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Bne_Un, notStringLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notStringLabel);
+            il.MarkLabel(notProtoNameLabel);
+
             var typePdsDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);

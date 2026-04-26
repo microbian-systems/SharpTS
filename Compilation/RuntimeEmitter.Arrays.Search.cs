@@ -168,6 +168,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notDict);
 
+        // Bool primitive → materialize from Boolean.prototype singleton.
+        // Per spec, ToObject(false) creates a Boolean wrapper that inherits
+        // from Boolean.prototype. Test262 patterns customize Boolean.prototype
+        // (`Boolean.prototype[0] = true; Boolean.prototype.length = 1;`)
+        // before calling Array.prototype.X.call(false, ...) — those reads must
+        // surface here. Routes through MaterializeFromPrototype which reads
+        // length + indexed properties from the supplied dict.
+        var notBool = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, notBool);
+        il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+        EmitMaterializeFromPrototypeDict(il, runtime);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBool);
+
+        // Double (number) primitive → materialize from Number.prototype singleton
+        // (mirrors the bool case for `Array.prototype.X.call(42, cb)`).
+        var notNumber = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, notNumber);
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        EmitMaterializeFromPrototypeDict(il, runtime);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNumber);
+
         // Fallback: return an empty List<object> rather than throw. ECMA-262
         // strictly says `Array.prototype.X.call(null/undefined)` throws TypeError,
         // and unsupported array-like receivers should also fail spec checks —
@@ -227,6 +254,128 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.Char.GetMethod("ToString", Type.EmptyTypes)!);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
 
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, listLocal);
+    }
+
+    /// <summary>
+    /// Reads length + indexed slots from a prototype-singleton dict that's
+    /// already on top of the stack and emits IL that produces a List&lt;object&gt;.
+    /// Used by the materializer's primitive-receiver branches (bool, double).
+    /// Stack-in: [dict]. Stack-out: [list].
+    /// Distinct from <see cref="EmitMaterializeDictionary"/> which expects the
+    /// receiver in arg0 and routes through GetProperty (for accessor getters);
+    /// prototype singletons hold plain dict entries written directly by user
+    /// code, so we use TryGetValue on the dict for both length and indexed reads.
+    /// </summary>
+    private void EmitMaterializeFromPrototypeDict(ILGenerator il, EmittedRuntime runtime)
+    {
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, dictLocal);
+
+        var lenLocal = il.DeclareLocal(_types.Int32);
+        var lenValLocal = il.DeclareLocal(_types.Object);
+        var listLocal = il.DeclareLocal(_types.ListOfObject);
+        var idxLocal = il.DeclareLocal(_types.Int32);
+        var valLocal = il.DeclareLocal(_types.Object);
+
+        var tryGetValue = _types.DictionaryStringObject.GetMethod(
+            "TryGetValue",
+            [_types.String, _types.Object.MakeByRefType()])!;
+
+        // if (dict.TryGetValue("length", out lenVal)) ... else len = 0
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Ldloca, lenValLocal);
+        il.Emit(OpCodes.Callvirt, tryGetValue);
+        var haveLen = il.DefineLabel();
+        var afterLen = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, haveLen);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.Emit(OpCodes.Br, afterLen);
+
+        il.MarkLabel(haveLen);
+        // len = (int)$Runtime.ToNumber(lenVal); clamp [0, 1<<20]
+        il.Emit(OpCodes.Ldloc, lenValLocal);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        var lenAsDouble = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Stloc, lenAsDouble);
+        // NaN/Infinity → 0; else clamp
+        il.Emit(OpCodes.Ldloc, lenAsDouble);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("IsFinite", [_types.Double])!);
+        var finiteLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, finiteLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.Emit(OpCodes.Br, afterLen);
+        il.MarkLabel(finiteLabel);
+        il.Emit(OpCodes.Ldloc, lenAsDouble);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        // clamp to [0, 1<<20]
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        var notNegLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bge, notNegLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.MarkLabel(notNegLabel);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Ldc_I4, 1 << 20);
+        var notTooBigLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ble, notTooBigLabel);
+        il.Emit(OpCodes.Ldc_I4, 1 << 20);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.MarkLabel(notTooBigLabel);
+
+        il.MarkLabel(afterLen);
+
+        // list = new List<object>(len)
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
+        il.Emit(OpCodes.Stloc, listLocal);
+
+        // i = 0
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idxLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // if (dict.TryGetValue(i.ToString(), out val)) list.Add(val); else list.Add(ArrayHole.Instance)
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        var idxAsIntLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Stloc, idxAsIntLocal);
+        il.Emit(OpCodes.Ldloca, idxAsIntLocal);
+        il.Emit(OpCodes.Call, _types.Int32.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ldloca, valLocal);
+        il.Emit(OpCodes.Callvirt, tryGetValue);
+        var noEntry = il.DefineLabel();
+        var afterEntry = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, noEntry);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+        il.Emit(OpCodes.Br, afterEntry);
+        il.MarkLabel(noEntry);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayHoleInstance);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+        il.MarkLabel(afterEntry);
+
+        // i++
         il.Emit(OpCodes.Ldloc, idxLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);

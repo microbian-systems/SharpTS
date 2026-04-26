@@ -78,6 +78,30 @@ public partial class RuntimeEmitter
             FieldAttributes.Public | FieldAttributes.Static);
         runtime.MathSingletonField = mathSingletonField;
 
+        // Boolean / Number / String prototype singletons. Test262 patterns like
+        //   Boolean.prototype[0] = true; Boolean.prototype.length = 1;
+        //   Array.prototype.every.call(false, cb)
+        // require these to be addressable Dictionary objects whose property
+        // writes round-trip and whose values surface to the array-like
+        // materializer when the receiver is a bare bool/double/string primitive.
+        // Bare-reference resolution for `Boolean`/`Number`/`String.prototype`
+        // routes through GetProperty's Type branch, which checks these fields.
+        var booleanPrototypeField = typeBuilder.DefineField(
+            "_booleanPrototype",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.BooleanPrototypeField = booleanPrototypeField;
+        var numberPrototypeField = typeBuilder.DefineField(
+            "_numberPrototype",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.NumberPrototypeField = numberPrototypeField;
+        var stringPrototypeField = typeBuilder.DefineField(
+            "_stringPrototype",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.StringPrototypeField = stringPrototypeField;
+
         // CheckCancellation(): if (_cancelRequested) throw new
         //   OperationCanceledException("Compiled execution cancelled.");
         // Called by loop emitters at each backedge. Method body is emitted
@@ -184,6 +208,15 @@ public partial class RuntimeEmitter
         // Initialize _mathSingleton = new Dictionary<string, object>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         cctorIL.Emit(OpCodes.Stsfld, mathSingletonField);
+
+        // Boolean/Number/String prototype singletons (lazy-feeling but eagerly
+        // initialized so Type→prototype lookups never hit a null).
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Stsfld, booleanPrototypeField);
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Stsfld, numberPrototypeField);
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Stsfld, stringPrototypeField);
 
         // Initialize _symbolStorage = new ConditionalWeakTable<object, Dictionary<object, object?>>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(symbolStorageType));

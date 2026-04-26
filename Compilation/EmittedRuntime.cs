@@ -281,6 +281,17 @@ public class EmittedRuntime
     // Pre-fix, bare `Math` in compiled mode evaluated to null, so writes
     // silently vanished.
     public FieldBuilder MathSingletonField { get; set; } = null!;
+    /// <summary>
+    /// Boolean.prototype singleton — a Dictionary&lt;string, object&gt; that surfaces
+    /// when user code does <c>Boolean.prototype[0] = …</c> or
+    /// <c>Boolean.prototype.length = …</c>. Read by GetProperty's Type-receiver
+    /// branch and by the array-like materializer for primitive bool receivers.
+    /// </summary>
+    public FieldBuilder BooleanPrototypeField { get; set; } = null!;
+    /// <summary>Number.prototype singleton; mirror of <see cref="BooleanPrototypeField"/> for primitive doubles.</summary>
+    public FieldBuilder NumberPrototypeField { get; set; } = null!;
+    /// <summary>String.prototype singleton; mirror of <see cref="BooleanPrototypeField"/> for primitive strings.</summary>
+    public FieldBuilder StringPrototypeField { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;
