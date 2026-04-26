@@ -174,7 +174,10 @@ public partial class Interpreter
                 {
                     return Runtime.Types.SharpTSUndefined.Instance;
                 }
-                throw new InterpreterException($"Can only call functions and classes. (got {callee?.GetType().FullName ?? "null"})");
+                // ECMA-262: invoking a non-callable surfaces as TypeError.
+                // Wrap so guest `try/catch` sees `e.constructor === TypeError`.
+                throw new ThrowException(new SharpTSTypeError(
+                    $"{GetTypeofString(callee)} is not a function"));
             }
 
             // Per ECMA-262 §10.2.1: missing arguments become undefined; do not
@@ -399,7 +402,9 @@ public partial class Interpreter
                 {
                     return RuntimeValue.Undefined;
                 }
-                throw new InterpreterException($"Can only call functions and classes. (got {callee?.GetType().FullName ?? "null"} from callee={call.Callee.GetType().Name}:{(call.Callee is Expr.Variable vv2 ? vv2.Name.Lexeme : call.Callee is Expr.Get gg2 ? $"{(gg2.Object is Expr.Variable gov2 ? gov2.Name.Lexeme : gg2.Object.GetType().Name)}.{gg2.Name.Lexeme}" : call.Callee is Expr.GetIndex gi2 ? $"[{(gi2.Index is Expr.Literal il2 ? il2.Value : "?")}]" : "?")} at line {call.Paren.Line})");
+                // ECMA-262: invoking a non-callable surfaces as TypeError.
+                throw new ThrowException(new SharpTSTypeError(
+                    $"{TypeOfRepr(callee)} is not a function"));
             }
 
             // Per ECMA-262 §10.2.1: missing arguments become undefined; do not

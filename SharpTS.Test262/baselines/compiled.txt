@@ -3835,7 +3835,7 @@ test/built-ins/Number/prototype/toExponential/infinity.js Pass
 test/built-ins/Number/prototype/toExponential/length.js TypeCheckError
 test/built-ins/Number/prototype/toExponential/name.js TypeCheckError
 test/built-ins/Number/prototype/toExponential/nan.js Pass
-test/built-ins/Number/prototype/toExponential/not-a-constructor.js RuntimeError
+test/built-ins/Number/prototype/toExponential/not-a-constructor.js Pass
 test/built-ins/Number/prototype/toExponential/prop-desc.js TypeCheckError
 test/built-ins/Number/prototype/toExponential/range.js Pass
 test/built-ins/Number/prototype/toExponential/return-abrupt-tointeger-fractiondigits-symbol.js Pass
@@ -3855,7 +3855,7 @@ test/built-ins/Number/prototype/toFixed/S15.7.4.5_A2_T01.js Pass
 test/built-ins/Number/prototype/toFixed/exactness.js Pass
 test/built-ins/Number/prototype/toFixed/length.js TypeCheckError
 test/built-ins/Number/prototype/toFixed/name.js TypeCheckError
-test/built-ins/Number/prototype/toFixed/not-a-constructor.js RuntimeError
+test/built-ins/Number/prototype/toFixed/not-a-constructor.js Pass
 test/built-ins/Number/prototype/toFixed/prop-desc.js TypeCheckError
 test/built-ins/Number/prototype/toFixed/range.js Pass
 test/built-ins/Number/prototype/toFixed/return-type.js Pass
@@ -3864,14 +3864,14 @@ test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-symbol
 test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-toprimitive.js Pass
 test/built-ins/Number/prototype/toLocaleString/length.js TypeCheckError
 test/built-ins/Number/prototype/toLocaleString/name.js TypeCheckError
-test/built-ins/Number/prototype/toLocaleString/not-a-constructor.js RuntimeError
+test/built-ins/Number/prototype/toLocaleString/not-a-constructor.js Pass
 test/built-ins/Number/prototype/toLocaleString/prop-desc.js TypeCheckError
 test/built-ins/Number/prototype/toPrecision/exponential.js Pass
 test/built-ins/Number/prototype/toPrecision/infinity.js Pass
 test/built-ins/Number/prototype/toPrecision/length.js TypeCheckError
 test/built-ins/Number/prototype/toPrecision/name.js TypeCheckError
 test/built-ins/Number/prototype/toPrecision/nan.js Pass
-test/built-ins/Number/prototype/toPrecision/not-a-constructor.js RuntimeError
+test/built-ins/Number/prototype/toPrecision/not-a-constructor.js Pass
 test/built-ins/Number/prototype/toPrecision/precision-cannot-be-coerced-to-a-number-in-range.js Pass
 test/built-ins/Number/prototype/toPrecision/prop-desc.js TypeCheckError
 test/built-ins/Number/prototype/toPrecision/range.js Pass
@@ -3932,7 +3932,7 @@ test/built-ins/Number/prototype/toString/S15.7.4.2_A4_T05.js RuntimeError
 test/built-ins/Number/prototype/toString/a-z.js Pass
 test/built-ins/Number/prototype/toString/length.js TypeCheckError
 test/built-ins/Number/prototype/toString/name.js TypeCheckError
-test/built-ins/Number/prototype/toString/not-a-constructor.js RuntimeError
+test/built-ins/Number/prototype/toString/not-a-constructor.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-default-radix.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-1.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-10.js Pass
@@ -3982,7 +3982,7 @@ test/built-ins/Number/prototype/valueOf/S15.7.4.4_A2_T04.js RuntimeError
 test/built-ins/Number/prototype/valueOf/S15.7.4.4_A2_T05.js RuntimeError
 test/built-ins/Number/prototype/valueOf/length.js TypeCheckError
 test/built-ins/Number/prototype/valueOf/name.js TypeCheckError
-test/built-ins/Number/prototype/valueOf/not-a-constructor.js RuntimeError
+test/built-ins/Number/prototype/valueOf/not-a-constructor.js Pass
 test/built-ins/Number/prototype/valueOf/prop-desc.js TypeCheckError
 test/built-ins/Number/return-abrupt-tonumber-value-symbol.js Pass
 test/built-ins/Number/return-abrupt-tonumber-value.js Pass

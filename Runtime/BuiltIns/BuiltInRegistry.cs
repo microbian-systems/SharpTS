@@ -367,10 +367,17 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterNamespace(new BuiltInNamespace(
             Name: "JSON",
-            IsSingleton: false,
-            SingletonFactory: null,
+            // ECMA-262 25.5: JSON is an ordinary (non-callable, non-
+            // constructable) object. Expose a singleton so bare-reference
+            // patterns like `var o = JSON` resolve to a real value (typeof
+            // === "object"), and so `JSON()` / `new JSON()` route through
+            // the interpreter's not-a-function / not-a-constructor paths.
+            IsSingleton: true,
+            SingletonFactory: () => Types.SharpTSJSON.Instance,
             GetMethod: name => JSONBuiltIns.GetStaticMethod(name) as BuiltInMethod
         ));
+        registry.RegisterInstanceType(typeof(Types.SharpTSJSON), (_, name) =>
+            JSONBuiltIns.GetStaticMethod(name));
     }
 
     private static void RegisterConsoleNamespace(BuiltInRegistry registry)

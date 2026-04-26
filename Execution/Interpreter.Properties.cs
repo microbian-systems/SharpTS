@@ -113,7 +113,10 @@ public partial class Interpreter
 
         if (klass is not SharpTSClass sharpClass)
         {
-             throw new InterpreterException("Can only instantiate classes.");
+             // ECMA-262: invoking `new X` on a non-constructor surfaces as
+             // TypeError. Routed through ThrowException so guest code sees a
+             // real TypeError instance for `assert.throws(TypeError, ...)`.
+             throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
         }
 
         // Runtime check for abstract class instantiation (backup to type checker)
@@ -231,7 +234,10 @@ public partial class Interpreter
 
         if (klass is not SharpTSClass sharpClass)
         {
-             throw new InterpreterException("Can only instantiate classes.");
+             // ECMA-262: invoking `new X` on a non-constructor surfaces as
+             // TypeError. Routed through ThrowException so guest code sees a
+             // real TypeError instance for `assert.throws(TypeError, ...)`.
+             throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
         }
 
         // Runtime check for abstract class instantiation (backup to type checker)
