@@ -152,6 +152,25 @@ public partial class Parser
             return FinishTraditionalFor(initializer);
         }
 
+        // ECMA-262 also allows for-in/for-of using a previously-declared variable:
+        //   var prop; for (prop in obj) {...}
+        // Without this branch the parser fell through to traditional-for and
+        // tripped over `in`/`of` mid-init, surfacing as ParseError. Detect by
+        // peeking IDENTIFIER then IN/OF and reusing the for-in/for-of nodes
+        // (with the existing var name as the loop binding).
+        if (Check(TokenType.IDENTIFIER) && (CheckNext(TokenType.IN) || CheckNext(TokenType.OF)))
+        {
+            Token varName = Advance(); // identifier
+            bool isOfLoop = Match(TokenType.OF);
+            if (!isOfLoop) Consume(TokenType.IN, "Expect 'in' or 'of' after for-loop binding.");
+            Expr rhs = Expression();
+            Consume(TokenType.RIGHT_PAREN, "Expect ')' after for-loop expression.");
+            Stmt body = Statement();
+            if (isOfLoop)
+                return new Stmt.ForOf(varName, null, rhs, body, isAsync);
+            return new Stmt.ForIn(varName, null, rhs, body);
+        }
+
         // Traditional for loop without let/const
         Stmt? init;
         if (Match(TokenType.SEMICOLON))
