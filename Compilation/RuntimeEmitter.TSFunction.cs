@@ -671,12 +671,25 @@ public partial class RuntimeEmitter
         lengthIL.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
         lengthIL.Emit(OpCodes.Brtrue, skipParam);
 
-        // Skip if param name starts with "__" (internal parameters like __this)
+        // Skip if param name starts with "__" (internal parameters like __this).
+        // ParameterInfo.Name can be null on emitted MethodBuilder methods that
+        // didn't supply parameter names (e.g. MathFloorAdapter takes (object)
+        // unnamed). Guard the StartsWith with a null check — null name means
+        // "regular parameter, count it".
+        var nameLocal = lengthIL.DeclareLocal(_types.String);
         lengthIL.Emit(OpCodes.Ldloc, paramLocalLength);
         lengthIL.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("Name")!.GetGetMethod()!);
+        lengthIL.Emit(OpCodes.Stloc, nameLocal);
+        lengthIL.Emit(OpCodes.Ldloc, nameLocal);
+        var nameNotNullLabel = lengthIL.DefineLabel();
+        lengthIL.Emit(OpCodes.Brtrue, nameNotNullLabel);
+        lengthIL.Emit(OpCodes.Br, incrementCount);
+        lengthIL.MarkLabel(nameNotNullLabel);
+        lengthIL.Emit(OpCodes.Ldloc, nameLocal);
         lengthIL.Emit(OpCodes.Ldstr, "__");
         lengthIL.Emit(OpCodes.Callvirt, _types.String.GetMethod("StartsWith", [_types.String])!);
         lengthIL.Emit(OpCodes.Brtrue, skipParam);
+        lengthIL.MarkLabel(incrementCount);
 
         // count++
         lengthIL.Emit(OpCodes.Ldloc, countLocal);
