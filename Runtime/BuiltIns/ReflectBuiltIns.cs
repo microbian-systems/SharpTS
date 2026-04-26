@@ -1,5 +1,6 @@
 using SharpTS.Compilation;
 using SharpTS.Execution;
+using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Runtime.BuiltIns;
@@ -366,8 +367,22 @@ public static class ReflectBuiltIns
 
             "construct" => new BuiltInMethod("construct", 2, 3, (interpreter, _, args) =>
             {
-                var target = args[0] ?? throw new Exception("Runtime Error: Reflect.construct requires a constructor.");
+                var target = args[0] ?? throw new ThrowException(new SharpTSTypeError(
+                    "Reflect.construct called on non-constructor"));
                 var argsList = args[1];
+
+                // ECMA-262 28.1.2: validate newTarget is a constructor when
+                // explicitly supplied. Test262's `isConstructor(f)` harness
+                // helper relies on this — it calls
+                // `Reflect.construct(function(){}, [], f)` and checks for a
+                // throw when f isn't constructable.
+                if (args.Count > 2 && args[2] is not null)
+                {
+                    var newTarget = args[2];
+                    if (IsNotConstructor(newTarget))
+                        throw new ThrowException(new SharpTSTypeError(
+                            "Reflect.construct newTarget is not a constructor"));
+                }
 
                 List<object?> callArgs;
                 if (argsList == null)
@@ -384,8 +399,13 @@ public static class ReflectBuiltIns
                 }
                 else
                 {
-                    throw new Exception("Runtime Error: Reflect.construct second argument must be an array-like object.");
+                    throw new ThrowException(new SharpTSTypeError(
+                        "Reflect.construct second argument must be an array-like object"));
                 }
+
+                if (IsNotConstructor(target))
+                    throw new ThrowException(new SharpTSTypeError(
+                        "Reflect.construct target is not a constructor"));
 
                 if (target is SharpTSClass cls)
                 {
@@ -395,11 +415,33 @@ public static class ReflectBuiltIns
                 {
                     return callable.Call(interpreter, callArgs);
                 }
-                throw new Exception("Runtime Error: Reflect.construct target is not a constructor.");
+                throw new ThrowException(new SharpTSTypeError(
+                    "Reflect.construct target is not a constructor"));
             }),
 
             _ => null
         };
+    }
+
+    /// <summary>
+    /// True when <paramref name="value"/> isn't a constructor — used by
+    /// Reflect.construct to validate target/newTarget per ECMA-262, and by
+    /// Test262's <c>isConstructor(f)</c> harness helper which calls
+    /// <c>Reflect.construct(function(){}, [], f)</c> and treats a throw as
+    /// "not a constructor".
+    /// </summary>
+    private static bool IsNotConstructor(object? value)
+    {
+        // Direct rejections — methods/wrappers that are clearly callable but
+        // aren't constructors per spec.
+        if (value is SharpTS.Runtime.Types.ArrayPrototypeMethodWrapper
+            or SharpTS.Runtime.Types.StringPrototypeMethodWrapper
+            or SharpTS.Runtime.Types.NumberPrototypeMethodWrapper
+            or SharpTS.Runtime.Types.SharpTSObjectUnboundMethod
+            or BoundFunction)
+            return true;
+        // Anything else that's not callable can't be a constructor.
+        return value is not ISharpTSCallable;
     }
 
     /// <summary>

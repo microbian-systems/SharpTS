@@ -97,11 +97,20 @@ public partial class Interpreter
                 : newThis;
         }
 
+        // Prototype-method wrappers and Object.prototype unbound methods are
+        // not constructors per ECMA-262. They look callable but `new` on them
+        // must surface a TypeError (covers \`new Error.prototype.toString()\`
+        // and the not-a-constructor.js Test262 cluster). BuiltInMethod
+        // explicitly stays constructable here because Intl.DateTimeFormat,
+        // RegExp, Date, Map, Set, etc. are registered as BuiltInMethod and
+        // need to support \`new\`.
+        if (IsNonConstructorWrapper(klass))
+        {
+            throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
+        }
+
         // Handle callable constructors (like SharpTSEventEmitterConstructor)
         // These implement ISharpTSCallable and are used for module-imported types.
-        // BuiltInMethod is included — many built-in constructors (Intl.DateTimeFormat,
-        // RegExp, etc.) are registered as BuiltInMethod and need `new` support.
-        // Spec-strict isConstructor distinction would need a per-method flag.
         if (klass is ISharpTSCallable callable && klass is not SharpTSClass && klass is not BoundFunction)
         {
             List<object?> ctorArgs = await ctx.EvaluateAllAsync(newExpr.Arguments);
@@ -215,6 +224,13 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(result is SharpTSObject or SharpTSInstance or SharpTSArray
                 ? result
                 : newThis);
+        }
+
+        // Prototype-method wrappers and Object.prototype unbound methods are
+        // not constructors per ECMA-262 — see async path above.
+        if (IsNonConstructorWrapper(klass))
+        {
+            throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
         }
 
         // Handle callable constructors. Many built-in constructors are
@@ -453,6 +469,23 @@ public partial class Interpreter
             return am.Bind(receiver);
         return member;
     }
+
+    /// <summary>
+    /// True when <paramref name="callable"/> is a prototype-method wrapper or
+    /// other ISharpTSCallable whose only role is method-dispatch — never a
+    /// constructor. Used to surface TypeError on <c>new SomeMethod()</c> per
+    /// ECMA-262. <see cref="BuiltInMethod"/> is intentionally excluded
+    /// because many built-ins (Intl.DateTimeFormat, RegExp, ...) are
+    /// registered as BuiltInMethod and need <c>new</c> support; a
+    /// per-method <c>isConstructor</c> flag is the proper fix and is
+    /// tracked as a follow-up.
+    /// </summary>
+    private static bool IsNonConstructorWrapper(object callable) => callable
+        is ArrayPrototypeMethodWrapper
+        or StringPrototypeMethodWrapper
+        or NumberPrototypeMethodWrapper
+        or SharpTSObjectUnboundMethod
+        or ErrorToStringCallable;
 
     private object? EvaluateGetOnClass(SharpTSClass klass, string memberName)
     {
