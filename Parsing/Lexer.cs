@@ -426,31 +426,51 @@ public class Lexer(string source)
             return;
         }
 
-        if (Peek() == '.' && (char.IsDigit(PeekNext()) || PeekNext() == '_'))
+        // ECMA-262 NumericLiteral grammar:
+        //   DecimalIntegerLiteral . DecimalDigits[opt] ExponentPart[opt]
+        // Both `1.5` and `1.` (trailing dot, no fractional digits) are valid.
+        // Only consume the `.` when it can't be a property accessor —
+        // i.e. NOT followed by an identifier char (so `(0).toFixed(2)` keeps
+        // dot as DOT). Digit / underscore / e / E / EOF / non-ident punct after
+        // dot all bind to the number; identifier letters bind as property.
+        if (Peek() == '.' && !char.IsLetter(PeekNext()) && PeekNext() != '_'
+            || Peek() == '.' && (char.IsDigit(PeekNext()) || PeekNext() == '_'))
         {
+            // Heuristic: if next char after `.` is a letter (a-z/A-Z), treat
+            // dot as property accessor (e.g. `(123).toFixed`). Otherwise it's
+            // a fractional separator. Check fractional-digit case explicitly
+            // so the underscore-after-dot path remains the same.
+            char afterDot = PeekNext();
+            bool hasFractional = char.IsDigit(afterDot) || afterDot == '_';
+
             Advance(); // consume '.'
 
-            // Check for underscore immediately after decimal point (invalid)
-            if (Peek() == '_')
+            if (hasFractional)
             {
-                throw new Exception($"Numeric separator must be between digits at line {_line}");
-            }
-
-            // Consume fractional digits and numeric separators
-            while (char.IsDigit(Peek()) || Peek() == '_')
-            {
+                // Check for underscore immediately after decimal point (invalid)
                 if (Peek() == '_')
                 {
-                    // Underscore must be between digits
-                    char prev = _source[_current - 1];
-                    char next = PeekNext();
-                    if (!char.IsDigit(prev) || !char.IsDigit(next))
-                    {
-                        throw new Exception($"Numeric separator must be between digits at line {_line}");
-                    }
+                    throw new Exception($"Numeric separator must be between digits at line {_line}");
                 }
-                Advance();
+
+                // Consume fractional digits and numeric separators
+                while (char.IsDigit(Peek()) || Peek() == '_')
+                {
+                    if (Peek() == '_')
+                    {
+                        // Underscore must be between digits
+                        char prev = _source[_current - 1];
+                        char next = PeekNext();
+                        if (!char.IsDigit(prev) || !char.IsDigit(next))
+                        {
+                            throw new Exception($"Numeric separator must be between digits at line {_line}");
+                        }
+                    }
+                    Advance();
+                }
             }
+            // else: trailing-dot form (`123.`) — dot already consumed, no
+            // fractional digits, fall through to ExponentPart check.
         }
 
         // Scientific notation: e/E followed by optional +/- and digits
