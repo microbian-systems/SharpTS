@@ -469,21 +469,73 @@ public class StateMachineEmitHelpers
     }
 
     /// <summary>
-    /// Emit Object.Equals call without boxing. Used for strict equality (===).
+    /// Emit JS-strict-equality (`===`). Stack: [boxed_a, boxed_b] -> [bool].
+    /// NaN handling: NaN === NaN must return false per ECMA-262 7.2.16, but
+    /// .NET's <see cref="object.Equals(object, object)"/> on boxed doubles routes
+    /// to <c>Double.Equals</c> which honors the IEquatable convention NaN==NaN.
+    /// We pre-check both operands for double NaN; if either is NaN the result
+    /// is false short-circuit, otherwise fall through to <c>Object.Equals</c>.
     /// </summary>
     public void EmitObjectEqualsBoxed_NoBox()
     {
-        _il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", [_types.Object, _types.Object]));
+        EmitJsStrictEqualityCore();
         _stackType = StackType.Boolean;
     }
 
     public void EmitObjectNotEqualsBoxed()
     {
-        _il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", [_types.Object, _types.Object]));
+        EmitJsStrictEqualityCore();
         _il.Emit(OpCodes.Ldc_I4_0);
         _il.Emit(OpCodes.Ceq);
         _il.Emit(OpCodes.Box, _types.Boolean);
         SetStackUnknown();
+    }
+
+    /// <summary>
+    /// IL helper: stack [boxed_a, boxed_b] -> [bool]. NaN-aware === per spec.
+    /// </summary>
+    private void EmitJsStrictEqualityCore()
+    {
+        var aLoc = _il.DeclareLocal(_types.Object);
+        var bLoc = _il.DeclareLocal(_types.Object);
+        _il.Emit(OpCodes.Stloc, bLoc);
+        _il.Emit(OpCodes.Stloc, aLoc);
+
+        var returnFalseLabel = _il.DefineLabel();
+        var aNotDoubleLabel = _il.DefineLabel();
+        var bNotDoubleLabel = _il.DefineLabel();
+        var endLabel = _il.DefineLabel();
+
+        // if (a is double da && double.IsNaN(da)) return false;
+        _il.Emit(OpCodes.Ldloc, aLoc);
+        _il.Emit(OpCodes.Isinst, _types.Double);
+        _il.Emit(OpCodes.Brfalse, aNotDoubleLabel);
+        _il.Emit(OpCodes.Ldloc, aLoc);
+        _il.Emit(OpCodes.Unbox_Any, _types.Double);
+        _il.Emit(OpCodes.Call, _types.Double.GetMethod("IsNaN", [_types.Double])!);
+        _il.Emit(OpCodes.Brtrue, returnFalseLabel);
+        _il.MarkLabel(aNotDoubleLabel);
+
+        // if (b is double db && double.IsNaN(db)) return false;
+        _il.Emit(OpCodes.Ldloc, bLoc);
+        _il.Emit(OpCodes.Isinst, _types.Double);
+        _il.Emit(OpCodes.Brfalse, bNotDoubleLabel);
+        _il.Emit(OpCodes.Ldloc, bLoc);
+        _il.Emit(OpCodes.Unbox_Any, _types.Double);
+        _il.Emit(OpCodes.Call, _types.Double.GetMethod("IsNaN", [_types.Double])!);
+        _il.Emit(OpCodes.Brtrue, returnFalseLabel);
+        _il.MarkLabel(bNotDoubleLabel);
+
+        // return Object.Equals(a, b)
+        _il.Emit(OpCodes.Ldloc, aLoc);
+        _il.Emit(OpCodes.Ldloc, bLoc);
+        _il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", [_types.Object, _types.Object]));
+        _il.Emit(OpCodes.Br, endLabel);
+
+        _il.MarkLabel(returnFalseLabel);
+        _il.Emit(OpCodes.Ldc_I4_0);
+
+        _il.MarkLabel(endLabel);
     }
 
     /// <summary>
