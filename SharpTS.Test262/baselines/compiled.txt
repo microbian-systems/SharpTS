@@ -3811,9 +3811,9 @@ test/built-ins/Number/isSafeInteger/not-safe-integer.js Pass
 test/built-ins/Number/isSafeInteger/prop-desc.js TypeCheckError
 test/built-ins/Number/isSafeInteger/safe-integers.js Pass
 test/built-ins/Number/parseFloat.js TypeCheckError
-test/built-ins/Number/parseFloat/not-a-constructor.js RuntimeError
+test/built-ins/Number/parseFloat/not-a-constructor.js Pass
 test/built-ins/Number/parseInt.js TypeCheckError
-test/built-ins/Number/parseInt/not-a-constructor.js RuntimeError
+test/built-ins/Number/parseInt/not-a-constructor.js Pass
 test/built-ins/Number/prop-desc.js TypeCheckError
 test/built-ins/Number/proto-from-ctor-realm.js TypeCheckError
 test/built-ins/Number/prototype/15.7.3.1-2.js Pass
@@ -5215,7 +5215,7 @@ test/built-ins/String/prototype/valueOf/string-primitive.js TypeCheckError
 test/built-ins/String/raw/length.js TypeCheckError
 test/built-ins/String/raw/name.js TypeCheckError
 test/built-ins/String/raw/nextkey-is-symbol-throws.js Pass
-test/built-ins/String/raw/not-a-constructor.js RuntimeError
+test/built-ins/String/raw/not-a-constructor.js Pass
 test/built-ins/String/raw/raw.js TypeCheckError
 test/built-ins/String/raw/return-empty-string-from-empty-array-length.js Pass
 test/built-ins/String/raw/return-empty-string-if-length-is-negative-infinity.js Pass

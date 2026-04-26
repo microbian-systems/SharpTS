@@ -108,6 +108,11 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
             "isFinite"      => runtime.NumberIsFinite,
             "isInteger"     => runtime.NumberIsInteger,
             "isSafeInteger" => runtime.NumberIsSafeInteger,
+            // Stage 4y: parseInt/parseFloat exposed as values too. The runtime
+            // helpers already exist (used by the static-call path); just wrap
+            // them as $TSFunction so `let p = Number.parseInt; p("42")` works.
+            "parseInt"      => runtime.NumberParseInt,
+            "parseFloat"    => runtime.NumberParseFloat,
             _ => null
         };
         if (method == null) return false;
@@ -196,5 +201,6 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
     public bool HasStaticProperty(string memberName) => memberName is
         "MAX_VALUE" or "MIN_VALUE" or "NaN" or "POSITIVE_INFINITY" or
         "NEGATIVE_INFINITY" or "MAX_SAFE_INTEGER" or "MIN_SAFE_INTEGER" or "EPSILON"
-        or "isNaN" or "isFinite" or "isInteger" or "isSafeInteger";
+        or "isNaN" or "isFinite" or "isInteger" or "isSafeInteger"
+        or "parseInt" or "parseFloat";
 }

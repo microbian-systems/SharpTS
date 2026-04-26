@@ -81,6 +81,7 @@ public sealed class StringStaticEmitter : IStaticTypeEmitterStrategy
         {
             "fromCharCode"  => runtime.StringFromCharCode,
             "fromCodePoint" => runtime.StringFromCodePoint,
+            "raw"           => runtime.StringRaw,
             _ => null
         };
         if (method == null) return false;

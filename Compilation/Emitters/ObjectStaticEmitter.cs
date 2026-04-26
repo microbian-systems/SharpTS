@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Parsing;
 
@@ -254,6 +255,44 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
     /// </summary>
     public bool TryEmitStaticPropertyGet(IEmitterContext emitter, string propertyName)
     {
-        return false;
+        var ctx = emitter.Context;
+        var runtime = ctx.Runtime!;
+        // Stage 4y: expose Object.* static methods as values so
+        // `let f = Object.keys; f(obj)` works AND so test262's isConstructor
+        // harness sees `typeof f === "function"`.
+        // Only methods with a uniform `(object) -> object` or
+        // `(object[], object) -> object` shape compatible with the
+        // $TSFunction reflection-dispatch path are wrapped here. Methods
+        // with mismatched return types (e.g. bool) need their own adapters
+        // — deferred to a follow-up stage.
+        MethodInfo? method = propertyName switch
+        {
+            "keys"                 => runtime.GetKeys,
+            "values"               => runtime.GetValues,
+            "entries"              => runtime.GetEntries,
+            "fromEntries"          => runtime.ObjectFromEntries,
+            "freeze"               => runtime.ObjectFreeze,
+            "seal"                 => runtime.ObjectSeal,
+            "preventExtensions"    => runtime.ObjectPreventExtensions,
+            "getOwnPropertyNames"  => runtime.GetOwnPropertyNames,
+            "defineProperty"       => runtime.ObjectDefineProperty,
+            "defineProperties"     => runtime.ObjectDefineProperties,
+            "getOwnPropertyDescriptor"  => runtime.ObjectGetOwnPropertyDescriptor,
+            "getOwnPropertyDescriptors" => runtime.ObjectGetOwnPropertyDescriptors,
+            "create"               => runtime.ObjectCreate,
+            "assign"               => runtime.ObjectAssign,
+            _ => null
+        };
+        if (method == null) return false;
+
+        var il = ctx.IL;
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldtoken, method);
+        il.Emit(OpCodes.Ldtoken, method.DeclaringType!);
+        il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
+            ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        return true;
     }
 }
