@@ -2427,6 +2427,10 @@ public partial class RuntimeEmitter
         // $Array handler — `arr.length = N` routes through SetLength. Any
         // other name falls off into the normal silent-ignore (JS permits
         // arbitrary named writes on arrays but we don't persist them).
+        // ECMA-262 23.1.4.1 [[DefineOwnProperty]] for "length": if
+        //   ToNumber(value) !== ToUint32(value)
+        // (i.e. value is not a non-negative integer ≤ 2^32 - 1), throw
+        // RangeError. Pre-fix Convert.ToInt64 rounded `1.5 → 2` silently.
         il.MarkLabel(tsArraySetPropLabel);
         {
             var notLengthLabel = il.DefineLabel();
@@ -2435,10 +2439,54 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
             il.Emit(OpCodes.Brfalse, notLengthLabel);
 
+            // Coerce value through ToNumber (handles strings, booleans, etc.)
+            // then enforce ToUint32 round-trip. The .NET `Convert.ToInt64` path
+            // truncates fractional parts; we need to flag fractional / NaN /
+            // out-of-range as a RangeError instead.
+            var doubleValLocal = il.DeclareLocal(_types.Double);
+            var u32Local = il.DeclareLocal(_types.Int64);
+            var validLengthLabel = il.DefineLabel();
+            var rangeErrorLabel = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Call, runtime.ToNumber);
+            il.Emit(OpCodes.Stloc, doubleValLocal);
+
+            // Reject NaN / +Infinity / -Infinity via IsFinite.
+            il.Emit(OpCodes.Ldloc, doubleValLocal);
+            il.Emit(OpCodes.Call, _types.Double.GetMethod("IsFinite", [_types.Double])!);
+            il.Emit(OpCodes.Brfalse, rangeErrorLabel);
+
+            // ToUint32 reciprocity: cast to long, ensure 0..2^32-1 inclusive,
+            // and that the round-trip back to double matches the original.
+            il.Emit(OpCodes.Ldloc, doubleValLocal);
+            il.Emit(OpCodes.Conv_I8);
+            il.Emit(OpCodes.Stloc, u32Local);
+            // negative → throw
+            il.Emit(OpCodes.Ldloc, u32Local);
+            il.Emit(OpCodes.Ldc_I8, 0L);
+            il.Emit(OpCodes.Blt, rangeErrorLabel);
+            // > uint.MaxValue → throw
+            il.Emit(OpCodes.Ldloc, u32Local);
+            il.Emit(OpCodes.Ldc_I8, (long)uint.MaxValue);
+            il.Emit(OpCodes.Bgt, rangeErrorLabel);
+            // round-trip mismatch (fractional component) → throw
+            il.Emit(OpCodes.Ldloc, u32Local);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Ldloc, doubleValLocal);
+            il.Emit(OpCodes.Bne_Un, rangeErrorLabel);
+            il.Emit(OpCodes.Br, validLengthLabel);
+
+            il.MarkLabel(rangeErrorLabel);
+            il.Emit(OpCodes.Ldstr, "Invalid array length");
+            il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+
+            il.MarkLabel(validLengthLabel);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Castclass, runtime.TSArrayType);
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
+            il.Emit(OpCodes.Ldloc, u32Local);
             il.Emit(OpCodes.Callvirt, runtime.TSArraySetLength);
             il.Emit(OpCodes.Ret);
 
