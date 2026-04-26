@@ -93,8 +93,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(throwLabel);
-        il.Emit(OpCodes.Ldstr, "TypeError: Value is not iterable.");
-        il.Emit(OpCodes.Newobj, _types.ExceptionCtorString);
+        il.Emit(OpCodes.Ldstr, "Value is not iterable.");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
     }
 
@@ -850,8 +851,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(throwLabel);
-        il.Emit(OpCodes.Ldstr, "TypeError: Reduce of empty iterator with no initial value.");
-        il.Emit(OpCodes.Newobj, _types.ExceptionCtorString);
+        il.Emit(OpCodes.Ldstr, "Reduce of empty iterator with no initial value.");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
     }
 

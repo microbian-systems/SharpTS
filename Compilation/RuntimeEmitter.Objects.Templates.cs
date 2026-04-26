@@ -300,8 +300,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(errorLabel);
-        il.Emit(OpCodes.Ldstr, "TypeError: Tagged template tag must be a function.");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Ldstr, "Tagged template tag must be a function.");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
     }
 
@@ -398,8 +399,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(errorLabel);
-        il.Emit(OpCodes.Ldstr, "TypeError: Tagged template tag must be a function.");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Ldstr, "Tagged template tag must be a function.");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
     }
 }

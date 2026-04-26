@@ -435,9 +435,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_3);
         il.Emit(OpCodes.Brfalse, getterReturnLabel);
 
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot set property which has only a getter");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
+        EmitTSObjectInlineThrow(il, "Cannot set property which has only a getter", runtime.TSTypeErrorCtor);
 
         il.MarkLabel(getterReturnLabel);
         // Non-strict mode silently fails for getter-only
@@ -454,9 +452,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_3);
         il.Emit(OpCodes.Brfalse, frozenReturnLabel);
 
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot assign to read only property of object");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
+        EmitTSObjectInlineThrow(il, "Cannot assign to read only property of object", runtime.TSTypeErrorCtor);
 
         il.MarkLabel(frozenReturnLabel);
         il.Emit(OpCodes.Ret);
@@ -478,9 +474,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_3);
         il.Emit(OpCodes.Brfalse, sealedReturnLabel);
 
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot add property to a sealed object");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
+        EmitTSObjectInlineThrow(il, "Cannot add property to a sealed object", runtime.TSTypeErrorCtor);
 
         il.MarkLabel(sealedReturnLabel);
         il.Emit(OpCodes.Ret);
@@ -579,12 +573,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, sloppyFrozenLabel);
 
         // Throw TypeError for frozen in strict mode
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot delete property '");
+        il.Emit(OpCodes.Ldstr, "Cannot delete property '");
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldstr, "' of a frozen object");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
-        il.Emit(OpCodes.Throw);
+        EmitTSObjectInlineThrowDynamicMsg(il, runtime.TSTypeErrorCtor);
 
         // Sloppy mode frozen - return false
         il.MarkLabel(sloppyFrozenLabel);
@@ -602,12 +595,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, sloppySealedLabel);
 
         // Throw TypeError for sealed in strict mode
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot delete property '");
+        il.Emit(OpCodes.Ldstr, "Cannot delete property '");
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldstr, "' of a sealed object");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
-        il.Emit(OpCodes.Throw);
+        EmitTSObjectInlineThrowDynamicMsg(il, runtime.TSTypeErrorCtor);
 
         // Sloppy mode sealed - return false
         il.MarkLabel(sloppySealedLabel);
@@ -880,5 +872,55 @@ public partial class RuntimeEmitter
         il.MarkLabel(foundLabel);
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits an inline throw of a CLR Exception whose Data["__tsValue"] holds a
+    /// fresh `$XError` instance, so `WrapException` can route it back to the
+    /// catch block as the proper JS-visible error. Used inside emitted runtime
+    /// classes that get built before <c>$Runtime.CreateException</c> exists.
+    /// </summary>
+    private void EmitTSObjectInlineThrow(ILGenerator il, string message, ConstructorBuilder errorCtor)
+    {
+        var errLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldstr, message);
+        il.Emit(OpCodes.Newobj, errorCtor);
+        il.Emit(OpCodes.Stloc, errLocal);
+        var exLocal = il.DeclareLocal(_types.Exception);
+        il.Emit(OpCodes.Ldstr, message);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Stloc, exLocal);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Data").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__tsValue");
+        il.Emit(OpCodes.Ldloc, errLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "set_Item"));
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Throw);
+    }
+
+    /// <summary>
+    /// Like <see cref="EmitTSObjectInlineThrow"/> but consumes a dynamically-built
+    /// message that's already on the IL stack (e.g. produced by String.Concat).
+    /// </summary>
+    private void EmitTSObjectInlineThrowDynamicMsg(ILGenerator il, ConstructorBuilder errorCtor)
+    {
+        var msgLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Stloc, msgLocal);
+        var errLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, msgLocal);
+        il.Emit(OpCodes.Newobj, errorCtor);
+        il.Emit(OpCodes.Stloc, errLocal);
+        var exLocal = il.DeclareLocal(_types.Exception);
+        il.Emit(OpCodes.Ldloc, msgLocal);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Stloc, exLocal);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Data").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__tsValue");
+        il.Emit(OpCodes.Ldloc, errLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "set_Item"));
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Throw);
     }
 }

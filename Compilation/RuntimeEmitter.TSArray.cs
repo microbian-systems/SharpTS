@@ -397,9 +397,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_3);
         il.Emit(OpCodes.Brfalse, frozenReturnLabel);
 
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot assign to read only property of array");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
+        EmitInlineThrowErrorInline(il, "Cannot assign to read only property of array", runtime.TSTypeErrorCtor);
 
         il.MarkLabel(frozenReturnLabel);
         il.Emit(OpCodes.Ret);
@@ -539,10 +537,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stfld, _tsArraySparseField);
         il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(throwRangeLabel);
-        il.Emit(OpCodes.Ldstr, "RangeError: Array operation requires materializing a sparse array whose length exceeds int.MaxValue.");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
+        EmitInlineThrowError(il, runtime, "Array operation requires materializing a sparse array whose length exceeds int.MaxValue.", runtime.TSRangeErrorCtor, throwRangeLabel);
 
         return method;
     }
@@ -1040,15 +1035,8 @@ public partial class RuntimeEmitter
         il.MarkLabel(indexInRangeLabel);
         il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(negThrowLabel);
-        il.Emit(OpCodes.Ldstr, "RangeError: Index out of bounds.");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
-
-        il.MarkLabel(maxThrowLabel);
-        il.Emit(OpCodes.Ldstr, "RangeError: Array index exceeds ECMA-262 uint32 maximum.");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
+        EmitInlineThrowError(il, runtime, "Index out of bounds.", runtime.TSRangeErrorCtor, negThrowLabel);
+        EmitInlineThrowError(il, runtime, "Array index exceeds ECMA-262 uint32 maximum.", runtime.TSRangeErrorCtor, maxThrowLabel);
     }
 
     /// <summary>
@@ -1081,9 +1069,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, frozenReturnLabel);
 
         // throw TypeError
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot assign to read only property of array");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
+        EmitInlineThrowErrorInline(il, "Cannot assign to read only property of array", runtime.TSTypeErrorCtor);
 
         il.MarkLabel(frozenReturnLabel);
         il.Emit(OpCodes.Ret);
@@ -1106,15 +1092,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, setCoreWithExtend);
         il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(negThrowLabel);
-        il.Emit(OpCodes.Ldstr, "RangeError: Index out of bounds.");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
-
-        il.MarkLabel(maxThrowLabel);
-        il.Emit(OpCodes.Ldstr, "RangeError: Array index exceeds ECMA-262 uint32 maximum.");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
+        EmitInlineThrowError(il, runtime, "Index out of bounds.", runtime.TSRangeErrorCtor, negThrowLabel);
+        EmitInlineThrowError(il, runtime, "Array index exceeds ECMA-262 uint32 maximum.", runtime.TSRangeErrorCtor, maxThrowLabel);
     }
 
     /// <summary>
@@ -1362,23 +1341,25 @@ public partial class RuntimeEmitter
     private void EmitInlineThrowError(ILGenerator il, EmittedRuntime runtime, string message, ConstructorBuilder errorCtor, System.Reflection.Emit.Label markLabel)
     {
         il.MarkLabel(markLabel);
-        // var err = new $XError(message)
+        EmitInlineThrowErrorInline(il, message, errorCtor);
+    }
+
+    /// <summary>Inline form of <see cref="EmitInlineThrowError"/> that doesn't mark a label first.</summary>
+    private void EmitInlineThrowErrorInline(ILGenerator il, string message, ConstructorBuilder errorCtor)
+    {
         var errLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldstr, message);
         il.Emit(OpCodes.Newobj, errorCtor);
         il.Emit(OpCodes.Stloc, errLocal);
-        // var ex = new Exception(message)
         var exLocal2 = il.DeclareLocal(_types.Exception);
         il.Emit(OpCodes.Ldstr, message);
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
         il.Emit(OpCodes.Stloc, exLocal2);
-        // ex.Data["__tsValue"] = err
         il.Emit(OpCodes.Ldloc, exLocal2);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Data").GetGetMethod()!);
         il.Emit(OpCodes.Ldstr, "__tsValue");
         il.Emit(OpCodes.Ldloc, errLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "set_Item"));
-        // throw ex
         il.Emit(OpCodes.Ldloc, exLocal2);
         il.Emit(OpCodes.Throw);
     }

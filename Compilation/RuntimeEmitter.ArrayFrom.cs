@@ -245,8 +245,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, inRangeLabel);
 
         il.MarkLabel(rangeErrorLabel);
-        il.Emit(OpCodes.Ldstr, "RangeError: Invalid array length");
-        il.Emit(OpCodes.Newobj, typeof(Exception).GetConstructor([typeof(string)])!);
+        // Inline-throw pattern: $RangeError(msg) wrapped in CLR Exception with
+        // Data["__tsValue"]=err so WrapException returns it on catch. Used here
+        // because EmitArrayConstructor runs before EmitCreateException in the
+        // emit pipeline (must precede InvokeValue), so runtime.CreateException
+        // isn't yet defined.
+        var errLocal = il.DeclareLocal(_types.Object);
+        var exLocal = il.DeclareLocal(_types.Exception);
+        il.Emit(OpCodes.Ldstr, "Invalid array length");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Stloc, errLocal);
+        il.Emit(OpCodes.Ldstr, "Invalid array length");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Stloc, exLocal);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Data").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__tsValue");
+        il.Emit(OpCodes.Ldloc, errLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "set_Item"));
+        il.Emit(OpCodes.Ldloc, exLocal);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(inRangeLabel);

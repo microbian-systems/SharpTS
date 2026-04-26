@@ -148,8 +148,9 @@ public partial class RuntimeEmitter
         var notCallableSkip = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, notCallableLocal);
         il.Emit(OpCodes.Brfalse, notCallableSkip);
-        il.Emit(OpCodes.Ldstr, "TypeError: not a constructor");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(typeof(Exception), _types.String));
+        il.Emit(OpCodes.Ldstr, "not a constructor");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
         il.MarkLabel(notCallableSkip);
 

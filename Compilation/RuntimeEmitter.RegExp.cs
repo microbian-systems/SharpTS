@@ -612,8 +612,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, regexpLocal);
         il.Emit(OpCodes.Callvirt, runtime.TSRegExpGlobalGetter);
         il.Emit(OpCodes.Brtrue, isGlobalLabel);
-        il.Emit(OpCodes.Ldstr, "TypeError: String.prototype.matchAll called with a non-global RegExp argument");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, [_types.String]));
+        il.Emit(OpCodes.Ldstr, "String.prototype.matchAll called with a non-global RegExp argument");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(isGlobalLabel);

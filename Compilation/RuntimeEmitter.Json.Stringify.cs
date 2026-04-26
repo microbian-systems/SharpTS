@@ -227,8 +227,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldc_I4, 512);
         il.Emit(OpCodes.Blt, depthOkLabel);
-        il.Emit(OpCodes.Ldstr, "TypeError: Converting circular structure to JSON");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(typeof(Exception), _types.String));
+        il.Emit(OpCodes.Ldstr, "Converting circular structure to JSON");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
         il.MarkLabel(depthOkLabel);
 
@@ -241,7 +242,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, nullLabel);
 
         // Check for BigInt - get type name and check
-        EmitBigIntCheck(il, valueLocal);
+        EmitBigIntCheck(il, valueLocal, runtime);
 
         // Check for toJSON() method and call it if present
         EmitToJsonCheck(il, valueLocal, runtime);
@@ -333,7 +334,7 @@ public partial class RuntimeEmitter
         return method;
     }
 
-    private void EmitBigIntCheck(ILGenerator il, LocalBuilder valueLocal)
+    private void EmitBigIntCheck(ILGenerator il, LocalBuilder valueLocal, EmittedRuntime runtime)
     {
         var notBigIntLabel = il.DefineLabel();
         var typeLocal = il.DeclareLocal(_types.Type);
@@ -362,8 +363,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, notBigIntLabel);
 
         il.MarkLabel(throwLabel);
-        il.Emit(OpCodes.Ldstr, "TypeError: BigInt value can't be serialized in JSON");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Ldstr, "BigInt value can't be serialized in JSON");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(notBigIntLabel);

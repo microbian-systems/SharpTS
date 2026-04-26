@@ -853,8 +853,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, frozenSloppyLabel);
 
         // Frozen + strict - throw TypeError
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot delete property of a frozen object");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Ldstr, "Cannot delete property of a frozen object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         // Frozen + sloppy - return false
@@ -877,8 +878,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, sealedSloppyLabel);
 
         // Sealed + strict - throw TypeError
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot delete property of a sealed object");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Ldstr, "Cannot delete property of a sealed object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         // Sealed + sloppy - return false

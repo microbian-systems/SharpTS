@@ -917,11 +917,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_3); // strictMode
         var frozenSilentLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, frozenSilentLabel);
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot assign to read only property '");
+        il.Emit(OpCodes.Ldstr, "Cannot assign to read only property '");
         il.Emit(OpCodes.Ldarg_1); // name
         il.Emit(OpCodes.Ldstr, "' of object");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
         il.MarkLabel(frozenSilentLabel);
         il.Emit(OpCodes.Ret); // Silently return in non-strict mode
@@ -2635,11 +2636,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, nullLabel); // Not strict, silently return
 
         // Strict mode and frozen - throw TypeError
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot assign to read only property '");
+        il.Emit(OpCodes.Ldstr, "Cannot assign to read only property '");
         il.Emit(OpCodes.Ldarg_1); // name
         il.Emit(OpCodes.Ldstr, "' of object");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         // Check if sealed and property doesn't exist
@@ -2663,11 +2665,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, nullLabel); // Not strict, silently return
 
         // Strict mode and sealed with new property - throw TypeError
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot add property '");
+        il.Emit(OpCodes.Ldstr, "Cannot add property '");
         il.Emit(OpCodes.Ldarg_1); // name
         il.Emit(OpCodes.Ldstr, "' to a sealed object");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         // Check extensibility via $PropertyDescriptorStore.CanAddProperty - fully standalone, no reflection
@@ -2682,11 +2685,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, nullLabel);  // Not strict, silently return
 
         // Strict mode and non-extensible with new property - throw TypeError
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot add property '");
+        il.Emit(OpCodes.Ldstr, "Cannot add property '");
         il.Emit(OpCodes.Ldarg_1);  // name
         il.Emit(OpCodes.Ldstr, "' to a non-extensible object");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         // Actually set the property
@@ -2772,8 +2776,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_3); // strictMode
         var listFrozenSilentLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, listFrozenSilentLabel);
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot assign to read only property of frozen array");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Ldstr, "Cannot assign to read only property of frozen array");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
         il.MarkLabel(listFrozenSilentLabel);
         il.Emit(OpCodes.Ret); // Silently return in non-strict mode
@@ -3003,12 +3008,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, frozenSloppyLabel);
 
         // Frozen + strict - throw TypeError
+        il.Emit(OpCodes.Ldstr, "Cannot delete property '");
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot delete property '");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
         il.Emit(OpCodes.Ldstr, "' of a frozen object");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         // Frozen + sloppy - return false
@@ -3031,12 +3036,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, sealedSloppyLabel);
 
         // Sealed + strict - throw TypeError
+        il.Emit(OpCodes.Ldstr, "Cannot delete property '");
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "TypeError: Cannot delete property '");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
         il.Emit(OpCodes.Ldstr, "' of a sealed object");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         // Sealed + sloppy - return false

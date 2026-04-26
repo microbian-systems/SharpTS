@@ -274,11 +274,13 @@ public partial class RuntimeEmitter
         EmitGetListProperty(typeBuilder, runtime);
         EmitGetMapProperty(typeBuilder, runtime);
         EmitGetSetProperty(typeBuilder, runtime);
-        EmitSetFieldsProperty(typeBuilder, runtime);
-        EmitSetFieldsPropertyStrict(typeBuilder, runtime);
-        // Exception helpers must come before Promise methods (Promise.any uses CreateException)
+        // Exception helpers must come before SetFieldsPropertyStrict (which references
+        // CreateException to throw spec-compliant $TypeError on frozen/sealed writes)
+        // and before Promise methods (Promise.any uses CreateException).
         EmitCreateException(typeBuilder, runtime);
         EmitWrapException(typeBuilder, runtime);
+        EmitSetFieldsProperty(typeBuilder, runtime);
+        EmitSetFieldsPropertyStrict(typeBuilder, runtime);
         // Promise methods must come before GetProperty (which needs PromiseThen for typeof p.then)
         EmitPromiseMethods(typeBuilder, runtime);
         // TypedArray detection helpers must come before GetProperty (which uses IsTypedArrayMethod)

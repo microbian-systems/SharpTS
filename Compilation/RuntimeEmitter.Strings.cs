@@ -1328,8 +1328,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ble, validLabel);
 
         il.MarkLabel(throwLabel);
-        il.Emit(OpCodes.Ldstr, "RangeError: Invalid code point");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Ldstr, "Invalid code point");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(validLabel);
@@ -1455,8 +1456,9 @@ public partial class RuntimeEmitter
 
         // Throw RangeError
         il.MarkLabel(throwLabel);
-        il.Emit(OpCodes.Ldstr, "RangeError: The normalization form should be one of NFC, NFD, NFKC, NFKD.");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Ldstr, "The normalization form should be one of NFC, NFD, NFKC, NFKD.");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
     }
 
