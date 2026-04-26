@@ -114,6 +114,16 @@ public partial class RuntimeEmitter
             FieldAttributes.Public | FieldAttributes.Static);
         runtime.JsonSingletonField = jsonSingletonField;
 
+        // Array.prototype singleton — populated lazily after $TSFunction and the
+        // Array* helper MethodBuilders are defined. Read by ArrayStaticEmitter
+        // for `Array.prototype` value access. Required so `Array.prototype.sort`
+        // is `typeof === "function"` (Test262 isConstructor harness probes this).
+        var arrayPrototypeField = typeBuilder.DefineField(
+            "_arrayPrototype",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.ArrayPrototypeField = arrayPrototypeField;
+
         // CheckCancellation(): if (_cancelRequested) throw new
         //   OperationCanceledException("Compiled execution cancelled.");
         // Called by loop emitters at each backedge. Method body is emitted
@@ -231,6 +241,11 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Stsfld, stringPrototypeField);
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         cctorIL.Emit(OpCodes.Stsfld, jsonSingletonField);
+
+        // Array.prototype starts empty; populated lazily by
+        // EmitArrayPrototypePopulate-emitted helper on first read.
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Stsfld, arrayPrototypeField);
 
         // Initialize _symbolStorage = new ConditionalWeakTable<object, Dictionary<object, object?>>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(symbolStorageType));
@@ -462,6 +477,10 @@ public partial class RuntimeEmitter
         EmitArrayEntries(typeBuilder, runtime);
         EmitArrayKeys(typeBuilder, runtime);
         EmitArrayValues(typeBuilder, runtime);
+        // Populate Array.prototype dict with $TSFunction wrappers for the
+        // helpers above. Must come AFTER all the Array* MethodBuilders are
+        // defined.
+        EmitArrayPrototypePopulate(typeBuilder, runtime);
         // String methods
         EmitStringCharAt(typeBuilder, runtime);
         EmitStringSubstring(typeBuilder, runtime);

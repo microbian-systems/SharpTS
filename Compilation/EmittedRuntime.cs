@@ -296,6 +296,24 @@ public class EmittedRuntime
     public FieldBuilder StringPrototypeField { get; set; } = null!;
     /// <summary>JSON singleton — `typeof JSON === "object"` per ECMA-262.</summary>
     public FieldBuilder JsonSingletonField { get; set; } = null!;
+    /// <summary>
+    /// Array.prototype singleton dictionary populated at cctor time with
+    /// <c>$TSFunction</c> wrappers around <c>$Runtime.Array*</c> helpers.
+    /// Read by ArrayStaticEmitter when user code does <c>Array.prototype</c>
+    /// or <c>Array.prototype.X</c> as a value access (the pattern matcher
+    /// in ILEmitter.Calls.cs still handles <c>Array.prototype.X.call(...)</c>
+    /// syntactically, so this dict is mostly used for typeof/identity/value
+    /// probes — including the Test262 <c>isConstructor</c> harness which
+    /// queries <c>Array.prototype.sort</c>.
+    /// </summary>
+    public FieldBuilder ArrayPrototypeField { get; set; } = null!;
+    /// <summary>
+    /// <c>$Runtime._ArrayPrototypePopulate()</c> — called from cctor's tail
+    /// to fill <see cref="ArrayPrototypeField"/> with <c>$TSFunction</c>
+    /// wrappers around the <c>Array*</c> helpers. Must be wired up after all
+    /// the Array helper MethodBuilders are defined.
+    /// </summary>
+    public MethodBuilder ArrayPrototypePopulateMethod { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;

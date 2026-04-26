@@ -117,6 +117,22 @@ public sealed class ArrayStaticEmitter : IStaticTypeEmitterStrategy
         // JS-spec name ("isArray" / "from" / "of") instead of the .NET method
         // name ("IsArray" / "ArrayFromAdapter" / "ArrayOf"), and .length
         // reports the spec-defined length.
+        // `Array.prototype` — return the singleton dict, lazily populated
+        // with $TSFunction wrappers on first read. Required for Test262
+        // `isConstructor(Array.prototype.X)` patterns and any code that
+        // probes `typeof Array.prototype.sort === "function"`. The pattern
+        // matcher in ILEmitter.Calls.cs still intercepts
+        // `Array.prototype.X.call(receiver, ...)` syntactically before this
+        // path fires, so direct method invocations through the dict aren't
+        // load-bearing.
+        if (propertyName == "prototype")
+        {
+            var protoIL = ctx.IL;
+            protoIL.Emit(OpCodes.Call, runtime.ArrayPrototypePopulateMethod);
+            protoIL.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+            return true;
+        }
+
         (MethodInfo? method, string jsName, int jsLength) info = propertyName switch
         {
             "isArray" => (runtime.IsArray, "isArray", 1),
