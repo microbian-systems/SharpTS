@@ -1028,12 +1028,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_R8, double.NaN);
         il.Emit(OpCodes.Stloc, valueLocal);
 
-        // Check if precision is null - if so, return value.ToString()
+        // Check if precision is null OR $Undefined - if so, return value.ToString().
+        // ECMA-262 21.1.3.5 step 2: "If precision is undefined, return ! ToString(x)".
+        // Both `null` (passed via missing arg) and the `$Undefined` singleton (passed
+        // via explicit `undefined`) must take this short-circuit path.
         il.MarkLabel(hasPrecisionLabel);
+        var defaultToStringLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brtrue, afterPrecisionLabel);
+        il.Emit(OpCodes.Brfalse, defaultToStringLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, defaultToStringLabel);
+        il.Emit(OpCodes.Br, afterPrecisionLabel);
 
-        // precision is null - return value.ToString(CultureInfo.InvariantCulture)
+        il.MarkLabel(defaultToStringLabel);
+        // precision is null/undefined - return value.ToString(CultureInfo.InvariantCulture)
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Call, typeof(CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
         il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [typeof(IFormatProvider)])!);

@@ -3882,7 +3882,7 @@ test/built-ins/Number/prototype/toPrecision/this-is-0-precision-is-1.js Pass
 test/built-ins/Number/prototype/toPrecision/this-is-0-precision-is-gter-than-1.js Pass
 test/built-ins/Number/prototype/toPrecision/this-type-not-number-or-number-object.js Pass
 test/built-ins/Number/prototype/toPrecision/tointeger-precision.js RuntimeError
-test/built-ins/Number/prototype/toPrecision/undefined-precision-arg.js RuntimeError
+test/built-ins/Number/prototype/toPrecision/undefined-precision-arg.js Pass
 test/built-ins/Number/prototype/toString/S15.7.4.2_A1_T01.js Pass
 test/built-ins/Number/prototype/toString/S15.7.4.2_A1_T02.js Pass
 test/built-ins/Number/prototype/toString/S15.7.4.2_A1_T03.js Pass
