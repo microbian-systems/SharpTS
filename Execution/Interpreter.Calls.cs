@@ -404,7 +404,7 @@ public partial class Interpreter
                 }
                 // ECMA-262: invoking a non-callable surfaces as TypeError.
                 throw new ThrowException(new SharpTSTypeError(
-                    $"{TypeOfRepr(callee)} is not a function"));
+                    $"{GetTypeofString(callee)} is not a function"));
             }
 
             // Per ECMA-262 §10.2.1: missing arguments become undefined; do not
