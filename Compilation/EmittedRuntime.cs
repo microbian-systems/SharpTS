@@ -435,6 +435,28 @@ public class EmittedRuntime
     public MethodBuilder MathPowAdapter { get; set; } = null!;
     public MethodBuilder MathMaxAdapter { get; set; } = null!;
     public MethodBuilder MathMinAdapter { get; set; } = null!;
+    // Stage 4y: ES2015+ Math methods exposed as values for `let f = Math.acos`
+    // patterns (and the test262 `isConstructor` harness which wants
+    // `typeof Math.acos === "function"`).
+    public MethodBuilder MathAsinAdapter { get; set; } = null!;
+    public MethodBuilder MathAcosAdapter { get; set; } = null!;
+    public MethodBuilder MathAtanAdapter { get; set; } = null!;
+    public MethodBuilder MathAtan2Adapter { get; set; } = null!;
+    public MethodBuilder MathSinhAdapter { get; set; } = null!;
+    public MethodBuilder MathCoshAdapter { get; set; } = null!;
+    public MethodBuilder MathTanhAdapter { get; set; } = null!;
+    public MethodBuilder MathAsinhAdapter { get; set; } = null!;
+    public MethodBuilder MathAcoshAdapter { get; set; } = null!;
+    public MethodBuilder MathAtanhAdapter { get; set; } = null!;
+    public MethodBuilder MathCbrtAdapter { get; set; } = null!;
+    public MethodBuilder MathLog10Adapter { get; set; } = null!;
+    public MethodBuilder MathLog2Adapter { get; set; } = null!;
+    public MethodBuilder MathLog1pAdapter { get; set; } = null!;
+    public MethodBuilder MathExpm1Adapter { get; set; } = null!;
+    public MethodBuilder MathFroundAdapter { get; set; } = null!;
+    public MethodBuilder MathClz32Adapter { get; set; } = null!;
+    public MethodBuilder MathImulAdapter { get; set; } = null!;
+    public MethodBuilder MathHypotAdapter { get; set; } = null!;
 
     public MethodBuilder ConcatTemplate { get; set; } = null!;
     public MethodBuilder InvokeTaggedTemplate { get; set; } = null!;

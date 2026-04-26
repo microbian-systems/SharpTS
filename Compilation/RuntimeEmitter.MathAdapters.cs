@@ -35,6 +35,194 @@ public partial class RuntimeEmitter
         runtime.MathPowAdapter = EmitMathPowAdapter(typeBuilder, runtime);
         runtime.MathMaxAdapter = EmitMathMinMaxAdapter(typeBuilder, runtime, "MathMaxAdapter", isMax: true);
         runtime.MathMinAdapter = EmitMathMinMaxAdapter(typeBuilder, runtime, "MathMinAdapter", isMax: false);
+
+        // Stage 4y: ES2015+ Math.* exposed as values. Each adapter routes
+        // arg(s) through ToNumber for spec coercion, then dispatches to the
+        // matching System.Math method.
+        runtime.MathAsinAdapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathAsinAdapter", "Asin");
+        runtime.MathAcosAdapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathAcosAdapter", "Acos");
+        runtime.MathAtanAdapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathAtanAdapter", "Atan");
+        runtime.MathAtan2Adapter = EmitBinaryMathAdapter(typeBuilder, runtime, "MathAtan2Adapter", "Atan2");
+        runtime.MathSinhAdapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathSinhAdapter", "Sinh");
+        runtime.MathCoshAdapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathCoshAdapter", "Cosh");
+        runtime.MathTanhAdapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathTanhAdapter", "Tanh");
+        runtime.MathAsinhAdapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathAsinhAdapter", "Asinh");
+        runtime.MathAcoshAdapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathAcoshAdapter", "Acosh");
+        runtime.MathAtanhAdapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathAtanhAdapter", "Atanh");
+        runtime.MathCbrtAdapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathCbrtAdapter", "Cbrt");
+        runtime.MathLog10Adapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathLog10Adapter", "Log10");
+        runtime.MathLog2Adapter = EmitUnaryMathAdapter(typeBuilder, runtime, "MathLog2Adapter", "Log2");
+        runtime.MathLog1pAdapter = EmitMathLog1pAdapter(typeBuilder, runtime);
+        runtime.MathExpm1Adapter = EmitMathExpm1Adapter(typeBuilder, runtime);
+        runtime.MathFroundAdapter = EmitMathFroundAdapter(typeBuilder, runtime);
+        runtime.MathClz32Adapter = EmitMathClz32Adapter(typeBuilder, runtime);
+        runtime.MathImulAdapter = EmitMathImulAdapter(typeBuilder, runtime);
+        runtime.MathHypotAdapter = EmitMathHypotAdapter(typeBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Emits <c>public static object {name}(object a, object b) =&gt; Math.{systemMethod}(ToNumber(a), ToNumber(b))</c>.
+    /// </summary>
+    private MethodBuilder EmitBinaryMathAdapter(TypeBuilder typeBuilder, EmittedRuntime runtime, string name, string systemMathMethod)
+    {
+        var method = typeBuilder.DefineMethod(
+            name,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]
+        );
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, systemMathMethod, _types.Double, _types.Double));
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
+    /// <summary>Math.log1p(x) → Math.Log(x + 1) after ToNumber coercion.</summary>
+    private MethodBuilder EmitMathLog1pAdapter(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("MathLog1pAdapter",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object]);
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Ldc_R8, 1.0);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Log", _types.Double));
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
+    /// <summary>Math.expm1(x) → Math.Exp(x) - 1 after ToNumber coercion.</summary>
+    private MethodBuilder EmitMathExpm1Adapter(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("MathExpm1Adapter",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object]);
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Exp", _types.Double));
+        il.Emit(OpCodes.Ldc_R8, 1.0);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
+    /// <summary>Math.fround(x) — round to float32 then back to double.</summary>
+    private MethodBuilder EmitMathFroundAdapter(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("MathFroundAdapter",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object]);
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Conv_R4);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
+    /// <summary>Math.clz32(x) — leading zero count of ToUint32(x); 32 when x is 0.</summary>
+    private MethodBuilder EmitMathClz32Adapter(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("MathClz32Adapter",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object]);
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Conv_U4);
+        il.Emit(OpCodes.Call, typeof(System.Numerics.BitOperations).GetMethod("LeadingZeroCount", [typeof(uint)])!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
+    /// <summary>Math.imul(a, b) — int32 multiplication after ToNumber.</summary>
+    private MethodBuilder EmitMathImulAdapter(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("MathImulAdapter",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object, _types.Object]);
+        var il = method.GetILGenerator();
+        var aLocal = il.DeclareLocal(_types.Int32);
+        var bLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, aLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, bLocal);
+        il.Emit(OpCodes.Ldloc, aLocal);
+        il.Emit(OpCodes.Ldloc, bLocal);
+        il.Emit(OpCodes.Mul);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
+    /// <summary>
+    /// Math.hypot(...args) — sqrt(sum(arg_i^2)) after ToNumber on each. Variadic
+    /// via object[]; matches the inline emitter's local-stash strategy.
+    /// </summary>
+    private MethodBuilder EmitMathHypotAdapter(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod("MathHypotAdapter",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.ObjectArray]);
+        var il = method.GetILGenerator();
+        var sumLocal = il.DeclareLocal(_types.Double);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var argLocal = il.DeclareLocal(_types.Double);
+
+        // sum = 0; i = 0
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stloc, sumLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // arg = ToNumber(args[i]); sum += arg * arg
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, argLocal);
+        il.Emit(OpCodes.Ldloc, sumLocal);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Mul);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, sumLocal);
+
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, sumLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Sqrt", _types.Double));
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        return method;
     }
 
     /// <summary>

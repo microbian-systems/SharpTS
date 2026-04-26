@@ -256,6 +256,26 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
             "max"    => runtime.MathMaxAdapter,
             "min"    => runtime.MathMinAdapter,
             "random" => runtime.Random,
+            // Stage 4y: ES2015+ Math methods exposed as values.
+            "asin"   => runtime.MathAsinAdapter,
+            "acos"   => runtime.MathAcosAdapter,
+            "atan"   => runtime.MathAtanAdapter,
+            "atan2"  => runtime.MathAtan2Adapter,
+            "sinh"   => runtime.MathSinhAdapter,
+            "cosh"   => runtime.MathCoshAdapter,
+            "tanh"   => runtime.MathTanhAdapter,
+            "asinh"  => runtime.MathAsinhAdapter,
+            "acosh"  => runtime.MathAcoshAdapter,
+            "atanh"  => runtime.MathAtanhAdapter,
+            "cbrt"   => runtime.MathCbrtAdapter,
+            "log10"  => runtime.MathLog10Adapter,
+            "log2"   => runtime.MathLog2Adapter,
+            "log1p"  => runtime.MathLog1pAdapter,
+            "expm1"  => runtime.MathExpm1Adapter,
+            "fround" => runtime.MathFroundAdapter,
+            "clz32"  => runtime.MathClz32Adapter,
+            "imul"   => runtime.MathImulAdapter,
+            "hypot"  => runtime.MathHypotAdapter,
             _ => null
         };
         if (adapter == null) return false;
@@ -277,5 +297,8 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
     public bool HasStaticProperty(string memberName) =>
         memberName is "PI" or "E" or "floor" or "ceil" or "abs" or "sqrt"
             or "round" or "trunc" or "sign" or "sin" or "cos" or "tan"
-            or "log" or "exp" or "pow" or "max" or "min" or "random";
+            or "log" or "exp" or "pow" or "max" or "min" or "random"
+            or "asin" or "acos" or "atan" or "atan2" or "sinh" or "cosh" or "tanh"
+            or "asinh" or "acosh" or "atanh" or "cbrt" or "log10" or "log2"
+            or "log1p" or "expm1" or "fround" or "clz32" or "imul" or "hypot";
 }
