@@ -845,12 +845,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
         il.Emit(OpCodes.Stloc, elementLocal);
 
-        // if (element is $Undefined) undefinedCount++ else defined.Add(element)
+        // if (element is $Undefined || element is $ArrayHole) undefinedCount++ else defined.Add(element)
+        // ECMA-262 sort moves both undefined values AND holes to the end, regardless
+        // of comparefn. Pre-fix only $Undefined was partitioned; holes (sentinel
+        // distinct from undefined) stayed at their original positions, so
+        // `new Array(2); x[1]=1; x.sort(cmp)` left `[<hole>, 1]` rather than
+        // `[1, undefined]`.
         il.Emit(OpCodes.Ldloc, elementLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, isUndefinedLabel);
 
-        // Not undefined: defined.Add(element)
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, isUndefinedLabel);
+
+        // Not undefined or hole: defined.Add(element)
         il.Emit(OpCodes.Ldloc, definedLocal);
         il.Emit(OpCodes.Ldloc, elementLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
