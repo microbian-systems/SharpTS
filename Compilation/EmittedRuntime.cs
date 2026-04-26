@@ -339,6 +339,7 @@ public class EmittedRuntime
     public MethodBuilder ReflectApply { get; set; } = null!;
     public MethodBuilder ReflectConstruct { get; set; } = null!;
     public MethodBuilder ReflectSet { get; set; } = null!;
+    public MethodBuilder IsConstructorMethod { get; set; } = null!;
 
     // Resource disposal for using declarations
     public MethodBuilder DisposeResource { get; set; } = null!;

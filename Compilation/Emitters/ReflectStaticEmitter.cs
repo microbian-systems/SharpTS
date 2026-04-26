@@ -363,6 +363,15 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
                 else
                     il.Emit(OpCodes.Ldnull);
 
+                // newTarget — defaults to target inside ReflectConstruct when null.
+                if (arguments.Count > 2)
+                {
+                    emitter.EmitExpression(arguments[2]);
+                    emitter.EmitBoxIfNeeded(arguments[2]);
+                }
+                else
+                    il.Emit(OpCodes.Ldnull);
+
                 il.Emit(OpCodes.Call, ctx.Runtime!.ReflectConstruct);
                 return true;
             }

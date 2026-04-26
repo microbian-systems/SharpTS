@@ -404,6 +404,7 @@ public partial class RuntimeEmitter
         EmitReflectDefineProperty(typeBuilder, runtime);
         EmitReflectOwnKeys(typeBuilder, runtime);
         EmitReflectApply(typeBuilder, runtime);
+        EmitIsConstructor(typeBuilder, runtime);
         EmitReflectConstruct(typeBuilder, runtime);
         EmitIsArray(typeBuilder, runtime);
         EmitSpreadArray(typeBuilder, runtime);

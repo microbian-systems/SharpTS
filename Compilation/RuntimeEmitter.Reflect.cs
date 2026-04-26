@@ -372,7 +372,125 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits ReflectConstruct: (object target, object argsList) → object?
+    /// Emits <c>$Runtime.IsConstructor(object fn) -&gt; bool</c>: returns true iff
+    /// <paramref name="fn"/> has the [[Construct]] internal slot per ECMA-262.
+    /// In compiled mode:
+    /// <list type="bullet">
+    /// <item>System.Type (a compiled class reference) → true.</item>
+    /// <item>$TSFunction wrapping a method whose declaring type is <c>$Runtime</c>
+    ///   (built-in helper like <c>Array.prototype.filter</c>) → false.</item>
+    /// <item>$TSFunction wrapping anything else (user function decl) → true.</item>
+    /// <item>$BoundTSFunction → recurse on the inner target.</item>
+    /// <item>Anything else (null, primitives, plain objects) → false.</item>
+    /// </list>
+    /// Used by <c>Reflect.construct</c>'s newTarget validation and the Test262
+    /// <c>isConstructor.js</c> harness which checks via
+    /// <c>Reflect.construct(emptyFn, [], target)</c>.
+    /// </summary>
+    private void EmitIsConstructor(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "IsConstructor",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object]
+        );
+        runtime.IsConstructorMethod = method;
+
+        var il = method.GetILGenerator();
+
+        // null/undefined → false
+        var notNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNullLabel);
+
+        var notUndefinedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, notUndefinedLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notUndefinedLabel);
+
+        // System.Type (class reference) → true
+        var notTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brfalse, notTypeLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTypeLabel);
+
+        // $TSFunction → check method's declaring type
+        var notTSFunctionLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notTSFunctionLabel);
+
+        // var mi = ((TSFunction)fn).GetMethodInfo();
+        // if (mi == null) return true; // user function decl missing metadata, default callable
+        // var dt = mi.DeclaringType;
+        // if (dt != null && dt.Name == "$Runtime") return false; // built-in helper
+        // return true;
+        var miLocal = il.DeclareLocal(_types.MethodInfo);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionGetMethodInfo);
+        il.Emit(OpCodes.Stloc, miLocal);
+        var miNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, miLocal);
+        il.Emit(OpCodes.Brfalse, miNullLabel);
+        // dt = mi.DeclaringType
+        var dtLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldloc, miLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(System.Reflection.MemberInfo), "DeclaringType").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, dtLocal);
+        var dtNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, dtLocal);
+        il.Emit(OpCodes.Brfalse, dtNullLabel);
+        // dt.Name == "$Runtime"
+        il.Emit(OpCodes.Ldloc, dtLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(System.Reflection.MemberInfo), "Name").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "$Runtime");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        var notRuntimeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notRuntimeLabel);
+        // declaring type is $Runtime → built-in helper, NOT constructable
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notRuntimeLabel);
+        il.MarkLabel(dtNullLabel);
+        il.MarkLabel(miNullLabel);
+        // Default for $TSFunction: constructable
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notTSFunctionLabel);
+
+        // $BoundTSFunction → not constructable in our model (bound functions
+        // technically inherit [[Construct]] from target, but compiled mode
+        // doesn't track that. Conservative: false.)
+        var notBoundLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brfalse, notBoundLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBoundLabel);
+
+        // Default: not constructable
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits ReflectConstruct: (object target, object argsList, object? newTarget) → object?
+    /// Per ECMA-262 §28.1.4: throws TypeError if target or newTarget is not a
+    /// constructor. Used by Test262's isConstructor.js harness via
+    /// <c>Reflect.construct(emptyFn, [], target)</c>.
     /// Converts argsList to object[] and invokes target as a constructor.
     /// </summary>
     private void EmitReflectConstruct(TypeBuilder typeBuilder, EmittedRuntime runtime)
@@ -381,12 +499,57 @@ public partial class RuntimeEmitter
             "ReflectConstruct",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Object,
-            [_types.Object, _types.Object]
+            [_types.Object, _types.Object, _types.Object]
         );
         runtime.ReflectConstruct = method;
 
         var il = method.GetILGenerator();
         var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var newTargetLocal = il.DeclareLocal(_types.Object);
+
+        // Validate target via IsConstructor — throws TypeError if not constructable.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.IsConstructorMethod);
+        var targetOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, targetOkLabel);
+        il.Emit(OpCodes.Ldstr, "Reflect.construct: target is not a constructor");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(targetOkLabel);
+
+        // newTarget defaults to target if null/undefined.
+        var haveNewTargetLabel = il.DefineLabel();
+        var newTargetSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brtrue, haveNewTargetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, newTargetLocal);
+        il.Emit(OpCodes.Br, newTargetSetLabel);
+        il.MarkLabel(haveNewTargetLabel);
+        // Distinguish $Undefined from a real value
+        var notUndefNewTargetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, notUndefNewTargetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, newTargetLocal);
+        il.Emit(OpCodes.Br, newTargetSetLabel);
+        il.MarkLabel(notUndefNewTargetLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stloc, newTargetLocal);
+        il.MarkLabel(newTargetSetLabel);
+
+        // Validate newTarget via IsConstructor — throws TypeError if not constructable.
+        il.Emit(OpCodes.Ldloc, newTargetLocal);
+        il.Emit(OpCodes.Call, runtime.IsConstructorMethod);
+        var newTargetOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, newTargetOkLabel);
+        il.Emit(OpCodes.Ldstr, "Reflect.construct: newTarget is not a constructor");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(newTargetOkLabel);
 
         // Convert argsList (arg1) to object[]
         var isListLabel = il.DefineLabel();

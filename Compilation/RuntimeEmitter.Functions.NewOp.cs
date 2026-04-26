@@ -42,6 +42,30 @@ public partial class RuntimeEmitter
         var prevThisLocal = il.DeclareLocal(_types.Object);
         var notCallableLocal = il.DeclareLocal(_types.Boolean);
 
+        // ECMA-262 §7.3.14 Construct: throw TypeError if callee is a $TSFunction
+        // wrapping a built-in helper (declaring type == $Runtime). Catches
+        // Test262 patterns like `new Array.prototype.sort()` where the user
+        // expects TypeError on a non-constructor. Routed through IsConstructor
+        // so the policy stays in one place. We only throw for the explicit
+        // "$TSFunction wrapping $Runtime" subset — class refs (Type) and user
+        // function decls fall through to the existing construct path.
+        var isConstructorOkLabel = il.DefineLabel();
+        var skipConstructorCheckLabel = il.DefineLabel();
+        // Only run the check for $TSFunction inputs — Type and other callees
+        // were already constructable in the legacy code path.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, skipConstructorCheckLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.IsConstructorMethod);
+        il.Emit(OpCodes.Brtrue, isConstructorOkLabel);
+        il.Emit(OpCodes.Ldstr, "not a constructor");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(skipConstructorCheckLabel);
+        il.MarkLabel(isConstructorOkLabel);
+
         // newObj = new $Object(new Dictionary<string, object>())
         var dictCtor = _types.GetDefaultConstructor(_types.DictionaryStringObject);
         il.Emit(OpCodes.Newobj, dictCtor);
