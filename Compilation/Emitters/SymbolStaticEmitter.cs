@@ -110,6 +110,32 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
             case "asyncDispose":
                 il.Emit(OpCodes.Ldsfld, ctx.Runtime!.SymbolAsyncDispose);
                 return true;
+            // Stage 4y: Symbol.for / Symbol.keyFor as values so test262's
+            // isConstructor harness sees `typeof Symbol.for === "function"`.
+            case "for":
+            {
+                var runtime = ctx.Runtime!;
+                il.Emit(OpCodes.Ldnull);
+                il.Emit(OpCodes.Ldtoken, runtime.SymbolFor);
+                il.Emit(OpCodes.Ldtoken, runtime.SymbolFor.DeclaringType!);
+                il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
+                    ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
+                il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
+                il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+                return true;
+            }
+            case "keyFor":
+            {
+                var runtime = ctx.Runtime!;
+                il.Emit(OpCodes.Ldnull);
+                il.Emit(OpCodes.Ldtoken, runtime.SymbolKeyFor);
+                il.Emit(OpCodes.Ldtoken, runtime.SymbolKeyFor.DeclaringType!);
+                il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
+                    ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
+                il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
+                il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+                return true;
+            }
             default:
                 return false;
         }
@@ -118,5 +144,6 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
     public bool HasStaticProperty(string memberName) => memberName is
         "iterator" or "asyncIterator" or "toStringTag" or "hasInstance" or
         "isConcatSpreadable" or "toPrimitive" or "species" or "unscopables" or
-        "dispose" or "asyncDispose";
+        "dispose" or "asyncDispose"
+        or "for" or "keyFor";
 }

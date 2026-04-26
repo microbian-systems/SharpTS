@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Parsing;
 
@@ -119,6 +120,35 @@ public sealed class PromiseStaticEmitter : IStaticTypeEmitterStrategy
     /// </summary>
     public bool TryEmitStaticPropertyGet(IEmitterContext emitter, string propertyName)
     {
-        return false;
+        var ctx = emitter.Context;
+        var runtime = ctx.Runtime!;
+        // Stage 4y: Promise.* statics as values for `let r = Promise.resolve;
+        // r(42).then(...)` patterns + test262 isConstructor harness.
+        MethodInfo? method = propertyName switch
+        {
+            "resolve"        => runtime.PromiseResolve,
+            "reject"         => runtime.PromiseReject,
+            "all"            => runtime.PromiseAll,
+            "race"           => runtime.PromiseRace,
+            "allSettled"     => runtime.PromiseAllSettled,
+            "any"            => runtime.PromiseAny,
+            "withResolvers"  => runtime.PromiseWithResolvers,
+            _ => null
+        };
+        if (method == null) return false;
+
+        var il = ctx.IL;
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldtoken, method);
+        il.Emit(OpCodes.Ldtoken, method.DeclaringType!);
+        il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
+            ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        return true;
     }
+
+    public bool HasStaticProperty(string memberName) =>
+        memberName is "resolve" or "reject" or "all" or "race"
+            or "allSettled" or "any" or "withResolvers";
 }
