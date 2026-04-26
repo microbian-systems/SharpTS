@@ -81,10 +81,23 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
 
         if (methodName == "sign")
         {
-            // Math.Sign returns int, need to convert to double
-            var signMethod = ctx.Types.GetMethod(ctx.Types.Math, "Sign", ctx.Types.Double);
-            il.Emit(OpCodes.Call, signMethod);
-            il.Emit(OpCodes.Conv_R8); // Convert int to double
+            // System.Math.Sign throws ArithmeticException on NaN; spec says
+            // Math.sign(NaN) === NaN. Stash arg in local, NaN-check first,
+            // route NaN to a literal-NaN result; otherwise Sign + Conv_R8.
+            var argLocal = il.DeclareLocal(ctx.Types.Double);
+            il.Emit(OpCodes.Stloc, argLocal);
+            var notNaN = il.DefineLabel();
+            var done = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, argLocal);
+            il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Double, "IsNaN", ctx.Types.Double));
+            il.Emit(OpCodes.Brfalse, notNaN);
+            il.Emit(OpCodes.Ldc_R8, double.NaN);
+            il.Emit(OpCodes.Br, done);
+            il.MarkLabel(notNaN);
+            il.Emit(OpCodes.Ldloc, argLocal);
+            il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Math, "Sign", ctx.Types.Double));
+            il.Emit(OpCodes.Conv_R8);
+            il.MarkLabel(done);
             il.Emit(OpCodes.Box, ctx.Types.Double);
             return true;
         }
