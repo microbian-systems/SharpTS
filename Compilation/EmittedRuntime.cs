@@ -322,6 +322,8 @@ public class EmittedRuntime
     public MethodBuilder StringPrototypeGenericStub { get; set; } = null!;
     /// <summary>Populates <see cref="BooleanPrototypeField"/> with $TSFunction wrappers for toString/valueOf; idempotent.</summary>
     public MethodBuilder BooleanPrototypePopulateMethod { get; set; } = null!;
+    /// <summary>$Runtime.HasOwnPropertyHelper(obj, name) — backs <c>obj.hasOwnProperty(name)</c> for $TSFunction / $Object / Dictionary / List receivers.</summary>
+    public MethodBuilder HasOwnPropertyHelperMethod { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;

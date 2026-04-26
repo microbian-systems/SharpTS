@@ -311,6 +311,9 @@ public partial class RuntimeEmitter
         // Object methods - must come BEFORE iterator methods since GetProperty, InvokeMethodValue are needed
         EmitCreateObject(typeBuilder, runtime);
         EmitGetArrayMethod(typeBuilder, runtime);
+        // hasOwnProperty helper — must come before GetFunctionMethod so the
+        // "hasOwnProperty" arm can return a $TSFunction wrapping it.
+        EmitHasOwnPropertyHelper(typeBuilder, runtime);
         EmitGetFunctionMethod(typeBuilder, runtime);  // For bind/call/apply on functions
         // InstanceOf walks the prototype chain via GetFunctionMethod (for the
         // `F.prototype` fetch) — must be emitted AFTER GetFunctionMethod so

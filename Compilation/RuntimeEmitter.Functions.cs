@@ -483,6 +483,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brtrue, nameLabel);
 
+        // Check for "hasOwnProperty" — return a $TSFunction whose target is
+        // `func` (the receiver) and whose method is HasOwnPropertyHelper.
+        // When invoked with [name], $TSFunction.Invoke prepends target →
+        // calls HasOwnPropertyHelper(func, name). Required for Test262 tests
+        // that probe `String.prototype.X.hasOwnProperty("length")` etc.
+        var hasOwnPropEqLabel = il.DefineLabel();
+        var notHasOwnPropLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "hasOwnProperty");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notHasOwnPropLabel);
+        // Build $TSFunction(func, HasOwnPropertyHelper)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, runtime.HasOwnPropertyHelperMethod);
+        il.Emit(OpCodes.Ldtoken, runtime.HasOwnPropertyHelperMethod.DeclaringType!);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+            _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notHasOwnPropLabel);
+
         // Fallback: check for a user-assigned property via PropertyDescriptorStore.
         // JS functions are objects and can carry arbitrary properties (`fn.x = 42`). Compiled
         // SetProperty routes $TSFunction writes into PDS as data descriptors; we mirror that
