@@ -163,7 +163,85 @@ public class SharpTSNumberNamespace : ISharpTSCallable
         return double.NaN;
     }
 
+    /// <summary>
+    /// Returns <c>Number.prototype</c> (so <c>Number.prototype.toString.call(x)</c>
+    /// resolves), with built-in static members (Number.MAX_VALUE, isNaN, etc.)
+    /// falling through to the registry.
+    /// </summary>
+    public object? GetMember(string name)
+    {
+        if (name == "prototype") return SharpTSNumberPrototype.Instance;
+        return NumberBuiltIns.GetStaticMember(name);
+    }
+
     public override string ToString() => "function Number() { [native code] }";
+}
+
+/// <summary>
+/// <c>Number.prototype</c>. Exposes registered Number instance methods
+/// (toFixed, toPrecision, toExponential, toString) as unbound callables
+/// wrapped to coerce the receiver to a number per ECMA-262.
+/// </summary>
+public sealed class SharpTSNumberPrototype
+{
+    public static readonly SharpTSNumberPrototype Instance = new();
+    private SharpTSNumberPrototype() { }
+
+    public object? GetMember(string name)
+    {
+        var method = NumberBuiltIns.GetPrototypeMethod(name);
+        if (method is null) return null;
+        return new NumberPrototypeMethodWrapper(name, method);
+    }
+
+    public override string ToString() => "[object Number]";
+}
+
+/// <summary>
+/// Adapter around a Number <see cref="BuiltInMethod"/>. Throws TypeError on
+/// non-number receivers per ECMA-262 (Number.prototype.toString and friends
+/// require <c>thisNumberValue</c>); plain numbers and bool/null aren't valid
+/// either. Wrapper objects (<c>new Number(1)</c>) aren't real wrappers in
+/// this interpreter, so this stays strict.
+/// </summary>
+internal sealed class NumberPrototypeMethodWrapper : ISharpTSCallable
+{
+    private readonly string _name;
+    private readonly BuiltInMethod _inner;
+    private readonly object? _receiver;
+    private readonly bool _hasReceiver;
+
+    public NumberPrototypeMethodWrapper(string name, BuiltInMethod inner)
+    {
+        _name = name;
+        _inner = inner;
+    }
+
+    private NumberPrototypeMethodWrapper(string name, BuiltInMethod inner, object? receiver)
+    {
+        _name = name;
+        _inner = inner;
+        _receiver = receiver;
+        _hasReceiver = true;
+    }
+
+    public int Arity() => _inner.MinArity;
+
+    public NumberPrototypeMethodWrapper Bind(object? receiver)
+        => new(_name, _inner, receiver);
+
+    public object? Call(Interpreter interpreter, List<object?> arguments)
+    {
+        if (!_hasReceiver || _receiver is not double d)
+        {
+            throw new ThrowException(new SharpTSTypeError(
+                $"Number.prototype.{_name} requires that 'this' be a Number"));
+        }
+
+        return _inner.Bind(d).Call(interpreter, arguments);
+    }
+
+    public override string ToString() => $"function {_name}() {{ [native code] }}";
 }
 
 /// <summary>

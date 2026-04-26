@@ -76,6 +76,15 @@ public static class NumberBuiltIns
     public static object? GetInstanceMember(double receiver, string name)
         => _instanceLookup.GetMember(receiver, name);
 
+    /// <summary>
+    /// Returns the unbound <see cref="BuiltInMethod"/> for a
+    /// Number.prototype.* method. Used by <see cref="Types.SharpTSNumberPrototype"/>
+    /// so <c>Number.prototype.toString.call(value)</c> resolves to the same
+    /// implementation as <c>(123).toString()</c>.
+    /// </summary>
+    public static BuiltInMethod? GetPrototypeMethod(string name)
+        => _instanceLookup.GetMethod(name);
+
     // Static method implementations (V2)
     private static RuntimeValue ParseIntV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {

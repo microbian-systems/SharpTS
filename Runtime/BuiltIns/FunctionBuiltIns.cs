@@ -181,6 +181,12 @@ public static class FunctionBuiltIns
             return stringProto.Bind(thisArg).Call(interp, args);
         }
 
+        // Number.prototype adapter — same pattern.
+        if (callable is Types.NumberPrototypeMethodWrapper numberProto)
+        {
+            return numberProto.Bind(thisArg).Call(interp, args);
+        }
+
         // For other callables, just call directly
         return callable.Call(interp, args);
     }

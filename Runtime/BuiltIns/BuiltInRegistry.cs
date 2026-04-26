@@ -450,6 +450,14 @@ public sealed class BuiltInRegistry
             SingletonFactory: () => Types.SharpTSNumberNamespace.Instance,
             GetMethod: name => NumberBuiltIns.GetStaticMember(name) as BuiltInMethod
         ));
+        // Property access on the Number identifier — `Number.prototype`,
+        // `Number.MAX_VALUE`, etc. — and the prototype's own method bag.
+        registry.RegisterInstanceType(typeof(Types.SharpTSNumberNamespace), (instance, name) =>
+            ((Types.SharpTSNumberNamespace)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(Types.SharpTSNumberPrototype), (instance, name) =>
+            ((Types.SharpTSNumberPrototype)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(Types.NumberPrototypeMethodWrapper), (instance, name) =>
+            FunctionBuiltIns.GetMember((ISharpTSCallable)instance, name));
     }
 
     private static void RegisterStringNamespace(BuiltInRegistry registry)
