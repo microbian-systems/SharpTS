@@ -1048,28 +1048,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.Emit(OpCodes.Stloc, precisionLocal);
 
-        // Validate precision 1-100
-        il.MarkLabel(validatePrecisionLabel);
-        il.Emit(OpCodes.Ldloc, precisionLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        var notTooSmallLabel = il.DefineLabel();
-        il.Emit(OpCodes.Bge, notTooSmallLabel);
-        il.Emit(OpCodes.Ldstr, "Runtime Error: toPrecision() argument must be between 1 and 100");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
-
-        il.MarkLabel(notTooSmallLabel);
-        il.Emit(OpCodes.Ldloc, precisionLocal);
-        il.Emit(OpCodes.Ldc_I4, 100);
-        var notTooLargeLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ble, notTooLargeLabel);
-        il.Emit(OpCodes.Ldstr, "Runtime Error: toPrecision() argument must be between 1 and 100");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
-        il.Emit(OpCodes.Throw);
-
-        // Handle special values
-        il.MarkLabel(notTooLargeLabel);
-
+        // ECMA-262 21.1.3.5 step 5: handle NaN/Infinity BEFORE precision range check.
+        // Spec: "If x is not finite, return Number::toString(x)" — runs before the
+        // RangeError-on-invalid-precision branch, so `(Infinity).toPrecision(1000)`
+        // returns "Infinity" instead of throwing.
         // if (double.IsNaN(value)) return "NaN"
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Call, _types.Double.GetMethod("IsNaN", [_types.Double])!);
@@ -1089,8 +1071,37 @@ public partial class RuntimeEmitter
         il.MarkLabel(notPosInfLabel);
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Call, _types.Double.GetMethod("IsNegativeInfinity", [_types.Double])!);
-        il.Emit(OpCodes.Brfalse, formatLabel);
+        il.Emit(OpCodes.Brfalse, validatePrecisionLabel);
         il.Emit(OpCodes.Ldstr, "-Infinity");
+        il.Emit(OpCodes.Ret);
+
+        // Validate precision 1-100 (only for finite numbers).
+        il.MarkLabel(validatePrecisionLabel);
+        il.Emit(OpCodes.Ldloc, precisionLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        var notTooSmallLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bge, notTooSmallLabel);
+        il.Emit(OpCodes.Ldstr, "toPrecision() argument must be between 1 and 100");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(notTooSmallLabel);
+        il.Emit(OpCodes.Ldloc, precisionLocal);
+        il.Emit(OpCodes.Ldc_I4, 100);
+        var notTooLargeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ble, notTooLargeLabel);
+        il.Emit(OpCodes.Ldstr, "toPrecision() argument must be between 1 and 100");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(notTooLargeLabel);
+        il.Emit(OpCodes.Br, formatLabel);
+
+        // Empty markers for legacy paths (kept for IL flow consistency).
+        var deadInfLabel = il.DefineLabel();
+        il.MarkLabel(deadInfLabel);
         il.Emit(OpCodes.Ret);
 
         // return Regex.Replace(value.ToString($"G{precision}", InvariantCulture).Replace("E","e"),

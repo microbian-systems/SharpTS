@@ -92,12 +92,118 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
             "exp" => ctx.Types.GetMethod(ctx.Types.Math, "Exp", ctx.Types.Double),
             "trunc" => ctx.Types.GetMethod(ctx.Types.Math, "Truncate", ctx.Types.Double),
             "pow" => ctx.Types.GetMethod(ctx.Types.Math, "Pow", ctx.Types.Double, ctx.Types.Double),
+            // Inverse trig + hyperbolic — direct .NET Math equivalents.
+            "asin" => ctx.Types.GetMethod(ctx.Types.Math, "Asin", ctx.Types.Double),
+            "acos" => ctx.Types.GetMethod(ctx.Types.Math, "Acos", ctx.Types.Double),
+            "atan" => ctx.Types.GetMethod(ctx.Types.Math, "Atan", ctx.Types.Double),
+            "atan2" => ctx.Types.GetMethod(ctx.Types.Math, "Atan2", ctx.Types.Double, ctx.Types.Double),
+            "sinh" => ctx.Types.GetMethod(ctx.Types.Math, "Sinh", ctx.Types.Double),
+            "cosh" => ctx.Types.GetMethod(ctx.Types.Math, "Cosh", ctx.Types.Double),
+            "tanh" => ctx.Types.GetMethod(ctx.Types.Math, "Tanh", ctx.Types.Double),
+            "asinh" => ctx.Types.GetMethod(ctx.Types.Math, "Asinh", ctx.Types.Double),
+            "acosh" => ctx.Types.GetMethod(ctx.Types.Math, "Acosh", ctx.Types.Double),
+            "atanh" => ctx.Types.GetMethod(ctx.Types.Math, "Atanh", ctx.Types.Double),
+            "cbrt" => ctx.Types.GetMethod(ctx.Types.Math, "Cbrt", ctx.Types.Double),
+            "log10" => ctx.Types.GetMethod(ctx.Types.Math, "Log10", ctx.Types.Double),
+            "log2" => ctx.Types.GetMethod(ctx.Types.Math, "Log2", ctx.Types.Double),
+            "log1p" => ctx.Types.GetMethod(typeof(System.Math), "Log", ctx.Types.Double), // see Log1p special case below
+            "expm1" => ctx.Types.GetMethod(typeof(System.Math), "Exp", ctx.Types.Double), // see Expm1 special case below
             _ => null
         };
 
         if (mathMethod != null)
         {
+            // log1p/expm1 need pre/post adjustments (log(x+1) and exp(x)-1).
+            // We hijack log/exp's MethodInfo above and patch around the call here.
+            if (methodName == "log1p")
+            {
+                // log1p(x) = log(x + 1)
+                il.Emit(OpCodes.Ldc_R8, 1.0);
+                il.Emit(OpCodes.Add);
+            }
             il.Emit(OpCodes.Call, mathMethod);
+            if (methodName == "expm1")
+            {
+                // expm1(x) = exp(x) - 1
+                il.Emit(OpCodes.Ldc_R8, 1.0);
+                il.Emit(OpCodes.Sub);
+            }
+            il.Emit(OpCodes.Box, ctx.Types.Double);
+            return true;
+        }
+
+        // Math.hypot(...args) — sqrt(sum(a_i^2)) per spec, with special-cases for
+        // Infinity/NaN. Stack on entry: [arg0, arg1, ..., argN-1] (each a double).
+        // Plan: pop each into a local, square it, sum them, sqrt the sum. Locals
+        // avoid the IL-stack-shuffle gymnastics that broke an earlier in-place
+        // version (squaring "the arg on top" misread the loop's stack shape and
+        // produced sum-of-cross-products instead of sum-of-squares).
+        if (methodName == "hypot")
+        {
+            if (arguments.Count == 0)
+            {
+                il.Emit(OpCodes.Ldc_R8, 0.0);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+            }
+            // Stash all args into locals; deepest arg is on the bottom of stack so
+            // pop order is reverse (argN-1 first).
+            var argLocals = new LocalBuilder[arguments.Count];
+            for (int i = arguments.Count - 1; i >= 0; i--)
+            {
+                argLocals[i] = il.DeclareLocal(ctx.Types.Double);
+                il.Emit(OpCodes.Stloc, argLocals[i]);
+            }
+            // sum = arg0 * arg0
+            il.Emit(OpCodes.Ldloc, argLocals[0]);
+            il.Emit(OpCodes.Ldloc, argLocals[0]);
+            il.Emit(OpCodes.Mul);
+            for (int i = 1; i < arguments.Count; i++)
+            {
+                il.Emit(OpCodes.Ldloc, argLocals[i]);
+                il.Emit(OpCodes.Ldloc, argLocals[i]);
+                il.Emit(OpCodes.Mul);
+                il.Emit(OpCodes.Add);
+            }
+            il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Math, "Sqrt", ctx.Types.Double));
+            il.Emit(OpCodes.Box, ctx.Types.Double);
+            return true;
+        }
+
+        // Math.fround(x) — round to nearest float32 then back to double.
+        if (methodName == "fround" && arguments.Count == 1)
+        {
+            il.Emit(OpCodes.Conv_R4);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, ctx.Types.Double);
+            return true;
+        }
+
+        // Math.clz32(x) — count leading zeros of (x >>> 0) as 32-bit unsigned.
+        // ECMA-262: ToUint32(x), then count leading zero bits; 32 if x === 0.
+        if (methodName == "clz32" && arguments.Count == 1)
+        {
+            // Stack: [double]. Convert to uint via Conv_U4 (truncates fractional + handles NaN→0).
+            il.Emit(OpCodes.Conv_U4);
+            il.Emit(OpCodes.Call, typeof(System.Numerics.BitOperations).GetMethod("LeadingZeroCount", [typeof(uint)])!);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, ctx.Types.Double);
+            return true;
+        }
+
+        // Math.imul(a, b) — multiply two 32-bit ints, return as int32.
+        if (methodName == "imul" && arguments.Count == 2)
+        {
+            // Stack: [a_double, b_double]
+            // Convert both to int32, multiply, convert to double.
+            il.Emit(OpCodes.Conv_I4);
+            // Now: [a_double, b_int32]. Need a_int32. Use a helper local.
+            var bLocal = il.DeclareLocal(ctx.Types.Int32);
+            il.Emit(OpCodes.Stloc, bLocal);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Ldloc, bLocal);
+            il.Emit(OpCodes.Mul);
+            il.Emit(OpCodes.Conv_R8);
             il.Emit(OpCodes.Box, ctx.Types.Double);
             return true;
         }
