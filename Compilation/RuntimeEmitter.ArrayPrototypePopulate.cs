@@ -103,6 +103,11 @@ public partial class RuntimeEmitter
         Wire("shift",          runtime.ArrayShift);
         Wire("unshift",        runtime.ArrayUnshift);
 
+        // Methods without dedicated $Runtime helpers — wired to a generic
+        // stub so typeof + isConstructor probes pass.
+        Wire("toString",       runtime.StringPrototypeGenericStub);
+        Wire("toLocaleString", runtime.StringPrototypeGenericStub);
+
         il.Emit(OpCodes.Ret);
 
         runtime.ArrayPrototypePopulateMethod = method;

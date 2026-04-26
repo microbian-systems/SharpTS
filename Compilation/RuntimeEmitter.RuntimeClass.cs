@@ -482,6 +482,10 @@ public partial class RuntimeEmitter
         EmitArrayEntries(typeBuilder, runtime);
         EmitArrayKeys(typeBuilder, runtime);
         EmitArrayValues(typeBuilder, runtime);
+        // Stubs used as MethodInfo backing for prototype $TSFunction wrappers
+        // when no dedicated $Runtime helper exists (toString/toLocaleString/
+        // match/search/etc.). Must be emitted before any prototype populate.
+        EmitStringPrototypeStubs(typeBuilder, runtime);
         // Populate Array.prototype dict with $TSFunction wrappers for the
         // helpers above. Must come AFTER all the Array* MethodBuilders are
         // defined.
@@ -511,7 +515,8 @@ public partial class RuntimeEmitter
         EmitStringFromCodePoint(typeBuilder, runtime);
         EmitStringNormalize(typeBuilder, runtime);
         EmitStringLocaleCompare(typeBuilder, runtime);
-        // String.prototype dict populate — must come AFTER all the String* helpers.
+        // String.prototype dict populate — must come AFTER all the String* helpers
+        // and the stubs (which were emitted earlier).
         EmitStringPrototypePopulate(typeBuilder, runtime);
         // Number.prototype populate is wired after EmitNumberMethods below.
         // Object utilities

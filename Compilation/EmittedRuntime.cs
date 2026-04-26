@@ -318,6 +318,8 @@ public class EmittedRuntime
     public MethodBuilder StringPrototypePopulateMethod { get; set; } = null!;
     /// <summary>Populates <see cref="NumberPrototypeField"/> with $TSFunction wrappers; idempotent.</summary>
     public MethodBuilder NumberPrototypePopulateMethod { get; set; } = null!;
+    /// <summary>Generic <c>$Runtime</c> stub used as MethodInfo backing for String.prototype wrappers without dedicated helpers (match/search/toString/valueOf/etc.) — only typeof + isConstructor are ever observed.</summary>
+    public MethodBuilder StringPrototypeGenericStub { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;

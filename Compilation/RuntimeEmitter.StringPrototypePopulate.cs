@@ -90,6 +90,21 @@ public partial class RuntimeEmitter
         Wire("normalize",      runtime.StringNormalize);
         Wire("localeCompare",  runtime.StringLocaleCompare);
 
+        // Methods without dedicated $Runtime helpers — wired to a generic
+        // stub so typeof + isConstructor probes pass. The pattern matcher
+        // and inline dispatch handle direct invocations of these on actual
+        // strings; the wrappers here are only observed by Test262
+        // `not-a-constructor.js` harness probes.
+        Wire("match",                runtime.StringPrototypeGenericStub);
+        Wire("matchAll",             runtime.StringPrototypeGenericStub);
+        Wire("search",               runtime.StringPrototypeGenericStub);
+        Wire("toString",             runtime.StringPrototypeGenericStub);
+        Wire("valueOf",              runtime.StringPrototypeGenericStub);
+        Wire("toLocaleLowerCase",    runtime.StringPrototypeGenericStub);
+        Wire("toLocaleUpperCase",    runtime.StringPrototypeGenericStub);
+        Wire("isWellFormed",         runtime.StringPrototypeGenericStub);
+        Wire("toWellFormed",         runtime.StringPrototypeGenericStub);
+
         il.Emit(OpCodes.Ret);
     }
 }
