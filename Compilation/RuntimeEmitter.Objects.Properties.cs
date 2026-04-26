@@ -1488,6 +1488,8 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldtoken, _types.Boolean);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
             il.Emit(OpCodes.Bne_Un, notBoolLabel);
+            // Lazy-populate Boolean.prototype with $TSFunction wrappers on first read.
+            il.Emit(OpCodes.Call, runtime.BooleanPrototypePopulateMethod);
             il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notBoolLabel);

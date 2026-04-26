@@ -751,6 +751,12 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSURIError), getMember);
         registry.RegisterInstanceType(typeof(SharpTSEvalError), getMember);
         registry.RegisterInstanceType(typeof(SharpTSAggregateError), getMember);
+
+        // Class.prototype is exposed as a SharpTSClassPrototype wrapper that
+        // resolves member access through SharpTSClass.FindMethod. Property
+        // access on the wrapper itself goes through here.
+        registry.RegisterInstanceType(typeof(SharpTSClassPrototype), (instance, name) =>
+            ((SharpTSClassPrototype)instance).GetMember(name));
     }
 
     private static void RegisterGlobalThisNamespace(BuiltInRegistry registry)

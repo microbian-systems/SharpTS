@@ -453,6 +453,23 @@ public partial class Interpreter
 
     private object? EvaluateGetOnClass(SharpTSClass klass, string memberName)
     {
+        // ECMA-262: every built-in class has a `prototype` (an ordinary
+        // object whose props are the instance methods + constructor back-
+        // ref). Without this, `Error.prototype.toString` and friends throw
+        // "Static member 'prototype' does not exist on class 'Error'".
+        // Lazy on-demand wrapper so we don't allocate one per class at
+        // startup; lifetime tied to the class.
+        if (memberName == "prototype")
+        {
+            return new SharpTSClassPrototype(klass);
+        }
+
+        // Function objects expose `name` and `length` per spec. For built-in
+        // classes the type checker often guards these but Test262 reads them
+        // directly via `Class.name` / `Class.length`.
+        if (memberName == "name") return klass.Name;
+        if (memberName == "length") return 0.0;
+
         // Try static auto-accessor first (TypeScript 4.9+)
         if (klass.HasStaticAutoAccessor(memberName))
         {

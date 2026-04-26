@@ -115,6 +115,12 @@ public sealed class JSONStaticEmitter : IStaticTypeEmitterStrategy
         {
             "parse"     => runtime.JsonParse,
             "stringify" => runtime.JsonStringify,
+            // Stage 4z11: stubs for json-parse-with-source proposal methods so
+            // typeof + isConstructor probes pass. Compiled mode doesn't
+            // implement the parsing semantics — actual invocations will fail
+            // — but the not-a-constructor.js tests only probe.
+            "rawJSON"   => runtime.StringPrototypeGenericStub,
+            "isRawJSON" => runtime.StringPrototypeGenericStub,
             _ => null
         };
         if (method == null) return false;

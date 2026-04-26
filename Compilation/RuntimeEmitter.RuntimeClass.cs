@@ -352,6 +352,7 @@ public partial class RuntimeEmitter
         // wrapped helpers exist).
         DefineStringPrototypePopulateShell(typeBuilder, runtime);
         DefineNumberPrototypePopulateShell(typeBuilder, runtime);
+        DefineBooleanPrototypePopulateShell(typeBuilder, runtime);
         EmitGetProperty(typeBuilder, runtime);
         // ToJsString depends on GetProperty + InvokeMethodValue + Stringify; emit after those.
         EmitToJsString(typeBuilder, runtime);
@@ -518,6 +519,9 @@ public partial class RuntimeEmitter
         // String.prototype dict populate — must come AFTER all the String* helpers
         // and the stubs (which were emitted earlier).
         EmitStringPrototypePopulate(typeBuilder, runtime);
+        // Boolean.prototype populate — uses the StringPrototypeGenericStub
+        // for both toString and valueOf (no dedicated Boolean helpers).
+        EmitBooleanPrototypePopulate(typeBuilder, runtime);
         // Number.prototype populate is wired after EmitNumberMethods below.
         // Object utilities
         EmitGetSuperMethod(typeBuilder, runtime);
