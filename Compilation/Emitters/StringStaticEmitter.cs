@@ -77,6 +77,20 @@ public sealed class StringStaticEmitter : IStaticTypeEmitterStrategy
     {
         var ctx = emitter.Context;
         var runtime = ctx.Runtime!;
+
+        // `String.prototype` — return the singleton dict (same pattern as
+        // Array.prototype, Stage 4z9). Populated lazily on first access with
+        // $TSFunction wrappers around String runtime helpers. Required for
+        // `typeof String.prototype.substring === "function"` and Test262
+        // isConstructor probes.
+        if (propertyName == "prototype")
+        {
+            var protoIL = ctx.IL;
+            protoIL.Emit(OpCodes.Call, runtime.StringPrototypePopulateMethod);
+            protoIL.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
+            return true;
+        }
+
         MethodInfo? method = propertyName switch
         {
             "fromCharCode"  => runtime.StringFromCharCode,

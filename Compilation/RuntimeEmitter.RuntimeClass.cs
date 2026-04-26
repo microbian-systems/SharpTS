@@ -506,6 +506,8 @@ public partial class RuntimeEmitter
         EmitStringFromCodePoint(typeBuilder, runtime);
         EmitStringNormalize(typeBuilder, runtime);
         EmitStringLocaleCompare(typeBuilder, runtime);
+        // String.prototype dict populate — must come AFTER all the String* helpers.
+        EmitStringPrototypePopulate(typeBuilder, runtime);
         // Object utilities
         EmitGetSuperMethod(typeBuilder, runtime);
         // EmitCreateException and EmitWrapException moved earlier (before Promise methods)

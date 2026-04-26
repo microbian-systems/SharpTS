@@ -541,6 +541,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSFunctionGetMethodInfo);
         il.Emit(OpCodes.Stloc, methodKeyLocal);
 
+        // Built-in helpers ($TSFunction wrapping $Runtime methods) do NOT
+        // get an auto-created `prototype` per ECMA-262 — they're not
+        // constructors. Test262 patterns like
+        // `String.prototype.charAt.prototype === undefined` rely on this.
+        // Detect via DeclaringType.Name == "$Runtime".
+        var notRuntimeMethodLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, methodKeyLocal);
+        il.Emit(OpCodes.Brfalse, notRuntimeMethodLabel);
+        il.Emit(OpCodes.Ldloc, methodKeyLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(System.Reflection.MemberInfo), "DeclaringType").GetGetMethod()!);
+        var dtLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Stloc, dtLocal);
+        il.Emit(OpCodes.Ldloc, dtLocal);
+        il.Emit(OpCodes.Brfalse, notRuntimeMethodLabel);
+        il.Emit(OpCodes.Ldloc, dtLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(System.Reflection.MemberInfo), "Name").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "$Runtime");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notRuntimeMethodLabel);
+        // Built-in: return undefined (no auto-created prototype).
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notRuntimeMethodLabel);
+
         // if (_prototypeCache.TryGetValue(methodKey, out cached)) return cached
         il.Emit(OpCodes.Ldsfld, runtime.TSFunctionPrototypeCacheField);
         il.Emit(OpCodes.Ldloc, methodKeyLocal);

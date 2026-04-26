@@ -1465,7 +1465,7 @@ test/built-ins/Array/prototype/join/S15.4.4.5_A3.2_T1.js Pass
 test/built-ins/Array/prototype/join/S15.4.4.5_A3.2_T2.js TypeCheckError
 test/built-ins/Array/prototype/join/S15.4.4.5_A4_T3.js TypeCheckError
 test/built-ins/Array/prototype/join/S15.4.4.5_A5_T1.js TypeCheckError
-test/built-ins/Array/prototype/join/S15.4.4.5_A6.6.js RuntimeError
+test/built-ins/Array/prototype/join/S15.4.4.5_A6.6.js Pass
 test/built-ins/Array/prototype/join/call-with-boolean.js Pass
 test/built-ins/Array/prototype/join/coerced-separator-grow.js TypeCheckError
 test/built-ins/Array/prototype/join/coerced-separator-shrink.js TypeCheckError
@@ -4188,7 +4188,7 @@ test/built-ins/String/prototype/charAt/S15.5.4.4_A9.js RuntimeError
 test/built-ins/String/prototype/charAt/S9.4_A1.js TypeCheckError
 test/built-ins/String/prototype/charAt/S9.4_A2.js Pass
 test/built-ins/String/prototype/charAt/name.js TypeCheckError
-test/built-ins/String/prototype/charAt/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/charAt/not-a-constructor.js Pass
 test/built-ins/String/prototype/charAt/pos-coerce-err.js Pass
 test/built-ins/String/prototype/charAt/pos-coerce-string.js TypeCheckError
 test/built-ins/String/prototype/charAt/pos-rounding.js Pass
@@ -4205,7 +4205,7 @@ test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T6.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T7.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T8.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T9.js RuntimeError
-test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A2.js Pass
+test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A2.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A3.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A4.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A6.js Pass
@@ -4213,7 +4213,7 @@ test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A7.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A8.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A9.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/name.js TypeCheckError
-test/built-ins/String/prototype/charCodeAt/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/charCodeAt/not-a-constructor.js Pass
 test/built-ins/String/prototype/charCodeAt/pos-coerce-err.js Pass
 test/built-ins/String/prototype/charCodeAt/pos-coerce-string.js TypeCheckError
 test/built-ins/String/prototype/charCodeAt/pos-rounding.js Pass
@@ -4221,7 +4221,7 @@ test/built-ins/String/prototype/charCodeAt/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/codePointAt/codePointAt.js TypeCheckError
 test/built-ins/String/prototype/codePointAt/length.js TypeCheckError
 test/built-ins/String/prototype/codePointAt/name.js TypeCheckError
-test/built-ins/String/prototype/codePointAt/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/codePointAt/not-a-constructor.js Pass
 test/built-ins/String/prototype/codePointAt/return-abrupt-from-object-pos-to-integer.js TypeCheckError
 test/built-ins/String/prototype/codePointAt/return-abrupt-from-symbol-pos-to-integer.js TypeCheckError
 test/built-ins/String/prototype/codePointAt/return-abrupt-from-this-as-symbol.js Pass
@@ -4254,7 +4254,7 @@ test/built-ins/String/prototype/concat/S15.5.4.6_A7.js Pass
 test/built-ins/String/prototype/concat/S15.5.4.6_A8.js RuntimeError
 test/built-ins/String/prototype/concat/S15.5.4.6_A9.js RuntimeError
 test/built-ins/String/prototype/concat/name.js TypeCheckError
-test/built-ins/String/prototype/concat/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/concat/not-a-constructor.js Pass
 test/built-ins/String/prototype/concat/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/constructor/S15.5.4.1_A1_T1.js RuntimeError
 test/built-ins/String/prototype/constructor/S15.5.4.1_A1_T2.js RuntimeError
@@ -4268,7 +4268,7 @@ test/built-ins/String/prototype/endsWith/coerced-values-of-position.js TypeCheck
 test/built-ins/String/prototype/endsWith/endsWith.js TypeCheckError
 test/built-ins/String/prototype/endsWith/length.js TypeCheckError
 test/built-ins/String/prototype/endsWith/name.js TypeCheckError
-test/built-ins/String/prototype/endsWith/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/endsWith/not-a-constructor.js Pass
 test/built-ins/String/prototype/endsWith/return-abrupt-from-position-as-symbol.js TypeCheckError
 test/built-ins/String/prototype/endsWith/return-abrupt-from-position.js TypeCheckError
 test/built-ins/String/prototype/endsWith/return-abrupt-from-searchstring-as-symbol.js TypeCheckError
@@ -4295,7 +4295,7 @@ test/built-ins/String/prototype/includes/coerced-values-of-position.js TypeCheck
 test/built-ins/String/prototype/includes/includes.js TypeCheckError
 test/built-ins/String/prototype/includes/length.js TypeCheckError
 test/built-ins/String/prototype/includes/name.js TypeCheckError
-test/built-ins/String/prototype/includes/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/includes/not-a-constructor.js Pass
 test/built-ins/String/prototype/includes/return-abrupt-from-position-as-symbol.js TypeCheckError
 test/built-ins/String/prototype/includes/return-abrupt-from-position.js TypeCheckError
 test/built-ins/String/prototype/includes/return-abrupt-from-searchstring-as-symbol.js TypeCheckError
@@ -4347,7 +4347,7 @@ test/built-ins/String/prototype/indexOf/S15.5.4.7_A7.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A8.js RuntimeError
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A9.js RuntimeError
 test/built-ins/String/prototype/indexOf/name.js TypeCheckError
-test/built-ins/String/prototype/indexOf/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/indexOf/not-a-constructor.js Pass
 test/built-ins/String/prototype/indexOf/position-tointeger-bigint.js TypeCheckError
 test/built-ins/String/prototype/indexOf/position-tointeger-errors.js TypeCheckError
 test/built-ins/String/prototype/indexOf/position-tointeger-toprimitive.js TypeCheckError
@@ -4389,7 +4389,7 @@ test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A7.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A8.js RuntimeError
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A9.js RuntimeError
 test/built-ins/String/prototype/lastIndexOf/name.js TypeCheckError
-test/built-ins/String/prototype/lastIndexOf/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/lastIndexOf/not-a-constructor.js Pass
 test/built-ins/String/prototype/lastIndexOf/not-a-substring.js Pass
 test/built-ins/String/prototype/lastIndexOf/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/localeCompare/15.5.4.9_3.js RuntimeError
@@ -4403,7 +4403,7 @@ test/built-ins/String/prototype/localeCompare/S15.5.4.9_A7.js Pass
 test/built-ins/String/prototype/localeCompare/S15.5.4.9_A8.js RuntimeError
 test/built-ins/String/prototype/localeCompare/S15.5.4.9_A9.js RuntimeError
 test/built-ins/String/prototype/localeCompare/name.js TypeCheckError
-test/built-ins/String/prototype/localeCompare/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/localeCompare/not-a-constructor.js Pass
 test/built-ins/String/prototype/localeCompare/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/match/S15.5.4.10_A1_T10.js Pass
 test/built-ins/String/prototype/match/S15.5.4.10_A1_T11.js Pass
@@ -4485,7 +4485,7 @@ test/built-ins/String/prototype/normalize/form-is-not-valid-throws.js TypeCheckE
 test/built-ins/String/prototype/normalize/length.js TypeCheckError
 test/built-ins/String/prototype/normalize/name.js TypeCheckError
 test/built-ins/String/prototype/normalize/normalize.js TypeCheckError
-test/built-ins/String/prototype/normalize/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/normalize/not-a-constructor.js Pass
 test/built-ins/String/prototype/normalize/return-abrupt-from-form-as-symbol.js TypeCheckError
 test/built-ins/String/prototype/normalize/return-abrupt-from-form.js TypeCheckError
 test/built-ins/String/prototype/normalize/return-abrupt-from-this-as-symbol.js Pass
@@ -4506,8 +4506,8 @@ test/built-ins/String/prototype/padEnd/function-name.js TypeCheckError
 test/built-ins/String/prototype/padEnd/function-property-descriptor.js TypeCheckError
 test/built-ins/String/prototype/padEnd/max-length-not-greater-than-string.js TypeCheckError
 test/built-ins/String/prototype/padEnd/normal-operation.js Pass
-test/built-ins/String/prototype/padEnd/not-a-constructor.js RuntimeError
-test/built-ins/String/prototype/padEnd/observable-operations.js Pass
+test/built-ins/String/prototype/padEnd/not-a-constructor.js Pass
+test/built-ins/String/prototype/padEnd/observable-operations.js RuntimeError
 test/built-ins/String/prototype/padStart/exception-fill-string-symbol.js TypeCheckError
 test/built-ins/String/prototype/padStart/exception-not-object-coercible.js Pass
 test/built-ins/String/prototype/padStart/exception-symbol.js Pass
@@ -4519,8 +4519,8 @@ test/built-ins/String/prototype/padStart/function-name.js TypeCheckError
 test/built-ins/String/prototype/padStart/function-property-descriptor.js TypeCheckError
 test/built-ins/String/prototype/padStart/max-length-not-greater-than-string.js TypeCheckError
 test/built-ins/String/prototype/padStart/normal-operation.js Pass
-test/built-ins/String/prototype/padStart/not-a-constructor.js RuntimeError
-test/built-ins/String/prototype/padStart/observable-operations.js Pass
+test/built-ins/String/prototype/padStart/not-a-constructor.js Pass
+test/built-ins/String/prototype/padStart/observable-operations.js RuntimeError
 test/built-ins/String/prototype/repeat/count-coerced-to-zero-returns-empty-string.js TypeCheckError
 test/built-ins/String/prototype/repeat/count-is-infinity-throws.js Pass
 test/built-ins/String/prototype/repeat/count-is-zero-returns-empty-string.js Pass
@@ -4528,7 +4528,7 @@ test/built-ins/String/prototype/repeat/count-less-than-zero-throws.js Pass
 test/built-ins/String/prototype/repeat/empty-string-returns-empty.js Pass
 test/built-ins/String/prototype/repeat/length.js TypeCheckError
 test/built-ins/String/prototype/repeat/name.js TypeCheckError
-test/built-ins/String/prototype/repeat/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/repeat/not-a-constructor.js Pass
 test/built-ins/String/prototype/repeat/repeat-string-n-times.js Pass
 test/built-ins/String/prototype/repeat/repeat.js TypeCheckError
 test/built-ins/String/prototype/repeat/return-abrupt-from-count-as-symbol.js TypeCheckError
@@ -4584,7 +4584,7 @@ test/built-ins/String/prototype/replace/cstm-replace-on-number-primitive.js Runt
 test/built-ins/String/prototype/replace/cstm-replace-on-string-primitive.js RuntimeError
 test/built-ins/String/prototype/replace/length.js TypeCheckError
 test/built-ins/String/prototype/replace/name.js TypeCheckError
-test/built-ins/String/prototype/replace/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/replace/not-a-constructor.js Pass
 test/built-ins/String/prototype/replace/regexp-capture-by-index.js Pass
 test/built-ins/String/prototype/replace/regexp-prototype-replace-v-u-flag.js Skipped:skip-feature:regexp-v-flag
 test/built-ins/String/prototype/replace/replaceValue-evaluation-order-regexp-object.js TypeCheckError
@@ -4606,7 +4606,7 @@ test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024N.js RuntimeErr
 test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024NN.js RuntimeError
 test/built-ins/String/prototype/replaceAll/length.js TypeCheckError
 test/built-ins/String/prototype/replaceAll/name.js TypeCheckError
-test/built-ins/String/prototype/replaceAll/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/replaceAll/not-a-constructor.js Pass
 test/built-ins/String/prototype/replaceAll/replaceAll.js TypeCheckError
 test/built-ins/String/prototype/replaceAll/replaceValue-call-abrupt.js Pass
 test/built-ins/String/prototype/replaceAll/replaceValue-call-each-match-position.js Pass
@@ -4714,7 +4714,7 @@ test/built-ins/String/prototype/slice/S15.5.4.13_A7.js Pass
 test/built-ins/String/prototype/slice/S15.5.4.13_A8.js RuntimeError
 test/built-ins/String/prototype/slice/S15.5.4.13_A9.js RuntimeError
 test/built-ins/String/prototype/slice/name.js TypeCheckError
-test/built-ins/String/prototype/slice/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/slice/not-a-constructor.js Pass
 test/built-ins/String/prototype/slice/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/slice/this-value-tostring-throws-symbol.js Pass
 test/built-ins/String/prototype/slice/this-value-tostring-throws-toprimitive.js Pass
@@ -4804,7 +4804,7 @@ test/built-ins/String/prototype/split/cstm-split-on-string-primitive.js RuntimeE
 test/built-ins/String/prototype/split/instance-is-array-1-2-3-4-5.js Pass
 test/built-ins/String/prototype/split/instance-is-boolean.js Pass
 test/built-ins/String/prototype/split/instance-is-function.js TypeCheckError
-test/built-ins/String/prototype/split/instance-is-math.js Pass
+test/built-ins/String/prototype/split/instance-is-math.js RuntimeError
 test/built-ins/String/prototype/split/instance-is-new-string.js Pass
 test/built-ins/String/prototype/split/instance-is-number-1234567890.js Pass
 test/built-ins/String/prototype/split/instance-is-number-1e21.js Pass
@@ -4814,7 +4814,7 @@ test/built-ins/String/prototype/split/instance-is-string-one-two-three-four-five
 test/built-ins/String/prototype/split/instance-is-string.js Pass
 test/built-ins/String/prototype/split/limit-touint32-error.js TypeCheckError
 test/built-ins/String/prototype/split/name.js TypeCheckError
-test/built-ins/String/prototype/split/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/split/not-a-constructor.js Pass
 test/built-ins/String/prototype/split/separator-colon-instance-is-string-one-1-two-2-four-4.js Pass
 test/built-ins/String/prototype/split/separator-comma-instance-is-string-one-two-three-four-five.js Pass
 test/built-ins/String/prototype/split/separator-empty-string-instance-is-string.js Pass
@@ -4841,7 +4841,7 @@ test/built-ins/String/prototype/split/valueOf-is-called-for-limit-argument.js Ty
 test/built-ins/String/prototype/startsWith/coerced-values-of-position.js TypeCheckError
 test/built-ins/String/prototype/startsWith/length.js TypeCheckError
 test/built-ins/String/prototype/startsWith/name.js TypeCheckError
-test/built-ins/String/prototype/startsWith/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/startsWith/not-a-constructor.js Pass
 test/built-ins/String/prototype/startsWith/out-of-bounds-position.js TypeCheckError
 test/built-ins/String/prototype/startsWith/return-abrupt-from-position-as-symbol.js TypeCheckError
 test/built-ins/String/prototype/startsWith/return-abrupt-from-position.js TypeCheckError
@@ -4901,7 +4901,7 @@ test/built-ins/String/prototype/substring/S15.5.4.15_A7.js Pass
 test/built-ins/String/prototype/substring/S15.5.4.15_A8.js RuntimeError
 test/built-ins/String/prototype/substring/S15.5.4.15_A9.js RuntimeError
 test/built-ins/String/prototype/substring/name.js TypeCheckError
-test/built-ins/String/prototype/substring/not-a-constructor.js RuntimeError
+test/built-ins/String/prototype/substring/not-a-constructor.js Pass
 test/built-ins/String/prototype/substring/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/substring/this-value-tostring-throws-symbol.js Pass
 test/built-ins/String/prototype/substring/this-value-tostring-throws-toprimitive.js Pass
