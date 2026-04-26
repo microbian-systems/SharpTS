@@ -50,63 +50,67 @@ public partial class RuntimeEmitter
         // pattern matcher in ILEmitter.Calls.cs intercepts the syntactic
         // Array.prototype.X.call form and bypasses these wrappers.
 
-        void Wire(string jsName, MethodBuilder? helper)
+        // Wire with explicit JS-spec name + length per ECMA-262.
+        // Length is the user-callable arg count (the receiver is implicit).
+        void Wire(string jsName, MethodBuilder? helper, int jsLength)
         {
             if (helper is null) return;
             il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
             il.Emit(OpCodes.Ldstr, jsName);
-            // new $TSFunction(null, helper)
+            // new $TSFunction(null, helper, jsName, jsLength)
             il.Emit(OpCodes.Ldnull); // target
             il.Emit(OpCodes.Ldtoken, helper);
             il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
                 _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
             il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldc_I4, jsLength);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
             il.Emit(OpCodes.Callvirt, setItem);
         }
 
-        Wire("map",            runtime.ArrayMap);
-        Wire("filter",         runtime.ArrayFilter);
-        Wire("forEach",        runtime.ArrayForEach);
-        Wire("find",           runtime.ArrayFind);
-        Wire("findIndex",      runtime.ArrayFindIndex);
-        Wire("findLast",       runtime.ArrayFindLast);
-        Wire("findLastIndex",  runtime.ArrayFindLastIndex);
-        Wire("some",           runtime.ArraySome);
-        Wire("every",          runtime.ArrayEvery);
-        Wire("reduce",         runtime.ArrayReduce);
-        Wire("reduceRight",    runtime.ArrayReduceRight);
-        Wire("includes",       runtime.ArrayIncludes);
-        Wire("indexOf",        runtime.ArrayIndexOf);
-        Wire("lastIndexOf",    runtime.ArrayLastIndexOf);
-        Wire("join",           runtime.ArrayJoin);
-        Wire("concat",         runtime.ArrayConcat);
-        Wire("reverse",        runtime.ArrayReverse);
-        Wire("flat",           runtime.ArrayFlat);
-        Wire("flatMap",        runtime.ArrayFlatMap);
-        Wire("sort",           runtime.ArraySort);
-        Wire("toSorted",       runtime.ArrayToSorted);
-        Wire("splice",         runtime.ArraySplice);
-        Wire("toSpliced",      runtime.ArrayToSpliced);
-        Wire("toReversed",     runtime.ArrayToReversed);
-        Wire("with",           runtime.ArrayWith);
-        Wire("at",             runtime.ArrayAt);
-        Wire("fill",           runtime.ArrayFill);
-        Wire("copyWithin",     runtime.ArrayCopyWithin);
-        Wire("entries",        runtime.ArrayEntries);
-        Wire("keys",           runtime.ArrayKeys);
-        Wire("values",         runtime.ArrayValues);
-        Wire("slice",          runtime.ArraySlice);
-        Wire("push",           runtime.ArrayPush);
-        Wire("pop",            runtime.ArrayPop);
-        Wire("shift",          runtime.ArrayShift);
-        Wire("unshift",        runtime.ArrayUnshift);
+        Wire("map",            runtime.ArrayMap,            1);
+        Wire("filter",         runtime.ArrayFilter,         1);
+        Wire("forEach",        runtime.ArrayForEach,        1);
+        Wire("find",           runtime.ArrayFind,           1);
+        Wire("findIndex",      runtime.ArrayFindIndex,      1);
+        Wire("findLast",       runtime.ArrayFindLast,       1);
+        Wire("findLastIndex",  runtime.ArrayFindLastIndex,  1);
+        Wire("some",           runtime.ArraySome,           1);
+        Wire("every",          runtime.ArrayEvery,          1);
+        Wire("reduce",         runtime.ArrayReduce,         1);
+        Wire("reduceRight",    runtime.ArrayReduceRight,    1);
+        Wire("includes",       runtime.ArrayIncludes,       1);
+        Wire("indexOf",        runtime.ArrayIndexOf,        1);
+        Wire("lastIndexOf",    runtime.ArrayLastIndexOf,    1);
+        Wire("join",           runtime.ArrayJoin,           1);
+        Wire("concat",         runtime.ArrayConcat,         1);
+        Wire("reverse",        runtime.ArrayReverse,        0);
+        Wire("flat",           runtime.ArrayFlat,           0);
+        Wire("flatMap",        runtime.ArrayFlatMap,        1);
+        Wire("sort",           runtime.ArraySort,           1);
+        Wire("toSorted",       runtime.ArrayToSorted,       1);
+        Wire("splice",         runtime.ArraySplice,         2);
+        Wire("toSpliced",      runtime.ArrayToSpliced,      2);
+        Wire("toReversed",     runtime.ArrayToReversed,     0);
+        Wire("with",           runtime.ArrayWith,           2);
+        Wire("at",             runtime.ArrayAt,             1);
+        Wire("fill",           runtime.ArrayFill,           1);
+        Wire("copyWithin",     runtime.ArrayCopyWithin,     2);
+        Wire("entries",        runtime.ArrayEntries,        0);
+        Wire("keys",           runtime.ArrayKeys,           0);
+        Wire("values",         runtime.ArrayValues,         0);
+        Wire("slice",          runtime.ArraySlice,          2);
+        Wire("push",           runtime.ArrayPush,           1);
+        Wire("pop",            runtime.ArrayPop,            0);
+        Wire("shift",          runtime.ArrayShift,          0);
+        Wire("unshift",        runtime.ArrayUnshift,        1);
 
         // Methods without dedicated $Runtime helpers — wired to a generic
         // stub so typeof + isConstructor probes pass.
-        Wire("toString",       runtime.StringPrototypeGenericStub);
-        Wire("toLocaleString", runtime.StringPrototypeGenericStub);
+        Wire("toString",       runtime.StringPrototypeGenericStub, 0);
+        Wire("toLocaleString", runtime.StringPrototypeGenericStub, 0);
 
         il.Emit(OpCodes.Ret);
 

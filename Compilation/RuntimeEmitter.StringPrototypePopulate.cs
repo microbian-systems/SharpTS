@@ -48,7 +48,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(doFillLabel);
 
-        void Wire(string jsName, MethodBuilder? helper)
+        // Wire with explicit JS-spec name + length via TSFunctionCtorWithCache.
+        // Length is the user-callable arg count per ECMA-262 (e.g. substring
+        // = 2, even though the underlying StringSubstring takes 3 .NET params
+        // because the receiver is the first arg). Without this cache, Test262
+        // `String.prototype.substring.length === 2` returns 3.
+        void Wire(string jsName, MethodBuilder? helper, int jsLength)
         {
             if (helper is null) return;
             il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
@@ -59,51 +64,53 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
                 _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
             il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldc_I4, jsLength);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
             il.Emit(OpCodes.Callvirt, setItem);
         }
 
-        Wire("charAt",         runtime.StringCharAt);
-        Wire("charCodeAt",     runtime.StringCharCodeAt);
-        Wire("codePointAt",    runtime.StringCodePointAt);
-        Wire("substring",      runtime.StringSubstring);
-        Wire("substr",         runtime.StringSubstr);
-        Wire("indexOf",        runtime.StringIndexOf);
-        Wire("lastIndexOf",    runtime.StringLastIndexOf);
-        Wire("toUpperCase",    runtime.StringToUpperCase);
-        Wire("toLowerCase",    runtime.StringToLowerCase);
-        Wire("trim",           runtime.StringTrim);
-        Wire("trimStart",      runtime.StringTrimStart);
-        Wire("trimEnd",        runtime.StringTrimEnd);
-        Wire("replace",        runtime.StringReplace);
-        Wire("replaceAll",     runtime.StringReplaceAll);
-        Wire("split",          runtime.StringSplit);
-        Wire("includes",       runtime.StringIncludes);
-        Wire("startsWith",     runtime.StringStartsWith);
-        Wire("endsWith",       runtime.StringEndsWith);
-        Wire("slice",          runtime.StringSlice);
-        Wire("repeat",         runtime.StringRepeat);
-        Wire("padStart",       runtime.StringPadStart);
-        Wire("padEnd",         runtime.StringPadEnd);
-        Wire("concat",         runtime.StringConcat);
-        Wire("at",             runtime.StringAt);
-        Wire("normalize",      runtime.StringNormalize);
-        Wire("localeCompare",  runtime.StringLocaleCompare);
+        Wire("charAt",         runtime.StringCharAt,         1);
+        Wire("charCodeAt",     runtime.StringCharCodeAt,     1);
+        Wire("codePointAt",    runtime.StringCodePointAt,    1);
+        Wire("substring",      runtime.StringSubstring,      2);
+        Wire("substr",         runtime.StringSubstr,         2);
+        Wire("indexOf",        runtime.StringIndexOf,        1);
+        Wire("lastIndexOf",    runtime.StringLastIndexOf,    1);
+        Wire("toUpperCase",    runtime.StringToUpperCase,    0);
+        Wire("toLowerCase",    runtime.StringToLowerCase,    0);
+        Wire("trim",           runtime.StringTrim,           0);
+        Wire("trimStart",      runtime.StringTrimStart,      0);
+        Wire("trimEnd",        runtime.StringTrimEnd,        0);
+        Wire("replace",        runtime.StringReplace,        2);
+        Wire("replaceAll",     runtime.StringReplaceAll,     2);
+        Wire("split",          runtime.StringSplit,          2);
+        Wire("includes",       runtime.StringIncludes,       1);
+        Wire("startsWith",     runtime.StringStartsWith,     1);
+        Wire("endsWith",       runtime.StringEndsWith,       1);
+        Wire("slice",          runtime.StringSlice,          2);
+        Wire("repeat",         runtime.StringRepeat,         1);
+        Wire("padStart",       runtime.StringPadStart,       1);
+        Wire("padEnd",         runtime.StringPadEnd,         1);
+        Wire("concat",         runtime.StringConcat,         1);
+        Wire("at",             runtime.StringAt,             1);
+        Wire("normalize",      runtime.StringNormalize,      0);
+        Wire("localeCompare",  runtime.StringLocaleCompare,  1);
 
         // Methods without dedicated $Runtime helpers — wired to a generic
         // stub so typeof + isConstructor probes pass. The pattern matcher
         // and inline dispatch handle direct invocations of these on actual
         // strings; the wrappers here are only observed by Test262
         // `not-a-constructor.js` harness probes.
-        Wire("match",                runtime.StringPrototypeGenericStub);
-        Wire("matchAll",             runtime.StringPrototypeGenericStub);
-        Wire("search",               runtime.StringPrototypeGenericStub);
-        Wire("toString",             runtime.StringPrototypeGenericStub);
-        Wire("valueOf",              runtime.StringPrototypeGenericStub);
-        Wire("toLocaleLowerCase",    runtime.StringPrototypeGenericStub);
-        Wire("toLocaleUpperCase",    runtime.StringPrototypeGenericStub);
-        Wire("isWellFormed",         runtime.StringPrototypeGenericStub);
-        Wire("toWellFormed",         runtime.StringPrototypeGenericStub);
+        Wire("match",                runtime.StringPrototypeGenericStub,   1);
+        Wire("matchAll",             runtime.StringPrototypeGenericStub,   1);
+        Wire("search",               runtime.StringPrototypeGenericStub,   1);
+        Wire("toString",             runtime.StringPrototypeGenericStub,   0);
+        Wire("valueOf",              runtime.StringPrototypeGenericStub,   0);
+        Wire("toLocaleLowerCase",    runtime.StringPrototypeGenericStub,   0);
+        Wire("toLocaleUpperCase",    runtime.StringPrototypeGenericStub,   0);
+        Wire("isWellFormed",         runtime.StringPrototypeGenericStub,   0);
+        Wire("toWellFormed",         runtime.StringPrototypeGenericStub,   0);
 
         il.Emit(OpCodes.Ret);
     }

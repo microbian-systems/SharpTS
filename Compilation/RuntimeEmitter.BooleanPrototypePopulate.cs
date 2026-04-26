@@ -37,7 +37,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(doFillLabel);
 
-        void Wire(string jsName, MethodBuilder? helper)
+        // Wire with explicit JS-spec name + length per ECMA-262.
+        void Wire(string jsName, MethodBuilder? helper, int jsLength)
         {
             if (helper is null) return;
             il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
@@ -48,12 +49,14 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
                 _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
             il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldc_I4, jsLength);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
             il.Emit(OpCodes.Callvirt, setItem);
         }
 
-        Wire("toString", runtime.StringPrototypeGenericStub);
-        Wire("valueOf",  runtime.StringPrototypeGenericStub);
+        Wire("toString", runtime.StringPrototypeGenericStub, 0);
+        Wire("valueOf",  runtime.StringPrototypeGenericStub, 0);
 
         il.Emit(OpCodes.Ret);
     }
