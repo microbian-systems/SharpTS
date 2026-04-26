@@ -230,6 +230,17 @@ public partial class ILEmitter
         EmitTag("[object Math]");
         IL.MarkLabel(notMathLabel);
 
+        // JSON singleton — reference equality. Per ECMA-262 §25.5,
+        // JSON has Symbol.toStringTag = "JSON" so toString returns
+        // "[object JSON]". Test262 uses `Array.prototype.reduce.call(JSON, …)`
+        // patterns that depend on this branding.
+        var notJsonLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Ldsfld, runtime.JsonSingletonField);
+        IL.Emit(OpCodes.Bne_Un, notJsonLabel);
+        EmitTag("[object JSON]");
+        IL.MarkLabel(notJsonLabel);
+
         // object[] (compiled `arguments` representation)
         var notArgsLabel = IL.DefineLabel();
         IL.Emit(OpCodes.Ldloc, receiverLocal);

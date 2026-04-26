@@ -93,6 +93,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
+        // $Object: route through $Runtime.GetProperty(obj, index.ToString())
+        // so prototype-chain walks + getters fire. Test262 patterns like
+        // `obj[0] = 11; arr.some.call(obj, …)` need numeric indexed reads
+        // to land in the same store as `obj.length` (own _fields).
+        var tsObjectIdxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, tsObjectIdxLabel);
+
         // Class instance: check if index is string or numeric, then use GetFieldsProperty
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.String);
@@ -195,6 +204,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
         il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
+        il.Emit(OpCodes.Ret);
+
+        // $Object indexed get: route through $Runtime.GetProperty(obj, index.ToString())
+        il.MarkLabel(tsObjectIdxLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.GetProperty);
         il.Emit(OpCodes.Ret);
 
         // $Array handler: route through the long-indexed Get, which returns
@@ -474,6 +491,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
+        // $Object indexed set: route to $Runtime.SetProperty so the value lands
+        // in the same _fields store as named property writes. Pre-fix, indexed
+        // writes silently dropped on $Object instances (e.g. `new Foo()[0] = 11`).
+        var tsObjectIdxSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, tsObjectIdxSetLabel);
+
         // Class instance: check if index is string, then use SetFieldsProperty
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.String);
@@ -481,6 +506,15 @@ public partial class RuntimeEmitter
 
         // Fallthrough: return (ignore)
         il.MarkLabel(nullLabel);
+        il.Emit(OpCodes.Ret);
+
+        // $Object indexed set handler: SetProperty(obj, index.ToString(), value)
+        il.MarkLabel(tsObjectIdxSetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
 
         // Symbol key handler: GetSymbolDict(obj)[index] = value

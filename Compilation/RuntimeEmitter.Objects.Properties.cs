@@ -1763,12 +1763,75 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSNamespaceGet);
         il.Emit(OpCodes.Ret);
 
-        // $Object handler - call obj.GetProperty(name) which handles getters
+        // $Object handler - call obj.GetProperty(name) which handles getters.
+        // If the property is missing (HasProperty=false) and there's no own PDS
+        // descriptor either, walk the prototype chain via PDSGetPrototype.
+        // Required for Test262 `Con.prototype = proto; new Con(); obj.length`
+        // patterns where length lives on the prototype, and conversely
+        // `Object.defineProperty(child, "length", {value:2})` (PDS-only) must
+        // override an inherited accessor on proto.
         il.MarkLabel(tsObjectLabel);
+        var tsObjectInstanceLocal = il.DeclareLocal(runtime.TSObjectType);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Stloc, tsObjectInstanceLocal);
+        // if (obj.HasProperty(name)) return obj.GetProperty(name)
+        il.Emit(OpCodes.Ldloc, tsObjectInstanceLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectHasProperty);
+        var tsObjectCheckPDS = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, tsObjectCheckPDS);
+        il.Emit(OpCodes.Ldloc, tsObjectInstanceLocal);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
+        il.Emit(OpCodes.Ret);
+        // Check PDS for own data descriptor / accessor before walking chain
+        il.MarkLabel(tsObjectCheckPDS);
+        var tsObjectPDSDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldloc, tsObjectInstanceLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, tsObjectPDSDescLocal);
+        var tsObjectWalkProto = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tsObjectPDSDescLocal);
+        il.Emit(OpCodes.Brfalse, tsObjectWalkProto);
+        // Has own descriptor: getter wins, else return value
+        var tsObjectPDSValue = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tsObjectPDSDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, tsObjectPDSValue);
+        // Invoke getter via InvokeMethodValue(obj, getter, [])
+        var tsObjectGetterLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, tsObjectGetterLocal);
+        il.Emit(OpCodes.Ldloc, tsObjectInstanceLocal);
+        il.Emit(OpCodes.Ldloc, tsObjectGetterLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(tsObjectPDSValue);
+        il.Emit(OpCodes.Pop); // discard the null getter
+        il.Emit(OpCodes.Ldloc, tsObjectPDSDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+        // Walk prototype chain
+        il.MarkLabel(tsObjectWalkProto);
+        var tsObjectProtoLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, tsObjectInstanceLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPrototype);
+        il.Emit(OpCodes.Stloc, tsObjectProtoLocal);
+        var tsObjectNoProto = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tsObjectProtoLocal);
+        il.Emit(OpCodes.Brfalse, tsObjectNoProto);
+        // Recursively call GetProperty(prototype, name)
+        il.Emit(OpCodes.Ldloc, tsObjectProtoLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, method);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(tsObjectNoProto);
+        // No prototype — return undefined per JS semantics
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(nullLabel);

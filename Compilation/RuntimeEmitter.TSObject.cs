@@ -503,6 +503,21 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
+        // if (_getters != null && _getters.ContainsKey(name)) return true
+        var checkFieldsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsObjectGettersField);
+        il.Emit(OpCodes.Brfalse, checkFieldsLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsObjectGettersField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("ContainsKey", [_types.String])!);
+        il.Emit(OpCodes.Brfalse, checkFieldsLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(checkFieldsLabel);
         // return _fields.ContainsKey(name)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsObjectFieldsField);

@@ -168,6 +168,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notDict);
 
+        // $Object → materialize via $Runtime.GetProperty so prototype-chain
+        // length + indexed reads fire (Test262 patterns: `Con.prototype = proto;
+        // obj = new Con(); obj[i] = …; Array.prototype.X.call(obj, …)`).
+        var notTSObject = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObject);
+        EmitMaterializeViaGetProperty(il, runtime);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSObject);
+
         // Bool primitive → materialize from Boolean.prototype singleton.
         // Per spec, ToObject(false) creates a Boolean wrapper that inherits
         // from Boolean.prototype. Test262 patterns customize Boolean.prototype
@@ -210,6 +221,117 @@ public partial class RuntimeEmitter
         il.MarkLabel(throwLabel);
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObject));
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Materializes a list from any receiver via $Runtime.GetProperty calls
+    /// (length + indexed reads). Used for $Object instances where prototype-
+    /// chain walks for `length` matter and indexed reads must go through the
+    /// public property pipeline (getters / accessors / chain). Stack-in: arg0
+    /// holds the receiver. Stack-out: [List&lt;object&gt;].
+    /// </summary>
+    private void EmitMaterializeViaGetProperty(ILGenerator il, EmittedRuntime runtime)
+    {
+        var lenLocal = il.DeclareLocal(_types.Int32);
+        var listLocal = il.DeclareLocal(_types.ListOfObject);
+        var idxLocal = il.DeclareLocal(_types.Int32);
+        var idxAsIntLocal = il.DeclareLocal(_types.Int32);
+
+        // lenVal = $Runtime.GetProperty(receiver, "length")
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        // double d = $Runtime.ToNumber(lenVal);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        var dLocal = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Stloc, dLocal);
+
+        // NaN → 0
+        var afterLen = il.DefineLabel();
+        var notNaN = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brtrue, notNaN);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.Emit(OpCodes.Br, afterLen);
+        il.MarkLabel(notNaN);
+
+        // ±Infinity / finite branches
+        var notPosInf = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("IsPositiveInfinity", [_types.Double])!);
+        il.Emit(OpCodes.Brfalse, notPosInf);
+        il.Emit(OpCodes.Ldc_I4, 1 << 20);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.Emit(OpCodes.Br, afterLen);
+        il.MarkLabel(notPosInf);
+
+        var notNegInf = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("IsNegativeInfinity", [_types.Double])!);
+        il.Emit(OpCodes.Brfalse, notNegInf);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.Emit(OpCodes.Br, afterLen);
+        il.MarkLabel(notNegInf);
+
+        // Finite: clamp to [0, 1<<20]
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        var notNeg = il.DefineLabel();
+        il.Emit(OpCodes.Bge, notNeg);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.MarkLabel(notNeg);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Ldc_I4, 1 << 20);
+        var notTooBig = il.DefineLabel();
+        il.Emit(OpCodes.Ble, notTooBig);
+        il.Emit(OpCodes.Ldc_I4, 1 << 20);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.MarkLabel(notTooBig);
+
+        il.MarkLabel(afterLen);
+
+        // list = new List<object>(len)
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
+        il.Emit(OpCodes.Stloc, listLocal);
+
+        // for (i = 0; i < len; i++) list.Add($Runtime.GetProperty(receiver, i.ToString()))
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idxLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // val = $Runtime.GetProperty(receiver, i.ToString())
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Stloc, idxAsIntLocal);
+        il.Emit(OpCodes.Ldloca, idxAsIntLocal);
+        il.Emit(OpCodes.Call, _types.Int32.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, listLocal);
     }
 
     private void EmitMaterializeString(ILGenerator il)
