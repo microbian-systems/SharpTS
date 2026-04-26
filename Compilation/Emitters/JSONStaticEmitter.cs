@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Parsing;
 
@@ -102,10 +103,33 @@ public sealed class JSONStaticEmitter : IStaticTypeEmitterStrategy
     }
 
     /// <summary>
-    /// JSON has no static properties.
+    /// Stage 4y: expose JSON.parse / JSON.stringify as values so
+    /// `let p = JSON.parse; p('"x"')` works AND so test262's isConstructor
+    /// harness reports them as functions (typeof check).
     /// </summary>
     public bool TryEmitStaticPropertyGet(IEmitterContext emitter, string propertyName)
     {
-        return false;
+        var ctx = emitter.Context;
+        var runtime = ctx.Runtime!;
+        MethodInfo? method = propertyName switch
+        {
+            "parse"     => runtime.JsonParse,
+            "stringify" => runtime.JsonStringify,
+            _ => null
+        };
+        if (method == null) return false;
+
+        var il = ctx.IL;
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldtoken, method);
+        il.Emit(OpCodes.Ldtoken, method.DeclaringType!);
+        il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
+            ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        return true;
     }
+
+    public bool HasStaticProperty(string memberName) =>
+        memberName is "parse" or "stringify";
 }

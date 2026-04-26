@@ -3247,7 +3247,7 @@ test/built-ins/JSON/parse/duplicate-proto.js Pass
 test/built-ins/JSON/parse/invalid-whitespace.js Pass
 test/built-ins/JSON/parse/length.js TypeCheckError
 test/built-ins/JSON/parse/name.js TypeCheckError
-test/built-ins/JSON/parse/not-a-constructor.js RuntimeError
+test/built-ins/JSON/parse/not-a-constructor.js Pass
 test/built-ins/JSON/parse/prop-desc.js TypeCheckError
 test/built-ins/JSON/parse/revived-proxy-revoked.js Pass
 test/built-ins/JSON/parse/revived-proxy.js Pass
@@ -3291,7 +3291,7 @@ test/built-ins/JSON/rawJSON/returns-expected-object.js RuntimeError
 test/built-ins/JSON/stringify/builtin.js TypeCheckError
 test/built-ins/JSON/stringify/length.js TypeCheckError
 test/built-ins/JSON/stringify/name.js TypeCheckError
-test/built-ins/JSON/stringify/not-a-constructor.js RuntimeError
+test/built-ins/JSON/stringify/not-a-constructor.js Pass
 test/built-ins/JSON/stringify/prop-desc.js TypeCheckError
 test/built-ins/JSON/stringify/property-order.js TypeCheckError
 test/built-ins/JSON/stringify/replacer-array-abrupt.js Pass
