@@ -33,12 +33,37 @@ public partial class RuntimeEmitter
         var loopEndLabel = il.DefineLabel();
         var returnLabel = il.DefineLabel();
 
+        // ECMA-262 Array.from: if @@iterator is missing, treat receiver as
+        // array-like (read length, iterate by index). The IterateToList
+        // fallback enumerates Dictionary<string,object> as KeyValuePair —
+        // wrong semantics for `Array.from({0:'a',1:'b',length:2})`. Detect
+        // Dictionary receivers without a Symbol.iterator method and route
+        // through ArrayLikeMaterialize, which handles length+indexed reads
+        // and preserves holes.
+        var notArrayLikeDictLabel = il.DefineLabel();
+        var afterListInit = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, notArrayLikeDictLabel);
+        // GetIteratorFunction(iterable, iteratorSymbol) — null means array-like
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.GetIteratorFunction);
+        il.Emit(OpCodes.Brtrue, notArrayLikeDictLabel);
+        // dict has no @@iterator → ArrayLikeMaterialize
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ArrayLikeMaterialize);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Br, afterListInit);
+        il.MarkLabel(notArrayLikeDictLabel);
+
         // Call IterateToList(iterable, iteratorSymbol, runtimeType) to get the initial list
         il.Emit(OpCodes.Ldarg_0);  // iterable
         il.Emit(OpCodes.Ldarg_2);  // iteratorSymbol
         il.Emit(OpCodes.Ldarg_3);  // runtimeType
         il.Emit(OpCodes.Call, runtime.IterateToList);
         il.Emit(OpCodes.Stloc, resultLocal);
+        il.MarkLabel(afterListInit);
 
         // if (mapFn == null) return result;
         il.Emit(OpCodes.Ldarg_1);  // mapFn

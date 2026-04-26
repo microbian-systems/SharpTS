@@ -47,9 +47,9 @@ test/built-ins/Array/from/Array.from-name.js TypeCheckError
 test/built-ins/Array/from/Array.from_arity.js TypeCheckError
 test/built-ins/Array/from/Array.from_forwards-length-for-array-likes.js RuntimeError
 test/built-ins/Array/from/array-like-has-length-but-no-indexes-with-values.js Pass
-test/built-ins/Array/from/calling-from-valid-1-noStrict.js RuntimeError
-test/built-ins/Array/from/calling-from-valid-1-onlyStrict.js RuntimeError
-test/built-ins/Array/from/calling-from-valid-2.js RuntimeError
+test/built-ins/Array/from/calling-from-valid-1-noStrict.js Pass
+test/built-ins/Array/from/calling-from-valid-1-onlyStrict.js Pass
+test/built-ins/Array/from/calling-from-valid-2.js Pass
 test/built-ins/Array/from/elements-added-after.js Pass
 test/built-ins/Array/from/elements-deleted-after.js Pass
 test/built-ins/Array/from/elements-updated-after.js Pass
