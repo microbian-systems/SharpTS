@@ -1496,6 +1496,8 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldtoken, _types.Double);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
             il.Emit(OpCodes.Bne_Un, notDoubleLabel);
+            // Lazy-populate Number.prototype with $TSFunction wrappers on first read.
+            il.Emit(OpCodes.Call, runtime.NumberPrototypePopulateMethod);
             il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notDoubleLabel);
@@ -1504,6 +1506,8 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldtoken, _types.String);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
             il.Emit(OpCodes.Bne_Un, notStringLabel);
+            // Lazy-populate String.prototype with $TSFunction wrappers on first read.
+            il.Emit(OpCodes.Call, runtime.StringPrototypePopulateMethod);
             il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notStringLabel);

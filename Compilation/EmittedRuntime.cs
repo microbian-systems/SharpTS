@@ -316,6 +316,8 @@ public class EmittedRuntime
     public MethodBuilder ArrayPrototypePopulateMethod { get; set; } = null!;
     /// <summary>Populates <see cref="StringPrototypeField"/> with $TSFunction wrappers; idempotent.</summary>
     public MethodBuilder StringPrototypePopulateMethod { get; set; } = null!;
+    /// <summary>Populates <see cref="NumberPrototypeField"/> with $TSFunction wrappers; idempotent.</summary>
+    public MethodBuilder NumberPrototypePopulateMethod { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;

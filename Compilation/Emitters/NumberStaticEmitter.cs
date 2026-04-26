@@ -62,6 +62,17 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
         var ctx = emitter.Context;
         var il = ctx.IL;
 
+        // `Number.prototype` — singleton dict, populated lazily with $TSFunction
+        // wrappers for toFixed/toPrecision/toExponential (and stubs for
+        // toString/valueOf/toLocaleString). Required for Test262
+        // `not-a-constructor.js` probes.
+        if (propertyName == "prototype")
+        {
+            il.Emit(OpCodes.Call, ctx.Runtime!.NumberPrototypePopulateMethod);
+            il.Emit(OpCodes.Ldsfld, ctx.Runtime!.NumberPrototypeField);
+            return true;
+        }
+
         switch (propertyName)
         {
             case "MAX_VALUE":

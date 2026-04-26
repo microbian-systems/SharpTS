@@ -19,14 +19,23 @@ public partial class RuntimeEmitter
     /// strings (<c>"abc".substring(1)</c>) flow through the type-checked
     /// dispatch path and bypass these wrappers.
     /// </remarks>
-    private void EmitStringPrototypePopulate(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    /// <summary>
+    /// Pre-defines the populate MethodBuilder shell so callers (e.g.
+    /// $Runtime.GetProperty's Type-prototype branch) can reference it
+    /// before the body is emitted.
+    /// </summary>
+    private void DefineStringPrototypePopulateShell(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
+        runtime.StringPrototypePopulateMethod = typeBuilder.DefineMethod(
             "_StringPrototypePopulate",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Void,
             Type.EmptyTypes);
+    }
 
+    private void EmitStringPrototypePopulate(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = runtime.StringPrototypePopulateMethod;
         var il = method.GetILGenerator();
         var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item",
             _types.String, _types.Object);
@@ -82,7 +91,5 @@ public partial class RuntimeEmitter
         Wire("localeCompare",  runtime.StringLocaleCompare);
 
         il.Emit(OpCodes.Ret);
-
-        runtime.StringPrototypePopulateMethod = method;
     }
 }

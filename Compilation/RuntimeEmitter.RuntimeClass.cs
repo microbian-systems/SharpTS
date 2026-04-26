@@ -347,6 +347,11 @@ public partial class RuntimeEmitter
         EmitPromiseMethods(typeBuilder, runtime);
         // TypedArray detection helpers must come before GetProperty (which uses IsTypedArrayMethod)
         EmitTypedArrayDetectionHelpers(typeBuilder, runtime);
+        // Pre-define populate shells so GetProperty's Type-prototype branch can
+        // reference them as MethodBuilders. Bodies emitted later (after the
+        // wrapped helpers exist).
+        DefineStringPrototypePopulateShell(typeBuilder, runtime);
+        DefineNumberPrototypePopulateShell(typeBuilder, runtime);
         EmitGetProperty(typeBuilder, runtime);
         // ToJsString depends on GetProperty + InvokeMethodValue + Stringify; emit after those.
         EmitToJsString(typeBuilder, runtime);
@@ -508,6 +513,7 @@ public partial class RuntimeEmitter
         EmitStringLocaleCompare(typeBuilder, runtime);
         // String.prototype dict populate — must come AFTER all the String* helpers.
         EmitStringPrototypePopulate(typeBuilder, runtime);
+        // Number.prototype populate is wired after EmitNumberMethods below.
         // Object utilities
         EmitGetSuperMethod(typeBuilder, runtime);
         // EmitCreateException and EmitWrapException moved earlier (before Promise methods)
@@ -534,6 +540,9 @@ public partial class RuntimeEmitter
         // Promise methods moved earlier (before GetProperty, which needs PromiseThen for typeof p.then)
         // Number methods
         EmitNumberMethods(typeBuilder, runtime);
+        // Number.prototype populate body — must come AFTER EmitNumberMethods so
+        // NumberToFixed/etc. MethodBuilders are non-null.
+        EmitNumberPrototypePopulate(typeBuilder, runtime);
         // Fill in LookupBuiltInStaticMember's body now that IsArray, NumberIs*,
         // StringFrom*, and TSFunctionCtor are all in place (#63).
         EmitLookupBuiltInStaticMemberBody(runtime);
