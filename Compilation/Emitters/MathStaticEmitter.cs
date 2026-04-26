@@ -261,59 +261,64 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
         }
 
         var runtime = ctx.Runtime!;
-        MethodInfo? adapter = propertyName switch
+        // Stage 4z5: tuple of (adapter, jsName, jsLength) so .name reports
+        // the JS-spec name (lowercase) instead of the .NET adapter method
+        // name (e.g. "MathFloorAdapter") and .length reports the spec length.
+        // Spec lengths from ECMA-262 21.3.2:
+        //   pow/atan2/imul/max/min ... → 2
+        //   hypot → 2 (per spec); others → 1; random → 0.
+        (MethodInfo? adapter, int len) info = propertyName switch
         {
-            "floor"  => runtime.MathFloorAdapter,
-            "ceil"   => runtime.MathCeilAdapter,
-            "abs"    => runtime.MathAbsAdapter,
-            "sqrt"   => runtime.MathSqrtAdapter,
-            "round"  => runtime.MathRoundAdapter,
-            "trunc"  => runtime.MathTruncAdapter,
-            "sign"   => runtime.MathSignAdapter,
-            "sin"    => runtime.MathSinAdapter,
-            "cos"    => runtime.MathCosAdapter,
-            "tan"    => runtime.MathTanAdapter,
-            "log"    => runtime.MathLogAdapter,
-            "exp"    => runtime.MathExpAdapter,
-            "pow"    => runtime.MathPowAdapter,
-            "max"    => runtime.MathMaxAdapter,
-            "min"    => runtime.MathMinAdapter,
-            "random" => runtime.Random,
-            // Stage 4y: ES2015+ Math methods exposed as values.
-            "asin"   => runtime.MathAsinAdapter,
-            "acos"   => runtime.MathAcosAdapter,
-            "atan"   => runtime.MathAtanAdapter,
-            "atan2"  => runtime.MathAtan2Adapter,
-            "sinh"   => runtime.MathSinhAdapter,
-            "cosh"   => runtime.MathCoshAdapter,
-            "tanh"   => runtime.MathTanhAdapter,
-            "asinh"  => runtime.MathAsinhAdapter,
-            "acosh"  => runtime.MathAcoshAdapter,
-            "atanh"  => runtime.MathAtanhAdapter,
-            "cbrt"   => runtime.MathCbrtAdapter,
-            "log10"  => runtime.MathLog10Adapter,
-            "log2"   => runtime.MathLog2Adapter,
-            "log1p"  => runtime.MathLog1pAdapter,
-            "expm1"  => runtime.MathExpm1Adapter,
-            "fround" => runtime.MathFroundAdapter,
-            "clz32"  => runtime.MathClz32Adapter,
-            "imul"   => runtime.MathImulAdapter,
-            "hypot"  => runtime.MathHypotAdapter,
-            _ => null
+            "floor"  => (runtime.MathFloorAdapter, 1),
+            "ceil"   => (runtime.MathCeilAdapter, 1),
+            "abs"    => (runtime.MathAbsAdapter, 1),
+            "sqrt"   => (runtime.MathSqrtAdapter, 1),
+            "round"  => (runtime.MathRoundAdapter, 1),
+            "trunc"  => (runtime.MathTruncAdapter, 1),
+            "sign"   => (runtime.MathSignAdapter, 1),
+            "sin"    => (runtime.MathSinAdapter, 1),
+            "cos"    => (runtime.MathCosAdapter, 1),
+            "tan"    => (runtime.MathTanAdapter, 1),
+            "log"    => (runtime.MathLogAdapter, 1),
+            "exp"    => (runtime.MathExpAdapter, 1),
+            "pow"    => (runtime.MathPowAdapter, 2),
+            "max"    => (runtime.MathMaxAdapter, 2),
+            "min"    => (runtime.MathMinAdapter, 2),
+            "random" => (runtime.Random, 0),
+            "asin"   => (runtime.MathAsinAdapter, 1),
+            "acos"   => (runtime.MathAcosAdapter, 1),
+            "atan"   => (runtime.MathAtanAdapter, 1),
+            "atan2"  => (runtime.MathAtan2Adapter, 2),
+            "sinh"   => (runtime.MathSinhAdapter, 1),
+            "cosh"   => (runtime.MathCoshAdapter, 1),
+            "tanh"   => (runtime.MathTanhAdapter, 1),
+            "asinh"  => (runtime.MathAsinhAdapter, 1),
+            "acosh"  => (runtime.MathAcoshAdapter, 1),
+            "atanh"  => (runtime.MathAtanhAdapter, 1),
+            "cbrt"   => (runtime.MathCbrtAdapter, 1),
+            "log10"  => (runtime.MathLog10Adapter, 1),
+            "log2"   => (runtime.MathLog2Adapter, 1),
+            "log1p"  => (runtime.MathLog1pAdapter, 1),
+            "expm1"  => (runtime.MathExpm1Adapter, 1),
+            "fround" => (runtime.MathFroundAdapter, 1),
+            "clz32"  => (runtime.MathClz32Adapter, 1),
+            "imul"   => (runtime.MathImulAdapter, 2),
+            "hypot"  => (runtime.MathHypotAdapter, 2),
+            _ => (null, 0)
         };
-        if (adapter == null) return false;
+        if (info.adapter == null) return false;
 
-        // new $TSFunction(null, MethodInfo_of(adapter)) — same shape as
-        // ArrayStaticEmitter.TryEmitStaticPropertyGet. The two-arg
-        // GetMethodFromHandle is required so the method token resolves
-        // against the emitted $Runtime TypeBuilder in persisted DLLs.
+        // new $TSFunction(null, MethodInfo_of(adapter), name, length) — uses
+        // the WithCache ctor so .name reports the JS spec name.
         il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldtoken, adapter);
-        il.Emit(OpCodes.Ldtoken, adapter.DeclaringType!);
+        il.Emit(OpCodes.Ldtoken, info.adapter);
+        il.Emit(OpCodes.Ldtoken, info.adapter.DeclaringType!);
         il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
             ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
         il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
-        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Ldstr, propertyName);
+        il.Emit(OpCodes.Ldc_I4, info.len);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
         return true;
     }
 

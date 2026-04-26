@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Parsing;
 
@@ -112,34 +113,29 @@ public sealed class ArrayStaticEmitter : IStaticTypeEmitterStrategy
         // return values auto-box). Array.from / Array.of take variadic or
         // runtime-specific trailing args and need adapter methods before they
         // can be exposed as values the same way.
-        var method = propertyName switch
+        // Stage 4z5: route through the WithCache ctor so .name reports the
+        // JS-spec name ("isArray" / "from" / "of") instead of the .NET method
+        // name ("IsArray" / "ArrayFromAdapter" / "ArrayOf"), and .length
+        // reports the spec-defined length.
+        (MethodInfo? method, string jsName, int jsLength) info = propertyName switch
         {
-            "isArray" => runtime.IsArray,
-            // Stage 4y: Array.from / Array.of as values. Array.from goes
-            // through an adapter (ArrayFrom has a 4-arg internal signature
-            // that includes spec-fixed Symbol.iterator + runtime type;
-            // ArrayFromAdapter wraps with a 2-arg public surface). Array.of
-            // is already (object[])->$Array which TSFunction can dispatch.
-            "from"    => runtime.ArrayFromAdapter,
-            "of"      => runtime.ArrayOf,
-            _ => null
+            "isArray" => (runtime.IsArray, "isArray", 1),
+            "from"    => (runtime.ArrayFromAdapter, "from", 1),
+            "of"      => (runtime.ArrayOf, "of", 0),
+            _ => (null, "", 0)
         };
-        if (method == null) return false;
+        if (info.method == null) return false;
 
         var il = ctx.IL;
-
-        // new $TSFunction(target: null, method: MethodInfo_of(method)).
-        // Materialize the MethodInfo via GetMethodFromHandle(methodHandle, declaringTypeHandle)
-        // — the two-arg overload is needed because the runtime method lives on
-        // the emitted $Runtime TypeBuilder and token resolution in persisted
-        // assemblies requires the declaring type.
         il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldtoken, method);
-        il.Emit(OpCodes.Ldtoken, method.DeclaringType!);
+        il.Emit(OpCodes.Ldtoken, info.method);
+        il.Emit(OpCodes.Ldtoken, info.method.DeclaringType!);
         il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
             ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
         il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
-        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Ldstr, info.jsName);
+        il.Emit(OpCodes.Ldc_I4, info.jsLength);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
         return true;
     }
 }
