@@ -3119,7 +3119,7 @@ test/built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T4.js Pass
 test/built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T5.js TypeCheckError
 test/built-ins/Boolean/prototype/toString/length.js TypeCheckError
 test/built-ins/Boolean/prototype/toString/name.js TypeCheckError
-test/built-ins/Boolean/prototype/toString/not-a-constructor.js RuntimeError
+test/built-ins/Boolean/prototype/toString/not-a-constructor.js Pass
 test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A1_T1.js Pass
 test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A1_T2.js Pass
 test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T1.js Pass
@@ -3129,7 +3129,7 @@ test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T4.js Pass
 test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T5.js TypeCheckError
 test/built-ins/Boolean/prototype/valueOf/length.js TypeCheckError
 test/built-ins/Boolean/prototype/valueOf/name.js TypeCheckError
-test/built-ins/Boolean/prototype/valueOf/not-a-constructor.js RuntimeError
+test/built-ins/Boolean/prototype/valueOf/not-a-constructor.js Pass
 test/built-ins/Boolean/symbol-coercion.js Pass
 test/built-ins/Error/cause_abrupt.js Pass
 test/built-ins/Error/cause_property.js TypeCheckError
@@ -3198,7 +3198,7 @@ test/built-ins/JSON/isRawJSON/basic.js RuntimeError
 test/built-ins/JSON/isRawJSON/builtin.js TypeCheckError
 test/built-ins/JSON/isRawJSON/length.js TypeCheckError
 test/built-ins/JSON/isRawJSON/name.js TypeCheckError
-test/built-ins/JSON/isRawJSON/not-a-constructor.js RuntimeError
+test/built-ins/JSON/isRawJSON/not-a-constructor.js Pass
 test/built-ins/JSON/isRawJSON/prop-desc.js TypeCheckError
 test/built-ins/JSON/parse/15.12.1.1-0-1.js Pass
 test/built-ins/JSON/parse/15.12.1.1-0-2.js Pass
@@ -3285,7 +3285,7 @@ test/built-ins/JSON/rawJSON/illegal-empty-and-start-end-chars.js Pass
 test/built-ins/JSON/rawJSON/invalid-JSON-text.js Pass
 test/built-ins/JSON/rawJSON/length.js TypeCheckError
 test/built-ins/JSON/rawJSON/name.js TypeCheckError
-test/built-ins/JSON/rawJSON/not-a-constructor.js RuntimeError
+test/built-ins/JSON/rawJSON/not-a-constructor.js Pass
 test/built-ins/JSON/rawJSON/prop-desc.js TypeCheckError
 test/built-ins/JSON/rawJSON/returns-expected-object.js RuntimeError
 test/built-ins/JSON/stringify/builtin.js TypeCheckError

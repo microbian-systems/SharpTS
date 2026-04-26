@@ -43,11 +43,14 @@ public class BuiltInRegistryTests
 
     [Theory]
     [InlineData("Array")]
-    [InlineData("JSON")]
     public void TryGetNamespace_StaticNamespaces_AreNotSingletons(string name)
     {
         BuiltInRegistry.Instance.TryGetNamespace(name, out var ns);
 
+        // JSON used to be IsSingleton:false; per ECMA-262 25.5 it's an
+        // ordinary object so it now resolves as a singleton (so bare
+        // `var o = JSON` works). Keeping just Array here — Array is
+        // exposed as a different identifier path (SharpTSArrayGlobal).
         Assert.False(ns!.IsSingleton);
     }
 

@@ -98,7 +98,10 @@ public partial class Interpreter
         }
 
         // Handle callable constructors (like SharpTSEventEmitterConstructor)
-        // These implement ISharpTSCallable and are used for module-imported types
+        // These implement ISharpTSCallable and are used for module-imported types.
+        // BuiltInMethod is included — many built-in constructors (Intl.DateTimeFormat,
+        // RegExp, etc.) are registered as BuiltInMethod and need `new` support.
+        // Spec-strict isConstructor distinction would need a per-method flag.
         if (klass is ISharpTSCallable callable && klass is not SharpTSClass && klass is not BoundFunction)
         {
             List<object?> ctorArgs = await ctx.EvaluateAllAsync(newExpr.Arguments);
@@ -214,8 +217,8 @@ public partial class Interpreter
                 : newThis);
         }
 
-        // Handle callable constructors (like SharpTSEventEmitterConstructor)
-        // These implement ISharpTSCallable and are used for module-imported types
+        // Handle callable constructors. Many built-in constructors are
+        // registered as BuiltInMethod, so we accept any ISharpTSCallable here.
         if (klass is ISharpTSCallable callable && klass is not SharpTSClass && klass is not BoundFunction)
         {
             List<object?> ctorArgs = [];
@@ -464,12 +467,6 @@ public partial class Interpreter
             return new SharpTSClassPrototype(klass);
         }
 
-        // Function objects expose `name` and `length` per spec. For built-in
-        // classes the type checker often guards these but Test262 reads them
-        // directly via `Class.name` / `Class.length`.
-        if (memberName == "name") return klass.Name;
-        if (memberName == "length") return 0.0;
-
         // Try static auto-accessor first (TypeScript 4.9+)
         if (klass.HasStaticAutoAccessor(memberName))
         {
@@ -499,6 +496,12 @@ public partial class Interpreter
         {
             return klass.GetStaticProperty(memberName);
         }
+
+        // Function-object slots: every class exposes `name` and `length` per
+        // spec. Falls back to the class name / 0 only when the user hasn't
+        // shadowed them with a static property (handled above).
+        if (memberName == "name") return klass.Name;
+        if (memberName == "length") return 0.0;
 
         throw new InterpreterException($"Static member '{memberName}' does not exist on class '{klass.Name}'.");
     }
