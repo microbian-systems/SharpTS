@@ -3671,8 +3671,8 @@ test/built-ins/Math/tanh/prop-desc.js TypeCheckError
 test/built-ins/Math/tanh/tanh-specialVals.js Pass
 test/built-ins/Math/trunc/Math.trunc_Infinity.js Pass
 test/built-ins/Math/trunc/Math.trunc_NaN.js Pass
-test/built-ins/Math/trunc/Math.trunc_NegDecimal.js ParseError
-test/built-ins/Math/trunc/Math.trunc_PosDecimal.js ParseError
+test/built-ins/Math/trunc/Math.trunc_NegDecimal.js Pass
+test/built-ins/Math/trunc/Math.trunc_PosDecimal.js Pass
 test/built-ins/Math/trunc/Math.trunc_Success.js Pass
 test/built-ins/Math/trunc/Math.trunc_Zero.js Pass
 test/built-ins/Math/trunc/length.js TypeCheckError
@@ -4042,7 +4042,7 @@ test/built-ins/String/S15.5.1.1_A1_T12.js TypeCheckError
 test/built-ins/String/S15.5.1.1_A1_T13.js Pass
 test/built-ins/String/S15.5.1.1_A1_T14.js Pass
 test/built-ins/String/S15.5.1.1_A1_T15.js Pass
-test/built-ins/String/S15.5.1.1_A1_T16.js ParseError
+test/built-ins/String/S15.5.1.1_A1_T16.js RuntimeError
 test/built-ins/String/S15.5.1.1_A1_T17.js Pass
 test/built-ins/String/S15.5.1.1_A1_T18.js RuntimeError
 test/built-ins/String/S15.5.1.1_A1_T19.js RuntimeError
@@ -4060,7 +4060,7 @@ test/built-ins/String/S15.5.2.1_A1_T10.js RuntimeError
 test/built-ins/String/S15.5.2.1_A1_T11.js RuntimeError
 test/built-ins/String/S15.5.2.1_A1_T12.js TypeCheckError
 test/built-ins/String/S15.5.2.1_A1_T13.js TypeCheckError
-test/built-ins/String/S15.5.2.1_A1_T16.js ParseError
+test/built-ins/String/S15.5.2.1_A1_T16.js RuntimeError
 test/built-ins/String/S15.5.2.1_A1_T17.js RuntimeError
 test/built-ins/String/S15.5.2.1_A1_T18.js RuntimeError
 test/built-ins/String/S15.5.2.1_A1_T19.js RuntimeError
@@ -4092,7 +4092,7 @@ test/built-ins/String/S8.12.8_A1.js RuntimeError
 test/built-ins/String/S8.12.8_A2.js RuntimeError
 test/built-ins/String/S9.1_A1_T2.js TypeCheckError
 test/built-ins/String/S9.8.1_A1.js Pass
-test/built-ins/String/S9.8.1_A10.js ParseError
+test/built-ins/String/S9.8.1_A10.js RuntimeError
 test/built-ins/String/S9.8.1_A2.js Pass
 test/built-ins/String/S9.8.1_A3.js Pass
 test/built-ins/String/S9.8.1_A4.js Pass

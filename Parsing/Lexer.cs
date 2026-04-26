@@ -178,6 +178,23 @@ public class Lexer(string source)
             case '.':
                 if (Match('.') && Match('.'))
                     AddToken(TokenType.DOT_DOT_DOT);
+                else if (char.IsDigit(Peek()))
+                {
+                    // ECMA-262 NumericLiteral: a leading `.digit` is a valid
+                    // DecimalLiteral (e.g. `.5` === `0.5`). Consume fractional
+                    // digits + optional exponent inline; the resulting token
+                    // text starts with '.' so double.Parse handles it.
+                    while (char.IsDigit(Peek())) Advance();
+                    if (Peek() == 'e' || Peek() == 'E')
+                    {
+                        Advance();
+                        if (Peek() == '+' || Peek() == '-') Advance();
+                        if (!char.IsDigit(Peek()))
+                            throw new Exception($"Invalid number: expected digit after exponent at line {_line}");
+                        while (char.IsDigit(Peek())) Advance();
+                    }
+                    AddToken(TokenType.NUMBER, double.Parse(_source[_start.._current]));
+                }
                 else
                     AddToken(TokenType.DOT);
                 break;
