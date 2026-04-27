@@ -1017,8 +1017,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
-        // return value.ToString($"F{digits}", CultureInfo.InvariantCulture)
+        // return value.ToString($"F{digits}", CultureInfo.InvariantCulture).
+        // ECMA-262: -0 formatted as "0" (no sign) — strip via abs on zero.
         il.MarkLabel(notTooLargeLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        var nonZeroFLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, nonZeroFLabel);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.MarkLabel(nonZeroFLabel);
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Ldstr, "F");
         il.Emit(OpCodes.Ldloc, digitsLocal);
@@ -1189,6 +1197,14 @@ public partial class RuntimeEmitter
         // The regex strips leading zeros from the exponent so .NET's "1E+02" matches
         // JS spec's "1e+2".
         il.MarkLabel(formatLabel);
+        // ECMA-262: -0 formatted as "0" (no sign).
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        var nonZeroPLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, nonZeroPLabel);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.MarkLabel(nonZeroPLabel);
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Ldstr, "G");
         il.Emit(OpCodes.Ldloc, precisionLocal);
