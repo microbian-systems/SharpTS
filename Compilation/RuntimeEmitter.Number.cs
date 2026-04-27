@@ -958,6 +958,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, receiverLocal);
         il.MarkLabel(notBoxedLabel);
 
+        // Number.prototype's [[NumberData]] is +0 per ECMA-262 §21.1.3.
+        il.Emit(OpCodes.Ldloc, receiverLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        var notNumberPrototypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, notNumberPrototypeLabel);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.Emit(OpCodes.Br, getDigitsLabel);
+        il.MarkLabel(notNumberPrototypeLabel);
+
         // Get value as double (NaN if not double)
         il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
@@ -1052,6 +1062,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, primValLocalP);
         il.Emit(OpCodes.Stloc, receiverLocal);
         il.MarkLabel(notBoxedPLabel);
+
+        // Number.prototype's [[NumberData]] is +0 per ECMA-262 §21.1.3.
+        il.Emit(OpCodes.Ldloc, receiverLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        var notNumberPrototypePLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, notNumberPrototypePLabel);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.Emit(OpCodes.Br, hasPrecisionLabel);
+        il.MarkLabel(notNumberPrototypePLabel);
 
         // Get value as double (NaN if not double)
         il.Emit(OpCodes.Ldloc, receiverLocal);
@@ -1215,6 +1235,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, receiverLocal);
         il.MarkLabel(notBoxedELabel);
 
+        // Number.prototype's [[NumberData]] is +0 per ECMA-262 §21.1.3.
+        il.Emit(OpCodes.Ldloc, receiverLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        var notNumberPrototypeELabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, notNumberPrototypeELabel);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.Emit(OpCodes.Br, notNaNLabel);
+        il.MarkLabel(notNumberPrototypeELabel);
+
         // Get value as double (NaN if not double)
         il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
@@ -1354,6 +1384,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, primValLocal);
         il.Emit(OpCodes.Stloc, receiverLocal);
         il.MarkLabel(notBoxedNumLabel);
+
+        // ECMA-262 §21.1.3: Number.prototype is itself a Number Exotic Object
+        // whose [[NumberData]] is +0. `Number.prototype.toString()` returns "0".
+        // Detect via reference-equality with the singleton dict field.
+        il.Emit(OpCodes.Ldloc, receiverLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        var notNumberPrototypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, notNumberPrototypeLabel);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.Emit(OpCodes.Br, hasRadixLabel);
+        il.MarkLabel(notNumberPrototypeLabel);
 
         // Get value as double (NaN if not double)
         il.Emit(OpCodes.Ldloc, receiverLocal);

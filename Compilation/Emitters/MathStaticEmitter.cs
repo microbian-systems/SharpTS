@@ -136,31 +136,48 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
 
         if (mathMethod != null)
         {
-            // log1p/expm1 need pre/post adjustments (log(x+1) and exp(x)-1).
-            // We hijack log/exp's MethodInfo above and patch around the call here.
-            if (methodName == "log1p")
+            // log1p/expm1 need pre/post adjustments + zero-sign preservation:
+            //   log1p(x) = log(x + 1); spec: log1p(-0) = -0.
+            //   expm1(x) = exp(x) - 1; spec: expm1(-0) = -0.
+            // The naive log(x+1)/exp(x)-1 implementation loses the sign of zero.
+            // Stash arg, short-circuit if x == 0 returning x as-is.
+            if (methodName == "log1p" || methodName == "expm1")
             {
-                // log1p(x) = log(x + 1)
-                il.Emit(OpCodes.Ldc_R8, 1.0);
-                il.Emit(OpCodes.Add);
+                var argLocal = il.DeclareLocal(ctx.Types.Double);
+                il.Emit(OpCodes.Stloc, argLocal);
+                var endLabel = il.DefineLabel();
+                var notZeroLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, argLocal);
+                il.Emit(OpCodes.Ldc_R8, 0.0);
+                il.Emit(OpCodes.Bne_Un, notZeroLabel);
+                il.Emit(OpCodes.Ldloc, argLocal);
+                il.Emit(OpCodes.Br, endLabel);
+                il.MarkLabel(notZeroLabel);
+                il.Emit(OpCodes.Ldloc, argLocal);
+                if (methodName == "log1p")
+                {
+                    il.Emit(OpCodes.Ldc_R8, 1.0);
+                    il.Emit(OpCodes.Add);
+                }
+                il.Emit(OpCodes.Call, mathMethod);
+                if (methodName == "expm1")
+                {
+                    il.Emit(OpCodes.Ldc_R8, 1.0);
+                    il.Emit(OpCodes.Sub);
+                }
+                il.MarkLabel(endLabel);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
             }
             il.Emit(OpCodes.Call, mathMethod);
-            if (methodName == "expm1")
-            {
-                // expm1(x) = exp(x) - 1
-                il.Emit(OpCodes.Ldc_R8, 1.0);
-                il.Emit(OpCodes.Sub);
-            }
             il.Emit(OpCodes.Box, ctx.Types.Double);
             return true;
         }
 
-        // Math.hypot(...args) — sqrt(sum(a_i^2)) per spec, with special-cases for
-        // Infinity/NaN. Stack on entry: [arg0, arg1, ..., argN-1] (each a double).
-        // Plan: pop each into a local, square it, sum them, sqrt the sum. Locals
-        // avoid the IL-stack-shuffle gymnastics that broke an earlier in-place
-        // version (squaring "the arg on top" misread the loop's stack shape and
-        // produced sum-of-cross-products instead of sum-of-squares).
+        // Math.hypot(...args) — sqrt(sum(a_i^2)) per spec.
+        // ECMA-262 21.3.2.16: Infinity check fires BEFORE NaN check, so
+        // Math.hypot(NaN, Infinity) returns Infinity (not NaN). Stack on
+        // entry: [arg0, arg1, ..., argN-1] (each a double).
         if (methodName == "hypot")
         {
             if (arguments.Count == 0)
@@ -169,15 +186,30 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
             }
-            // Stash all args into locals; deepest arg is on the bottom of stack so
-            // pop order is reverse (argN-1 first).
+            // Stash all args into locals; deepest arg on bottom of stack → pop reversed.
             var argLocals = new LocalBuilder[arguments.Count];
             for (int i = arguments.Count - 1; i >= 0; i--)
             {
                 argLocals[i] = il.DeclareLocal(ctx.Types.Double);
                 il.Emit(OpCodes.Stloc, argLocals[i]);
             }
-            // sum = arg0 * arg0
+            // First pass: any infinity → return +Infinity.
+            // Use Math.Abs(x) > 0 to detect both +∞ and -∞ via comparison with double.MaxValue.
+            // Simpler: check IsInfinity directly per arg.
+            var endLabel = il.DefineLabel();
+            var notInfLabel = il.DefineLabel();
+            for (int i = 0; i < arguments.Count; i++)
+            {
+                il.Emit(OpCodes.Ldloc, argLocals[i]);
+                il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Double, "IsInfinity", ctx.Types.Double));
+                var notThisInfLabel = il.DefineLabel();
+                il.Emit(OpCodes.Brfalse, notThisInfLabel);
+                il.Emit(OpCodes.Ldc_R8, double.PositiveInfinity);
+                il.Emit(OpCodes.Br, endLabel);
+                il.MarkLabel(notThisInfLabel);
+            }
+            // No arg was Infinity. Compute sum-of-squares: Math.Sqrt(NaN) = NaN
+            // automatically propagates if any arg is NaN.
             il.Emit(OpCodes.Ldloc, argLocals[0]);
             il.Emit(OpCodes.Ldloc, argLocals[0]);
             il.Emit(OpCodes.Mul);
@@ -189,6 +221,7 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Add);
             }
             il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Math, "Sqrt", ctx.Types.Double));
+            il.MarkLabel(endLabel);
             il.Emit(OpCodes.Box, ctx.Types.Double);
             return true;
         }
@@ -225,12 +258,17 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
             return true;
         }
 
-        // Math.clz32(x) — count leading zeros of (x >>> 0) as 32-bit unsigned.
-        // ECMA-262: ToUint32(x), then count leading zero bits; 32 if x === 0.
+        // Math.clz32(x) — count leading zeros of ToUint32(x).
+        // ECMA-262 21.3.2.7: ToUint32 modular-reduces the truncated value to
+        // [0, 2^32). Conv_U4 from double is undefined for values outside
+        // [0, 2^32); JsToInt32 handles NaN/Infinity → 0 + reduction. Cast
+        // its int32 result to uint32 by reinterpretation (same bit pattern).
         if (methodName == "clz32" && arguments.Count == 1)
         {
-            // Stack: [double]. Convert to uint via Conv_U4 (truncates fractional + handles NaN→0).
-            il.Emit(OpCodes.Conv_U4);
+            // Stack: [double]. Box, JsToInt32 → int32, then uint32 view.
+            il.Emit(OpCodes.Box, ctx.Types.Double);
+            il.Emit(OpCodes.Call, ctx.Runtime!.JsToInt32);
+            // int32 → uint32 reinterpret (no-op at IL level)
             il.Emit(OpCodes.Call, typeof(System.Numerics.BitOperations).GetMethod("LeadingZeroCount", [typeof(uint)])!);
             il.Emit(OpCodes.Conv_R8);
             il.Emit(OpCodes.Box, ctx.Types.Double);
@@ -238,16 +276,22 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
         }
 
         // Math.imul(a, b) — multiply two 32-bit ints, return as int32.
+        // ECMA-262 21.3.2.18: a = ToInt32(x), b = ToInt32(y); result = (a*b) mod 2^32
+        // returned as int32. Conv_I4 from double is undefined for values outside
+        // [-2^31, 2^31); JsToInt32 handles NaN/Infinity → 0 and modular reduction
+        // properly. Box/JsToInt32 round-trip is acceptable for spec-correctness.
         if (methodName == "imul" && arguments.Count == 2)
         {
-            // Stack: [a_double, b_double]
-            // Convert both to int32, multiply, convert to double.
-            il.Emit(OpCodes.Conv_I4);
-            // Now: [a_double, b_int32]. Need a_int32. Use a helper local.
-            var bLocal = il.DeclareLocal(ctx.Types.Int32);
-            il.Emit(OpCodes.Stloc, bLocal);
-            il.Emit(OpCodes.Conv_I4);
-            il.Emit(OpCodes.Ldloc, bLocal);
+            // Stack: [a_double, b_double]. Stash b → local; box a, call JsToInt32 → int32 a.
+            var bDoubleLocal = il.DeclareLocal(ctx.Types.Double);
+            il.Emit(OpCodes.Stloc, bDoubleLocal);
+            il.Emit(OpCodes.Box, ctx.Types.Double);
+            il.Emit(OpCodes.Call, ctx.Runtime!.JsToInt32);
+            // Stack: [a_int32]. Box b, call JsToInt32 → int32 b.
+            il.Emit(OpCodes.Ldloc, bDoubleLocal);
+            il.Emit(OpCodes.Box, ctx.Types.Double);
+            il.Emit(OpCodes.Call, ctx.Runtime!.JsToInt32);
+            // Stack: [a_int32, b_int32]. Multiply (Mul wraps mod 2^32).
             il.Emit(OpCodes.Mul);
             il.Emit(OpCodes.Conv_R8);
             il.Emit(OpCodes.Box, ctx.Types.Double);
@@ -271,6 +315,7 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
         var ctx = emitter.Context;
         var il = ctx.IL;
 
+        // ECMA-262 21.3.1: numeric constants on the Math object.
         switch (propertyName)
         {
             case "PI":
@@ -279,6 +324,30 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
                 return true;
             case "E":
                 il.Emit(OpCodes.Ldc_R8, Math.E);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+            case "LN10":
+                il.Emit(OpCodes.Ldc_R8, Math.Log(10.0));
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+            case "LN2":
+                il.Emit(OpCodes.Ldc_R8, Math.Log(2.0));
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+            case "LOG10E":
+                il.Emit(OpCodes.Ldc_R8, 1.0 / Math.Log(10.0));
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+            case "LOG2E":
+                il.Emit(OpCodes.Ldc_R8, 1.0 / Math.Log(2.0));
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+            case "SQRT2":
+                il.Emit(OpCodes.Ldc_R8, Math.Sqrt(2.0));
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+            case "SQRT1_2":
+                il.Emit(OpCodes.Ldc_R8, Math.Sqrt(0.5));
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
         }
@@ -346,7 +415,9 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
     }
 
     public bool HasStaticProperty(string memberName) =>
-        memberName is "PI" or "E" or "floor" or "ceil" or "abs" or "sqrt"
+        memberName is "PI" or "E" or "LN10" or "LN2" or "LOG10E" or "LOG2E"
+            or "SQRT2" or "SQRT1_2"
+            or "floor" or "ceil" or "abs" or "sqrt"
             or "round" or "trunc" or "sign" or "sin" or "cos" or "tan"
             or "log" or "exp" or "pow" or "max" or "min" or "random"
             or "asin" or "acos" or "atan" or "atan2" or "sinh" or "cosh" or "tanh"

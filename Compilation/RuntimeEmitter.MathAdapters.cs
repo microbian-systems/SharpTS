@@ -135,9 +135,11 @@ public partial class RuntimeEmitter
         var method = typeBuilder.DefineMethod("MathClz32Adapter",
             MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object]);
         var il = method.GetILGenerator();
+        // ECMA-262 21.3.2.7: clz32(x) = number of leading zero bits in ToUint32(x).
+        // Conv_U4 from double has undefined behavior for values outside [0, 2^32);
+        // JsToInt32 handles NaN/Infinity → 0 + modular reduction.
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.ToNumber);
-        il.Emit(OpCodes.Conv_U4);
+        il.Emit(OpCodes.Call, runtime.JsToInt32);
         il.Emit(OpCodes.Call, typeof(System.Numerics.BitOperations).GetMethod("LeadingZeroCount", [typeof(uint)])!);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Box, _types.Double);
@@ -153,14 +155,17 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var aLocal = il.DeclareLocal(_types.Int32);
         var bLocal = il.DeclareLocal(_types.Int32);
+        // ECMA-262 21.3.2.18: a = ToUint32(x), b = ToUint32(y); product = (a*b) mod 2^32
+        // returned as int32. Use JsToInt32 helper: properly handles NaN, +/-Infinity,
+        // and values outside int32 range by modular reduction (Conv_I4 from double
+        // is undefined behavior outside [-2^31, 2^31)).
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.ToNumber);
-        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Call, runtime.JsToInt32);
         il.Emit(OpCodes.Stloc, aLocal);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.ToNumber);
-        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Call, runtime.JsToInt32);
         il.Emit(OpCodes.Stloc, bLocal);
+        // (a * b) wraps via Mul. Result fits in int32 by construction (mod 2^32).
         il.Emit(OpCodes.Ldloc, aLocal);
         il.Emit(OpCodes.Ldloc, bLocal);
         il.Emit(OpCodes.Mul);

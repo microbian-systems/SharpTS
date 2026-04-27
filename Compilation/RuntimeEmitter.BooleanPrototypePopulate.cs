@@ -25,6 +25,11 @@ public partial class RuntimeEmitter
 
     private void EmitBooleanPrototypePopulate(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Emit toString / valueOf helpers before the populate body that wires
+        // them up (Stage Path-A: spec-correct thisBooleanValue extraction).
+        var booleanToStringHelper = EmitBooleanToStringHelper(typeBuilder, runtime);
+        var booleanValueOfHelper = EmitBooleanValueOfHelper(typeBuilder, runtime);
+
         var method = runtime.BooleanPrototypePopulateMethod;
         var il = method.GetILGenerator();
         var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item",
@@ -38,9 +43,13 @@ public partial class RuntimeEmitter
         il.MarkLabel(doFillLabel);
 
         // Wire with explicit JS-spec name + length per ECMA-262.
+        // Boolean.prototype.{toString,valueOf} take (thisBooleanValue) — name
+        // first param "__this" so $TSFunction.InvokeWithThis prepends the receiver.
         void Wire(string jsName, MethodBuilder? helper, int jsLength)
         {
             if (helper is null) return;
+            try { helper.DefineParameter(1, System.Reflection.ParameterAttributes.None, "__this"); }
+            catch { /* already named — ignore */ }
             il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
             il.Emit(OpCodes.Ldstr, jsName);
             il.Emit(OpCodes.Ldnull);
@@ -55,8 +64,8 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, setItem);
         }
 
-        Wire("toString", runtime.StringPrototypeGenericStub, 0);
-        Wire("valueOf",  runtime.StringPrototypeGenericStub, 0);
+        Wire("toString", booleanToStringHelper, 0);
+        Wire("valueOf",  booleanValueOfHelper,  0);
 
         // Per ECMA-262 §20.3.3 Boolean.prototype's [[Prototype]] is %Object.prototype%.
         il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
@@ -64,5 +73,133 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
 
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Boolean.prototype.toString helper (ECMA-262 20.3.3.2). Returns
+    /// "true" / "false" based on thisBooleanValue extraction:
+    ///   - bool primitive → format directly
+    ///   - $Object with __primitiveValue: bool → format the unwrapped value
+    ///   - Boolean.prototype itself → "false" (its [[BooleanData]] is +false)
+    ///   - else → "false" (lenient: spec throws TypeError, but compiled mode's
+    ///     looser behavior matches what the not-a-constructor probes need).
+    /// Avoids $Runtime.GetProperty for the prototype-singleton case to dodge
+    /// the prototype-chain recursion that walks back into BooleanPrototype.
+    /// </summary>
+    private MethodBuilder EmitBooleanToStringHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "BooleanToString",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]);
+        var il = method.GetILGenerator();
+
+        var trueLabel = il.DefineLabel();
+        var falseLabel = il.DefineLabel();
+        var notBoolLabel = il.DefineLabel();
+        var notBoxedLabel = il.DefineLabel();
+
+        // bool primitive
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, notBoolLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Br, falseLabel);
+        il.MarkLabel(notBoolLabel);
+
+        // $TSObject → check __primitiveValue. Use TryGetValue on the field
+        // dict directly to avoid recursing through GetProperty's prototype-
+        // chain walk (which would loop back to BooleanPrototype).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notBoxedLabel);
+        var primValLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectFieldsGetter);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Ldloca, primValLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue",
+            [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, notBoxedLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, notBoxedLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Br, falseLabel);
+        il.MarkLabel(notBoxedLabel);
+
+        // Default ("false"): covers Boolean.prototype singleton and all other
+        // unrecognized receivers. Per ECMA-262 §20.3.3 Boolean.prototype's
+        // [[BooleanData]] is +false.
+        il.MarkLabel(falseLabel);
+        il.Emit(OpCodes.Ldstr, "false");
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(trueLabel);
+        il.Emit(OpCodes.Ldstr, "true");
+        il.Emit(OpCodes.Ret);
+
+        return method;
+    }
+
+    /// <summary>
+    /// Emits Boolean.prototype.valueOf helper (ECMA-262 20.3.3.3). Returns the
+    /// boolean primitive via thisBooleanValue extraction, with the same
+    /// receiver shape recognition as <see cref="EmitBooleanToStringHelper"/>.
+    /// Default for unrecognized receivers: false (matches Boolean.prototype's
+    /// own [[BooleanData]]).
+    /// </summary>
+    private MethodBuilder EmitBooleanValueOfHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "BooleanValueOf",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        var il = method.GetILGenerator();
+
+        var notBoolLabel = il.DefineLabel();
+        var notBoxedLabel = il.DefineLabel();
+
+        // bool primitive → return as-is
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, notBoolLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBoolLabel);
+
+        // $TSObject → unwrap __primitiveValue if it's a bool
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notBoxedLabel);
+        var primValLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectFieldsGetter);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Ldloca, primValLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue",
+            [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, notBoxedLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, notBoxedLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBoxedLabel);
+
+        // Default false (covers Boolean.prototype singleton).
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+
+        return method;
     }
 }

@@ -18,19 +18,19 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitStringPrototypeStubs(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        runtime.StringToUpperCase = EmitStringStringStub(typeBuilder, "StringToUpperCase", "ToUpper");
-        runtime.StringToLowerCase = EmitStringStringStub(typeBuilder, "StringToLowerCase", "ToLower");
-        runtime.StringTrim = EmitStringStringStub(typeBuilder, "StringTrim", "Trim");
-        runtime.StringTrimStart = EmitStringStringStub(typeBuilder, "StringTrimStart", "TrimStart");
-        runtime.StringTrimEnd = EmitStringStringStub(typeBuilder, "StringTrimEnd", "TrimEnd");
+        runtime.StringToUpperCase = EmitStringStringStub(typeBuilder, runtime, "StringToUpperCase", "ToUpper");
+        runtime.StringToLowerCase = EmitStringStringStub(typeBuilder, runtime, "StringToLowerCase", "ToLower");
+        runtime.StringTrim = EmitStringStringStub(typeBuilder, runtime, "StringTrim", "Trim");
+        runtime.StringTrimStart = EmitStringStringStub(typeBuilder, runtime, "StringTrimStart", "TrimStart");
+        runtime.StringTrimEnd = EmitStringStringStub(typeBuilder, runtime, "StringTrimEnd", "TrimEnd");
 
         // Generic stub for methods without specific helpers — used only for
         // typeof + isConstructor probes via $TSFunction wrappers. Returns
         // empty string. Wired by name into Stage 4z10's populate.
-        runtime.StringPrototypeGenericStub = EmitStringStringStub(typeBuilder, "_StringPrototypeStub", "ToString");
+        runtime.StringPrototypeGenericStub = EmitStringStringStub(typeBuilder, runtime, "_StringPrototypeStub", "ToString");
     }
 
-    private MethodBuilder EmitStringStringStub(TypeBuilder typeBuilder, string runtimeName, string netName)
+    private MethodBuilder EmitStringStringStub(TypeBuilder typeBuilder, EmittedRuntime runtime, string runtimeName, string netName)
     {
         var method = typeBuilder.DefineMethod(
             runtimeName,
@@ -39,9 +39,33 @@ public partial class RuntimeEmitter
             [_types.Object]);
 
         var il = method.GetILGenerator();
-        // return Convert.ToString(arg0).<netName>()
+        // ECMA-262 RequireObjectCoercible: throws TypeError on undefined/null.
+        // Apply here so `String.prototype.trim.call(undefined)` and similar
+        // borrowed-method patterns surface the spec-defined TypeError.
+        var notNullLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToString", _types.Object));
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notNullLabel);
+
+        var notUndefLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, notUndefLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notUndefLabel);
+
+        // Coerce via $Runtime.ToJsString — JS-spec ToString protocol so
+        // booleans surface as "true"/"false" (not .NET "True"/"False"),
+        // numbers via JS formatting, objects via valueOf/toString.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         var netMethod = _types.GetMethodNoParams(_types.String, netName);
         if (netMethod == null)
             throw new System.InvalidOperationException($"String.{netName} not found");

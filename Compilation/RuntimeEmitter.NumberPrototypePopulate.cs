@@ -121,8 +121,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, primValLocal);
         il.Emit(OpCodes.Ret);
 
-        // Not boxed: return the receiver as-is.
         il.MarkLabel(notBoxedLabel);
+        // ECMA-262 §21.1.3: Number.prototype's [[NumberData]] is +0.
+        // `Number.prototype.valueOf()` must return 0, not the prototype dict.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        var notNumberPrototypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, notNumberPrototypeLabel);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNumberPrototypeLabel);
+
+        // Not boxed: return the receiver as-is.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
 
