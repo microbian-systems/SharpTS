@@ -1661,6 +1661,69 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, alreadyStringLabel);
 
+        // List<object> → ECMA-262 Array.prototype.toString returns join(","),
+        // not Stringify's debug-style "[a, b]". Build the comma-joined form
+        // inline so `String([1,2,3]) === "1,2,3"`. Recursively Stringify each
+        // element (matches join's per-element ToString conversion).
+        var notListLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brfalse, notListLabel);
+        var joinedListLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Stloc, joinedListLocal);
+        var sbJoinLocal = il.DeclareLocal(_types.StringBuilder);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, _types.EmptyTypes));
+        il.Emit(OpCodes.Stloc, sbJoinLocal);
+        var idxJoinLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idxJoinLocal);
+        var joinLoop = il.DefineLabel();
+        var joinEnd = il.DefineLabel();
+        il.MarkLabel(joinLoop);
+        il.Emit(OpCodes.Ldloc, idxJoinLocal);
+        il.Emit(OpCodes.Ldloc, joinedListLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, joinEnd);
+        // Append "," for index > 0
+        var skipJoinComma = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, idxJoinLocal);
+        il.Emit(OpCodes.Brfalse, skipJoinComma);
+        il.Emit(OpCodes.Ldloc, sbJoinLocal);
+        il.Emit(OpCodes.Ldstr, ",");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(skipJoinComma);
+        // val = list[index]; null/undefined → empty per spec join behavior; else recursive Stringify.
+        var valLocalJ = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, joinedListLocal);
+        il.Emit(OpCodes.Ldloc, idxJoinLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, valLocalJ);
+        var skipAppend = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valLocalJ);
+        il.Emit(OpCodes.Brfalse, skipAppend);
+        il.Emit(OpCodes.Ldloc, valLocalJ);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, skipAppend);
+        il.Emit(OpCodes.Ldloc, sbJoinLocal);
+        il.Emit(OpCodes.Ldloc, valLocalJ);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(skipAppend);
+        il.Emit(OpCodes.Ldloc, idxJoinLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, idxJoinLocal);
+        il.Emit(OpCodes.Br, joinLoop);
+        il.MarkLabel(joinEnd);
+        il.Emit(OpCodes.Ldloc, sbJoinLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notListLabel);
+
         // Only attempt JS-toString invocation for Dictionary or $Object receivers.
         var isObjectLikeLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
