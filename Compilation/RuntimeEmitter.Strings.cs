@@ -738,12 +738,13 @@ public partial class RuntimeEmitter
 
     private void EmitStringPadStart(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // StringPadStart(string str, int argCount, object[] args) -> string
+        // StringPadStart(string str, object[] args) -> string. argCount derived
+        // from args.Length internally so the helper is borrowable via \$TSFunction.
         var method = typeBuilder.DefineMethod(
             "StringPadStart",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.String,
-            [_types.String, _types.Int32, _types.ObjectArray]
+            [_types.String, _types.ObjectArray]
         );
         runtime.StringPadStart = method;
 
@@ -761,7 +762,7 @@ public partial class RuntimeEmitter
         var doneLabel = il.DefineLabel();
 
         // targetLength = (int)$Runtime.ToNumber(args[0]) — coerce non-double per ECMA-262.
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Call, runtime.ToNumber);
@@ -774,15 +775,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
         il.Emit(OpCodes.Ble, returnOriginal);
 
-        // padString = argCount > 1 ? (string)args[1] : " "
+        // padString = args.Length > 1 ? (string)args[1] : " "
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Bgt, hasPadArg);
         il.Emit(OpCodes.Ldstr, " ");
         il.Emit(OpCodes.Stloc, padStringLocal);
         il.Emit(OpCodes.Br, buildPadding);
         il.MarkLabel(hasPadArg);
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Castclass, _types.String);
@@ -835,12 +838,13 @@ public partial class RuntimeEmitter
 
     private void EmitStringPadEnd(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // StringPadEnd(string str, int argCount, object[] args) -> string
+        // StringPadEnd(string str, object[] args) -> string. argCount derived
+        // from args.Length internally so the helper is borrowable via \$TSFunction.
         var method = typeBuilder.DefineMethod(
             "StringPadEnd",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.String,
-            [_types.String, _types.Int32, _types.ObjectArray]
+            [_types.String, _types.ObjectArray]
         );
         runtime.StringPadEnd = method;
 
@@ -857,7 +861,7 @@ public partial class RuntimeEmitter
         var doneLabel = il.DefineLabel();
 
         // targetLength = (int)$Runtime.ToNumber(args[0]) — coerce non-double per ECMA-262.
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Call, runtime.ToNumber);
@@ -870,15 +874,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
         il.Emit(OpCodes.Ble, returnOriginal);
 
-        // padString = argCount > 1 ? (string)args[1] : " "
+        // padString = args.Length > 1 ? (string)args[1] : " "
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Bgt, hasPadArg);
         il.Emit(OpCodes.Ldstr, " ");
         il.Emit(OpCodes.Stloc, padStringLocal);
         il.Emit(OpCodes.Br, buildPadding);
         il.MarkLabel(hasPadArg);
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Castclass, _types.String);

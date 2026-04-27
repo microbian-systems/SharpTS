@@ -44,7 +44,6 @@ public partial class ILEmitter
         {
             case "padEnd":
                 IL.Emit(OpCodes.Ldc_I4, arguments.Count);
-                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
                 IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
                 for (int i = 0; i < arguments.Count; i++)
                 {
@@ -58,7 +57,6 @@ public partial class ILEmitter
                 break;
 
             case "padStart":
-                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
                 IL.Emit(OpCodes.Ldc_I4, arguments.Count);
                 IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
                 for (int i = 0; i < arguments.Count; i++)
