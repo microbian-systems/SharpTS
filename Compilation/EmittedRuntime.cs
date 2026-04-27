@@ -326,6 +326,10 @@ public class EmittedRuntime
     public MethodBuilder HasOwnPropertyHelperMethod { get; set; } = null!;
     /// <summary>$Runtime.IsPrototypeOfHelper(receiver, target) — backs <c>receiver.isPrototypeOf(target)</c>; walks target's prototype chain via PDS.</summary>
     public MethodBuilder IsPrototypeOfHelperMethod { get; set; } = null!;
+    /// <summary>$Runtime.NewBoxedPrimitive(typeTag, value) — builds a $Object wrapper with __primitiveType + __primitiveValue marker fields, prototype-linked to Boolean/Number/String prototype.</summary>
+    public MethodBuilder NewBoxedPrimitiveMethod { get; set; } = null!;
+    /// <summary>$Runtime.IsBoxedPrimitiveOfType(obj, typeTag) — true iff obj is a $Object with matching __primitiveType marker. Used by the instanceof emitter.</summary>
+    public MethodBuilder IsBoxedPrimitiveOfTypeMethod { get; set; } = null!;
     /// <summary>Object.prototype singleton dict, populated lazily with hasOwnProperty/isPrototypeOf/toString/valueOf wrappers.</summary>
     public FieldBuilder ObjectPrototypeField { get; set; } = null!;
     /// <summary>Idempotent populate for <see cref="ObjectPrototypeField"/>.</summary>

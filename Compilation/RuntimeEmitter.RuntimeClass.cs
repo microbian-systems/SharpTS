@@ -333,6 +333,9 @@ public partial class RuntimeEmitter
         // to reference at compile time. Body emitted later.
         DefineObjectPrototypePopulateShell(typeBuilder, runtime);
         EmitGetFunctionMethod(typeBuilder, runtime);  // For bind/call/apply on functions
+        // Pre-define IsBoxedPrimitiveOfType shell so InstanceOf can reference
+        // it. Body emitted later (after the prototype singletons are defined).
+        DefineIsBoxedPrimitiveOfTypeShell(typeBuilder, runtime);
         // InstanceOf walks the prototype chain via GetFunctionMethod (for the
         // `F.prototype` fetch) — must be emitted AFTER GetFunctionMethod so
         // `runtime.GetFunctionMethod` is populated when InstanceOf references it.
@@ -515,6 +518,10 @@ public partial class RuntimeEmitter
         // Object.prototype populate body — uses HasOwnPropertyHelper +
         // IsPrototypeOfHelper which are emitted before GetFunctionMethod above.
         EmitObjectPrototypePopulate(typeBuilder, runtime);
+        // Boxed primitive helpers — must come AFTER prototype populates so
+        // BooleanPrototypePopulateMethod / Number / String / Object are non-null.
+        EmitNewBoxedPrimitive(typeBuilder, runtime);
+        EmitIsBoxedPrimitiveOfType(typeBuilder, runtime);
         // String methods
         EmitStringCharAt(typeBuilder, runtime);
         EmitStringSubstring(typeBuilder, runtime);

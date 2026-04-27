@@ -2458,9 +2458,38 @@ public partial class RuntimeEmitter
         var notTypeLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notTypeLabel);
 
-        // classType is Type, use it directly
+        // Stage 4z19 boxed-primitive detection: when classType is one of the
+        // primitive types (Boolean/Double/String) and instance is a $Object
+        // wrapper with __primitiveType matching, return true. Only applies
+        // when the legacy IsAssignableFrom would say false (since .NET
+        // System.Boolean/Double/String are sealed value types, IsAssignableFrom
+        // for a $Object always returns false; checking the marker comes first
+        // to short-circuit).
+        var classTypeLocal = il.DeclareLocal(_types.Type);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, _types.Type);
+        il.Emit(OpCodes.Stloc, classTypeLocal);
+
+        void CheckBoxed(Type primType, string typeTag)
+        {
+            var skip = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, classTypeLocal);
+            il.Emit(OpCodes.Ldtoken, primType);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Bne_Un, skip);
+            // classType is the primitive type — check marker
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, typeTag);
+            il.Emit(OpCodes.Call, runtime.IsBoxedPrimitiveOfTypeMethod);
+            il.Emit(OpCodes.Brtrue, trueLabel);
+            il.MarkLabel(skip);
+        }
+        CheckBoxed(_types.Boolean, "Boolean");
+        CheckBoxed(_types.Double,  "Number");
+        CheckBoxed(_types.String,  "String");
+
+        // classType is Type, use it directly
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));

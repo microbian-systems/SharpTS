@@ -256,12 +256,15 @@ public abstract partial class ExpressionEmitterBase
 
             // --- String / Number / Boolean primitive wrappers ---
             // ECMA-262: `new String(v)` / `new Number(v)` / `new Boolean(v)`
-            // construct boxed primitive wrappers. Most test262 tests using
-            // these don't care about the wrapper identity — they just need
-            // `.length`, `.charAt`, etc. to work. Returning the coerced
-            // primitive matches how compiled-mode strings/numbers/booleans
-            // already dispatch to the same prototype methods.
+            // construct boxed primitive wrappers. Stage 4z19: build a $Object
+            // wrapper with __primitiveType + __primitiveValue marker fields,
+            // PDS-linked to the matching prototype singleton. Tests that probe
+            // `obj instanceof Boolean` see true via the marker; tests that do
+            // `obj.length = 2; obj[0] = 11` work via $Object's indexed set.
+            // The pre-Stage-4z19 fallback returned the coerced primitive,
+            // which broke wrapper-identity tests.
             case "String":
+                IL.Emit(OpCodes.Ldstr, "String");
                 if (arguments.Count == 0)
                     IL.Emit(OpCodes.Ldstr, "");
                 else
@@ -270,10 +273,12 @@ public abstract partial class ExpressionEmitterBase
                     EnsureBoxed();
                     IL.Emit(OpCodes.Call, Ctx.Runtime!.ToJsString);
                 }
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.NewBoxedPrimitiveMethod);
                 SetStackUnknown();
                 return true;
 
             case "Number":
+                IL.Emit(OpCodes.Ldstr, "Number");
                 if (arguments.Count == 0)
                 {
                     IL.Emit(OpCodes.Ldc_R8, 0.0);
@@ -286,10 +291,12 @@ public abstract partial class ExpressionEmitterBase
                     IL.Emit(OpCodes.Call, Ctx.Runtime!.ToNumber);
                     IL.Emit(OpCodes.Box, Ctx.Types.Double);
                 }
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.NewBoxedPrimitiveMethod);
                 SetStackUnknown();
                 return true;
 
             case "Boolean":
+                IL.Emit(OpCodes.Ldstr, "Boolean");
                 if (arguments.Count == 0)
                 {
                     IL.Emit(OpCodes.Ldc_I4_0);
@@ -302,6 +309,7 @@ public abstract partial class ExpressionEmitterBase
                     IL.Emit(OpCodes.Call, Ctx.Runtime!.IsTruthy);
                     IL.Emit(OpCodes.Box, Ctx.Types.Boolean);
                 }
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.NewBoxedPrimitiveMethod);
                 SetStackUnknown();
                 return true;
 
