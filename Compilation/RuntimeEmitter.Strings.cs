@@ -184,12 +184,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.String, "get_Length"));
         il.Emit(OpCodes.Stloc, lenLocal);
 
-        // int start = (int)(double)args[0]; if (start < 0) start = max(0, len + start)
+        // int start = ToIntegerOrInfinity(args[0]); if (start < 0) start = max(0, len + start)
+        // Use ToIntegerOrInfinity instead of raw Unbox_Any Double — borrowed
+        // patterns may pass bool/string/object args that need ECMA-262 coercion.
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.Emit(OpCodes.Stloc, startLocal);
 
         var nonNegStart = il.DefineLabel();
@@ -226,8 +228,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.MarkLabel(afterLength);
         il.Emit(OpCodes.Stloc, lengthLocal);
 

@@ -510,7 +510,9 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         {
             emitter.EmitExpression(arguments[0]);
             emitter.EmitBoxIfNeeded(arguments[0]);
-            il.Emit(OpCodes.Unbox_Any, ctx.Types.Double);
+            // Use ToNumber instead of raw Unbox_Any Double — non-double args
+            // (bool, string, object) per ECMA-262 ToInteger.
+            il.Emit(OpCodes.Call, ctx.Runtime!.ToNumber);
         }
         else
         {

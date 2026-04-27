@@ -1215,9 +1215,13 @@ public partial class RuntimeEmitter
     /// </summary>
     private MethodBuilder EmitTSFunctionCoercePrimitivesHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // Static cache field for the resolved $Runtime.ToJsString MethodInfo.
+        // Static cache fields for resolved $Runtime helpers.
         var toJsStringCacheField = typeBuilder.DefineField(
             "_toJsStringCache",
+            _types.MethodInfo,
+            FieldAttributes.Private | FieldAttributes.Static);
+        var toNumberCacheField = typeBuilder.DefineField(
+            "_toNumberCache",
             _types.MethodInfo,
             FieldAttributes.Private | FieldAttributes.Static);
 
@@ -1234,7 +1238,9 @@ public partial class RuntimeEmitter
         var iLocal = il.DeclareLocal(_types.Int32);
         var paramTypeLocal = il.DeclareLocal(_types.Type);
         var stringTypeLocal = il.DeclareLocal(_types.Type);
+        var doubleTypeLocal = il.DeclareLocal(_types.Type);
         var toJsStringLocal = il.DeclareLocal(_types.MethodInfo);
+        var toNumberLocal = il.DeclareLocal(_types.MethodInfo);
         var oneArgLocal = il.DeclareLocal(_types.ObjectArray);
 
         // params = method.GetParameters()
@@ -1252,39 +1258,43 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.Math.GetMethod("Min", [_types.Int32, _types.Int32])!);
         il.Emit(OpCodes.Stloc, countLocal);
 
-        // stringType = typeof(string)
+        // stringType = typeof(string), doubleType = typeof(double)
         il.Emit(OpCodes.Ldtoken, _types.String);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
         il.Emit(OpCodes.Stloc, stringTypeLocal);
-
-        // toJsString = _toJsStringCache; if null, resolve via typeof($TSFunction).Assembly.GetType("$Runtime").GetMethod("ToJsString") and cache.
-        il.Emit(OpCodes.Ldsfld, toJsStringCacheField);
-        il.Emit(OpCodes.Stloc, toJsStringLocal);
-        var haveCache = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, toJsStringLocal);
-        il.Emit(OpCodes.Brtrue, haveCache);
-
-        // typeof($TSFunction) → Type
-        il.Emit(OpCodes.Ldtoken, typeBuilder);
+        il.Emit(OpCodes.Ldtoken, _types.Double);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
-        // .Assembly
-        il.Emit(OpCodes.Callvirt, _types.Type.GetProperty("Assembly")!.GetGetMethod()!);
-        // .GetType("$Runtime")
-        il.Emit(OpCodes.Ldstr, "$Runtime");
-        il.Emit(OpCodes.Callvirt, _types.Assembly.GetMethod("GetType", [_types.String])!);
-        // .GetMethod("ToJsString")
-        il.Emit(OpCodes.Ldstr, "ToJsString");
-        il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("GetMethod", [_types.String])!);
-        // cache
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Stsfld, toJsStringCacheField);
-        il.Emit(OpCodes.Stloc, toJsStringLocal);
-        il.MarkLabel(haveCache);
+        il.Emit(OpCodes.Stloc, doubleTypeLocal);
 
-        // If resolution failed (returned null), bail out — caller's reflection.Invoke
-        // will surface the original ArgumentException.
+        // Local helper: resolve a $Runtime static method by name into a cache field.
+        // Stack-in/out: nothing; stores resolved MethodInfo in `localOut`.
+        void ResolveRuntimeMethod(string methodName, FieldBuilder cacheField, LocalBuilder localOut)
+        {
+            il.Emit(OpCodes.Ldsfld, cacheField);
+            il.Emit(OpCodes.Stloc, localOut);
+            var have = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, localOut);
+            il.Emit(OpCodes.Brtrue, have);
+            il.Emit(OpCodes.Ldtoken, typeBuilder);
+            il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+            il.Emit(OpCodes.Callvirt, _types.Type.GetProperty("Assembly")!.GetGetMethod()!);
+            il.Emit(OpCodes.Ldstr, "$Runtime");
+            il.Emit(OpCodes.Callvirt, _types.Assembly.GetMethod("GetType", [_types.String])!);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("GetMethod", [_types.String])!);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Stsfld, cacheField);
+            il.Emit(OpCodes.Stloc, localOut);
+            il.MarkLabel(have);
+        }
+        ResolveRuntimeMethod("ToJsString", toJsStringCacheField, toJsStringLocal);
+        ResolveRuntimeMethod("ToNumber", toNumberCacheField, toNumberLocal);
+
+        // If either resolution failed, bail.
         var bail = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, toJsStringLocal);
+        il.Emit(OpCodes.Brfalse, bail);
+        il.Emit(OpCodes.Ldloc, toNumberLocal);
         il.Emit(OpCodes.Brfalse, bail);
 
         // i = 0
@@ -1305,11 +1315,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("ParameterType")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, paramTypeLocal);
 
-        // if (paramType != typeof(string)) continue
+        // Branch on paramType: string → ToJsString; double → ToNumber; else continue.
+        var stringBranch = il.DefineLabel();
+        var doubleBranch = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, paramTypeLocal);
         il.Emit(OpCodes.Ldloc, stringTypeLocal);
-        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Inequality", [_types.Type, _types.Type])!);
-        il.Emit(OpCodes.Brtrue, continueLbl);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Brtrue, stringBranch);
+        il.Emit(OpCodes.Ldloc, paramTypeLocal);
+        il.Emit(OpCodes.Ldloc, doubleTypeLocal);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Brtrue, doubleBranch);
+        il.Emit(OpCodes.Br, continueLbl);
+
+        // String branch
+        il.MarkLabel(stringBranch);
 
         // arg = args[i]
         // if (arg == null) continue
@@ -1340,6 +1360,52 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldloc, toJsStringLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, oneArgLocal);
+        il.Emit(OpCodes.Callvirt, _types.MethodBase.GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Br, continueLbl);
+
+        // Double branch
+        il.MarkLabel(doubleBranch);
+
+        // if (arg == null) → coerce to 0.0 (ECMA-262 ToNumber(null) == 0).
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        var doubleArgNotNull = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, doubleArgNotNull);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Br, continueLbl);
+        il.MarkLabel(doubleArgNotNull);
+
+        // if (arg is double) continue
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, continueLbl);
+
+        // oneArg = new object[1] { args[i] }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, oneArgLocal);
+
+        // args[i] = (double) toNumber.Invoke(null, oneArg)
+        // toNumber.Invoke returns object boxing a double already, so just store it.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, toNumberLocal);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldloc, oneArgLocal);
         il.Emit(OpCodes.Callvirt, _types.MethodBase.GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
