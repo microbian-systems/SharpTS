@@ -101,27 +101,28 @@ public static class BuiltInTypes
             "shift" => new TypeInfo.Function([], elementType),
             "unshift" => new TypeInfo.Function([new TypeInfo.Array(elementType)], NumberType, RequiredParams: 0, HasRestParam: true), // variadic: unshift(...items: T[])
             "slice" => new TypeInfo.Function([NumberType, NumberType], new TypeInfo.Array(elementType), RequiredParams: 0), // start/end are optional
+            // ECMA-262: callbackfn[, thisArg] — thisArg is optional Any
             "map" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 1)],
-                new TypeInfo.Array(AnyType)),
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 1), AnyType],
+                new TypeInfo.Array(AnyType), RequiredParams: 1),
             "filter" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1)],
-                new TypeInfo.Array(elementType)),
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1), AnyType],
+                new TypeInfo.Array(elementType), RequiredParams: 1),
             "forEach" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], VoidType, RequiredParams: 1)],
-                VoidType),
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], VoidType, RequiredParams: 1), AnyType],
+                VoidType, RequiredParams: 1),
             "find" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1)],
-                elementType),
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1), AnyType],
+                elementType, RequiredParams: 1),
             "findIndex" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1)],
-                NumberType),
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1), AnyType],
+                NumberType, RequiredParams: 1),
             "some" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1)],
-                BooleanType),
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1), AnyType],
+                BooleanType, RequiredParams: 1),
             "every" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1)],
-                BooleanType),
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], BooleanType, RequiredParams: 1), AnyType],
+                BooleanType, RequiredParams: 1),
             "reduce" => new TypeInfo.Function(
                 [new TypeInfo.Function([AnyType, elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 2), AnyType],
                 AnyType, RequiredParams: 1), // initialValue is optional
@@ -141,14 +142,18 @@ public static class BuiltInTypes
             // `arr.join()` and `arr.join(undefined)`/`arr.join(null)` without
             // rejecting them ahead of the spec coercion.
             "join" => new TypeInfo.Function([AnyType], StringType, RequiredParams: 0),
+            // ECMA-262 23.1.3.1: concat accepts arbitrary args (arrays or values),
+            // each spread or appended; widen to AnyType rest param.
             "concat" => new TypeInfo.Function(
-                [new TypeInfo.Array(elementType)],
-                new TypeInfo.Array(elementType)),
+                [new TypeInfo.Array(AnyType)],
+                new TypeInfo.Array(elementType),
+                RequiredParams: 0,
+                HasRestParam: true),
             "reverse" => new TypeInfo.Function([], new TypeInfo.Array(elementType)),
             "flat" => new TypeInfo.Function([NumberType], new TypeInfo.Array(AnyType), RequiredParams: 0), // depth is optional, defaults to 1
             "flatMap" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 1)],
-                new TypeInfo.Array(AnyType)),
+                [new TypeInfo.Function([elementType, NumberType, new TypeInfo.Array(elementType)], AnyType, RequiredParams: 1), AnyType],
+                new TypeInfo.Array(AnyType), RequiredParams: 1),
             "sort" => new TypeInfo.Function(
                 [new TypeInfo.Function([elementType, elementType], NumberType)],
                 new TypeInfo.Array(elementType),
@@ -168,11 +173,11 @@ public static class BuiltInTypes
                 RequiredParams: 0,
                 HasRestParam: true),
             "findLast" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType], BooleanType)],
-                elementType),
+                [new TypeInfo.Function([elementType], BooleanType), AnyType],
+                elementType, RequiredParams: 1),
             "findLastIndex" => new TypeInfo.Function(
-                [new TypeInfo.Function([elementType], BooleanType)],
-                NumberType),
+                [new TypeInfo.Function([elementType], BooleanType), AnyType],
+                NumberType, RequiredParams: 1),
             "toReversed" => new TypeInfo.Function([], new TypeInfo.Array(elementType)),
             "with" => new TypeInfo.Function([NumberType, elementType], new TypeInfo.Array(elementType)),
             "at" => new TypeInfo.Function([NumberType], elementType),
