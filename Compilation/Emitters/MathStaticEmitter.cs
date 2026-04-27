@@ -202,6 +202,29 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
             return true;
         }
 
+        // Math.f16round(x) — round to nearest binary16 (Float16) then back to
+        // double. Per Float16Array proposal in ECMA-262. Uses System.Half's
+        // double→Half (op_Explicit) + Half→double (op_Explicit returning double)
+        // conversions. Both directions are op_Explicit on Half; need to filter
+        // by signature to disambiguate.
+        if (methodName == "f16round" && arguments.Count == 1)
+        {
+            var halfFromDouble = typeof(System.Half).GetMethods()
+                .First(m => m.Name == "op_Explicit"
+                            && m.ReturnType == typeof(System.Half)
+                            && m.GetParameters().Length == 1
+                            && m.GetParameters()[0].ParameterType == typeof(double));
+            var doubleFromHalf = typeof(System.Half).GetMethods()
+                .First(m => m.Name == "op_Explicit"
+                            && m.ReturnType == typeof(double)
+                            && m.GetParameters().Length == 1
+                            && m.GetParameters()[0].ParameterType == typeof(System.Half));
+            il.Emit(OpCodes.Call, halfFromDouble);
+            il.Emit(OpCodes.Call, doubleFromHalf);
+            il.Emit(OpCodes.Box, ctx.Types.Double);
+            return true;
+        }
+
         // Math.clz32(x) — count leading zeros of (x >>> 0) as 32-bit unsigned.
         // ECMA-262: ToUint32(x), then count leading zero bits; 32 if x === 0.
         if (methodName == "clz32" && arguments.Count == 1)
