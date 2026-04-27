@@ -856,10 +856,16 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var dictLocal = il.DeclareLocal(descriptorsDictType);
+        var keyLocal = il.DeclareLocal(_types.Object);
 
-        // var descriptors = _descriptors.GetOrCreateValue(obj);
+        // Normalize key: $TSFunction → its MethodInfo. Function declarations may
+        // be wrapped by multiple $TSFunction instances across references; keying
+        // by MethodInfo makes `fn.x = v; fn.x` round-trip on a single property.
+        EmitNormalizePDSKey(il, runtime, keyLocal);
+
+        // var descriptors = _descriptors.GetOrCreateValue(key);
         il.Emit(OpCodes.Ldsfld, descriptorsField);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Callvirt, descriptorsGetOrCreate);
         il.Emit(OpCodes.Stloc, dictLocal);
 
@@ -893,11 +899,15 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var descriptorsDictLocal = il.DeclareLocal(descriptorsDictType);
         var descriptorLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        var keyLocal = il.DeclareLocal(_types.Object);
         var returnNullLabel = il.DefineLabel();
 
-        // if (!_descriptors.TryGetValue(obj, out var descriptors)) return null
+        // Normalize key: $TSFunction → its MethodInfo (mirrors DefineProperty).
+        EmitNormalizePDSKey(il, runtime, keyLocal);
+
+        // if (!_descriptors.TryGetValue(key, out var descriptors)) return null
         il.Emit(OpCodes.Ldsfld, descriptorsField);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Ldloca, descriptorsDictLocal);
         il.Emit(OpCodes.Callvirt, descriptorsTryGet);
         il.Emit(OpCodes.Brfalse, returnNullLabel);
@@ -917,6 +927,47 @@ public partial class RuntimeEmitter
         il.MarkLabel(returnNullLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Reads <c>arg0</c> (the receiver), and stores the canonical PDS key in
+    /// <paramref name="keyLocal"/>: if the receiver is a <c>$TSFunction</c>,
+    /// substitute its underlying <c>MethodInfo</c>; otherwise use the receiver
+    /// directly. Required so <c>fn.x = v</c> followed by <c>fn.x</c> resolve
+    /// to the same descriptor entry even when each <c>fn</c> reference produces
+    /// a fresh wrapper instance — function declarations don't share identity
+    /// across references in compiled mode (no <c>GetOrCreate</c> instance cache
+    /// at the IL emit sites). MethodInfo is identity-stable across reflection
+    /// reads, so it makes a reliable canonical key for ConditionalWeakTable.
+    /// </summary>
+    private void EmitNormalizePDSKey(ILGenerator il, EmittedRuntime runtime, LocalBuilder keyLocal)
+    {
+        // var key = arg0;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, keyLocal);
+
+        // if (arg0 is $TSFunction f) key = f.GetMethodInfo() ?? arg0;
+        var afterLabel = il.DefineLabel();
+        var fLocal = il.DeclareLocal(runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, fLocal);
+        il.Emit(OpCodes.Brfalse, afterLabel);
+
+        // mi = f.GetMethodInfo()
+        var miLocal = il.DeclareLocal(_types.MethodInfo);
+        il.Emit(OpCodes.Ldloc, fLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionGetMethodInfo);
+        il.Emit(OpCodes.Stloc, miLocal);
+
+        // if (mi != null) key = mi
+        il.Emit(OpCodes.Ldloc, miLocal);
+        il.Emit(OpCodes.Brfalse, afterLabel);
+        il.Emit(OpCodes.Ldloc, miLocal);
+        il.Emit(OpCodes.Stloc, keyLocal);
+
+        il.MarkLabel(afterLabel);
     }
 
     /// <summary>
