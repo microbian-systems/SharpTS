@@ -846,6 +846,44 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notErrorLabel);
 
+        // Scoped PDS-data-store fallback for ECMA built-ins: $TSDate, $TSRegExp,
+        // $TSPromise. JS allows ad-hoc property assignment on these instances
+        // (`d = new Date(); d.foo = 1; d.foo === 1`); the value lands in PDS so
+        // GetFieldsProperty's PDS-data-descriptor arm reads it back. Limited
+        // to these types so user-defined class instances and runtime-side types
+        // (which may rely on silent-no-op semantics for unknown writes — e.g.,
+        // the Debug npm package) are not affected.
+        var pdsStoreLabel = il.DefineLabel();
+        var afterPdsStoreLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSDateType);
+        il.Emit(OpCodes.Brtrue, pdsStoreLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+        il.Emit(OpCodes.Brtrue, pdsStoreLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brtrue, pdsStoreLabel);
+        il.Emit(OpCodes.Br, afterPdsStoreLabel);
+
+        il.MarkLabel(pdsStoreLabel);
+        {
+            var fbDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, fbDescLocal);
+            il.Emit(OpCodes.Ldloc, fbDescLocal);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloc, fbDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ret);
+        }
+
+        il.MarkLabel(afterPdsStoreLabel);
+
         // Fallback: Try SetMember(string, object) method for types like $HttpResponse
         // that expose property setters through their SetMember dispatch method.
         var setMemberLocal = il.DeclareLocal(_types.MethodInfo);

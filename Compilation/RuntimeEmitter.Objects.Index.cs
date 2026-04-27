@@ -499,10 +499,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brtrue, tsObjectIdxSetLabel);
 
-        // Class instance: check if index is string, then use SetFieldsProperty
+        // Class instance / unknown receiver fallback: route to SetFieldsProperty
+        // with index coerced to string. SetFieldsProperty's own scoped PDS-store
+        // fallback handles ad-hoc indexed writes on Date/RegExp/Promise; other
+        // unknown types fall through to silent-no-op via SetFieldsProperty's
+        // SetMember-reflection-not-found branch.
+        // Null index (e.g. unsupported Symbol like Symbol.matchAll) → silent
+        // no-op rather than NRE on `null.ToString()`.
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brtrue, classInstanceLabel);
+        il.Emit(OpCodes.Brfalse, nullLabel);
+        il.Emit(OpCodes.Br, classInstanceLabel);
 
         // Fallthrough: return (ignore)
         il.MarkLabel(nullLabel);
@@ -571,11 +577,15 @@ public partial class RuntimeEmitter
         il.MarkLabel(bufSetDoneLabel);
         il.Emit(OpCodes.Ret);
 
-        // Class instance handler: use SetFieldsProperty(obj, index as string, value)
+        // Class instance / unknown handler: use SetFieldsProperty(obj, index.ToString(), value).
+        // ToString lets numeric indexes (`obj[0] = v`) round-trip through PDS for
+        // ECMA built-ins (Date/RegExp/Promise) per SetFieldsProperty's scoped PDS-store
+        // fallback. For other receivers, SetFieldsProperty silently no-ops if no
+        // SetMember method is found — matching the prior fallthrough behavior.
         il.MarkLabel(classInstanceLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetFieldsProperty);
         il.Emit(OpCodes.Ret);

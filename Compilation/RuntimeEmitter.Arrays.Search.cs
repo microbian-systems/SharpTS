@@ -206,18 +206,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notNumber);
 
-        // Fallback: return an empty List<object> rather than throw. ECMA-262
-        // strictly says `Array.prototype.X.call(null/undefined)` throws TypeError,
-        // and unsupported array-like receivers should also fail spec checks —
-        // but compiled mode has receivers we can't yet materialize (Math
-        // emits as null, boxed-primitive wrappers, class instances with
-        // .length, etc.) and treating those as empty preserves the legacy
-        // "silent default" behavior. Tests that expected TypeError still
-        // surface as Fail (returning empty causes downstream assertion
-        // mismatches), but tests that just iterated and saw nothing keep
-        // passing instead of becoming RuntimeError. Once Stage 5's $Math
-        // materialization + boxed-primitive handling lands, this should
-        // become a TypeError throw.
+        // Generic fallback for any non-null receiver: materialize via
+        // $Runtime.GetProperty(receiver, "length") + indexed reads. Unlocks
+        // Date / RegExp / $TSPromise (paired with SetFieldsProperty's scoped
+        // PDS-store fallback) and other receivers that expose length+indexed
+        // properties. Receivers without length yield NaN → 0 → empty list,
+        // matching the previous fallback's silent-empty behavior.
+        EmitMaterializeViaGetProperty(il, runtime);
+        il.Emit(OpCodes.Ret);
+
+        // null / undefined fallback: return an empty List<object>. ECMA-262
+        // says throw TypeError but tests rely on empty-iteration semantics here.
         il.MarkLabel(throwLabel);
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObject));
         il.Emit(OpCodes.Ret);
