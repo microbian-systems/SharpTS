@@ -572,7 +572,9 @@ public partial class TypeChecker
                 }
                 return valueType;
             }
-            throw new TypeCheckException($" Property '{propName}' does not exist on type 'Error'.");
+            // Other names — Error is an ordinary object in JS; allow ad-hoc
+            // property assignment (\`new Error(); e.foo = 1\` is legal at runtime).
+            return CheckExpr(set.Value);
         }
         // Allow property assignment on built-in types with settable properties
         if (objType is TypeInfo.AbortSignal && set.Name.Lexeme == "onabort")
