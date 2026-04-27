@@ -83,6 +83,71 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits <c>$Runtime.ToObject(object value) -&gt; object</c>: ECMA-262
+    /// 7.1.18 ToObject coercion. <c>null</c>/<c>undefined</c> → empty
+    /// <c>$Object</c>; <c>bool</c>/<c>double</c> → boxed wrapper via
+    /// <c>NewBoxedPrimitive</c>; everything else (including <c>string</c>)
+    /// passes through unchanged. Used by <c>new Object(v)</c> in compiled mode.
+    /// String is intentionally not boxed — see Stage 4z19 carve-out.
+    /// </summary>
+    private void EmitToObject(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ToObject",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        runtime.ToObjectMethod = method;
+
+        var il = method.GetILGenerator();
+
+        // null → empty $Object
+        var notNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Newobj, runtime.TSObjectCtor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNullLabel);
+
+        // undefined → empty $Object
+        var notUndefLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, notUndefLabel);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Newobj, runtime.TSObjectCtor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notUndefLabel);
+
+        // bool → NewBoxedPrimitive("Boolean", arg)
+        var notBoolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, notBoolLabel);
+        il.Emit(OpCodes.Ldstr, "Boolean");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.NewBoxedPrimitiveMethod);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBoolLabel);
+
+        // double → NewBoxedPrimitive("Number", arg)
+        var notNumLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, notNumLabel);
+        il.Emit(OpCodes.Ldstr, "Number");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.NewBoxedPrimitiveMethod);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNumLabel);
+
+        // Otherwise (string, dict, array, $Object, etc.) — return as-is.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void DefineIsBoxedPrimitiveOfTypeShell(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         runtime.IsBoxedPrimitiveOfTypeMethod = typeBuilder.DefineMethod(

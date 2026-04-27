@@ -328,6 +328,8 @@ public class EmittedRuntime
     public MethodBuilder IsPrototypeOfHelperMethod { get; set; } = null!;
     /// <summary>$Runtime.NewBoxedPrimitive(typeTag, value) — builds a $Object wrapper with __primitiveType + __primitiveValue marker fields, prototype-linked to Boolean/Number/String prototype.</summary>
     public MethodBuilder NewBoxedPrimitiveMethod { get; set; } = null!;
+    /// <summary>$Runtime.ToObject(value) — ECMA-262 ToObject coercion. null/undefined → empty $Object; bool/double → boxed wrapper; else as-is. Used by `new Object(v)`.</summary>
+    public MethodBuilder ToObjectMethod { get; set; } = null!;
     /// <summary>$Runtime.IsBoxedPrimitiveOfType(obj, typeTag) — true iff obj is a $Object with matching __primitiveType marker. Used by the instanceof emitter.</summary>
     public MethodBuilder IsBoxedPrimitiveOfTypeMethod { get; set; } = null!;
     /// <summary>Object.prototype singleton dict, populated lazily with hasOwnProperty/isPrototypeOf/toString/valueOf wrappers.</summary>

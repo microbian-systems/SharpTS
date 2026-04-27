@@ -254,6 +254,27 @@ public abstract partial class ExpressionEmitterBase
                 EmitNewDateConstructor(arguments);
                 return true;
 
+            // --- Object(v) constructor — ECMA-262 19.1.1.1 ToObject ---
+            // `new Object(undefined|null)` → empty $Object.
+            // `new Object(prim)` for primitives → routes through ToObject.
+            // For Boolean/Number/String primitives, build the matching boxed
+            // wrapper via NewBoxedPrimitive so prototype-chain lookups land
+            // on the right singleton. For non-primitives, the value is
+            // returned as-is (ECMA-262 step 2 of ToObject).
+            case "Object":
+                if (arguments.Count == 0)
+                {
+                    IL.Emit(OpCodes.Newobj, Ctx.Types.GetDefaultConstructor(Ctx.Types.DictionaryStringObject));
+                    IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSObjectCtor);
+                    SetStackUnknown();
+                    return true;
+                }
+                EmitExpression(arguments[0]);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.ToObjectMethod);
+                SetStackUnknown();
+                return true;
+
             // --- String / Number / Boolean primitive wrappers ---
             // ECMA-262: `new String(v)` / `new Number(v)` / `new Boolean(v)`
             // construct boxed primitive wrappers. Stage 4z19: build a $Object
