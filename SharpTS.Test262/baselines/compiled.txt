@@ -326,10 +326,10 @@ test/built-ins/Array/prototype/concat/S15.4.4.4_A3_T2.js TypeCheckError
 test/built-ins/Array/prototype/concat/S15.4.4.4_A3_T3.js TypeCheckError
 test/built-ins/Array/prototype/concat/arg-length-exceeding-integer-limit.js TypeCheckError
 test/built-ins/Array/prototype/concat/arg-length-near-integer-limit.js TypeCheckError
-test/built-ins/Array/prototype/concat/call-with-boolean.js RuntimeError
+test/built-ins/Array/prototype/concat/call-with-boolean.js Pass
 test/built-ins/Array/prototype/concat/create-ctor-non-object.js TypeCheckError
 test/built-ins/Array/prototype/concat/create-ctor-poisoned.js TypeCheckError
-test/built-ins/Array/prototype/concat/create-non-array.js RuntimeError
+test/built-ins/Array/prototype/concat/create-non-array.js Pass
 test/built-ins/Array/prototype/concat/create-proto-from-ctor-realm-array.js TypeCheckError
 test/built-ins/Array/prototype/concat/create-proto-from-ctor-realm-non-array.js TypeCheckError
 test/built-ins/Array/prototype/concat/create-proxy.js TypeCheckError
@@ -989,7 +989,7 @@ test/built-ins/Array/prototype/findLastIndex/return-index-predicate-result-is-tr
 test/built-ins/Array/prototype/findLastIndex/return-negative-one-if-predicate-returns-false-value.js TypeCheckError
 test/built-ins/Array/prototype/flat/array-like-objects.js Pass
 test/built-ins/Array/prototype/flat/bound-function-call.js Pass
-test/built-ins/Array/prototype/flat/call-with-boolean.js RuntimeError
+test/built-ins/Array/prototype/flat/call-with-boolean.js Pass
 test/built-ins/Array/prototype/flat/empty-array-elements.js Pass
 test/built-ins/Array/prototype/flat/empty-object-elements.js Pass
 test/built-ins/Array/prototype/flat/length.js TypeCheckError
@@ -1220,7 +1220,7 @@ test/built-ins/Array/prototype/forEach/prop-desc.js TypeCheckError
 test/built-ins/Array/prototype/forEach/resizable-buffer-grow-mid-iteration.js TypeCheckError
 test/built-ins/Array/prototype/forEach/resizable-buffer-shrink-mid-iteration.js TypeCheckError
 test/built-ins/Array/prototype/forEach/resizable-buffer.js TypeCheckError
-test/built-ins/Array/prototype/includes/call-with-boolean.js RuntimeError
+test/built-ins/Array/prototype/includes/call-with-boolean.js Pass
 test/built-ins/Array/prototype/includes/coerced-searchelement-fromindex-resize.js TypeCheckError
 test/built-ins/Array/prototype/includes/fromIndex-equal-or-greater-length-returns-false.js TypeCheckError
 test/built-ins/Array/prototype/includes/fromIndex-infinity.js TypeCheckError
@@ -1466,7 +1466,7 @@ test/built-ins/Array/prototype/join/S15.4.4.5_A3.2_T2.js TypeCheckError
 test/built-ins/Array/prototype/join/S15.4.4.5_A4_T3.js TypeCheckError
 test/built-ins/Array/prototype/join/S15.4.4.5_A5_T1.js TypeCheckError
 test/built-ins/Array/prototype/join/S15.4.4.5_A6.6.js Pass
-test/built-ins/Array/prototype/join/call-with-boolean.js RuntimeError
+test/built-ins/Array/prototype/join/call-with-boolean.js Pass
 test/built-ins/Array/prototype/join/coerced-separator-grow.js TypeCheckError
 test/built-ins/Array/prototype/join/coerced-separator-shrink.js TypeCheckError
 test/built-ins/Array/prototype/join/length.js TypeCheckError
