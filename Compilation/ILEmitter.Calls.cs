@@ -343,7 +343,7 @@ public partial class ILEmitter
             "findLastIndex" => (runtime.ArrayFindLastIndex,"single",  _ctx.Types.Double),
             "includes"      => (runtime.ArrayIncludes,   "single",    _ctx.Types.Boolean),
             "join"          => (runtime.ArrayJoin,       "single",    _ctx.Types.Object),
-            "concat"        => (runtime.ArrayConcat,     "single",    _ctx.Types.Object),
+            "concat"        => (runtime.ArrayConcat,     "argsArray", _ctx.Types.Object),
             "flat"          => (runtime.ArrayFlat,       "single",    _ctx.Types.Object),
             "flatMap"       => (runtime.ArrayFlatMap,    "single",    _ctx.Types.Object),
             "at"            => (runtime.ArrayAt,         "single",    _ctx.Types.Object),

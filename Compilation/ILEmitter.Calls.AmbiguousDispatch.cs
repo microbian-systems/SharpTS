@@ -256,15 +256,16 @@ public partial class ILEmitter
                 break;
 
             case "concat":
-                if (arguments.Count > 0)
+                // ECMA-262: concat(...items) is variadic. Pass args as object[].
+                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+                IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+                for (int i = 0; i < arguments.Count; i++)
                 {
-                    EmitExpression(arguments[0]);
-                    EmitBoxIfNeeded(arguments[0]);
-                    IL.Emit(OpCodes.Castclass, _ctx.Types.ListOfObject);
-                }
-                else
-                {
-                    IL.Emit(OpCodes.Newobj, _ctx.Types.GetConstructor(_ctx.Types.ListOfObject));
+                    IL.Emit(OpCodes.Dup);
+                    IL.Emit(OpCodes.Ldc_I4, i);
+                    EmitExpression(arguments[i]);
+                    EmitBoxIfNeeded(arguments[i]);
+                    IL.Emit(OpCodes.Stelem_Ref);
                 }
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.ArrayConcat);
                 break;

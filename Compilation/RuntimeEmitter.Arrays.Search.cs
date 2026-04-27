@@ -1173,12 +1173,19 @@ public partial class RuntimeEmitter
 
     private void EmitArrayConcat(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // ECMA-262 23.1.3.1: concat takes ...items (variadic). Signature widened
+        // to accept object[] so `arr.concat(a, b, c)` spreads each argument.
+        // The trailing object[] is marked params via ParamArrayAttribute so
+        // reflection-via-$TSFunction auto-packs trailing args into the array.
         var method = typeBuilder.DefineMethod(
             "ArrayConcat",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.ListOfObject,
-            [_types.ListOfObject, _types.Object]
+            [_types.ListOfObject, _types.ObjectArray]
         );
+        var paramArrayCtor = typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes)!;
+        method.DefineParameter(2, System.Reflection.ParameterAttributes.None, "items")
+            .SetCustomAttribute(new CustomAttributeBuilder(paramArrayCtor, []));
         runtime.ArrayConcat = method;
 
         var il = method.GetILGenerator();
@@ -1189,46 +1196,70 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.IEnumerableOfObject));
         il.Emit(OpCodes.Stloc, resultLocal);
 
-        // if (arg1 is $Array arr) result.AddRange(arr.Elements)
-        // else if (arg1 is List<object> otherList) result.AddRange(otherList)
-        // else result.Add(arg1)
-        var notList = il.DefineLabel();
-        var notTSArray = il.DefineLabel();
-        var done = il.DefineLabel();
-
-        // Stage E.2 M2: $Array needs to spread like a list. The old code only
-        // checked `Isinst List<object?>`, so with M2's emitter-level switch to
-        // $Array, concat(b) where b is a compiled array literal would Add the
-        // wrapper as one element instead of spreading — classic regression
-        // driver for Array_Concat_ReturnsNewArray.
+        // for each arg in args[]: spread (if Array/List) or append.
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var idxLocal = il.DeclareLocal(_types.Int32);
+        var argLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idxLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var advance = il.DefineLabel();
+        var notTSArray = il.DefineLabel();
+        var notList = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // arg = args[i]
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, argLocal);
+
+        // if (arg is $Array) AddRange(elements)
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Isinst, runtime.TSArrayType);
         il.Emit(OpCodes.Brfalse, notTSArray);
-
         il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Castclass, runtime.TSArrayType);
         il.Emit(OpCodes.Callvirt, runtime.TSArrayElementsGetter);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "AddRange", _types.IEnumerableOfObject));
-        il.Emit(OpCodes.Br, done);
+        il.Emit(OpCodes.Br, advance);
 
         il.MarkLabel(notTSArray);
-        il.Emit(OpCodes.Ldarg_1);
+        // if (arg is List<object>) AddRange
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brfalse, notList);
-
         il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Castclass, _types.ListOfObject);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "AddRange", _types.IEnumerableOfObject));
-        il.Emit(OpCodes.Br, done);
+        il.Emit(OpCodes.Br, advance);
 
         il.MarkLabel(notList);
+        // else: append the arg as a single element
         il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
 
-        il.MarkLabel(done);
+        il.MarkLabel(advance);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
     }

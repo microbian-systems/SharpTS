@@ -161,7 +161,7 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 break;
 
             case "concat":
-                EmitSingleArgOrNull(emitter, arguments);
+                EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayConcat);
                 break;
 

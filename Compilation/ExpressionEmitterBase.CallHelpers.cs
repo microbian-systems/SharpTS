@@ -1286,7 +1286,16 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.ArraySlice);
                 break;
             case "concat":
-                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+                // ECMA-262: concat(...items) is variadic. Pass args as object[]
+                // so each argument spreads (Array/List) or appends individually.
+                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+                IL.Emit(OpCodes.Newarr, Ctx.Types.Object);
+                for (int i = 0; i < arguments.Count; i++)
+                {
+                    IL.Emit(OpCodes.Dup); IL.Emit(OpCodes.Ldc_I4, i);
+                    EmitExpression(arguments[i]); EnsureBoxed();
+                    IL.Emit(OpCodes.Stelem_Ref);
+                }
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.ArrayConcat);
                 break;
         }

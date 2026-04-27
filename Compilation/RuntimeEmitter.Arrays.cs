@@ -1058,7 +1058,7 @@ public partial class RuntimeEmitter
         EmitSearchCase("indexOf", runtime.ArrayIndexOf);
         EmitSearchCase("lastIndexOf", runtime.ArrayLastIndexOf);
         EmitSingleArgCase("includes", runtime.ArrayIncludes);
-        EmitSingleArgCase("concat", runtime.ArrayConcat);
+        EmitArgsArrayCase("concat", runtime.ArrayConcat);
         EmitSingleArgCase("join", runtime.ArrayJoin);
         EmitSingleArgCase("map", runtime.ArrayMap);
         EmitSingleArgCase("filter", runtime.ArrayFilter);
