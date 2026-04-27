@@ -18,19 +18,25 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitStringPrototypeStubs(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        runtime.StringToUpperCase = EmitStringStringStub(typeBuilder, runtime, "StringToUpperCase", "ToUpper");
-        runtime.StringToLowerCase = EmitStringStringStub(typeBuilder, runtime, "StringToLowerCase", "ToLower");
-        runtime.StringTrim = EmitStringStringStub(typeBuilder, runtime, "StringTrim", "Trim");
-        runtime.StringTrimStart = EmitStringStringStub(typeBuilder, runtime, "StringTrimStart", "TrimStart");
-        runtime.StringTrimEnd = EmitStringStringStub(typeBuilder, runtime, "StringTrimEnd", "TrimEnd");
+        // Concrete trim/toUpperCase/toLowerCase helpers: enforce ECMA-262
+        // RequireObjectCoercible (throw TypeError on undefined/null) and
+        // coerce via JS-spec ToJsString (so .call(false) → "false" not
+        // .NET "False").
+        runtime.StringToUpperCase = EmitStringStringStub(typeBuilder, runtime, "StringToUpperCase", "ToUpper", strictReceiver: true);
+        runtime.StringToLowerCase = EmitStringStringStub(typeBuilder, runtime, "StringToLowerCase", "ToLower", strictReceiver: true);
+        runtime.StringTrim = EmitStringStringStub(typeBuilder, runtime, "StringTrim", "Trim", strictReceiver: true);
+        runtime.StringTrimStart = EmitStringStringStub(typeBuilder, runtime, "StringTrimStart", "TrimStart", strictReceiver: true);
+        runtime.StringTrimEnd = EmitStringStringStub(typeBuilder, runtime, "StringTrimEnd", "TrimEnd", strictReceiver: true);
 
         // Generic stub for methods without specific helpers — used only for
-        // typeof + isConstructor probes via $TSFunction wrappers. Returns
-        // empty string. Wired by name into Stage 4z10's populate.
-        runtime.StringPrototypeGenericStub = EmitStringStringStub(typeBuilder, runtime, "_StringPrototypeStub", "ToString");
+        // typeof + isConstructor probes via $TSFunction wrappers, AND wired
+        // into Object.prototype.toString / Array.prototype.toString. Stays
+        // tolerant of null/undefined receivers (returns empty string) since
+        // those wirings legitimately call with non-string receivers.
+        runtime.StringPrototypeGenericStub = EmitStringStringStub(typeBuilder, runtime, "_StringPrototypeStub", "ToString", strictReceiver: false);
     }
 
-    private MethodBuilder EmitStringStringStub(TypeBuilder typeBuilder, EmittedRuntime runtime, string runtimeName, string netName)
+    private MethodBuilder EmitStringStringStub(TypeBuilder typeBuilder, EmittedRuntime runtime, string runtimeName, string netName, bool strictReceiver)
     {
         var method = typeBuilder.DefineMethod(
             runtimeName,
@@ -39,33 +45,49 @@ public partial class RuntimeEmitter
             [_types.Object]);
 
         var il = method.GetILGenerator();
-        // ECMA-262 RequireObjectCoercible: throws TypeError on undefined/null.
-        // Apply here so `String.prototype.trim.call(undefined)` and similar
-        // borrowed-method patterns surface the spec-defined TypeError.
-        var notNullLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brtrue, notNullLabel);
-        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
-        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
-        il.Emit(OpCodes.Call, runtime.CreateException);
-        il.Emit(OpCodes.Throw);
-        il.MarkLabel(notNullLabel);
 
-        var notUndefLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brfalse, notUndefLabel);
-        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
-        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
-        il.Emit(OpCodes.Call, runtime.CreateException);
-        il.Emit(OpCodes.Throw);
-        il.MarkLabel(notUndefLabel);
+        if (strictReceiver)
+        {
+            // ECMA-262 RequireObjectCoercible: throws TypeError on undefined/null.
+            // Apply here so `String.prototype.trim.call(undefined)` and similar
+            // borrowed-method patterns surface the spec-defined TypeError.
+            var notNullLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Brtrue, notNullLabel);
+            il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(notNullLabel);
 
-        // Coerce via $Runtime.ToJsString — JS-spec ToString protocol so
-        // booleans surface as "true"/"false" (not .NET "True"/"False"),
-        // numbers via JS formatting, objects via valueOf/toString.
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.ToJsString);
+            var notUndefLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brfalse, notUndefLabel);
+            il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(notUndefLabel);
+
+            // Coerce via $Runtime.ToJsString — JS-spec ToString protocol so
+            // booleans surface as "true"/"false" (not .NET "True"/"False"),
+            // numbers via JS formatting, objects via valueOf/toString.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.ToJsString);
+        }
+        else
+        {
+            // Generic-stub path used as the fallback wiring for various
+            // prototype.toString slots. Stay tolerant of null/undefined and
+            // avoid ToJsString — the latter walks the prototype chain looking
+            // for "toString" which itself is wired to this stub, causing
+            // infinite recursion. Convert.ToString gives the receiver's .NET
+            // ToString without dispatching back through the prototype.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToString", _types.Object));
+        }
+
         var netMethod = _types.GetMethodNoParams(_types.String, netName);
         if (netMethod == null)
             throw new System.InvalidOperationException($"String.{netName} not found");
