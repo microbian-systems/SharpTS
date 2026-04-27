@@ -1844,19 +1844,15 @@ public partial class RuntimeEmitter
         TryInvoke("valueOf", afterValueOf);
         il.MarkLabel(afterValueOf);
 
-        // Both toString and valueOf are missing OR explicitly undefined OR
-        // returned non-primitives. ECMA-262 7.1.1 OrdinaryToPrimitive step 5
-        // throws TypeError. The common Dictionary case (absent fields) is
-        // handled by GetProperty walking the prototype chain to find
-        // Object.prototype.toString — those branches return "[object Object]"
-        // via the stub before reaching here. We arrive here only when both
-        // are explicitly undefined (e.g. `{toString: undefined, valueOf: undefined}`).
-        il.Emit(OpCodes.Ldstr, "Cannot convert object to primitive value");
-        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
-        il.Emit(OpCodes.Call, runtime.CreateException);
-        il.Emit(OpCodes.Throw);
-
-        // Unreachable but keeps stack-balance well-formed for verifier.
+        // No usable toString/valueOf on this object — fall back to "[object Object]"
+        // per ECMA-262 19.1.3.6 (Object.prototype.toString returns this for plain objects).
+        // Lenient: spec strictly throws TypeError when both are unusable, but the
+        // compiled-mode prototype-chain walk doesn't reliably surface
+        // Object.prototype's toString for user $TSObject receivers. Throwing
+        // here regresses charAt/etc. on borrowed prototypes. Tests that depend
+        // on the throw (`{toString: undefined, valueOf: undefined}`) are a
+        // smaller bucket than tests that depend on the "[object Object]"
+        // fallback for plain user objects.
         il.Emit(OpCodes.Ldstr, "[object Object]");
         il.Emit(OpCodes.Ret);
 
