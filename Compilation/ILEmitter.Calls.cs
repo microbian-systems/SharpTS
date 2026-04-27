@@ -396,7 +396,13 @@ public partial class ILEmitter
         // without materializing element accessors. Test262 tests like
         // `Array.prototype.every.call(obj)` (no cb) check this ordering via
         // assert(lengthAccessed) + assert(loopAccessed === false).
-        if (kind == "single" && methodArgs.Count == 0)
+        // Only applies to methods whose first arg is a REQUIRED callback —
+        // includes/join/concat/flat/at take other arg shapes and don't throw
+        // when called with no args.
+        bool needsCallableFirstArg = methodName is "every" or "some" or "filter"
+            or "map" or "forEach" or "find" or "findIndex" or "findLast"
+            or "findLastIndex" or "flatMap";
+        if (kind == "single" && methodArgs.Count == 0 && needsCallableFirstArg)
         {
             // Pop the duplicated receiver from the stack — we won't be
             // calling materialize.
