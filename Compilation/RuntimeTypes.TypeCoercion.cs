@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.CompilerServices;
 
 namespace SharpTS.Compilation;
@@ -29,9 +30,17 @@ public static partial class RuntimeTypes
         if (double.IsNaN(d)) return "NaN";
         if (double.IsPositiveInfinity(d)) return "Infinity";
         if (double.IsNegativeInfinity(d)) return "-Infinity";
-        if (d == Math.Floor(d) && Math.Abs(d) < 1e15)
-            return ((long)d).ToString();
-        return d.ToString("G15");
+        // ECMA-262 6.1.6.1.13: integers up to 10^21 - 1 format as plain digits.
+        // For Math.Abs(d) >= 2^63 (Int64 overflow boundary), use F0 format.
+        if (d == Math.Floor(d) && Math.Abs(d) < 1e21)
+        {
+            if (Math.Abs(d) < 9.2233720368547758e18)
+                return ((long)d).ToString(CultureInfo.InvariantCulture);
+            return d.ToString("F0", CultureInfo.InvariantCulture);
+        }
+        // Non-integer or >= 1e21: scientific notation with lowercase e + no leading zeros.
+        var s = d.ToString("G15", CultureInfo.InvariantCulture).Replace("E", "e");
+        return System.Text.RegularExpressions.Regex.Replace(s, @"e([+-])0+(?=\d)", "e$1");
     }
 
     private static string StringifyObject(Dictionary<string, object?> dict)
