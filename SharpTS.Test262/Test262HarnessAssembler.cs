@@ -39,7 +39,7 @@ public sealed class Test262HarnessAssembler
         // failure) from RuntimeError. Compiled-mode $TSObject.GetProperty
         // doesn't walk the prototype chain, so a prototype-only `name` won't
         // surface. Wrap the constructor so each instance carries its own name.
-        sb.Append("(function(){var __orig=Test262Error;Test262Error=function(message){__orig.call(this,message);this.name=\"Test262Error\";};Test262Error.prototype=__orig.prototype;Test262Error.prototype.constructor=Test262Error;})();\n");
+        sb.Append("(function(){var __orig=Test262Error;Test262Error=function(message){__orig.call(this,message);this.name=\"Test262Error\";this.constructor=Test262Error;};Test262Error.prototype=__orig.prototype;Test262Error.prototype.constructor=Test262Error;})();\n");
         foreach (var include in metadata.Includes)
         {
             AppendHarnessFile(sb, include);
