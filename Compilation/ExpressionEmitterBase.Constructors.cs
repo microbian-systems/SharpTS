@@ -261,10 +261,14 @@ public abstract partial class ExpressionEmitterBase
             // PDS-linked to the matching prototype singleton. Tests that probe
             // `obj instanceof Boolean` see true via the marker; tests that do
             // `obj.length = 2; obj[0] = 11` work via $Object's indexed set.
-            // The pre-Stage-4z19 fallback returned the coerced primitive,
-            // which broke wrapper-identity tests.
+            //
+            // String is excluded — `new String(v)` returns the coerced primitive
+            // because most Test262 String tests use `new String("x").split(...)`
+            // patterns that depend on the wrapper acting as a primitive for
+            // method dispatch. Wrapping String breaks ~80 tests vs the ~4
+            // instanceof tests it would unlock. Revisit if String.prototype.X
+            // dispatch learns to unwrap markers.
             case "String":
-                IL.Emit(OpCodes.Ldstr, "String");
                 if (arguments.Count == 0)
                     IL.Emit(OpCodes.Ldstr, "");
                 else
@@ -273,7 +277,6 @@ public abstract partial class ExpressionEmitterBase
                     EnsureBoxed();
                     IL.Emit(OpCodes.Call, Ctx.Runtime!.ToJsString);
                 }
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.NewBoxedPrimitiveMethod);
                 SetStackUnknown();
                 return true;
 
