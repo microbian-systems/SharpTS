@@ -112,6 +112,11 @@ public partial class RuntimeEmitter
         Wire("toString",       runtime.StringPrototypeGenericStub, 0);
         Wire("toLocaleString", runtime.StringPrototypeGenericStub, 0);
 
+        // Per ECMA-262 §23.1.3 Array.prototype's [[Prototype]] is %Object.prototype%.
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
+
         il.Emit(OpCodes.Ret);
 
         runtime.ArrayPrototypePopulateMethod = method;

@@ -124,6 +124,14 @@ public partial class RuntimeEmitter
             FieldAttributes.Public | FieldAttributes.Static);
         runtime.ArrayPrototypeField = arrayPrototypeField;
 
+        // Object.prototype singleton — populated lazily with hasOwnProperty/
+        // isPrototypeOf/toString/valueOf/etc. wrappers.
+        var objectPrototypeField = typeBuilder.DefineField(
+            "_objectPrototype",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.ObjectPrototypeField = objectPrototypeField;
+
         // CheckCancellation(): if (_cancelRequested) throw new
         //   OperationCanceledException("Compiled execution cancelled.");
         // Called by loop emitters at each backedge. Method body is emitted
@@ -247,6 +255,11 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         cctorIL.Emit(OpCodes.Stsfld, arrayPrototypeField);
 
+        // Object.prototype starts empty; populated lazily by
+        // EmitObjectPrototypePopulate-emitted helper on first read.
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Stsfld, objectPrototypeField);
+
         // Initialize _symbolStorage = new ConditionalWeakTable<object, Dictionary<object, object?>>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(symbolStorageType));
         cctorIL.Emit(OpCodes.Stsfld, symbolStorageField);
@@ -311,9 +324,14 @@ public partial class RuntimeEmitter
         // Object methods - must come BEFORE iterator methods since GetProperty, InvokeMethodValue are needed
         EmitCreateObject(typeBuilder, runtime);
         EmitGetArrayMethod(typeBuilder, runtime);
-        // hasOwnProperty helper — must come before GetFunctionMethod so the
-        // "hasOwnProperty" arm can return a $TSFunction wrapping it.
+        // hasOwnProperty + isPrototypeOf helpers — must come before
+        // GetFunctionMethod so the corresponding arms can return $TSFunction
+        // wrappers.
         EmitHasOwnPropertyHelper(typeBuilder, runtime);
+        EmitIsPrototypeOfHelper(typeBuilder, runtime);
+        // Pre-define ObjectPrototypePopulate shell for ObjectStaticEmitter
+        // to reference at compile time. Body emitted later.
+        DefineObjectPrototypePopulateShell(typeBuilder, runtime);
         EmitGetFunctionMethod(typeBuilder, runtime);  // For bind/call/apply on functions
         // InstanceOf walks the prototype chain via GetFunctionMethod (for the
         // `F.prototype` fetch) — must be emitted AFTER GetFunctionMethod so
@@ -494,6 +512,9 @@ public partial class RuntimeEmitter
         // helpers above. Must come AFTER all the Array* MethodBuilders are
         // defined.
         EmitArrayPrototypePopulate(typeBuilder, runtime);
+        // Object.prototype populate body — uses HasOwnPropertyHelper +
+        // IsPrototypeOfHelper which are emitted before GetFunctionMethod above.
+        EmitObjectPrototypePopulate(typeBuilder, runtime);
         // String methods
         EmitStringCharAt(typeBuilder, runtime);
         EmitStringSubstring(typeBuilder, runtime);

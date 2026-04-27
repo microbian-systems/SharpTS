@@ -64,6 +64,12 @@ public partial class RuntimeEmitter
         Wire("toLocaleString", runtime.NumberToStringRadix,   0);
         Wire("valueOf",        runtime.NumberToStringRadix,   0);
 
+        // PDSSetPrototype(NumberPrototypeField, ObjectPrototypeField).
+        // Per ECMA-262 §21.1.3 Number.prototype's [[Prototype]] is %Object.prototype%.
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
+
         il.Emit(OpCodes.Ret);
     }
 }

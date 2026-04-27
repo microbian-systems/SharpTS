@@ -58,6 +58,11 @@ public partial class RuntimeEmitter
         Wire("toString", runtime.StringPrototypeGenericStub, 0);
         Wire("valueOf",  runtime.StringPrototypeGenericStub, 0);
 
+        // Per ECMA-262 §20.3.3 Boolean.prototype's [[Prototype]] is %Object.prototype%.
+        il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
+
         il.Emit(OpCodes.Ret);
     }
 }

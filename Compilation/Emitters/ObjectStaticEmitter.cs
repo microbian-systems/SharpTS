@@ -257,6 +257,18 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
     {
         var ctx = emitter.Context;
         var runtime = ctx.Runtime!;
+
+        // Object.prototype — singleton dict populated lazily with hasOwnProperty,
+        // isPrototypeOf, toString, valueOf wrappers. Required for Test262
+        // patterns like `Object.prototype.isPrototypeOf(Number.prototype)`.
+        if (propertyName == "prototype")
+        {
+            var protoIL = ctx.IL;
+            protoIL.Emit(OpCodes.Call, runtime.ObjectPrototypePopulateMethod);
+            protoIL.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+            return true;
+        }
+
         // Stage 4y: expose Object.* static methods as values so
         // `let f = Object.keys; f(obj)` works AND so test262's isConstructor
         // harness sees `typeof f === "function"`.

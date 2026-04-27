@@ -1,0 +1,67 @@
+using System.Reflection;
+using System.Reflection.Emit;
+
+namespace SharpTS.Compilation;
+
+public partial class RuntimeEmitter
+{
+    private void DefineObjectPrototypePopulateShell(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.ObjectPrototypePopulateMethod = typeBuilder.DefineMethod(
+            "_ObjectPrototypePopulate",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            Type.EmptyTypes);
+    }
+
+    /// <summary>
+    /// Populates <see cref="EmittedRuntime.ObjectPrototypeField"/> with
+    /// <c>$TSFunction</c> wrappers for hasOwnProperty/isPrototypeOf/toString/
+    /// valueOf/etc. Required for Test262 tests that probe
+    /// <c>Object.prototype.isPrototypeOf(SomeBuiltin.prototype)</c>.
+    /// </summary>
+    private void EmitObjectPrototypePopulate(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = runtime.ObjectPrototypePopulateMethod;
+        var il = method.GetILGenerator();
+        var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item",
+            _types.String, _types.Object);
+
+        var doFillLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.DictionaryStringObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, doFillLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(doFillLabel);
+
+        // Wire methods backed by $Runtime helpers. Each wrapper has the
+        // helper as its MethodInfo and uses TSFunctionCtorWithCache for
+        // proper .name + .length per ECMA-262.
+        void Wire(string jsName, MethodBuilder helper, int jsLength)
+        {
+            il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldnull); // target — methods take receiver as first arg
+            il.Emit(OpCodes.Ldtoken, helper);
+            il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+                _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldc_I4, jsLength);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+            il.Emit(OpCodes.Callvirt, setItem);
+        }
+
+        Wire("hasOwnProperty", runtime.HasOwnPropertyHelperMethod, 1);
+        Wire("isPrototypeOf",  runtime.IsPrototypeOfHelperMethod,  1);
+        // toString and valueOf — back with the generic stub so they pass
+        // typeof/IsConstructor probes. Real semantics handled inline.
+        Wire("toString",       runtime.StringPrototypeGenericStub, 0);
+        Wire("valueOf",        runtime.StringPrototypeGenericStub, 0);
+        Wire("toLocaleString", runtime.StringPrototypeGenericStub, 0);
+        Wire("propertyIsEnumerable", runtime.StringPrototypeGenericStub, 1);
+
+        il.Emit(OpCodes.Ret);
+    }
+}

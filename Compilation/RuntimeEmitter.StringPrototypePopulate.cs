@@ -112,6 +112,11 @@ public partial class RuntimeEmitter
         Wire("isWellFormed",         runtime.StringPrototypeGenericStub,   0);
         Wire("toWellFormed",         runtime.StringPrototypeGenericStub,   0);
 
+        // Per ECMA-262 §22.1.3 String.prototype's [[Prototype]] is %Object.prototype%.
+        il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
+
         il.Emit(OpCodes.Ret);
     }
 }

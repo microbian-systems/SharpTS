@@ -324,6 +324,12 @@ public class EmittedRuntime
     public MethodBuilder BooleanPrototypePopulateMethod { get; set; } = null!;
     /// <summary>$Runtime.HasOwnPropertyHelper(obj, name) — backs <c>obj.hasOwnProperty(name)</c> for $TSFunction / $Object / Dictionary / List receivers.</summary>
     public MethodBuilder HasOwnPropertyHelperMethod { get; set; } = null!;
+    /// <summary>$Runtime.IsPrototypeOfHelper(receiver, target) — backs <c>receiver.isPrototypeOf(target)</c>; walks target's prototype chain via PDS.</summary>
+    public MethodBuilder IsPrototypeOfHelperMethod { get; set; } = null!;
+    /// <summary>Object.prototype singleton dict, populated lazily with hasOwnProperty/isPrototypeOf/toString/valueOf wrappers.</summary>
+    public FieldBuilder ObjectPrototypeField { get; set; } = null!;
+    /// <summary>Idempotent populate for <see cref="ObjectPrototypeField"/>.</summary>
+    public MethodBuilder ObjectPrototypePopulateMethod { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;
