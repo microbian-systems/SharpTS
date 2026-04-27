@@ -215,11 +215,15 @@ public partial class RuntimeEmitter
         EmitMaterializeViaGetProperty(il, runtime);
         il.Emit(OpCodes.Ret);
 
-        // null / undefined fallback: return an empty List<object>. ECMA-262
-        // says throw TypeError but tests rely on empty-iteration semantics here.
+        // null / undefined: ECMA-262 ToObject(null) / ToObject(undefined) throws
+        // TypeError per 7.1.18. `Array.prototype.X.call(undefined, ...)` and
+        // `.call(null, ...)` must surface this throw rather than silently
+        // iterate an empty list.
         il.MarkLabel(throwLabel);
-        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObject));
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
     }
 
     /// <summary>
@@ -724,6 +728,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, afterToString);
         TryInvoke("toString", afterToString);
         il.MarkLabel(afterToString);
+
+        // ECMA-262 ToPrimitive: if both valueOf and toString returned non-
+        // primitives (lenVal still a Dictionary), throw TypeError. Test262
+        // patterns like `length: { valueOf:()=>{}, toString:()=>{} }` expect
+        // `assert.throws(TypeError, ...)` to fire here.
+        var afterTypeErrorCheck = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, lenValLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, afterTypeErrorCheck);
+        il.Emit(OpCodes.Ldstr, "Cannot convert object to primitive value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(afterTypeErrorCheck);
     }
 
     private void EmitArrayIndexOf(TypeBuilder typeBuilder, EmittedRuntime runtime)

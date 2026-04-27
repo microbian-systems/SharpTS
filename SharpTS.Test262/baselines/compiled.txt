@@ -283,7 +283,7 @@ test/built-ins/Array/prototype/at/index-non-numeric-argument-tointeger.js TypeCh
 test/built-ins/Array/prototype/at/length.js TypeCheckError
 test/built-ins/Array/prototype/at/name.js TypeCheckError
 test/built-ins/Array/prototype/at/prop-desc.js TypeCheckError
-test/built-ins/Array/prototype/at/return-abrupt-from-this.js Fail
+test/built-ins/Array/prototype/at/return-abrupt-from-this.js Pass
 test/built-ins/Array/prototype/at/returns-item-relative-index.js Pass
 test/built-ins/Array/prototype/at/returns-item.js Pass
 test/built-ins/Array/prototype/at/returns-undefined-for-holes-in-sparse-arrays.js Pass
@@ -457,7 +457,7 @@ test/built-ins/Array/prototype/every/15.4.4.16-3-19.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-3-2.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-3-20.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-3-21.js Pass
-test/built-ins/Array/prototype/every/15.4.4.16-3-22.js Fail
+test/built-ins/Array/prototype/every/15.4.4.16-3-22.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-3-23.js Fail
 test/built-ins/Array/prototype/every/15.4.4.16-3-24.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-3-25.js Pass
@@ -701,7 +701,7 @@ test/built-ins/Array/prototype/filter/15.4.4.20-3-19.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-3-2.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-3-20.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-3-21.js Pass
-test/built-ins/Array/prototype/filter/15.4.4.20-3-22.js Fail
+test/built-ins/Array/prototype/filter/15.4.4.20-3-22.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-3-23.js Fail
 test/built-ins/Array/prototype/filter/15.4.4.20-3-24.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-3-25.js Pass
@@ -913,7 +913,7 @@ test/built-ins/Array/prototype/find/return-abrupt-from-predicate-call.js TypeChe
 test/built-ins/Array/prototype/find/return-abrupt-from-property.js Fail
 test/built-ins/Array/prototype/find/return-abrupt-from-this-length-as-symbol.js TypeCheckError
 test/built-ins/Array/prototype/find/return-abrupt-from-this-length.js Fail
-test/built-ins/Array/prototype/find/return-abrupt-from-this.js Fail
+test/built-ins/Array/prototype/find/return-abrupt-from-this.js Pass
 test/built-ins/Array/prototype/find/return-found-value-predicate-result-is-true.js TypeCheckError
 test/built-ins/Array/prototype/find/return-undefined-if-predicate-returns-false-value.js TypeCheckError
 test/built-ins/Array/prototype/findIndex/array-altered-during-loop.js Fail
@@ -936,7 +936,7 @@ test/built-ins/Array/prototype/findIndex/return-abrupt-from-predicate-call.js Ty
 test/built-ins/Array/prototype/findIndex/return-abrupt-from-property.js Fail
 test/built-ins/Array/prototype/findIndex/return-abrupt-from-this-length-as-symbol.js TypeCheckError
 test/built-ins/Array/prototype/findIndex/return-abrupt-from-this-length.js Fail
-test/built-ins/Array/prototype/findIndex/return-abrupt-from-this.js Fail
+test/built-ins/Array/prototype/findIndex/return-abrupt-from-this.js Pass
 test/built-ins/Array/prototype/findIndex/return-index-predicate-result-is-true.js TypeCheckError
 test/built-ins/Array/prototype/findIndex/return-negative-one-if-predicate-returns-false-value.js TypeCheckError
 test/built-ins/Array/prototype/findLast/array-altered-during-loop.js Pass
@@ -960,7 +960,7 @@ test/built-ins/Array/prototype/findLast/return-abrupt-from-predicate-call.js Typ
 test/built-ins/Array/prototype/findLast/return-abrupt-from-property.js Fail
 test/built-ins/Array/prototype/findLast/return-abrupt-from-this-length-as-symbol.js TypeCheckError
 test/built-ins/Array/prototype/findLast/return-abrupt-from-this-length.js Fail
-test/built-ins/Array/prototype/findLast/return-abrupt-from-this.js Fail
+test/built-ins/Array/prototype/findLast/return-abrupt-from-this.js Pass
 test/built-ins/Array/prototype/findLast/return-found-value-predicate-result-is-true.js TypeCheckError
 test/built-ins/Array/prototype/findLast/return-undefined-if-predicate-returns-false-value.js TypeCheckError
 test/built-ins/Array/prototype/findLastIndex/array-altered-during-loop.js Pass
@@ -984,7 +984,7 @@ test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-predicate-call.j
 test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-property.js Fail
 test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-this-length-as-symbol.js TypeCheckError
 test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-this-length.js Fail
-test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-this.js Fail
+test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-this.js Pass
 test/built-ins/Array/prototype/findLastIndex/return-index-predicate-result-is-true.js TypeCheckError
 test/built-ins/Array/prototype/findLastIndex/return-negative-one-if-predicate-returns-false-value.js TypeCheckError
 test/built-ins/Array/prototype/flat/array-like-objects.js RuntimeError
@@ -1076,7 +1076,7 @@ test/built-ins/Array/prototype/forEach/15.4.4.18-3-19.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-3-2.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-3-20.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-3-21.js Pass
-test/built-ins/Array/prototype/forEach/15.4.4.18-3-22.js Fail
+test/built-ins/Array/prototype/forEach/15.4.4.18-3-22.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-3-23.js RuntimeError
 test/built-ins/Array/prototype/forEach/15.4.4.18-3-24.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-3-25.js Pass
@@ -1250,14 +1250,14 @@ test/built-ins/Array/prototype/includes/tointeger-fromindex.js TypeCheckError
 test/built-ins/Array/prototype/includes/tolength-length.js TypeCheckError
 test/built-ins/Array/prototype/includes/using-fromindex.js TypeCheckError
 test/built-ins/Array/prototype/includes/values-are-not-cached.js RuntimeError
-test/built-ins/Array/prototype/indexOf/15.4.4.14-1-1.js Fail
+test/built-ins/Array/prototype/indexOf/15.4.4.14-1-1.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-10.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-11.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-12.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-13.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-14.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-15.js Pass
-test/built-ins/Array/prototype/indexOf/15.4.4.14-1-2.js Fail
+test/built-ins/Array/prototype/indexOf/15.4.4.14-1-2.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-3.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-4.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-1-5.js Pass
@@ -1298,7 +1298,7 @@ test/built-ins/Array/prototype/indexOf/15.4.4.14-3-19.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-3-2.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-3-20.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-3-21.js Pass
-test/built-ins/Array/prototype/indexOf/15.4.4.14-3-22.js Fail
+test/built-ins/Array/prototype/indexOf/15.4.4.14-3-22.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-3-23.js Fail
 test/built-ins/Array/prototype/indexOf/15.4.4.14-3-24.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-3-25.js Pass
@@ -1342,7 +1342,7 @@ test/built-ins/Array/prototype/indexOf/15.4.4.14-5-24.js Fail
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-25.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-26.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-27.js Pass
-test/built-ins/Array/prototype/indexOf/15.4.4.14-5-28.js Fail
+test/built-ins/Array/prototype/indexOf/15.4.4.14-5-28.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-29.js Fail
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-3.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-30.js Fail
@@ -1486,14 +1486,14 @@ test/built-ins/Array/prototype/keys/resizable-buffer.js TypeCheckError
 test/built-ins/Array/prototype/keys/return-abrupt-from-this.js Fail
 test/built-ins/Array/prototype/keys/returns-iterator-from-object.js TypeCheckError
 test/built-ins/Array/prototype/keys/returns-iterator.js TypeCheckError
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-1.js Fail
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-1.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-10.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-11.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-12.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-13.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-14.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-15.js Pass
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-2.js Fail
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-2.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-3.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-4.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-5.js Pass
@@ -1532,7 +1532,7 @@ test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-19.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-2.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-20.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-21.js Pass
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-22.js Fail
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-22.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-23.js Fail
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-24.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-25.js Pass
@@ -1574,7 +1574,7 @@ test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-24.js Fail
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-25.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-26.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-27.js Pass
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-28.js Fail
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-28.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-29.js Fail
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-3.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-30.js Fail
@@ -1731,7 +1731,7 @@ test/built-ins/Array/prototype/map/15.4.4.19-3-19.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-3-2.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-3-20.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-3-21.js Pass
-test/built-ins/Array/prototype/map/15.4.4.19-3-22.js Fail
+test/built-ins/Array/prototype/map/15.4.4.19-3-22.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-3-23.js Fail
 test/built-ins/Array/prototype/map/15.4.4.19-3-24.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-3-25.js Pass
@@ -2005,7 +2005,7 @@ test/built-ins/Array/prototype/reduce/15.4.4.21-3-19.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-3-2.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-3-20.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-3-21.js Pass
-test/built-ins/Array/prototype/reduce/15.4.4.21-3-22.js Fail
+test/built-ins/Array/prototype/reduce/15.4.4.21-3-22.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-3-23.js Fail
 test/built-ins/Array/prototype/reduce/15.4.4.21-3-24.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-3-25.js Pass
@@ -2265,7 +2265,7 @@ test/built-ins/Array/prototype/reduceRight/15.4.4.22-3-19.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-3-2.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-3-20.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-3-21.js Pass
-test/built-ins/Array/prototype/reduceRight/15.4.4.22-3-22.js Fail
+test/built-ins/Array/prototype/reduceRight/15.4.4.22-3-22.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-3-23.js RuntimeError
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-3-24.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-3-25.js Pass
@@ -2626,7 +2626,7 @@ test/built-ins/Array/prototype/some/15.4.4.17-3-19.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-3-2.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-3-20.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-3-21.js Pass
-test/built-ins/Array/prototype/some/15.4.4.17-3-22.js Fail
+test/built-ins/Array/prototype/some/15.4.4.17-3-22.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-3-23.js RuntimeError
 test/built-ins/Array/prototype/some/15.4.4.17-3-24.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-3-25.js Pass
