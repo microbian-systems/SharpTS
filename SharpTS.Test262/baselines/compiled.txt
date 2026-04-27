@@ -3489,7 +3489,7 @@ test/built-ins/Math/f16round/length.js TypeCheckError
 test/built-ins/Math/f16round/name.js TypeCheckError
 test/built-ins/Math/f16round/not-a-constructor.js RuntimeError
 test/built-ins/Math/f16round/prop-desc.js TypeCheckError
-test/built-ins/Math/f16round/value-conversion.js RuntimeError
+test/built-ins/Math/f16round/value-conversion.js Pass
 test/built-ins/Math/floor/S15.8.2.9_A1.js Pass
 test/built-ins/Math/floor/S15.8.2.9_A2.js Pass
 test/built-ins/Math/floor/S15.8.2.9_A3.js Pass
