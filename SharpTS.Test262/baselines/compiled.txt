@@ -4124,7 +4124,7 @@ test/built-ins/String/fromCharCode/not-a-constructor.js Pass
 test/built-ins/String/fromCharCode/touint16-tonumber-throws-bigint.js Fail
 test/built-ins/String/fromCharCode/touint16-tonumber-throws-valueof.js Fail
 test/built-ins/String/fromCodePoint/argument-is-Symbol.js Fail
-test/built-ins/String/fromCodePoint/argument-is-not-integer.js Fail
+test/built-ins/String/fromCodePoint/argument-is-not-integer.js Pass
 test/built-ins/String/fromCodePoint/argument-not-coercible.js Fail
 test/built-ins/String/fromCodePoint/arguments-is-empty.js Pass
 test/built-ins/String/fromCodePoint/fromCodePoint.js TypeCheckError
@@ -4133,7 +4133,7 @@ test/built-ins/String/fromCodePoint/name.js TypeCheckError
 test/built-ins/String/fromCodePoint/not-a-constructor.js Pass
 test/built-ins/String/fromCodePoint/number-is-out-of-range.js Pass
 test/built-ins/String/fromCodePoint/return-string-value.js Pass
-test/built-ins/String/fromCodePoint/to-number-conversions.js Fail
+test/built-ins/String/fromCodePoint/to-number-conversions.js RuntimeError
 test/built-ins/String/is-a-constructor.js Pass
 test/built-ins/String/length.js TypeCheckError
 test/built-ins/String/numeric-properties.js TypeCheckError
@@ -4162,7 +4162,7 @@ test/built-ins/String/prototype/at/return-abrupt-from-this.js Fail
 test/built-ins/String/prototype/at/returns-code-unit.js Pass
 test/built-ins/String/prototype/at/returns-item-relative-index.js Pass
 test/built-ins/String/prototype/at/returns-item.js Pass
-test/built-ins/String/prototype/at/returns-undefined-for-out-of-range-index.js Fail
+test/built-ins/String/prototype/at/returns-undefined-for-out-of-range-index.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A1.1.js TypeCheckError
 test/built-ins/String/prototype/charAt/S15.5.4.4_A10.js TypeCheckError
 test/built-ins/String/prototype/charAt/S15.5.4.4_A11.js Pass
@@ -4230,8 +4230,8 @@ test/built-ins/String/prototype/codePointAt/return-code-unit-coerced-position.js
 test/built-ins/String/prototype/codePointAt/return-first-code-unit.js Pass
 test/built-ins/String/prototype/codePointAt/return-single-code-unit.js Pass
 test/built-ins/String/prototype/codePointAt/return-utf16-decode.js Pass
-test/built-ins/String/prototype/codePointAt/returns-undefined-on-position-equal-or-more-than-size.js Fail
-test/built-ins/String/prototype/codePointAt/returns-undefined-on-position-less-than-zero.js Fail
+test/built-ins/String/prototype/codePointAt/returns-undefined-on-position-equal-or-more-than-size.js Pass
+test/built-ins/String/prototype/codePointAt/returns-undefined-on-position-less-than-zero.js Pass
 test/built-ins/String/prototype/codePointAt/this-is-null-throws.js Fail
 test/built-ins/String/prototype/codePointAt/this-is-undefined-throws.js Fail
 test/built-ins/String/prototype/concat/S15.5.4.6_A10.js TypeCheckError
