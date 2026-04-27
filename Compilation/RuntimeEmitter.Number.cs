@@ -1349,6 +1349,19 @@ public partial class RuntimeEmitter
         //                      @"e([+-])0+(?=\d)", "e$1");
         // .NET's "1.2e+002" → JS spec's "1.2e+2".
         il.MarkLabel(notTooLargeLabel);
+
+        // ECMA-262 21.1.3.2 step 8.b: only treat x as negative when x < 0 (not
+        // when x is -0). .NET formats -0 as "-0E+0"; strip the leading minus.
+        // Use Math.Abs to drop the sign on -0 before formatting.
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        var nonZeroLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, nonZeroLabel);
+        // value == 0 (handles ±0): replace with +0.0 to ensure no leading minus
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.MarkLabel(nonZeroLabel);
+
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Ldstr, "e");
         il.Emit(OpCodes.Ldloc, digitsLocal);
