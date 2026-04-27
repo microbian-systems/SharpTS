@@ -133,6 +133,19 @@ public sealed class ArrayStaticEmitter : IStaticTypeEmitterStrategy
             return true;
         }
 
+        // Constructor metadata (ECMA-262 §23.1.2): Array.length is 1, name is "Array".
+        if (propertyName == "length")
+        {
+            ctx.IL.Emit(OpCodes.Ldc_R8, 1.0);
+            ctx.IL.Emit(OpCodes.Box, ctx.Types.Double);
+            return true;
+        }
+        if (propertyName == "name")
+        {
+            ctx.IL.Emit(OpCodes.Ldstr, "Array");
+            return true;
+        }
+
         (MethodInfo? method, string jsName, int jsLength) info = propertyName switch
         {
             "isArray" => (runtime.IsArray, "isArray", 1),
