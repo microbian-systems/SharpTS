@@ -57,7 +57,7 @@ test/built-ins/Array/from/from-array.js Pass
 test/built-ins/Array/from/from-string.js Pass
 test/built-ins/Array/from/get-iter-method-err.js Fail
 test/built-ins/Array/from/items-is-arraybuffer.js RuntimeError
-test/built-ins/Array/from/items-is-null-throws.js Fail
+test/built-ins/Array/from/items-is-null-throws.js Pass
 test/built-ins/Array/from/iter-adv-err.js TypeCheckError
 test/built-ins/Array/from/iter-cstm-ctor-err.js TypeCheckError
 test/built-ins/Array/from/iter-cstm-ctor.js TypeCheckError
@@ -3717,7 +3717,7 @@ test/built-ins/Number/S15.7.3_A4.js Pass
 test/built-ins/Number/S15.7.3_A5.js Pass
 test/built-ins/Number/S15.7.3_A6.js Pass
 test/built-ins/Number/S15.7.3_A7.js TypeCheckError
-test/built-ins/Number/S15.7.3_A8.js Fail
+test/built-ins/Number/S15.7.3_A8.js Pass
 test/built-ins/Number/S15.7.5_A1_T01.js Pass
 test/built-ins/Number/S15.7.5_A1_T02.js Pass
 test/built-ins/Number/S15.7.5_A1_T03.js Pass
@@ -4075,7 +4075,7 @@ test/built-ins/String/S15.5.2.1_A1_T9.js RuntimeError
 test/built-ins/String/S15.5.2.1_A2_T1.js RuntimeError
 test/built-ins/String/S15.5.2.1_A2_T2.js RuntimeError
 test/built-ins/String/S15.5.2.1_A3.js RuntimeError
-test/built-ins/String/S15.5.3_A1.js RuntimeError
+test/built-ins/String/S15.5.3_A1.js Pass
 test/built-ins/String/S15.5.3_A2_T1.js TypeCheckError
 test/built-ins/String/S15.5.3_A2_T2.js TypeCheckError
 test/built-ins/String/S15.5.5.1_A1.js Pass
@@ -4522,9 +4522,9 @@ test/built-ins/String/prototype/padStart/normal-operation.js Pass
 test/built-ins/String/prototype/padStart/not-a-constructor.js Pass
 test/built-ins/String/prototype/padStart/observable-operations.js Fail
 test/built-ins/String/prototype/repeat/count-coerced-to-zero-returns-empty-string.js TypeCheckError
-test/built-ins/String/prototype/repeat/count-is-infinity-throws.js Fail
+test/built-ins/String/prototype/repeat/count-is-infinity-throws.js Pass
 test/built-ins/String/prototype/repeat/count-is-zero-returns-empty-string.js Pass
-test/built-ins/String/prototype/repeat/count-less-than-zero-throws.js Fail
+test/built-ins/String/prototype/repeat/count-less-than-zero-throws.js Pass
 test/built-ins/String/prototype/repeat/empty-string-returns-empty.js Pass
 test/built-ins/String/prototype/repeat/length.js TypeCheckError
 test/built-ins/String/prototype/repeat/name.js TypeCheckError
