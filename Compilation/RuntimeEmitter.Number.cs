@@ -1443,10 +1443,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brtrue, radixFromDoubleLabel);
 
-        // radix is null - return value.ToString(CultureInfo.InvariantCulture)
-        il.Emit(OpCodes.Ldloca, valueLocal);
-        il.Emit(OpCodes.Call, typeof(CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
-        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [typeof(IFormatProvider)])!);
+        // radix is null/undefined - delegate to Stringify for JS-spec format.
+        // (.NET Double.ToString with InvariantCulture uses scientific for |x| ≥ 1e16
+        // and uppercase "E", but JS spec wants plain decimal up to 1e21.)
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Ret);
 
         // ECMA-262 21.1.3.6: radix coerced via ToIntegerOrInfinity (default 10).
@@ -1504,15 +1506,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "-Infinity");
         il.Emit(OpCodes.Ret);
 
-        // if (radix == 10) return value.ToString(InvariantCulture)
+        // if (radix == 10) delegate to Stringify for JS-spec format.
+        // (.NET's Double.ToString(InvariantCulture) uses scientific for |x| ≥ 1e16
+        // with uppercase "E"; JS spec uses plain decimal up to 1e21 and lowercase
+        // "e". Stringify implements the spec rules.)
         il.MarkLabel(convertLabel);
         il.Emit(OpCodes.Ldloc, radixLocal);
         il.Emit(OpCodes.Ldc_I4, 10);
         var notRadix10Label = il.DefineLabel();
         il.Emit(OpCodes.Bne_Un, notRadix10Label);
-        il.Emit(OpCodes.Ldloca, valueLocal);
-        il.Emit(OpCodes.Call, typeof(CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
-        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [typeof(IFormatProvider)])!);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Ret);
 
         // if (value == 0) return "0"

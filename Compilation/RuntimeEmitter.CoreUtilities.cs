@@ -127,7 +127,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, endLabel);
         il.MarkLabel(notNegInfLabel);
 
-        // Check if integer (d == floor(d) && abs(d) < 1e15)
+        // Check if integer (d == floor(d) && abs(d) < 1e21).
+        // ECMA-262 6.1.6.1.13: integers up to 10^21 - 1 are formatted in plain
+        // decimal notation. Larger values switch to exponential. The pre-fix
+        // threshold of 1e15 caused (1e20).toString() to format as "1e+20"
+        // instead of "100000000000000000000".
         var notIntLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, doubleLocal);
         il.Emit(OpCodes.Ldloc, doubleLocal);
@@ -135,16 +139,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Bne_Un, notIntLabel);
         il.Emit(OpCodes.Ldloc, doubleLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Abs", [_types.Double]));
-        il.Emit(OpCodes.Ldc_R8, 1e15);
+        il.Emit(OpCodes.Ldc_R8, 1e21);
         il.Emit(OpCodes.Bge, notIntLabel);
 
-        // Integer: format as long
+        // Integer: format as long for |d| < 2^63, else use F0 for plain decimal.
+        // 1e21 > 2^63 (~9.22e18) so values 9.22e18 ≤ d < 1e21 must use F0; smaller
+        // values use Int64 for performance.
+        var useF0Label = il.DefineLabel();
+        var longFormatLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, doubleLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Abs", [_types.Double]));
+        il.Emit(OpCodes.Ldc_R8, 9.2233720368547758e18); // ~2^63 - 1024 (safe Int64 range)
+        il.Emit(OpCodes.Bge, useF0Label);
+
+        // |d| < 2^63: format as Int64
         il.Emit(OpCodes.Ldloc, doubleLocal);
         il.Emit(OpCodes.Conv_I8);
         var longLocal = il.DeclareLocal(_types.Int64);
         il.Emit(OpCodes.Stloc, longLocal);
         il.Emit(OpCodes.Ldloca, longLocal);
         il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int64, "ToString"));
+        il.Emit(OpCodes.Br, endLabel);
+
+        // |d| >= 2^63 but < 1e21: use double.ToString("F0") for plain digits.
+        il.MarkLabel(useF0Label);
+        il.Emit(OpCodes.Ldloca, doubleLocal);
+        il.Emit(OpCodes.Ldstr, "F0");
+        il.Emit(OpCodes.Call, typeof(System.Globalization.CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(System.IFormatProvider)])!);
         il.Emit(OpCodes.Br, endLabel);
 
         // Non-integer: use G15 format with JS-style exponent fixup.
