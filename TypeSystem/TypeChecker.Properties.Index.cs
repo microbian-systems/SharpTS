@@ -369,7 +369,21 @@ public partial class TypeChecker
                 }
                 return valueType;
             }
+        }
 
+        // String-keyed assignment on arrays. ECMA-262 array indices are
+        // canonical numeric-string keys: \`a["0"] = v\` is equivalent to
+        // \`a[0] = v\`. Type checker accepts both.
+        if ((IsString(indexType) || indexType is TypeInfo.StringLiteral)
+            && objType is TypeInfo.Array arrayWithStringIndex)
+        {
+            if (!IsCompatible(arrayWithStringIndex.ElementType, valueType))
+                throw new TypeCheckException($" Cannot assign '{valueType}' to array of '{arrayWithStringIndex.ElementType}'.");
+            return valueType;
+        }
+
+        if (IsNumber(indexType) || indexType is TypeInfo.NumberLiteral)
+        {
             // TypedArray index assignment
             if (objType is TypeInfo.TypedArray typedArrayType)
             {
