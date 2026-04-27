@@ -3571,7 +3571,7 @@ test/built-ins/Math/min/name.js TypeCheckError
 test/built-ins/Math/min/not-a-constructor.js Pass
 test/built-ins/Math/min/prop-desc.js TypeCheckError
 test/built-ins/Math/min/zeros.js Pass
-test/built-ins/Math/pow/applying-the-exp-operator_A1.js Fail
+test/built-ins/Math/pow/applying-the-exp-operator_A1.js Pass
 test/built-ins/Math/pow/applying-the-exp-operator_A10.js Pass
 test/built-ins/Math/pow/applying-the-exp-operator_A11.js Pass
 test/built-ins/Math/pow/applying-the-exp-operator_A12.js Pass
@@ -3591,8 +3591,8 @@ test/built-ins/Math/pow/applying-the-exp-operator_A3.js Pass
 test/built-ins/Math/pow/applying-the-exp-operator_A4.js Pass
 test/built-ins/Math/pow/applying-the-exp-operator_A5.js Pass
 test/built-ins/Math/pow/applying-the-exp-operator_A6.js Pass
-test/built-ins/Math/pow/applying-the-exp-operator_A7.js Fail
-test/built-ins/Math/pow/applying-the-exp-operator_A8.js Fail
+test/built-ins/Math/pow/applying-the-exp-operator_A7.js Pass
+test/built-ins/Math/pow/applying-the-exp-operator_A8.js Pass
 test/built-ins/Math/pow/applying-the-exp-operator_A9.js Pass
 test/built-ins/Math/pow/int32_min-exponent.js Pass
 test/built-ins/Math/pow/length.js TypeCheckError
@@ -3608,7 +3608,7 @@ test/built-ins/Math/random/not-a-constructor.js Pass
 test/built-ins/Math/random/prop-desc.js TypeCheckError
 test/built-ins/Math/round/S15.8.2.15_A1.js Pass
 test/built-ins/Math/round/S15.8.2.15_A2.js Pass
-test/built-ins/Math/round/S15.8.2.15_A3.js Fail
+test/built-ins/Math/round/S15.8.2.15_A3.js Pass
 test/built-ins/Math/round/S15.8.2.15_A4.js Pass
 test/built-ins/Math/round/S15.8.2.15_A5.js Pass
 test/built-ins/Math/round/S15.8.2.15_A6.js Pass
@@ -3621,7 +3621,7 @@ test/built-ins/Math/sign/length.js TypeCheckError
 test/built-ins/Math/sign/name.js TypeCheckError
 test/built-ins/Math/sign/not-a-constructor.js Pass
 test/built-ins/Math/sign/prop-desc.js TypeCheckError
-test/built-ins/Math/sign/sign-specialVals.js Fail
+test/built-ins/Math/sign/sign-specialVals.js Pass
 test/built-ins/Math/sin/S15.8.2.16_A1.js Pass
 test/built-ins/Math/sin/S15.8.2.16_A4.js Pass
 test/built-ins/Math/sin/S15.8.2.16_A5.js Pass
@@ -3683,7 +3683,7 @@ test/built-ins/Math/trunc/trunc-sampleTests.js Pass
 test/built-ins/Math/trunc/trunc-specialVals.js Pass
 test/built-ins/Number/15.7.3-1.js TypeCheckError
 test/built-ins/Number/15.7.3-2.js TypeCheckError
-test/built-ins/Number/15.7.4-1.js Fail
+test/built-ins/Number/15.7.4-1.js Pass
 test/built-ins/Number/EPSILON.js TypeCheckError
 test/built-ins/Number/MAX_SAFE_INTEGER.js TypeCheckError
 test/built-ins/Number/MAX_VALUE/S15.7.3.2_A2.js TypeCheckError
