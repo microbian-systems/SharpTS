@@ -42,7 +42,11 @@ public sealed class JSONStaticEmitter : IStaticTypeEmitterStrategy
                     il.Emit(OpCodes.Throw);
                     il.MarkLabel(notSymbolLabel);
                     il.Emit(OpCodes.Ldloc, argLocal);
-                    il.Emit(OpCodes.Call, ctx.Runtime!.Stringify);
+                    // Use ToJsString (ECMA-262 ToString protocol) rather than
+                    // Stringify so user-defined toString/valueOf on Dictionary/$Object
+                    // receivers fires. JSON.parse({toString: () => '"x"'}) must
+                    // coerce via the protocol then parse the resulting string.
+                    il.Emit(OpCodes.Call, ctx.Runtime!.ToJsString);
                 }
                 else
                 {
