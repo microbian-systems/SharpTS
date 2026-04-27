@@ -1362,23 +1362,41 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, lengthLocal);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        // codePoint = (int)$Runtime.ToNumber(args[i]) — coerce non-double per ECMA-262.
+        // codePoint = ToNumber(args[i]). Validate per ECMA-262 22.1.2.2:
+        //   - reject NaN (ToNumber on undefined / non-numeric strings)
+        //   - reject non-integers (3.14 → throw, even though Conv_I4 would yield 3)
+        //   - reject < 0 or > 0x10FFFF (Unicode max)
+        var dLocal = il.DeclareLocal(_types.Double);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Call, runtime.ToNumber);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Stloc, codePointLocal);
+        il.Emit(OpCodes.Stloc, dLocal);
 
-        // Validate: if (codePoint < 0 || codePoint > 0x10FFFF) throw RangeError
         var validLabel = il.DefineLabel();
         var throwLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, codePointLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
+        // NaN check (NaN compares unequal to itself)
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Bne_Un, throwLabel);
+        // Math.Floor(d) != d → non-integer → throw
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Floor", _types.Double));
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Bne_Un, throwLabel);
+        // d < 0 → throw
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
         il.Emit(OpCodes.Blt, throwLabel);
-        il.Emit(OpCodes.Ldloc, codePointLocal);
-        il.Emit(OpCodes.Ldc_I4, 0x10FFFF);
-        il.Emit(OpCodes.Ble, validLabel);
+        // d > 0x10FFFF → throw
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Ldc_R8, (double)0x10FFFF);
+        il.Emit(OpCodes.Bgt, throwLabel);
+        // Valid: Conv_I4
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, codePointLocal);
+        il.Emit(OpCodes.Br, validLabel);
 
         il.MarkLabel(throwLabel);
         il.Emit(OpCodes.Ldstr, "Invalid code point");
