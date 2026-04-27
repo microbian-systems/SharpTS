@@ -17,14 +17,29 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // index = (int)(double)args[0]
+        // index = (int)$Runtime.ToNumber(args[0]). ToNumber coerces bool/string/etc.
+        // per ECMA-262 ToInteger; raw Unbox_Any Double would throw on non-double
+        // args (e.g. when this method is borrowed via
+        // `obj.charAt = String.prototype.charAt; obj.charAt(false)`).
         var indexLocal = il.DeclareLocal(_types.Int32);
+        // Default to 0 if args is empty.
+        var hasArgLabel = il.DefineLabel();
+        var afterIndexLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brtrue, hasArgLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, afterIndexLabel);
+        il.MarkLabel(hasArgLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Stloc, indexLocal);
+        il.MarkLabel(afterIndexLabel);
 
         var returnEmpty = il.DefineLabel();
         var validIndex = il.DefineLabel();
