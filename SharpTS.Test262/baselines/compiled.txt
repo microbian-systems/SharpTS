@@ -3708,7 +3708,7 @@ test/built-ins/Number/S15.7.1.1_A1.js Fail
 test/built-ins/Number/S15.7.1.1_A2.js Pass
 test/built-ins/Number/S15.7.2.1_A1.js Pass
 test/built-ins/Number/S15.7.2.1_A2.js Fail
-test/built-ins/Number/S15.7.2.1_A3.js Fail
+test/built-ins/Number/S15.7.2.1_A3.js Pass
 test/built-ins/Number/S15.7.2.1_A4.js Fail
 test/built-ins/Number/S15.7.3_A1.js Pass
 test/built-ins/Number/S15.7.3_A2.js Pass
@@ -3974,7 +3974,7 @@ test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-9.js Pas
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-poisoned.js Fail
 test/built-ins/Number/prototype/toString/prop-desc.js TypeCheckError
 test/built-ins/Number/prototype/valueOf/S15.7.4.4_A1_T01.js Fail
-test/built-ins/Number/prototype/valueOf/S15.7.4.4_A1_T02.js RuntimeError
+test/built-ins/Number/prototype/valueOf/S15.7.4.4_A1_T02.js Fail
 test/built-ins/Number/prototype/valueOf/S15.7.4.4_A2_T01.js RuntimeError
 test/built-ins/Number/prototype/valueOf/S15.7.4.4_A2_T02.js RuntimeError
 test/built-ins/Number/prototype/valueOf/S15.7.4.4_A2_T03.js TypeCheckError

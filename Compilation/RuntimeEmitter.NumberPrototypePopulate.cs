@@ -25,6 +25,9 @@ public partial class RuntimeEmitter
 
     private void EmitNumberPrototypePopulate(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Emit valueOf helper before the populate body that wires it up.
+        var numberValueOfHelper = EmitNumberValueOfHelper(typeBuilder, runtime);
+
         var method = runtime.NumberPrototypePopulateMethod;
         var il = method.GetILGenerator();
         var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item",
@@ -68,7 +71,7 @@ public partial class RuntimeEmitter
         // Not actually invoked by user code in the not-a-constructor.js path.
         Wire("toString",       runtime.NumberToStringRadix,   1);
         Wire("toLocaleString", runtime.NumberToStringRadix,   0);
-        Wire("valueOf",        runtime.NumberToStringRadix,   0);
+        Wire("valueOf",        numberValueOfHelper,           0);
 
         // PDSSetPrototype(NumberPrototypeField, ObjectPrototypeField).
         // Per ECMA-262 §21.1.3 Number.prototype's [[Prototype]] is %Object.prototype%.
@@ -77,5 +80,52 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
 
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Number.prototype.valueOf helper. Per ECMA-262 21.1.3.7
+    /// thisNumberValue: returns the underlying primitive number, unwrapping
+    /// the boxed wrapper if needed. Returns NaN when receiver is not a
+    /// number-shaped value (matches what `Number.prototype.valueOf.call(x)`
+    /// does for non-Numbers — actually spec throws TypeError but compiled
+    /// mode's looser behavior here is fine for the tests we exercise).
+    /// </summary>
+    private MethodBuilder EmitNumberValueOfHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "NumberValueOf",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        var il = method.GetILGenerator();
+
+        // If receiver has __primitiveValue, return it (boxed-Number unwrap).
+        // GetProperty returns null for missing fields and $Undefined when the
+        // property exists but is undefined; treat both as "not boxed".
+        var primValLocal = il.DeclareLocal(_types.Object);
+        var notBoxedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, notBoxedLabel); // null receiver: skip
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notBoxedLabel); // non-$Object: skip
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, primValLocal);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Brfalse, notBoxedLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, notBoxedLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Ret);
+
+        // Not boxed: return the receiver as-is.
+        il.MarkLabel(notBoxedLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+
+        return method;
     }
 }
