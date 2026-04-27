@@ -4196,7 +4196,7 @@ test/built-ins/String/prototype/charAt/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1.1.js TypeCheckError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A10.js TypeCheckError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A11.js Pass
-test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T1.js RuntimeError
+test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T1.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T10.js TypeCheckError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T2.js TypeCheckError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T4.js TypeCheckError
