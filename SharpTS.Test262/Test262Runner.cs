@@ -444,8 +444,35 @@ public sealed class Test262Runner
             }
             if (name == "Test262Error")
                 return new Test262Result(Test262Outcome.Fail, userMessage ?? msg, null);
+
+            // Heuristic fallback — Test262Error message shapes from the assert
+            // harness all start with predictable strings. With Stage 4z22 the
+            // assert harness actually runs (PDS-MethodInfo-keyed reads/writes
+            // co-locate), so assertion failures throw Test262Error. The
+            // instance-side `name` field doesn't always survive the
+            // throw-catch cycle reliably, so match on the message shape.
+            if (userMessage is not null && IsTest262HarnessMessage(userMessage))
+                return new Test262Result(Test262Outcome.Fail, userMessage, null);
         }
 
+        // Last-resort: ex.Message itself looks like an assert-harness Test262Error.
+        if (IsTest262HarnessMessage(msg))
+            return new Test262Result(Test262Outcome.Fail, msg, null);
+
         return new Test262Result(Test262Outcome.RuntimeError, msg, null);
+    }
+
+    private static bool IsTest262HarnessMessage(string m)
+    {
+        // assert.js / sta.js error message prefixes (verified against the
+        // committed harness files). Conservative match on substrings that
+        // are unlikely to appear in plain RuntimeError messages.
+        return m.Contains("Expected SameValue", StringComparison.Ordinal)
+            || m.Contains("Expected true but got", StringComparison.Ordinal)
+            || m.Contains("expected at least", StringComparison.Ordinal)
+            || m.Contains("Thrown value was not an object", StringComparison.Ordinal)
+            || m.Contains("Expected a ", StringComparison.Ordinal)
+                && (m.Contains(" to be thrown", StringComparison.Ordinal)
+                    || m.Contains(" but got", StringComparison.Ordinal));
     }
 }

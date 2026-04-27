@@ -616,10 +616,12 @@ public partial class RuntimeEmitter
         var descriptorsDictLocal = il.DeclareLocal(descriptorsDictType);
         var descriptorLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
         var returnFalseLabel = il.DefineLabel();
+        var keyLocal = il.DeclareLocal(_types.Object);
+        EmitNormalizePDSKey(il, runtime, keyLocal);
 
-        // if (!_descriptors.TryGetValue(obj, out var descriptors)) goto returnFalse
+        // if (!_descriptors.TryGetValue(key, out var descriptors)) goto returnFalse
         il.Emit(OpCodes.Ldsfld, descriptorsField);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Ldloca, descriptorsDictLocal);
         il.Emit(OpCodes.Callvirt, descriptorsTryGet);
         il.Emit(OpCodes.Brfalse, returnFalseLabel);
@@ -672,10 +674,12 @@ public partial class RuntimeEmitter
         var descriptorsDictLocal = il.DeclareLocal(descriptorsDictType);
         var descriptorLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
         var returnFalseLabel = il.DefineLabel();
+        var keyLocal = il.DeclareLocal(_types.Object);
+        EmitNormalizePDSKey(il, runtime, keyLocal);
 
-        // if (!_descriptors.TryGetValue(obj, out var descriptors)) goto returnFalse
+        // if (!_descriptors.TryGetValue(key, out var descriptors)) goto returnFalse
         il.Emit(OpCodes.Ldsfld, descriptorsField);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Ldloca, descriptorsDictLocal);
         il.Emit(OpCodes.Callvirt, descriptorsTryGet);
         il.Emit(OpCodes.Brfalse, returnFalseLabel);
@@ -746,8 +750,10 @@ public partial class RuntimeEmitter
 
         // Check descriptors
         il.MarkLabel(checkDescriptorsLabel);
+        var keyLocal = il.DeclareLocal(_types.Object);
+        EmitNormalizePDSKey(il, runtime, keyLocal);
         il.Emit(OpCodes.Ldsfld, descriptorsField);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Ldloca, descriptorsDictLocal);
         il.Emit(OpCodes.Callvirt, descriptorsTryGet);
         il.Emit(OpCodes.Brfalse, returnTrueLabel);
@@ -856,10 +862,12 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var dictLocal = il.DeclareLocal(descriptorsDictType);
+        var keyLocal = il.DeclareLocal(_types.Object);
+        EmitNormalizePDSKey(il, runtime, keyLocal);
 
-        // var descriptors = _descriptors.GetOrCreateValue(obj);
+        // var descriptors = _descriptors.GetOrCreateValue(key);
         il.Emit(OpCodes.Ldsfld, descriptorsField);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Callvirt, descriptorsGetOrCreate);
         il.Emit(OpCodes.Stloc, dictLocal);
 
@@ -894,10 +902,12 @@ public partial class RuntimeEmitter
         var descriptorsDictLocal = il.DeclareLocal(descriptorsDictType);
         var descriptorLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
         var returnNullLabel = il.DefineLabel();
+        var keyLocal = il.DeclareLocal(_types.Object);
+        EmitNormalizePDSKey(il, runtime, keyLocal);
 
-        // if (!_descriptors.TryGetValue(obj, out var descriptors)) return null
+        // if (!_descriptors.TryGetValue(key, out var descriptors)) return null
         il.Emit(OpCodes.Ldsfld, descriptorsField);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Ldloca, descriptorsDictLocal);
         il.Emit(OpCodes.Callvirt, descriptorsTryGet);
         il.Emit(OpCodes.Brfalse, returnNullLabel);
