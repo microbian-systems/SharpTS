@@ -979,8 +979,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, getDigitsLabel);
 
         il.MarkLabel(notDoubleLabel);
-        il.Emit(OpCodes.Ldc_R8, double.NaN);
-        il.Emit(OpCodes.Stloc, valueLocal);
+        // Per ECMA-262 21.1.3.3 step 1, thisNumberValue throws TypeError when
+        // receiver is neither a Number primitive nor a Number-marker $TSObject.
+        il.Emit(OpCodes.Ldstr, "Number.prototype.toFixed requires a Number this value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
 
         // ECMA-262 21.1.3.3: digits = ToIntegerOrInfinity(digits, 0). Coerces
         // bool/string via ToNumber.
@@ -1088,8 +1092,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, hasPrecisionLabel);
 
         il.MarkLabel(notDoubleLabel);
-        il.Emit(OpCodes.Ldc_R8, double.NaN);
-        il.Emit(OpCodes.Stloc, valueLocal);
+        // Per ECMA-262 21.1.3.5 step 1, thisNumberValue throws TypeError when
+        // receiver is neither a Number primitive nor a Number-marker $TSObject.
+        il.Emit(OpCodes.Ldstr, "Number.prototype.toPrecision requires a Number this value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
 
         // Check if precision is null OR $Undefined - if so, return value.ToString().
         // ECMA-262 21.1.3.5 step 2: "If precision is undefined, return ! ToString(x)".
@@ -1249,7 +1257,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, notNaNLabel);
         il.MarkLabel(notNumberPrototypeELabel);
 
-        // Get value as double (NaN if not double)
+        // Get value as double (else throw TypeError per ECMA-262 thisNumberValue)
         il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
         var notDoubleLabel = il.DefineLabel();
@@ -1260,6 +1268,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, notNaNLabel);
 
         il.MarkLabel(notDoubleLabel);
+        // Per ECMA-262 21.1.3.2 step 1, thisNumberValue throws TypeError when
+        // receiver is neither a Number primitive nor a Number-marker $TSObject.
+        il.Emit(OpCodes.Ldstr, "Number.prototype.toExponential requires a Number this value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        // Unused but keeps original valueLocal init for this branch (unreachable).
         il.Emit(OpCodes.Ldc_R8, double.NaN);
         il.Emit(OpCodes.Stloc, valueLocal);
 
@@ -1403,7 +1419,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, hasRadixLabel);
         il.MarkLabel(notNumberPrototypeLabel);
 
-        // Get value as double (NaN if not double)
+        // Get value as double (else throw TypeError per ECMA-262 thisNumberValue)
         il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
         var notDoubleLabel = il.DefineLabel();
@@ -1414,8 +1430,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, hasRadixLabel);
 
         il.MarkLabel(notDoubleLabel);
-        il.Emit(OpCodes.Ldc_R8, double.NaN);
-        il.Emit(OpCodes.Stloc, valueLocal);
+        // Receiver is neither a Number primitive nor a Number-marker $TSObject
+        // nor the Number.prototype singleton. ECMA-262 21.1.3.6 step 1 calls
+        // thisNumberValue which throws TypeError in this case.
+        il.Emit(OpCodes.Ldstr, "Number.prototype.toString requires a Number this value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
 
         // Check if radix is null
         il.MarkLabel(hasRadixLabel);
