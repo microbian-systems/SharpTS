@@ -150,24 +150,46 @@ public partial class RuntimeEmitter
 
         // System.Type — check known own properties for built-in JS constructors
         // (Boolean/Number/String have "prototype"; all have "name" and "length").
-        // Also check static reflection for declared static methods / fields.
+        // Also check known JS-spec static names per Type, then static reflection.
         var notTypeLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Brfalse, notTypeLabel);
         // "prototype" / "name" / "length" → true for any Type
-        il.Emit(OpCodes.Ldloc, nameLocal);
-        il.Emit(OpCodes.Ldstr, "prototype");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brtrue, trueLabel);
-        il.Emit(OpCodes.Ldloc, nameLocal);
-        il.Emit(OpCodes.Ldstr, "name");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brtrue, trueLabel);
-        il.Emit(OpCodes.Ldloc, nameLocal);
-        il.Emit(OpCodes.Ldstr, "length");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brtrue, trueLabel);
+        void NameEq(string n)
+        {
+            il.Emit(OpCodes.Ldloc, nameLocal);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brtrue, trueLabel);
+        }
+        NameEq("prototype");
+        NameEq("name");
+        NameEq("length");
+
+        // Number static names — JS-spec own properties of the Number constructor.
+        // System.Double's own static members don't match, so we check by Type ==
+        // typeof(double).
+        var notDoubleLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Double);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, notDoubleLabel);
+        NameEq("MAX_VALUE"); NameEq("MIN_VALUE");
+        NameEq("NaN"); NameEq("POSITIVE_INFINITY"); NameEq("NEGATIVE_INFINITY");
+        NameEq("MAX_SAFE_INTEGER"); NameEq("MIN_SAFE_INTEGER"); NameEq("EPSILON");
+        NameEq("parseInt"); NameEq("parseFloat");
+        NameEq("isNaN"); NameEq("isFinite"); NameEq("isInteger"); NameEq("isSafeInteger");
+        il.MarkLabel(notDoubleLabel);
+
+        // String static names.
+        var notStringTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, notStringTypeLabel);
+        NameEq("fromCharCode"); NameEq("fromCodePoint"); NameEq("raw");
+        il.MarkLabel(notStringTypeLabel);
         // Reflection: type.GetField(name, Public|Static) ?? type.GetMethod(name, Public|Static)
         const System.Reflection.BindingFlags staticPub = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
         var typeLocal2 = il.DeclareLocal(_types.Type);
