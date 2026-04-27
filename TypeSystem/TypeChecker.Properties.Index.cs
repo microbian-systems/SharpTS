@@ -407,6 +407,15 @@ public partial class TypeChecker
             }
         }
 
+        // JS treats built-in objects (Date, RegExp, Map, Set, Promise) as
+        // ordinary objects — `obj[0] = 1` is legal at runtime. Mirror
+        // TypeChecker.Properties' permissiveness for property-set on these types.
+        if (objType is TypeInfo.Date or TypeInfo.RegExp or TypeInfo.Map or TypeInfo.Set
+            or TypeInfo.WeakMap or TypeInfo.WeakSet or TypeInfo.Promise)
+        {
+            return valueType;
+        }
+
         // Handle symbol index
         if (indexType is TypeInfo.Symbol)
         {

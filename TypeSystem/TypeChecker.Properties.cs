@@ -579,6 +579,16 @@ public partial class TypeChecker
         {
             return CheckExpr(set.Value);
         }
+        // JS treats built-in objects (Date, RegExp, Map, Set, Promise, etc.) as
+        // ordinary objects — \`new Date(); d.foo = 1\` is legal. Mirror that
+        // permissiveness so test262 patterns like \`var obj = new Date();
+        // obj.length = 1; obj[0] = 1\` (used to test Array.prototype.X.call
+        // on array-likes) compile.
+        if (objType is TypeInfo.Date or TypeInfo.RegExp or TypeInfo.Map or TypeInfo.Set
+            or TypeInfo.WeakMap or TypeInfo.WeakSet or TypeInfo.Promise)
+        {
+            return CheckExpr(set.Value);
+        }
         // Allow property assignment on Any type (e.g., 'this' in object method shorthand)
         if (objType is TypeInfo.Any)
         {
