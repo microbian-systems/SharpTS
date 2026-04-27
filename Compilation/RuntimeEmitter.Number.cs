@@ -996,8 +996,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         var notNegativeLabel = il.DefineLabel();
         il.Emit(OpCodes.Bge, notNegativeLabel);
-        il.Emit(OpCodes.Ldstr, "Runtime Error: toFixed() digits argument must be between 0 and 100");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        // ECMA-262 21.1.3.3 step 3: range error for f < 0 or f > 100. Use $RangeError
+        // (not bare Exception) so `assert.throws(RangeError, …)` succeeds.
+        il.Emit(OpCodes.Ldstr, "toFixed() digits argument must be between 0 and 100");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(notNegativeLabel);
@@ -1005,8 +1008,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4, 100);
         var notTooLargeLabel = il.DefineLabel();
         il.Emit(OpCodes.Ble, notTooLargeLabel);
-        il.Emit(OpCodes.Ldstr, "Runtime Error: toFixed() digits argument must be between 0 and 100");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Ldstr, "toFixed() digits argument must be between 0 and 100");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         // return value.ToString($"F{digits}", CultureInfo.InvariantCulture)
@@ -1310,8 +1314,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         var notNegativeLabel = il.DefineLabel();
         il.Emit(OpCodes.Bge, notNegativeLabel);
-        il.Emit(OpCodes.Ldstr, "Runtime Error: toExponential() argument must be between 0 and 100");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Ldstr, "toExponential() argument must be between 0 and 100");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(notNegativeLabel);
@@ -1319,8 +1324,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4, 100);
         var notTooLargeLabel = il.DefineLabel();
         il.Emit(OpCodes.Ble, notTooLargeLabel);
-        il.Emit(OpCodes.Ldstr, "Runtime Error: toExponential() argument must be between 0 and 100");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Ldstr, "toExponential() argument must be between 0 and 100");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         // return Regex.Replace(value.ToString($"e{digits}", InvariantCulture),
@@ -1436,8 +1442,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_2);
         var radixValidLabel = il.DefineLabel();
         il.Emit(OpCodes.Bge, radixValidLabel);
-        il.Emit(OpCodes.Ldstr, "Runtime Error: toString() radix must be between 2 and 36");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Ldstr, "toString() radix must be between 2 and 36");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(radixValidLabel);
@@ -1445,8 +1452,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4, 36);
         var radixNotTooLargeLabel = il.DefineLabel();
         il.Emit(OpCodes.Ble, radixNotTooLargeLabel);
-        il.Emit(OpCodes.Ldstr, "Runtime Error: toString() radix must be between 2 and 36");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Ldstr, "toString() radix must be between 2 and 36");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         // Handle special values
