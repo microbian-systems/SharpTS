@@ -134,9 +134,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, falseLabel);
         il.MarkLabel(notBoxedLabel);
 
-        // Default ("false"): covers Boolean.prototype singleton and all other
-        // unrecognized receivers. Per ECMA-262 §20.3.3 Boolean.prototype's
-        // [[BooleanData]] is +false.
+        // Boolean.prototype itself: [[BooleanData]] is +false → "false".
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+        il.Emit(OpCodes.Beq, falseLabel);
+
+        // Other receivers (e.g. new String() with __primitiveType="String", or a
+        // plain Object): per ECMA-262 §20.3.3.2 throw TypeError. The borrowed-
+        // method tests `s1.toString = Boolean.prototype.toString; s1.toString()`
+        // rely on this throw.
+        il.Emit(OpCodes.Ldstr, "Boolean.prototype.toString requires a Boolean this value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
         il.MarkLabel(falseLabel);
         il.Emit(OpCodes.Ldstr, "false");
         il.Emit(OpCodes.Ret);
@@ -195,7 +206,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notBoxedLabel);
 
-        // Default false (covers Boolean.prototype singleton).
+        // Boolean.prototype itself: [[BooleanData]] is +false.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+        var notBoolPrototypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, notBoolPrototypeLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBoolPrototypeLabel);
+
+        // Other receivers: throw TypeError per ECMA-262 §20.3.3.3.
+        il.Emit(OpCodes.Ldstr, "Boolean.prototype.valueOf requires a Boolean this value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        // Unreachable but balances stack:
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Ret);
