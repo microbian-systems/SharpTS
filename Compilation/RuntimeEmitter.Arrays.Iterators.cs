@@ -146,10 +146,12 @@ public partial class RuntimeEmitter
         il.MarkLabel(afterReceiverLabel);
         il.Emit(OpCodes.Stelem_Ref);
 
-        // InvokeMethodValue(null /* thisArg */, callback, args)
+        // InvokeMethodValue(thisArg, callback, args). thisArg comes from the
+        // _currentCallbackThisArg thread-static (set by ArrayEmitter when the
+        // user passes a 2nd arg to forEach/map/etc, e.g. `arr.forEach(cb, ctx)`).
         var argsLocal = il.DeclareLocal(_types.ObjectArray);
         il.Emit(OpCodes.Stloc, argsLocal);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldsfld, runtime.CurrentCallbackThisArgField);
         il.Emit(OpCodes.Ldarg_1); // callback
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Call, runtime.InvokeMethodValue);

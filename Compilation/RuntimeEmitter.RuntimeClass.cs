@@ -67,6 +67,17 @@ public partial class RuntimeEmitter
         currentArrayLikeReceiverField.SetCustomAttribute(new CustomAttributeBuilder(threadStaticCtor, []));
         runtime.CurrentArrayLikeReceiverField = currentArrayLikeReceiverField;
 
+        // Thread-static "callback thisArg" for `arr.forEach(cb, thisArg)` and
+        // similar Array prototype methods. Set by ArrayEmitter / $BoundArrayMethod
+        // when the user passes a thisArg; read by EmitCallbackArgsAndInvoke as
+        // the receiver passed to InvokeMethodValue.
+        var currentCallbackThisArgField = typeBuilder.DefineField(
+            "_currentCallbackThisArg",
+            _types.Object,
+            FieldAttributes.Public | FieldAttributes.Static);
+        currentCallbackThisArgField.SetCustomAttribute(new CustomAttributeBuilder(threadStaticCtor, []));
+        runtime.CurrentCallbackThisArgField = currentCallbackThisArgField;
+
         // Math singleton — a shared Dictionary<string, object> that user code
         // can mutate (`Math.length = 1`). `Math.PI` etc. still go through
         // MathStaticEmitter's compile-time interception, which fires *before*

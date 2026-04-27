@@ -277,6 +277,13 @@ public class EmittedRuntime
     // context is active — direct `arr.forEach(cb)` calls keep passing the List as the 4th arg.
     public FieldBuilder CurrentArrayLikeReceiverField { get; set; } = null!;
 
+    // Thread-static "callback thisArg" for `arr.forEach(cb, thisArg)` and
+    // similar Array prototype methods. ArrayEmitter / $BoundArrayMethod sets
+    // it when the user passes a thisArg; EmitCallbackArgsAndInvoke reads it
+    // as the receiver passed to InvokeMethodValue, then clears it. Null
+    // means no thisArg (callback's `this` becomes undefined per spec).
+    public FieldBuilder CurrentCallbackThisArgField { get; set; } = null!;
+
     // Math singleton (Dictionary<string, object>). ECMA-262 treats Math as an
     // ordinary extensible object — user code can assign `Math.length = 1;
     // Math[0] = 1` and then iterate via `Array.prototype.X.call(Math, cb)`.

@@ -70,41 +70,80 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 break;
 
             case "map":
-                EmitSingleArgOrNull(emitter, arguments);
+            {
+                var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayMap);
+                var resLocal = il.DeclareLocal(ctx.Types.ListOfObject);
+                il.Emit(OpCodes.Stloc, resLocal);
+                EmitRestoreCallbackThisArg(emitter, saved);
+                il.Emit(OpCodes.Ldloc, resLocal);
                 break;
+            }
 
             case "filter":
-                EmitSingleArgOrNull(emitter, arguments);
+            {
+                var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFilter);
+                var resLocal = il.DeclareLocal(ctx.Types.ListOfObject);
+                il.Emit(OpCodes.Stloc, resLocal);
+                EmitRestoreCallbackThisArg(emitter, saved);
+                il.Emit(OpCodes.Ldloc, resLocal);
                 break;
+            }
 
             case "forEach":
-                EmitSingleArgOrNull(emitter, arguments);
+            {
+                var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayForEach);
+                EmitRestoreCallbackThisArg(emitter, saved);
                 il.Emit(OpCodes.Ldnull); // forEach returns undefined
                 break;
+            }
 
             case "find":
-                EmitSingleArgOrNull(emitter, arguments);
+            {
+                var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFind);
+                var resLocal = il.DeclareLocal(ctx.Types.Object);
+                il.Emit(OpCodes.Stloc, resLocal);
+                EmitRestoreCallbackThisArg(emitter, saved);
+                il.Emit(OpCodes.Ldloc, resLocal);
                 break;
+            }
 
             case "findIndex":
-                EmitSingleArgOrNull(emitter, arguments);
+            {
+                var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFindIndex);
+                var resLocal = il.DeclareLocal(ctx.Types.Double);
+                il.Emit(OpCodes.Stloc, resLocal);
+                EmitRestoreCallbackThisArg(emitter, saved);
+                il.Emit(OpCodes.Ldloc, resLocal);
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 break;
+            }
 
             case "some":
-                EmitSingleArgOrNull(emitter, arguments);
+            {
+                var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArraySome);
+                var resLocal = il.DeclareLocal(ctx.Types.Object);
+                il.Emit(OpCodes.Stloc, resLocal);
+                EmitRestoreCallbackThisArg(emitter, saved);
+                il.Emit(OpCodes.Ldloc, resLocal);
                 break;
+            }
 
             case "every":
-                EmitSingleArgOrNull(emitter, arguments);
+            {
+                var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayEvery);
+                var resLocal = il.DeclareLocal(ctx.Types.Object);
+                il.Emit(OpCodes.Stloc, resLocal);
+                EmitRestoreCallbackThisArg(emitter, saved);
+                il.Emit(OpCodes.Ldloc, resLocal);
                 break;
+            }
 
             case "reduce":
                 EmitArgsArray(emitter, arguments);
@@ -480,6 +519,65 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         {
             il.Emit(OpCodes.Ldnull);
         }
+    }
+
+    /// <summary>
+    /// Emits the callback (arg 0) and stashes optional thisArg (arg 1) into
+    /// `$Runtime._currentCallbackThisArg` so EmitCallbackArgsAndInvoke uses it
+    /// as the receiver when invoking the callback. Returns a local holding the
+    /// previous thread-static value so the caller can restore it via
+    /// <see cref="EmitRestoreCallbackThisArg"/> after the helper call. Null
+    /// means no thisArg was passed; per ECMA-262 the callback's `this` becomes
+    /// undefined (here passed as null to InvokeMethodValue, which is treated
+    /// as no-receiver).
+    /// </summary>
+    private static LocalBuilder EmitCallbackAndStashThisArg(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        var runtime = ctx.Runtime!;
+
+        // Emit callback (arg 0) onto the stack first.
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // Save previous thread-static so nested forEach/map calls don't leak.
+        var savedLocal = il.DeclareLocal(ctx.Types.Object);
+        il.Emit(OpCodes.Ldsfld, runtime.CurrentCallbackThisArgField);
+        il.Emit(OpCodes.Stloc, savedLocal);
+
+        // Stash thisArg (arg 1) into the thread-static.
+        if (arguments.Count >= 2)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+        il.Emit(OpCodes.Stsfld, runtime.CurrentCallbackThisArgField);
+
+        return savedLocal;
+    }
+
+    /// <summary>
+    /// Restores the previous `$Runtime._currentCallbackThisArg` value saved
+    /// by <see cref="EmitCallbackAndStashThisArg"/>. Stack-neutral.
+    /// </summary>
+    private static void EmitRestoreCallbackThisArg(IEmitterContext emitter, LocalBuilder savedLocal)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        il.Emit(OpCodes.Ldloc, savedLocal);
+        il.Emit(OpCodes.Stsfld, ctx.Runtime!.CurrentCallbackThisArgField);
     }
 
     /// <summary>
