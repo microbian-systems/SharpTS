@@ -1528,6 +1528,27 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noTypePdsLabel);
 
+            // hasOwnProperty — return a $TSFunction wrapping HasOwnPropertyHelper,
+            // bound to this Type as the receiver. Test262 patterns like
+            // `Number.hasOwnProperty("prototype")` must dispatch through this.
+            // Without this arm the lookup falls through to the .NET reflection
+            // tail and finds nothing (or accidentally finds a CLR member by
+            // case-insensitive matching).
+            var notHasOwnLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "hasOwnProperty");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, notHasOwnLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldtoken, runtime.HasOwnPropertyHelperMethod);
+            il.Emit(OpCodes.Ldtoken, runtime.HasOwnPropertyHelperMethod.DeclaringType!);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+                _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notHasOwnLabel);
+
             // Cache the casted Type reference for the three reflection probes below.
             var typeLocal = il.DeclareLocal(_types.Type);
             il.Emit(OpCodes.Ldarg_0);

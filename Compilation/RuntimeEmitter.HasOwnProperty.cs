@@ -148,7 +148,48 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, trueLabel);
         il.MarkLabel(notList);
 
-        // Default: PDS check (might find user-set descriptor on Type, etc.)
+        // System.Type — check known own properties for built-in JS constructors
+        // (Boolean/Number/String have "prototype"; all have "name" and "length").
+        // Also check static reflection for declared static methods / fields.
+        var notTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brfalse, notTypeLabel);
+        // "prototype" / "name" / "length" → true for any Type
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        // Reflection: type.GetField(name, Public|Static) ?? type.GetMethod(name, Public|Static)
+        const System.Reflection.BindingFlags staticPub = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
+        var typeLocal2 = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.Type);
+        il.Emit(OpCodes.Stloc, typeLocal2);
+        // GetField
+        il.Emit(OpCodes.Ldloc, typeLocal2);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)staticPub);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetField", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        // GetProperty(name) — covers static .NET property accessors.
+        il.Emit(OpCodes.Ldloc, typeLocal2);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)staticPub);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Br, falseLabel);
+        il.MarkLabel(notTypeLabel);
+
+        // Default: PDS check (might find user-set descriptor)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, nameLocal);
         il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
