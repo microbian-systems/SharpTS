@@ -228,10 +228,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(tsFunctionLabel);
+        // Route through InvokeWithThis(null, args) instead of Invoke(args) so the
+        // helper's "__this" first-param check fires for function expressions.
+        // Function expressions emit a synthetic "__this" first parameter (Stmt.Function
+        // has HasOwnThis=true → ArrowFunctions.cs line 169-179). Calling Invoke
+        // directly would AdjustArgs to paramCount=N+1 — the user's args[0]
+        // accumulator would slide into the __this slot, shifting everything.
+        // InvokeWithThis prepends the thisArg, leaving user args aligned.
+        // Behavior unchanged for callables without __this naming: InvokeWithThis
+        // sets thread-local _currentThis and calls Invoke unchanged.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldnull);  // thisArg = null
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(boundTsFunctionLabel);
