@@ -4045,7 +4045,7 @@ test/built-ins/String/S15.5.1.1_A1_T15.js Pass
 test/built-ins/String/S15.5.1.1_A1_T16.js Pass
 test/built-ins/String/S15.5.1.1_A1_T17.js Pass
 test/built-ins/String/S15.5.1.1_A1_T18.js Pass
-test/built-ins/String/S15.5.1.1_A1_T19.js RuntimeError
+test/built-ins/String/S15.5.1.1_A1_T19.js Pass
 test/built-ins/String/S15.5.1.1_A1_T2.js Pass
 test/built-ins/String/S15.5.1.1_A1_T3.js Pass
 test/built-ins/String/S15.5.1.1_A1_T4.js Pass
