@@ -856,16 +856,10 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var dictLocal = il.DeclareLocal(descriptorsDictType);
-        var keyLocal = il.DeclareLocal(_types.Object);
 
-        // Normalize key: $TSFunction → its MethodInfo. Function declarations may
-        // be wrapped by multiple $TSFunction instances across references; keying
-        // by MethodInfo makes `fn.x = v; fn.x` round-trip on a single property.
-        EmitNormalizePDSKey(il, runtime, keyLocal);
-
-        // var descriptors = _descriptors.GetOrCreateValue(key);
+        // var descriptors = _descriptors.GetOrCreateValue(obj);
         il.Emit(OpCodes.Ldsfld, descriptorsField);
-        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, descriptorsGetOrCreate);
         il.Emit(OpCodes.Stloc, dictLocal);
 
@@ -899,15 +893,11 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var descriptorsDictLocal = il.DeclareLocal(descriptorsDictType);
         var descriptorLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
-        var keyLocal = il.DeclareLocal(_types.Object);
         var returnNullLabel = il.DefineLabel();
 
-        // Normalize key: $TSFunction → its MethodInfo (mirrors DefineProperty).
-        EmitNormalizePDSKey(il, runtime, keyLocal);
-
-        // if (!_descriptors.TryGetValue(key, out var descriptors)) return null
+        // if (!_descriptors.TryGetValue(obj, out var descriptors)) return null
         il.Emit(OpCodes.Ldsfld, descriptorsField);
-        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloca, descriptorsDictLocal);
         il.Emit(OpCodes.Callvirt, descriptorsTryGet);
         il.Emit(OpCodes.Brfalse, returnNullLabel);
