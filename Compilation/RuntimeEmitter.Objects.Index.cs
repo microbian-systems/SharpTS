@@ -220,10 +220,37 @@ public partial class RuntimeEmitter
         // without this, real packages (semver, minimatch, yaml) crash when
         // `arr[i]` runs past the end during parsing.
         il.MarkLabel(tsArrayLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        // ECMA-262 6.1.7: array indexes are uint32 < 2^32-1. Indexes ≥ 2^32-1
+        // (or negative) are NOT array indexes — they're regular named
+        // properties. Route those via GetProperty(arr, idx.ToString()) so
+        // PDS-stored values (from the symmetric SetIndex path) round-trip.
+        var tsArrayGetIdx = il.DeclareLocal(_types.Int64);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
+        il.Emit(OpCodes.Stloc, tsArrayGetIdx);
+
+        var doArrayGetLabel = il.DefineLabel();
+        var routeAsNamedGetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tsArrayGetIdx);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Blt, routeAsNamedGetLabel);
+        il.Emit(OpCodes.Ldloc, tsArrayGetIdx);
+        il.Emit(OpCodes.Ldc_I8, (long)uint.MaxValue - 1);
+        il.Emit(OpCodes.Bgt, routeAsNamedGetLabel);
+        il.Emit(OpCodes.Br, doArrayGetLabel);
+
+        il.MarkLabel(routeAsNamedGetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(doArrayGetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Ldloc, tsArrayGetIdx);
         il.Emit(OpCodes.Callvirt, runtime.TSArrayGetLong);
         il.Emit(OpCodes.Ret);
 
@@ -602,16 +629,47 @@ public partial class RuntimeEmitter
         //     strict-mode wraps via SetIndexStrict)
         // Legacy FrozenObjectsField check kept for pre-M2 paths that froze
         // the $Array via the global weak table instead of arr.Freeze().
+        // Per ECMA-262 6.1.7: array indexes are uint32 < 2^32-1. Indexes ≥
+        // 2^32-1 are NOT array indexes — they're regular named properties.
+        // Route those via SetProperty(arr, idx.ToString(), value) so the
+        // $Array PDS-data-store fallback picks them up. Without this, $Array.Set
+        // throws RangeError for `a[4294967295] = X`.
         var tsArrayFrozenLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloca, tsArrayFrozenLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
         il.Emit(OpCodes.Brtrue, nullLabel); // Frozen — silently return
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+
+        var idxLong = il.DeclareLocal(_types.Int64);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
+        il.Emit(OpCodes.Stloc, idxLong);
+
+        // If idx < 0 OR idx >= 2^32-1, route to SetProperty (named property).
+        var doArraySetLabel = il.DefineLabel();
+        var routeAsNamedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, idxLong);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Blt, routeAsNamedLabel);
+        il.Emit(OpCodes.Ldloc, idxLong);
+        il.Emit(OpCodes.Ldc_I8, (long)uint.MaxValue - 1);
+        il.Emit(OpCodes.Bgt, routeAsNamedLabel);
+        il.Emit(OpCodes.Br, doArraySetLabel);
+
+        il.MarkLabel(routeAsNamedLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(doArraySetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Ldloc, idxLong);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Callvirt, runtime.TSArraySetLong);
         il.Emit(OpCodes.Ret);
