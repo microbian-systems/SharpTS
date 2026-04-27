@@ -691,7 +691,35 @@ public partial class RuntimeEmitter
         var emptyLabel = il.DefineLabel();
         var doneLabel = il.DefineLabel();
 
-        // count = (int)countArg
+        // ECMA-262 21.1.3.13: validate count first.
+        //   if count is NaN → ToIntegerOrInfinity returns 0 → return "" (no throw)
+        //   if count < 0 (incl. -∞) → throw RangeError
+        //   if count is +∞ → throw RangeError
+        var nonNegLabel = il.DefineLabel();
+        var throwRangeLabel = il.DefineLabel();
+        // NaN check (NaN != NaN)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Bne_Un, nonNegLabel); // NaN: skip throw, fall through to Conv_I4 path (will yield 0)
+        // < 0 check (catches finite negatives + -Infinity)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Blt, throwRangeLabel);
+        // +Infinity check
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("IsPositiveInfinity", [_types.Double])!);
+        il.Emit(OpCodes.Brtrue, throwRangeLabel);
+        il.Emit(OpCodes.Br, nonNegLabel);
+
+        il.MarkLabel(throwRangeLabel);
+        il.Emit(OpCodes.Ldstr, "Invalid count value");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(nonNegLabel);
+
+        // count = (int)countArg (NaN → garbage, but emptyLabel below catches via count<=0)
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Stloc, countLocal);
