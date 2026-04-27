@@ -45,7 +45,9 @@ public sealed class ArrayStaticEmitter : IStaticTypeEmitterStrategy
                     il.Emit(OpCodes.Ldnull);
                 }
 
-                // Emit mapFn (or null)
+                // Emit mapFn ($Undefined.Instance for absent so ArrayFrom can
+                // distinguish "not provided" from "provided as null" — spec
+                // throws TypeError for the latter but not the former).
                 if (arguments.Count > 1)
                 {
                     emitter.EmitExpression(arguments[1]);
@@ -53,7 +55,7 @@ public sealed class ArrayStaticEmitter : IStaticTypeEmitterStrategy
                 }
                 else
                 {
-                    il.Emit(OpCodes.Ldnull);
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
                 }
 
                 // Load Symbol.iterator and runtime type for IterateToList

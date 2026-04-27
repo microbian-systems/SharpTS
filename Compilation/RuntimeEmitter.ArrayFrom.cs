@@ -55,6 +55,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(nonUndefLabel);
 
+        // ECMA-262 23.1.2.1 step 2-3: if mapfn is undefined, mapping is false.
+        // Otherwise mapfn must be callable; non-callable (null/Symbol/Number/
+        // string/Object) → throw TypeError.
+        // Callers emit $Undefined.Instance for absent args, so this distinguishes
+        // "not provided" from "provided as null".
+        var mapFnOkLabel = il.DefineLabel();
+        // $Undefined → skip check
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, mapFnOkLabel);
+        // Provided value: must be callable. $TSFunction passes; everything else throws.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, mapFnOkLabel);
+        il.Emit(OpCodes.Ldstr, "Array.from: mapfn argument must be callable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(mapFnOkLabel);
+
         // ECMA-262 Array.from: if @@iterator is missing, treat receiver as
         // array-like (read length, iterate by index). The IterateToList
         // fallback enumerates Dictionary<string,object> as KeyValuePair —
@@ -87,8 +107,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, resultLocal);
         il.MarkLabel(afterListInit);
 
-        // if (mapFn == null) return result;
-        il.Emit(OpCodes.Ldarg_1);  // mapFn
+        // if (mapFn is $Undefined) return result. Callers now pass $Undefined
+        // for absent mapfn, so the prior null-check is replaced by Isinst.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, noMapFnLabel);
+        il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, noMapFnLabel);
 
         // Create mapped result list
