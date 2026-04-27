@@ -147,11 +147,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int64, "ToString"));
         il.Emit(OpCodes.Br, endLabel);
 
-        // Non-integer: use G15 format
+        // Non-integer: use G15 format with JS-style exponent fixup.
+        // .NET's "1.2345E-07" → JS spec's "1.2345e-7" (lowercase e + no
+        // leading zeros in exponent). Mirrors Stage 4e/4f's
+        // NumberToPrecision/Exponential fixups.
         il.MarkLabel(notIntLabel);
         il.Emit(OpCodes.Ldloca, doubleLocal);
         il.Emit(OpCodes.Ldstr, "G15");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "ToString", [_types.String]));
+        il.Emit(OpCodes.Call, typeof(System.Globalization.CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(System.IFormatProvider)])!);
+        il.Emit(OpCodes.Ldstr, "E");
+        il.Emit(OpCodes.Ldstr, "e");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Replace", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Ldstr, @"e([+-])0+(?=\d)");
+        il.Emit(OpCodes.Ldstr, "e$1");
+        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Replace", [_types.String, _types.String, _types.String])!);
         il.Emit(OpCodes.Br, endLabel);
 
         // BigInteger case - format as value.ToString() + "n"
