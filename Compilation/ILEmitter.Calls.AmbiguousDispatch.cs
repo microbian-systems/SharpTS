@@ -27,8 +27,16 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Isinst, _ctx.Types.String);
         builder.Emit_Brtrue(isStringLabel);
 
-        // Assume it's a list if not a string
-        builder.Emit_Br(isListLabel);
+        // List<object> → list path. Otherwise (Dictionary, $Object, etc.)
+        // fall back to dynamic property dispatch via $Runtime.GetProperty +
+        // InvokeMethodValue. Without this fallback, borrowed-prototype
+        // patterns like `obj.charAt = String.prototype.charAt; obj.charAt(0)`
+        // cast obj to List<object> and crash with InvalidCastException.
+        var dynamicDispatchLabel = builder.DefineLabel("ambiguous_dynamic");
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Isinst, _ctx.Types.ListOfObject);
+        builder.Emit_Brtrue(isListLabel);
+        builder.Emit_Br(dynamicDispatchLabel);
 
         // String path
         builder.MarkLabel(isStringLabel);
@@ -271,6 +279,36 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
                 break;
         }
+        builder.Emit_Br(doneLabel);
+
+        // Dynamic property-dispatch path: receiver is neither string nor List.
+        // Look up the method via $Runtime.GetProperty (which walks PDS +
+        // prototype chain), then invoke via $Runtime.InvokeMethodValue.
+        // Required for borrowed-prototype patterns like
+        // `obj.charAt = String.prototype.charAt; obj.charAt(0)`.
+        builder.MarkLabel(dynamicDispatchLabel);
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Ldstr, methodName);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
+        var fnLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, fnLocal);
+        // args = new object[arguments.Count]
+        IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+        var argsLocal = IL.DeclareLocal(_ctx.Types.ObjectArray);
+        IL.Emit(OpCodes.Stloc, argsLocal);
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            IL.Emit(OpCodes.Ldloc, argsLocal);
+            IL.Emit(OpCodes.Ldc_I4, i);
+            EmitExpression(arguments[i]);
+            EmitBoxIfNeeded(arguments[i]);
+            IL.Emit(OpCodes.Stelem_Ref);
+        }
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Ldloc, fnLocal);
+        IL.Emit(OpCodes.Ldloc, argsLocal);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.InvokeMethodValue);
 
         builder.MarkLabel(doneLabel);
     }

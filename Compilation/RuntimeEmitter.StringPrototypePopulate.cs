@@ -56,6 +56,14 @@ public partial class RuntimeEmitter
         void Wire(string jsName, MethodBuilder? helper, int jsLength)
         {
             if (helper is null) return;
+            // Name the first parameter "__this" so $TSFunction.InvokeWithThis
+            // prepends the call-site receiver when this helper is invoked via
+            // a borrowed prototype method (`obj.charAt = String.prototype.charAt;
+            // obj.charAt(0)`). DefineParameter is idempotent when called multiple
+            // times for the same position; safe even if some helpers already
+            // named their first param.
+            try { helper.DefineParameter(1, System.Reflection.ParameterAttributes.None, "__this"); }
+            catch { /* parameter already defined elsewhere — ignore */ }
             il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
             il.Emit(OpCodes.Ldstr, jsName);
             il.Emit(OpCodes.Ldnull);

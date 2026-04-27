@@ -13,6 +13,8 @@ public partial class RuntimeEmitter
             _types.String,
             [_types.String, _types.ObjectArray]
         );
+        // First param naming as "__this" happens in StringPrototypePopulate.Wire
+        // so all wired helpers get the same treatment uniformly.
         runtime.StringCharAt = method;
 
         var il = method.GetILGenerator();
