@@ -206,6 +206,48 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
             }
+            // Math.pow(base, exp): two ECMA-262 spec quirks vs .NET Math.Pow:
+            //   1) If exp is NaN, return NaN (.NET returns 1 for Pow(1, NaN)).
+            //   2) If abs(base) == 1 and abs(exp) == +∞, return NaN (.NET
+            //      follows IEEE-754 fma which returns 1).
+            // Stack on entry: [base, exp].
+            if (methodName == "pow")
+            {
+                var expLocal = il.DeclareLocal(ctx.Types.Double);
+                var baseLocal = il.DeclareLocal(ctx.Types.Double);
+                il.Emit(OpCodes.Stloc, expLocal);
+                il.Emit(OpCodes.Stloc, baseLocal);
+                var notNaNExpLabel = il.DefineLabel();
+                var endLabel = il.DefineLabel();
+                // Quirk 1: NaN exponent → NaN.
+                il.Emit(OpCodes.Ldloc, expLocal);
+                il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Double, "IsNaN", ctx.Types.Double));
+                il.Emit(OpCodes.Brfalse, notNaNExpLabel);
+                il.Emit(OpCodes.Ldc_R8, double.NaN);
+                il.Emit(OpCodes.Br, endLabel);
+                il.MarkLabel(notNaNExpLabel);
+                // Quirk 2: |base| == 1 && IsInfinity(exp) → NaN.
+                var notUnitInfLabel = il.DefineLabel();
+                var absBaseLocal = il.DeclareLocal(ctx.Types.Double);
+                il.Emit(OpCodes.Ldloc, baseLocal);
+                il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Math, "Abs", ctx.Types.Double));
+                il.Emit(OpCodes.Stloc, absBaseLocal);
+                il.Emit(OpCodes.Ldloc, absBaseLocal);
+                il.Emit(OpCodes.Ldc_R8, 1.0);
+                il.Emit(OpCodes.Bne_Un, notUnitInfLabel);
+                il.Emit(OpCodes.Ldloc, expLocal);
+                il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Double, "IsInfinity", ctx.Types.Double));
+                il.Emit(OpCodes.Brfalse, notUnitInfLabel);
+                il.Emit(OpCodes.Ldc_R8, double.NaN);
+                il.Emit(OpCodes.Br, endLabel);
+                il.MarkLabel(notUnitInfLabel);
+                il.Emit(OpCodes.Ldloc, baseLocal);
+                il.Emit(OpCodes.Ldloc, expLocal);
+                il.Emit(OpCodes.Call, mathMethod);
+                il.MarkLabel(endLabel);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+            }
             il.Emit(OpCodes.Call, mathMethod);
             il.Emit(OpCodes.Box, ctx.Types.Double);
             return true;
