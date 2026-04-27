@@ -98,19 +98,32 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Max", _types.Int32, _types.Int32));
         il.Emit(OpCodes.Stloc, startLocal);
 
-        // end = args.Length > 1 && args[1] != undefined ? ToIntegerOrInfinity(args[1], len) : str.Length
+        // end = args.Length > 1 && args[1] != undefined ? ToIntegerOrInfinity(args[1], 0) : str.Length
         var endLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldlen);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Ldc_I4_1);
         var hasEnd = il.DefineLabel();
+        var endIsUndefined = il.DefineLabel();
+        var defaultEnd = il.DefineLabel();
         var afterEnd = il.DefineLabel();
         il.Emit(OpCodes.Bgt, hasEnd);
+        il.MarkLabel(defaultEnd);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
         il.Emit(OpCodes.Br, afterEnd);
         il.MarkLabel(hasEnd);
+        // If args[1] is null or $Undefined, use str.Length per spec.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Brfalse, defaultEnd);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, defaultEnd);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
