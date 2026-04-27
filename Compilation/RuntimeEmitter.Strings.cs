@@ -1135,7 +1135,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, doneLabel);
 
         il.MarkLabel(nullLabel);
-        il.Emit(OpCodes.Ldnull);
+        // ECMA-262 22.1.3.1 String.prototype.at: out-of-range → undefined.
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Ret);
     }
@@ -1314,7 +1315,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, doneLabel);
 
         il.MarkLabel(nullLabel);
-        il.Emit(OpCodes.Ldnull);
+        // ECMA-262 22.1.3.3 step 7: out-of-range index → return undefined.
+        // Pre-fix used null which fails `=== undefined` strict equality
+        // checks in Test262 (which uses assert.sameValue).
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Ret);
     }
