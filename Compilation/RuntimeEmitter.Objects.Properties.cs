@@ -847,12 +847,15 @@ public partial class RuntimeEmitter
         il.MarkLabel(notErrorLabel);
 
         // Scoped PDS-data-store fallback for ECMA built-ins: $TSDate, $TSRegExp,
-        // $TSPromise. JS allows ad-hoc property assignment on these instances
-        // (`d = new Date(); d.foo = 1; d.foo === 1`); the value lands in PDS so
-        // GetFieldsProperty's PDS-data-descriptor arm reads it back. Limited
-        // to these types so user-defined class instances and runtime-side types
-        // (which may rely on silent-no-op semantics for unknown writes — e.g.,
-        // the Debug npm package) are not affected.
+        // $TSPromise, $TSError. JS allows ad-hoc property assignment on these
+        // instances (`d = new Date(); d.foo = 1; d.foo === 1`); the value lands
+        // in PDS so GetFieldsProperty's PDS-data-descriptor arm reads it back.
+        // Limited to these types so user-defined class instances and runtime-
+        // side types (which may rely on silent-no-op semantics for unknown
+        // writes — e.g., the Debug npm package) are not affected.
+        // Note: $TSError already has explicit name/message/stack/code/syscall
+        // handlers above and only reaches the PDS path for OTHER property
+        // names (like `obj.length`, `obj[0]`).
         var pdsStoreLabel = il.DefineLabel();
         var afterPdsStoreLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -863,6 +866,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, pdsStoreLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brtrue, pdsStoreLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSErrorType);
         il.Emit(OpCodes.Brtrue, pdsStoreLabel);
         il.Emit(OpCodes.Br, afterPdsStoreLabel);
 
