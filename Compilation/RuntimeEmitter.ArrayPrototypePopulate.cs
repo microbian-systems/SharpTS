@@ -55,13 +55,14 @@ public partial class RuntimeEmitter
         void Wire(string jsName, MethodBuilder? helper, int jsLength)
         {
             if (helper is null) return;
-            // Note: NOT naming first param "__this" here. Array helpers take
-            // `List<object>` as their receiver param; \$TSFunction would prepend
-            // a non-List receiver and the Castclass inside the helper would
-            // crash. Borrowed Array.prototype.X patterns need a separate path
-            // that materializes the receiver via ArrayLikeMaterialize first
-            // (Stage 3a's pattern matcher already handles the syntactic
-            // \`Array.prototype.X.call(receiver, ...)\` form).
+            // Name first param "__this" so $TSFunction.InvokeWithThis prepends
+            // the call-site receiver. Stage 4z35 added a List<object> coercion
+            // branch in CoercePrimitiveArgs that materializes non-list receivers
+            // via $Runtime.ArrayLikeMaterialize before the helper's Castclass —
+            // unblocks borrowed Array.prototype.X patterns
+            // (`obj.map = Array.prototype.map; obj.map(cb)`).
+            try { helper.DefineParameter(1, System.Reflection.ParameterAttributes.None, "__this"); }
+            catch { /* already named — ignore */ }
             il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
             il.Emit(OpCodes.Ldstr, jsName);
             // new $TSFunction(null, helper, jsName, jsLength)

@@ -1224,6 +1224,10 @@ public partial class RuntimeEmitter
             "_toNumberCache",
             _types.MethodInfo,
             FieldAttributes.Private | FieldAttributes.Static);
+        var arrayLikeMaterializeCacheField = typeBuilder.DefineField(
+            "_arrayLikeMaterializeCache",
+            _types.MethodInfo,
+            FieldAttributes.Private | FieldAttributes.Static);
 
         var method = typeBuilder.DefineMethod(
             "CoercePrimitiveArgs",
@@ -1239,8 +1243,10 @@ public partial class RuntimeEmitter
         var paramTypeLocal = il.DeclareLocal(_types.Type);
         var stringTypeLocal = il.DeclareLocal(_types.Type);
         var doubleTypeLocal = il.DeclareLocal(_types.Type);
+        var listTypeLocal = il.DeclareLocal(_types.Type);
         var toJsStringLocal = il.DeclareLocal(_types.MethodInfo);
         var toNumberLocal = il.DeclareLocal(_types.MethodInfo);
+        var arrayLikeMaterializeLocal = il.DeclareLocal(_types.MethodInfo);
         var oneArgLocal = il.DeclareLocal(_types.ObjectArray);
 
         // params = method.GetParameters()
@@ -1258,13 +1264,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.Math.GetMethod("Min", [_types.Int32, _types.Int32])!);
         il.Emit(OpCodes.Stloc, countLocal);
 
-        // stringType = typeof(string), doubleType = typeof(double)
+        // stringType = typeof(string), doubleType = typeof(double),
+        // listType = typeof(List<object>).
         il.Emit(OpCodes.Ldtoken, _types.String);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
         il.Emit(OpCodes.Stloc, stringTypeLocal);
         il.Emit(OpCodes.Ldtoken, _types.Double);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
         il.Emit(OpCodes.Stloc, doubleTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.ListOfObject);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Stloc, listTypeLocal);
 
         // Local helper: resolve a $Runtime static method by name into a cache field.
         // Stack-in/out: nothing; stores resolved MethodInfo in `localOut`.
@@ -1289,12 +1299,19 @@ public partial class RuntimeEmitter
         }
         ResolveRuntimeMethod("ToJsString", toJsStringCacheField, toJsStringLocal);
         ResolveRuntimeMethod("ToNumber", toNumberCacheField, toNumberLocal);
+        ResolveRuntimeMethod("ArrayLikeMaterialize", arrayLikeMaterializeCacheField, arrayLikeMaterializeLocal);
 
-        // If either resolution failed, bail.
+        // If any resolution failed, bail. Each branch checks its own resolved
+        // method again before invoking, so the bail-on-any approach is
+        // conservative — a failed ArrayLikeMaterialize lookup shouldn't block
+        // the string/double coercion paths. But all three are defined on $Runtime
+        // unconditionally, so in practice all resolve.
         var bail = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, toJsStringLocal);
         il.Emit(OpCodes.Brfalse, bail);
         il.Emit(OpCodes.Ldloc, toNumberLocal);
+        il.Emit(OpCodes.Brfalse, bail);
+        il.Emit(OpCodes.Ldloc, arrayLikeMaterializeLocal);
         il.Emit(OpCodes.Brfalse, bail);
 
         // i = 0
@@ -1315,9 +1332,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("ParameterType")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, paramTypeLocal);
 
-        // Branch on paramType: string → ToJsString; double → ToNumber; else continue.
+        // Branch on paramType: string → ToJsString; double → ToNumber;
+        // List<object> → ArrayLikeMaterialize; else continue.
         var stringBranch = il.DefineLabel();
         var doubleBranch = il.DefineLabel();
+        var listBranch = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, paramTypeLocal);
         il.Emit(OpCodes.Ldloc, stringTypeLocal);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
@@ -1326,6 +1345,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, doubleTypeLocal);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
         il.Emit(OpCodes.Brtrue, doubleBranch);
+        il.Emit(OpCodes.Ldloc, paramTypeLocal);
+        il.Emit(OpCodes.Ldloc, listTypeLocal);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Brtrue, listBranch);
         il.Emit(OpCodes.Br, continueLbl);
 
         // String branch
@@ -1406,6 +1429,47 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldloc, toNumberLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, oneArgLocal);
+        il.Emit(OpCodes.Callvirt, _types.MethodBase.GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Br, continueLbl);
+
+        // List<object> branch — for borrowed Array.prototype.X helpers whose
+        // first param is List<object> (the receiver). Materialize non-list
+        // receivers (Dictionary, $Object, string, object[]) into a new list
+        // via $Runtime.ArrayLikeMaterialize so the helper's Castclass succeeds.
+        il.MarkLabel(listBranch);
+
+        // if (arg == null) continue — null receiver typically already failed
+        // upstream; preserve current behavior.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Brfalse, continueLbl);
+
+        // if (arg is List<object>) continue — already materialized.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brtrue, continueLbl);
+
+        // oneArg = new object[1] { args[i] }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, oneArgLocal);
+
+        // args[i] = (List<object>) arrayLikeMaterialize.Invoke(null, oneArg)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, arrayLikeMaterializeLocal);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldloc, oneArgLocal);
         il.Emit(OpCodes.Callvirt, _types.MethodBase.GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
