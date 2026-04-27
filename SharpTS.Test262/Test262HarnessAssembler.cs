@@ -33,6 +33,13 @@ public sealed class Test262HarnessAssembler
         var sb = new StringBuilder();
         AppendHarnessFile(sb, "sta.js");
         AppendHarnessFile(sb, "assert.js");
+        // SharpTS patch: sta.js's `Test262Error` doesn't set `this.name`. The
+        // compiled-mode test runner classifies thrown JS values by reading
+        // `name` off the exception's `__tsValue` to distinguish Fail (assert
+        // failure) from RuntimeError. Compiled-mode $TSObject.GetProperty
+        // doesn't walk the prototype chain, so a prototype-only `name` won't
+        // surface. Wrap the constructor so each instance carries its own name.
+        sb.Append("(function(){var __orig=Test262Error;Test262Error=function(message){__orig.call(this,message);this.name=\"Test262Error\";};Test262Error.prototype=__orig.prototype;Test262Error.prototype.constructor=Test262Error;})();\n");
         foreach (var include in metadata.Includes)
         {
             AppendHarnessFile(sb, include);
