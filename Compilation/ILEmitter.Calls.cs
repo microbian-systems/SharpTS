@@ -387,10 +387,38 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, receiverLocal);
         IL.Emit(OpCodes.Stsfld, runtime.CurrentArrayLikeReceiverField);
 
+        var methodArgs = c.Arguments.Skip(1).ToList();
+
+        // ECMA-262 lazy-iteration order: callback validation happens AFTER
+        // ToLength(O.length) but BEFORE element reads. For the static-
+        // missing-callback case (kind=="single" with no methodArgs), read
+        // length to trigger any accessor side effects, then throw TypeError
+        // without materializing element accessors. Test262 tests like
+        // `Array.prototype.every.call(obj)` (no cb) check this ordering via
+        // assert(lengthAccessed) + assert(loopAccessed === false).
+        if (kind == "single" && methodArgs.Count == 0)
+        {
+            // Pop the duplicated receiver from the stack — we won't be
+            // calling materialize.
+            IL.Emit(OpCodes.Pop);
+            // Read length: GetProperty(receiver, "length") to trigger getter.
+            // Discard the result — the materialize-replacement path always
+            // throws before using it.
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+            IL.Emit(OpCodes.Ldstr, "length");
+            IL.Emit(OpCodes.Call, runtime.GetProperty);
+            IL.Emit(OpCodes.Pop);
+            // Throw: TypeError("undefined is not a function")
+            IL.Emit(OpCodes.Ldstr, "undefined is not a function");
+            IL.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            IL.Emit(OpCodes.Call, runtime.CreateException);
+            IL.Emit(OpCodes.Throw);
+            // Unreachable, but keep stack balanced for any dead-code analysis.
+            return true;
+        }
+
         // list = ArrayLikeMaterialize(receiver) — the Dup'd receiver is on the stack
         IL.Emit(OpCodes.Call, runtime.ArrayLikeMaterialize);
-
-        var methodArgs = c.Arguments.Skip(1).ToList();
 
         switch (kind)
         {
