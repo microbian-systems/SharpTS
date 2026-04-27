@@ -241,6 +241,39 @@ public partial class ILEmitter
         EmitTag("[object JSON]");
         IL.MarkLabel(notJsonLabel);
 
+        // Number/String/Boolean/Array .prototype singletons each carry the
+        // [[Class]] of their underlying type per ECMA-262 §21/§22/§20/§23.
+        // E.g. Number.prototype is itself a Number Exotic Object → its
+        // toString brand is "[object Number]". Without these, lookups via
+        // Object.getPrototypeOf(new X(…)) fall through to "[object Object]".
+        var notNumberProtoLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        IL.Emit(OpCodes.Bne_Un, notNumberProtoLabel);
+        EmitTag("[object Number]");
+        IL.MarkLabel(notNumberProtoLabel);
+
+        var notStringProtoLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
+        IL.Emit(OpCodes.Bne_Un, notStringProtoLabel);
+        EmitTag("[object String]");
+        IL.MarkLabel(notStringProtoLabel);
+
+        var notBoolProtoLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+        IL.Emit(OpCodes.Bne_Un, notBoolProtoLabel);
+        EmitTag("[object Boolean]");
+        IL.MarkLabel(notBoolProtoLabel);
+
+        var notArrayProtoLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+        IL.Emit(OpCodes.Bne_Un, notArrayProtoLabel);
+        EmitTag("[object Array]");
+        IL.MarkLabel(notArrayProtoLabel);
+
         // object[] (compiled `arguments` representation)
         var notArgsLabel = IL.DefineLabel();
         IL.Emit(OpCodes.Ldloc, receiverLocal);
