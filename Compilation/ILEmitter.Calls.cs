@@ -426,6 +426,31 @@ public partial class ILEmitter
         // list = ArrayLikeMaterialize(receiver) — the Dup'd receiver is on the stack
         IL.Emit(OpCodes.Call, runtime.ArrayLikeMaterialize);
 
+        // For iterator methods that accept thisArg (callbackfn, thisArg) per
+        // ECMA-262, save the previous _currentCallbackThisArg, stash methodArgs[1]
+        // (or null) into the thread-static, then restore after the call.
+        // EmitCallbackArgsAndInvoke reads it as the receiver to InvokeMethodValue.
+        bool hasThisArgSlot = methodName is "every" or "some" or "filter" or "map"
+            or "forEach" or "find" or "findIndex" or "findLast" or "findLastIndex"
+            or "flatMap";
+        LocalBuilder? prevThisArgLocal = null;
+        if (hasThisArgSlot)
+        {
+            prevThisArgLocal = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Ldsfld, runtime.CurrentCallbackThisArgField);
+            IL.Emit(OpCodes.Stloc, prevThisArgLocal);
+            if (methodArgs.Count >= 2)
+            {
+                EmitExpression(methodArgs[1]);
+                EmitBoxIfNeeded(methodArgs[1]);
+            }
+            else
+            {
+                IL.Emit(OpCodes.Ldnull);
+            }
+            IL.Emit(OpCodes.Stsfld, runtime.CurrentCallbackThisArgField);
+        }
+
         switch (kind)
         {
             case "single":
@@ -500,6 +525,11 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Stloc, resultTmp);
         IL.Emit(OpCodes.Ldloc, prevReceiverLocal);
         IL.Emit(OpCodes.Stsfld, runtime.CurrentArrayLikeReceiverField);
+        if (prevThisArgLocal != null)
+        {
+            IL.Emit(OpCodes.Ldloc, prevThisArgLocal);
+            IL.Emit(OpCodes.Stsfld, runtime.CurrentCallbackThisArgField);
+        }
         IL.Emit(OpCodes.Ldloc, resultTmp);
 
         SetStackUnknown();
