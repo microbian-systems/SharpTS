@@ -936,6 +936,33 @@ public partial class RuntimeEmitter
         var loopStartLabel = il.DefineLabel();
         var loopEndLabel = il.DefineLabel();
 
+        // ECMA-262 22.1.3.21 step 4: if separator is undefined, return [str].
+        // Pre-fix this fell through to ToJsString → "undefined", then split
+        // "undefinedd" by "undefined" produced ["", "d"] (length 2) instead
+        // of ["undefinedd"] (length 1). Check both null (passed for absent
+        // arg) and $Undefined.Instance (passed via explicit `undefined`).
+        var sepNotNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brtrue, sepNotNullLabel);
+        // separator is null: return [str]
+        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(sepNotNullLabel);
+        var sepNotUndefSingletonLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, sepNotUndefSingletonLabel);
+        // separator is $Undefined: return [str]
+        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(sepNotUndefSingletonLabel);
+
         // var regexp = separator as $RegExp
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.TSRegExpType);

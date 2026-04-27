@@ -1907,6 +1907,12 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notHexLabel);
 
+        // ECMA-262: strings with "0b"/"0B" parse as binary literals,
+        // "0o"/"0O" as octal. Convert.ToDouble doesn't recognize these.
+        // Pattern: "0[bB][01]+" or "0[oO][0-7]+".
+        EmitParsePrefixedInt(il, strLocal, resultLocal, 'b', 2);
+        EmitParsePrefixedInt(il, strLocal, resultLocal, 'o', 8);
+
         // Handle "Infinity"/"+Infinity"/"-Infinity" strings before Convert.ToDouble
         // (which throws FormatException on those — caught below as NaN, but
         // ECMA-262 specifies +Infinity/-Infinity numeric values).
@@ -1973,6 +1979,65 @@ public partial class RuntimeEmitter
     /// bitwise-op and `x | 0` semantics. Required for packages like lodash
     /// and debug that rely on <c>hash |= 0</c> idioms.
     /// </summary>
+    /// <summary>
+    /// Emits IL that parses "0[Pp]<digits>" prefixed integer-literal strings
+    /// to a double. If the string at <paramref name="strLocal"/> doesn't
+    /// match the prefix shape, falls through. Used by ToNumber for binary
+    /// (0b/0B, radix 2) and octal (0o/0O, radix 8) literal support per
+    /// ECMA-262 7.1.4.1. Hex (0x/0X) has its own inline path since it
+    /// predates this helper.
+    /// </summary>
+    private void EmitParsePrefixedInt(ILGenerator il, LocalBuilder strLocal,
+        LocalBuilder resultLocal, char prefix, int radix)
+    {
+        var skipLabel = il.DefineLabel();
+
+        // strLocal == null? skip.
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        // Length >= 3?
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Blt, skipLabel);
+
+        // strLocal[0] == '0'?
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, (int)'0');
+        il.Emit(OpCodes.Bne_Un, skipLabel);
+
+        // (strLocal[1] | 0x20) == prefix?
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, 0x20);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Ldc_I4, (int)prefix);
+        il.Emit(OpCodes.Bne_Un, skipLabel);
+
+        // try { result = (double)Convert.ToInt64(strLocal.Substring(2), radix); }
+        il.BeginExceptionBlock();
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Substring", [_types.Int32])!);
+        il.Emit(OpCodes.Ldc_I4, radix);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.String, _types.Int32));
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.EndExceptionBlock();
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(skipLabel);
+    }
+
     private void EmitJsToInt32(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
@@ -2176,6 +2241,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notHexInConvLabel);
+        // ECMA-262: "0b"/"0B" → binary, "0o"/"0O" → octal literal parsing.
+        EmitParsePrefixedInt(il, trimmedLocal, resultLocal, 'b', 2);
+        EmitParsePrefixedInt(il, trimmedLocal, resultLocal, 'o', 8);
+
         // double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out result)
         il.Emit(OpCodes.Ldloc, trimmedLocal);
         il.Emit(OpCodes.Ldc_I4, (int)System.Globalization.NumberStyles.Float);
