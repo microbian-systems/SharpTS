@@ -3837,7 +3837,7 @@ test/built-ins/Number/prototype/toExponential/name.js TypeCheckError
 test/built-ins/Number/prototype/toExponential/nan.js Pass
 test/built-ins/Number/prototype/toExponential/not-a-constructor.js Pass
 test/built-ins/Number/prototype/toExponential/prop-desc.js TypeCheckError
-test/built-ins/Number/prototype/toExponential/range.js Fail
+test/built-ins/Number/prototype/toExponential/range.js Pass
 test/built-ins/Number/prototype/toExponential/return-abrupt-tointeger-fractiondigits-symbol.js Fail
 test/built-ins/Number/prototype/toExponential/return-abrupt-tointeger-fractiondigits.js Fail
 test/built-ins/Number/prototype/toExponential/return-values.js Fail
@@ -3857,7 +3857,7 @@ test/built-ins/Number/prototype/toFixed/length.js TypeCheckError
 test/built-ins/Number/prototype/toFixed/name.js TypeCheckError
 test/built-ins/Number/prototype/toFixed/not-a-constructor.js Pass
 test/built-ins/Number/prototype/toFixed/prop-desc.js TypeCheckError
-test/built-ins/Number/prototype/toFixed/range.js Fail
+test/built-ins/Number/prototype/toFixed/range.js Pass
 test/built-ins/Number/prototype/toFixed/return-type.js Pass
 test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-bigint.js Fail
 test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-symbol.js Fail
@@ -3934,7 +3934,7 @@ test/built-ins/Number/prototype/toString/length.js TypeCheckError
 test/built-ins/Number/prototype/toString/name.js TypeCheckError
 test/built-ins/Number/prototype/toString/not-a-constructor.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-default-radix.js Pass
-test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-1.js Fail
+test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-1.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-10.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-11.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-12.js Pass
@@ -3964,7 +3964,7 @@ test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-33.js Pa
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-34.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-35.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-36.js Pass
-test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-37.js Fail
+test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-37.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-4.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-5.js Pass
 test/built-ins/Number/prototype/toString/numeric-literal-tostring-radix-6.js Pass
