@@ -268,6 +268,13 @@ public partial class RuntimeEmitter
         // Helper method: private static void ConvertArgsForUnionTypes(MethodInfo method, object[] args)
         var convertArgsMethod = EmitTSFunctionConvertArgsHelper(typeBuilder, runtime);
 
+        // Helper method: private static void CoercePrimitiveArgs(MethodInfo method, object[] args)
+        // Coerces args whose target parameter type is `string` via $Runtime.ToJsString.
+        // Used for borrowed prototype methods like
+        // `Number.prototype.split = String.prototype.split; new Number(x).split(...)`
+        // where the wrapped helper expects (string, ...) but receives a non-string `this`.
+        var coercePrimitivesMethod = EmitTSFunctionCoercePrimitivesHelper(typeBuilder, runtime);
+
         // Invoke method: public object Invoke(object[] args)
         var invokeBuilder = typeBuilder.DefineMethod(
             "Invoke",
@@ -354,6 +361,12 @@ public partial class RuntimeEmitter
         invokeIL.Emit(OpCodes.Ldfld, methodField);
         invokeIL.Emit(OpCodes.Ldloc, adjustedArgsLocal);
         invokeIL.Emit(OpCodes.Call, convertArgsMethod);
+
+        // Coerce string-typed params from non-string args via $Runtime.ToJsString.
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, methodField);
+        invokeIL.Emit(OpCodes.Ldloc, adjustedArgsLocal);
+        invokeIL.Emit(OpCodes.Call, coercePrimitivesMethod);
 
         // Publish the un-adjusted caller args to the thread-static $Runtime._currentArguments
         // slot so flagged function bodies (those that reference JS `arguments`) can see
@@ -1183,6 +1196,169 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ret);
 
+        return method;
+    }
+
+    /// <summary>
+    /// Emits a private static helper on $TSFunction that coerces primitive-
+    /// typed arguments before reflection-Invoke. Without this, calling a
+    /// helper that expects a <c>string</c> parameter via reflection with a
+    /// non-string boxed argument throws ArgumentException at the CLR level.
+    /// Pattern: <c>Number.prototype.split = String.prototype.split; new
+    /// Number(100).split(1, 1)</c> — the wrapped StringSplit helper takes
+    /// (string, string, ...) but receives a $Object boxed-Number receiver.
+    /// Iterates parameters and calls <c>$Runtime.ToJsString</c> via late-bound
+    /// reflection on args[i] when paramType == typeof(string) and args[i] is
+    /// not already a string. Late-bound because $TSFunction is finalized
+    /// before $Runtime, so the MethodBuilder reference isn't available at IL
+    /// emit time. Caches the resolved MethodInfo in a static field.
+    /// </summary>
+    private MethodBuilder EmitTSFunctionCoercePrimitivesHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // Static cache field for the resolved $Runtime.ToJsString MethodInfo.
+        var toJsStringCacheField = typeBuilder.DefineField(
+            "_toJsStringCache",
+            _types.MethodInfo,
+            FieldAttributes.Private | FieldAttributes.Static);
+
+        var method = typeBuilder.DefineMethod(
+            "CoercePrimitiveArgs",
+            MethodAttributes.Private | MethodAttributes.Static,
+            _types.Void,
+            [_types.MethodInfo, _types.ObjectArray]
+        );
+        var il = method.GetILGenerator();
+
+        var paramsLocal = il.DeclareLocal(_types.MakeArrayType(_types.ParameterInfo));
+        var countLocal = il.DeclareLocal(_types.Int32);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var paramTypeLocal = il.DeclareLocal(_types.Type);
+        var stringTypeLocal = il.DeclareLocal(_types.Type);
+        var toJsStringLocal = il.DeclareLocal(_types.MethodInfo);
+        var oneArgLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // params = method.GetParameters()
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.MethodBase.GetMethod("GetParameters")!);
+        il.Emit(OpCodes.Stloc, paramsLocal);
+
+        // count = Math.Min(args.Length, params.Length)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Call, _types.Math.GetMethod("Min", [_types.Int32, _types.Int32])!);
+        il.Emit(OpCodes.Stloc, countLocal);
+
+        // stringType = typeof(string)
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Stloc, stringTypeLocal);
+
+        // toJsString = _toJsStringCache; if null, resolve via typeof($TSFunction).Assembly.GetType("$Runtime").GetMethod("ToJsString") and cache.
+        il.Emit(OpCodes.Ldsfld, toJsStringCacheField);
+        il.Emit(OpCodes.Stloc, toJsStringLocal);
+        var haveCache = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, toJsStringLocal);
+        il.Emit(OpCodes.Brtrue, haveCache);
+
+        // typeof($TSFunction) → Type
+        il.Emit(OpCodes.Ldtoken, typeBuilder);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        // .Assembly
+        il.Emit(OpCodes.Callvirt, _types.Type.GetProperty("Assembly")!.GetGetMethod()!);
+        // .GetType("$Runtime")
+        il.Emit(OpCodes.Ldstr, "$Runtime");
+        il.Emit(OpCodes.Callvirt, _types.Assembly.GetMethod("GetType", [_types.String])!);
+        // .GetMethod("ToJsString")
+        il.Emit(OpCodes.Ldstr, "ToJsString");
+        il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("GetMethod", [_types.String])!);
+        // cache
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stsfld, toJsStringCacheField);
+        il.Emit(OpCodes.Stloc, toJsStringLocal);
+        il.MarkLabel(haveCache);
+
+        // If resolution failed (returned null), bail out — caller's reflection.Invoke
+        // will surface the original ArgumentException.
+        var bail = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, toJsStringLocal);
+        il.Emit(OpCodes.Brfalse, bail);
+
+        // i = 0
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        var loopCond = il.DefineLabel();
+        var loopBody = il.DefineLabel();
+        var continueLbl = il.DefineLabel();
+        il.Emit(OpCodes.Br, loopCond);
+
+        il.MarkLabel(loopBody);
+
+        // paramType = params[i].ParameterType
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("ParameterType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, paramTypeLocal);
+
+        // if (paramType != typeof(string)) continue
+        il.Emit(OpCodes.Ldloc, paramTypeLocal);
+        il.Emit(OpCodes.Ldloc, stringTypeLocal);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Inequality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Brtrue, continueLbl);
+
+        // arg = args[i]
+        // if (arg == null) continue
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Brfalse, continueLbl);
+
+        // if (arg is string) continue
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, continueLbl);
+
+        // oneArg = new object[1] { args[i] }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, oneArgLocal);
+
+        // args[i] = (string) toJsString.Invoke(null, oneArg)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, toJsStringLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, oneArgLocal);
+        il.Emit(OpCodes.Callvirt, _types.MethodBase.GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        il.MarkLabel(continueLbl);
+        // i++
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(loopCond);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, countLocal);
+        il.Emit(OpCodes.Blt, loopBody);
+
+        il.MarkLabel(bail);
+        il.Emit(OpCodes.Ret);
         return method;
     }
 }
