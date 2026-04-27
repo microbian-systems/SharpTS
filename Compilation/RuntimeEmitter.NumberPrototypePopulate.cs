@@ -37,10 +37,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(doFillLabel);
 
-        // Wire with explicit JS-spec name + length per ECMA-262.
+        // Wire with explicit JS-spec name + length per ECMA-262. Number's
+        // prototype methods take (thisNumberValue, digits/precision/radix);
+        // name first param "__this" so $TSFunction.InvokeWithThis prepends
+        // the receiver. Without this, `n.toExponential(1000)` would map
+        // 1000 to value (the first arg) and lose the receiver.
         void Wire(string jsName, MethodBuilder? helper, int jsLength)
         {
             if (helper is null) return;
+            try { helper.DefineParameter(1, System.Reflection.ParameterAttributes.None, "__this"); }
+            catch { /* already named — ignore */ }
             il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
             il.Emit(OpCodes.Ldstr, jsName);
             il.Emit(OpCodes.Ldnull);

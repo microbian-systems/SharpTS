@@ -931,6 +931,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var valueLocal = il.DeclareLocal(_types.Double);
+        var receiverLocal = il.DeclareLocal(_types.Object);
         var digitsLocal = il.DeclareLocal(_types.Int32);
         var validDigitsLabel = il.DefineLabel();
         var getDigitsLabel = il.DefineLabel();
@@ -938,12 +939,31 @@ public partial class RuntimeEmitter
         var digitsFromIntLabel = il.DefineLabel();
         var afterDigitsLabel = il.DefineLabel();
 
-        // Get value as double (NaN if not double)
+        // Boxed primitive unwrap: if receiver is $Object with __primitiveValue
+        // marker, use the primitive value (ECMA-262 thisNumberValue semantics).
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, receiverLocal);
+        var notBoxedLabel = il.DefineLabel();
+        var primValLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, primValLocal);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Brfalse, notBoxedLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, notBoxedLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Stloc, receiverLocal);
+        il.MarkLabel(notBoxedLabel);
+
+        // Get value as double (NaN if not double)
+        il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
         var notDoubleLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notDoubleLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Unbox_Any, _types.Double);
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, getDigitsLabel);
@@ -1003,6 +1023,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var valueLocal = il.DeclareLocal(_types.Double);
+        var receiverLocal = il.DeclareLocal(_types.Object);
         var precisionLocal = il.DeclareLocal(_types.Int32);
         var hasPrecisionLabel = il.DefineLabel();
         var precisionFromDoubleLabel = il.DefineLabel();
@@ -1014,12 +1035,30 @@ public partial class RuntimeEmitter
         var notNegInfLabel = il.DefineLabel();
         var formatLabel = il.DefineLabel();
 
-        // Get value as double (NaN if not double)
+        // Boxed primitive unwrap (ECMA-262 thisNumberValue).
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, receiverLocal);
+        var notBoxedPLabel = il.DefineLabel();
+        var primValLocalP = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, primValLocalP);
+        il.Emit(OpCodes.Ldloc, primValLocalP);
+        il.Emit(OpCodes.Brfalse, notBoxedPLabel);
+        il.Emit(OpCodes.Ldloc, primValLocalP);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, notBoxedPLabel);
+        il.Emit(OpCodes.Ldloc, primValLocalP);
+        il.Emit(OpCodes.Stloc, receiverLocal);
+        il.MarkLabel(notBoxedPLabel);
+
+        // Get value as double (NaN if not double)
+        il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
         var notDoubleLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notDoubleLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Unbox_Any, _types.Double);
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, hasPrecisionLabel);
@@ -1147,6 +1186,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var valueLocal = il.DeclareLocal(_types.Double);
+        var receiverLocal = il.DeclareLocal(_types.Object);
         var digitsLocal = il.DeclareLocal(_types.Int32);
         var notNaNLabel = il.DefineLabel();
         var notPosInfLabel = il.DefineLabel();
@@ -1157,12 +1197,30 @@ public partial class RuntimeEmitter
         var validateDigitsLabel = il.DefineLabel();
         var formatWithDigitsLabel = il.DefineLabel();
 
-        // Get value as double (NaN if not double)
+        // Boxed primitive unwrap (ECMA-262 thisNumberValue).
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, receiverLocal);
+        var notBoxedELabel = il.DefineLabel();
+        var primValLocalE = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, primValLocalE);
+        il.Emit(OpCodes.Ldloc, primValLocalE);
+        il.Emit(OpCodes.Brfalse, notBoxedELabel);
+        il.Emit(OpCodes.Ldloc, primValLocalE);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, notBoxedELabel);
+        il.Emit(OpCodes.Ldloc, primValLocalE);
+        il.Emit(OpCodes.Stloc, receiverLocal);
+        il.MarkLabel(notBoxedELabel);
+
+        // Get value as double (NaN if not double)
+        il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
         var notDoubleLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notDoubleLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Unbox_Any, _types.Double);
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, notNaNLabel);
@@ -1264,6 +1322,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var valueLocal = il.DeclareLocal(_types.Double);
+        var receiverLocal = il.DeclareLocal(_types.Object);
         var radixLocal = il.DeclareLocal(_types.Int32);
         var notNaNLabel = il.DefineLabel();
         var notPosInfLabel = il.DefineLabel();
@@ -1275,12 +1334,33 @@ public partial class RuntimeEmitter
         var convertLabel = il.DefineLabel();
         var notZeroLabel = il.DefineLabel();
 
-        // Get value as double (NaN if not double)
+        // Boxed primitive unwrap: if receiver is $Object with __primitiveValue
+        // marker (Stage 4z19 wrapper from `new Number(x)`), use the primitive
+        // value as the receiver. ECMA-262 thisNumberValue extracts [[NumberData]].
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, receiverLocal);
+        var notBoxedNumLabel = il.DefineLabel();
+        var primValLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, primValLocal);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Brfalse, notBoxedNumLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, notBoxedNumLabel);
+        // Replace receiver with unwrapped primitive
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Stloc, receiverLocal);
+        il.MarkLabel(notBoxedNumLabel);
+
+        // Get value as double (NaN if not double)
+        il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
         var notDoubleLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notDoubleLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, receiverLocal);
         il.Emit(OpCodes.Unbox_Any, _types.Double);
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, hasRadixLabel);
