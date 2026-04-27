@@ -419,6 +419,12 @@ public partial class TypeChecker
                     throw new TypeCheckException($" Cannot assign '{valueType}' to number index signature type '{rec2.NumberIndexType}'.");
                 return valueType;
             }
+
+            // Allow numeric index assignment on records/interfaces/instances
+            // without an explicit number-index signature. JS allows arbitrary
+            // numeric-key assignment on plain objects (`var o = {}; o[0] = 1`).
+            if (objType is TypeInfo.Record or TypeInfo.Interface or TypeInfo.Instance)
+                return valueType;
         }
 
         // JS treats built-in objects (Date, RegExp, Map, Set, Promise, Function,
