@@ -4133,7 +4133,7 @@ test/built-ins/String/fromCodePoint/name.js TypeCheckError
 test/built-ins/String/fromCodePoint/not-a-constructor.js Pass
 test/built-ins/String/fromCodePoint/number-is-out-of-range.js Pass
 test/built-ins/String/fromCodePoint/return-string-value.js Pass
-test/built-ins/String/fromCodePoint/to-number-conversions.js RuntimeError
+test/built-ins/String/fromCodePoint/to-number-conversions.js Pass
 test/built-ins/String/is-a-constructor.js Pass
 test/built-ins/String/length.js TypeCheckError
 test/built-ins/String/numeric-properties.js TypeCheckError
