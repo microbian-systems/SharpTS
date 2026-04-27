@@ -91,6 +91,19 @@ public sealed class StringStaticEmitter : IStaticTypeEmitterStrategy
             return true;
         }
 
+        // Constructor metadata (ECMA-262 §22.1.2): String.length is 1, name is "String".
+        if (propertyName == "length")
+        {
+            ctx.IL.Emit(OpCodes.Ldc_R8, 1.0);
+            ctx.IL.Emit(OpCodes.Box, ctx.Types.Double);
+            return true;
+        }
+        if (propertyName == "name")
+        {
+            ctx.IL.Emit(OpCodes.Ldstr, "String");
+            return true;
+        }
+
         MethodInfo? method = propertyName switch
         {
             "fromCharCode"  => runtime.StringFromCharCode,

@@ -107,6 +107,14 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Ldc_R8, 2.220446049250313e-16); // 2^-52
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
+            // Constructor metadata properties (ECMA-262 §21.1.2): Number.length is 1, name is "Number".
+            case "length":
+                il.Emit(OpCodes.Ldc_R8, 1.0);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+            case "name":
+                il.Emit(OpCodes.Ldstr, "Number");
+                return true;
         }
 
         // Method references as values (issue #60). Wrap the matching $Runtime
@@ -213,5 +221,6 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
         "MAX_VALUE" or "MIN_VALUE" or "NaN" or "POSITIVE_INFINITY" or
         "NEGATIVE_INFINITY" or "MAX_SAFE_INTEGER" or "MIN_SAFE_INTEGER" or "EPSILON"
         or "isNaN" or "isFinite" or "isInteger" or "isSafeInteger"
-        or "parseInt" or "parseFloat";
+        or "parseInt" or "parseFloat"
+        or "length" or "name";
 }

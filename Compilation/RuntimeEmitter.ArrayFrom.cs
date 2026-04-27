@@ -33,6 +33,28 @@ public partial class RuntimeEmitter
         var loopEndLabel = il.DefineLabel();
         var returnLabel = il.DefineLabel();
 
+        // ECMA-262 23.1.2.1 Array.from step 1: ToObject(items). Throws TypeError
+        // for null / undefined receivers. Pre-fix tolerated these silently
+        // (empty result), but Test262 explicitly tests `Array.from(null)` /
+        // `Array.from(undefined)` for the throw.
+        var nonNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, nonNullLabel);
+        il.Emit(OpCodes.Ldstr, "Array.from requires an array-like object - not null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(nonNullLabel);
+        var nonUndefLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, nonUndefLabel);
+        il.Emit(OpCodes.Ldstr, "Array.from requires an array-like object - not null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(nonUndefLabel);
+
         // ECMA-262 Array.from: if @@iterator is missing, treat receiver as
         // array-like (read length, iterate by index). The IterateToList
         // fallback enumerates Dictionary<string,object> as KeyValuePair —
