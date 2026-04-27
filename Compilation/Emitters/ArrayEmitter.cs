@@ -553,7 +553,10 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         il.Emit(OpCodes.Ldsfld, runtime.CurrentCallbackThisArgField);
         il.Emit(OpCodes.Stloc, savedLocal);
 
-        // Stash thisArg (arg 1) into the thread-static.
+        // Stash thisArg (arg 1) into the thread-static. When no thisArg is
+        // provided, push $Undefined so strict-mode callbacks see
+        // `this === undefined` per ECMA-262 (sloppy mode coerces undefined to
+        // globalThis at the callback's prologue if needed).
         if (arguments.Count >= 2)
         {
             emitter.EmitExpression(arguments[1]);
@@ -561,7 +564,7 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         }
         else
         {
-            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         }
         il.Emit(OpCodes.Stsfld, runtime.CurrentCallbackThisArgField);
 
