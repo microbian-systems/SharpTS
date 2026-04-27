@@ -732,11 +732,11 @@ public partial class RuntimeEmitter
         var loopEnd = il.DefineLabel();
         var doneLabel = il.DefineLabel();
 
-        // targetLength = (int)(double)args[0]
+        // targetLength = (int)$Runtime.ToNumber(args[0]) — coerce non-double per ECMA-262.
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Stloc, targetLengthLocal);
 
@@ -828,11 +828,11 @@ public partial class RuntimeEmitter
         var loopEnd = il.DefineLabel();
         var doneLabel = il.DefineLabel();
 
-        // targetLength = (int)(double)args[0]
+        // targetLength = (int)$Runtime.ToNumber(args[0]) — coerce non-double per ECMA-262.
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Stloc, targetLengthLocal);
 
@@ -1328,11 +1328,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, lengthLocal);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        // codePoint = (int)(double)args[i]
+        // codePoint = (int)$Runtime.ToNumber(args[i]) — coerce non-double per ECMA-262.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Stloc, codePointLocal);
 
