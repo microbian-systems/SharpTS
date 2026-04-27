@@ -1777,6 +1777,23 @@ public partial class RuntimeEmitter
         // `Object.defineProperty(child, "length", {value:2})` (PDS-only) must
         // override an inherited accessor on proto.
         il.MarkLabel(tsObjectLabel);
+        // hasOwnProperty short-circuit (Stage 4z15 follow-on): expose as a
+        // $TSFunction wrapping HasOwnPropertyHelper bound to this $Object.
+        var notHopTSObjLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "hasOwnProperty");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notHopTSObjLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, runtime.HasOwnPropertyHelperMethod);
+        il.Emit(OpCodes.Ldtoken, runtime.HasOwnPropertyHelperMethod.DeclaringType!);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+            _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notHopTSObjLabel);
+
         var tsObjectInstanceLocal = il.DeclareLocal(runtime.TSObjectType);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSObjectType);
@@ -1944,6 +1961,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(dictLabel);
+        // hasOwnProperty short-circuit: return a $TSFunction wrapping
+        // HasOwnPropertyHelper bound to this dict. Same pattern as
+        // GetFunctionMethod for $TSFunction receivers (Stage 4z15).
+        var notHopDictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "hasOwnProperty");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notHopDictLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, runtime.HasOwnPropertyHelperMethod);
+        il.Emit(OpCodes.Ldtoken, runtime.HasOwnPropertyHelperMethod.DeclaringType!);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+            _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notHopDictLabel);
+
         // Check for getter accessor via $PropertyDescriptorStore - fully standalone, no reflection
         var getterLocal = il.DeclareLocal(_types.Object);
         var noGetterLabel = il.DefineLabel();
