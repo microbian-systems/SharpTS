@@ -254,7 +254,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, iterableLocal);
         il.MarkLabel(iterableSet);
 
-        // mapFn = args.Length > 1 ? args[1] : null
+        // mapFn = args.Length > 1 ? args[1] : $Undefined.Instance
+        // (absent → $Undefined so ArrayFrom can distinguish from explicit null
+        // per ECMA-262 23.1.2.1 step 2: undefined skips mapping; null throws.)
         var hasMapFn = il.DefineLabel();
         var mapFnSet = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, argsLocal);
@@ -262,7 +264,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Bgt, hasMapFn);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Stloc, mapFnLocal);
         il.Emit(OpCodes.Br, mapFnSet);
         il.MarkLabel(hasMapFn);
