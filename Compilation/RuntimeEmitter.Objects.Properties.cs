@@ -2672,7 +2672,24 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
 
             il.MarkLabel(notLengthLabel);
-            // Silently ignore other named writes on arrays.
+            // Other named writes on arrays go to PDS as data descriptors.
+            // ECMA-262 23.1.5: arrays are exotic objects but accept arbitrary
+            // named property assignment via [[DefineOwnProperty]]. Test262
+            // patterns like `var arr = []; arr.foo = ...; arr.foo()` rely on
+            // this. GetFieldsProperty's PDS-data-descriptor arm reads it back.
+            {
+                var arrFbDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+                il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+                il.Emit(OpCodes.Stloc, arrFbDescLocal);
+                il.Emit(OpCodes.Ldloc, arrFbDescLocal);
+                il.Emit(OpCodes.Ldarg_2);
+                il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldloc, arrFbDescLocal);
+                il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+                il.Emit(OpCodes.Pop);
+            }
             il.Emit(OpCodes.Ret);
         }
 
