@@ -15,13 +15,43 @@ public partial class RuntimeEmitter
         );
         runtime.JsonParse = method;
 
-        // We need to emit a call to a method that converts JSON to Dict/List
-        // Since this requires recursive conversion, we emit a helper method
         var il = method.GetILGenerator();
+        var resultLocal = il.DeclareLocal(_types.Object);
+        var endLabel = il.DefineLabel();
 
-        // Call JsonParseHelper which we'll emit separately
+        // try { return JsonParseHelper(arg); }
+        // catch (Exception ex) {
+        //   if (ex.Data.Contains("__tsValue")) rethrow;
+        //   throw $SyntaxError(ex.Message); // ECMA-262 24.5.1.1: parse failures throw SyntaxError
+        // }
+        il.BeginExceptionBlock();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, EmitJsonParseHelper(typeBuilder));
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Leave, endLabel);
+
+        il.BeginCatchBlock(_types.Exception);
+        var exLocal = il.DeclareLocal(_types.Exception);
+        il.Emit(OpCodes.Stloc, exLocal);
+        var rethrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Data").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__tsValue");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "Contains", _types.Object));
+        il.Emit(OpCodes.Brtrue, rethrowLabel);
+
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Message").GetGetMethod()!);
+        il.Emit(OpCodes.Newobj, runtime.TSSyntaxErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(rethrowLabel);
+        il.Emit(OpCodes.Rethrow);
+        il.EndExceptionBlock();
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
     }
 
