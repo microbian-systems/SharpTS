@@ -1663,6 +1663,30 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(isObjectLikeLabel);
 
+        // Boxed primitive marker fast-path: if the receiver carries
+        // __primitiveType + __primitiveValue (Stage 4z19 wrappers), Stringify
+        // the underlying primitive directly. Without this, toString walks the
+        // prototype chain to the StringPrototypeGenericStub which doesn't read
+        // the marker — returns receiver-as-string instead of the primitive's
+        // natural string repr (`new Object(true).valueOf()` gives wrapper, not true).
+        var primValLocal = il.DeclareLocal(_types.Object);
+        var notBoxedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, primValLocal);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Brfalse, notBoxedLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, notBoxedLabel);
+        // Stringify the primitive — handles bool/double/string identically to
+        // the top-level fallback path.
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBoxedLabel);
+
         // emptyArgs = new object[0]
         var emptyArgsLocal = il.DeclareLocal(_types.ObjectArray);
         il.Emit(OpCodes.Ldc_I4_0);
