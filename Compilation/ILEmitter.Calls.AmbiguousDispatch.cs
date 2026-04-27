@@ -105,9 +105,7 @@ public partial class ILEmitter
                 break;
 
             case "slice":
-                // str.slice(start, end?) - with negative index support
-                // StringSlice(string str, int argCount, object[] args)
-                IL.Emit(OpCodes.Ldc_I4, arguments.Count); // argCount
+                // StringSlice(string str, object[] args). argCount derived from args.Length.
                 IL.Emit(OpCodes.Ldc_I4, arguments.Count);
                 IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
                 for (int i = 0; i < arguments.Count; i++)

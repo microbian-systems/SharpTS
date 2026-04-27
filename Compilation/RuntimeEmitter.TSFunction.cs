@@ -1243,6 +1243,7 @@ public partial class RuntimeEmitter
         var paramTypeLocal = il.DeclareLocal(_types.Type);
         var stringTypeLocal = il.DeclareLocal(_types.Type);
         var doubleTypeLocal = il.DeclareLocal(_types.Type);
+        var int32TypeLocal = il.DeclareLocal(_types.Type);
         var listTypeLocal = il.DeclareLocal(_types.Type);
         var toJsStringLocal = il.DeclareLocal(_types.MethodInfo);
         var toNumberLocal = il.DeclareLocal(_types.MethodInfo);
@@ -1275,6 +1276,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldtoken, _types.ListOfObject);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
         il.Emit(OpCodes.Stloc, listTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.Int32);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Stloc, int32TypeLocal);
 
         // Local helper: resolve a $Runtime static method by name into a cache field.
         // Stack-in/out: nothing; stores resolved MethodInfo in `localOut`.
@@ -1333,9 +1337,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, paramTypeLocal);
 
         // Branch on paramType: string → ToJsString; double → ToNumber;
-        // List<object> → ArrayLikeMaterialize; else continue.
+        // int → ToNumber → Conv_I4; List<object> → ArrayLikeMaterialize; else continue.
         var stringBranch = il.DefineLabel();
         var doubleBranch = il.DefineLabel();
+        var int32Branch = il.DefineLabel();
         var listBranch = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, paramTypeLocal);
         il.Emit(OpCodes.Ldloc, stringTypeLocal);
@@ -1345,6 +1350,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, doubleTypeLocal);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
         il.Emit(OpCodes.Brtrue, doubleBranch);
+        il.Emit(OpCodes.Ldloc, paramTypeLocal);
+        il.Emit(OpCodes.Ldloc, int32TypeLocal);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Brtrue, int32Branch);
         il.Emit(OpCodes.Ldloc, paramTypeLocal);
         il.Emit(OpCodes.Ldloc, listTypeLocal);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
@@ -1432,6 +1441,56 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldloc, oneArgLocal);
         il.Emit(OpCodes.Callvirt, _types.MethodBase.GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Br, continueLbl);
+
+        // Int32 branch — helpers like StringSlice take an int argCount param.
+        // Coerce via ToNumber, then unbox + Conv_I4 + box Int32. Bool/double/
+        // string args all flow through ECMA-262 ToInteger.
+        il.MarkLabel(int32Branch);
+
+        // if (arg == null) coerce to 0
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        var int32ArgNotNull = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, int32ArgNotNull);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Br, continueLbl);
+        il.MarkLabel(int32ArgNotNull);
+
+        // if (arg is int) continue
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Isinst, _types.Int32);
+        il.Emit(OpCodes.Brtrue, continueLbl);
+
+        // oneArg = new object[1] { args[i] }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, oneArgLocal);
+
+        // d = (double) toNumber.Invoke(null, oneArg); args[i] = (Int32)(int)d (boxed).
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, toNumberLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, oneArgLocal);
+        il.Emit(OpCodes.Callvirt, _types.MethodBase.GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Box, _types.Int32);
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Br, continueLbl);
 

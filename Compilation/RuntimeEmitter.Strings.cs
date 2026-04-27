@@ -548,13 +548,16 @@ public partial class RuntimeEmitter
 
     private void EmitStringSlice(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // StringSlice(string str, int argCount, object[] args) -> string
-        // Handles negative indices and optional end parameter
+        // StringSlice(string str, object[] args) -> string
+        // Handles negative indices and optional end parameter.
+        // argCount derived from args.Length so the helper is borrowable via
+        // \$TSFunction reflection without a metadata mismatch — the explicit
+        // int argCount param previously confused the borrowed-pattern dispatch.
         var method = typeBuilder.DefineMethod(
             "StringSlice",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.String,
-            [_types.String, _types.Int32, _types.ObjectArray]
+            [_types.String, _types.ObjectArray]
         );
         runtime.StringSlice = method;
 
@@ -571,20 +574,32 @@ public partial class RuntimeEmitter
         // start = ToIntegerOrInfinity(args[0], 0). Handles NaN/±Infinity per spec
         // (NaN→0, +Inf→intMax, -Inf→intMin). Conv_I4 alone is undefined behavior
         // for those values.
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
         il.Emit(OpCodes.Stloc, startLocal);
 
-        // end = argCount > 1 ? ToIntegerOrInfinity(args[1], 0) : length
+        // end = args.Length > 1 && args[1] != null/undefined ? ToIntegerOrInfinity(args[1], 0) : length
         var noEndArg = il.DefineLabel();
         var endArgDone = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ble, noEndArg);
-        il.Emit(OpCodes.Ldarg_2);
+        // null/undefined → use length per ECMA-262 22.1.3.20.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Brfalse, noEndArg);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, noEndArg);
+        il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Ldc_I4_0);

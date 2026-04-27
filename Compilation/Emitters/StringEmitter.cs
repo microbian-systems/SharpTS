@@ -431,7 +431,8 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        il.Emit(OpCodes.Ldc_I4, arguments.Count);
+        // StringSlice now takes (string, object[]) — argCount derived from
+        // args.Length internally so the helper is borrowable via \$TSFunction.
         il.Emit(OpCodes.Ldc_I4, arguments.Count);
         il.Emit(OpCodes.Newarr, ctx.Types.Object);
         for (int i = 0; i < arguments.Count; i++)
