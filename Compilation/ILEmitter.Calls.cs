@@ -385,6 +385,9 @@ public partial class ILEmitter
             "slice"         => (runtime.ArraySlice,      "argsArray", _ctx.Types.Object),
             "indexOf"       => (runtime.ArrayIndexOf,    "search",    _ctx.Types.Double),
             "lastIndexOf"   => (runtime.ArrayLastIndexOf,"search",    _ctx.Types.Double),
+            "entries"       => (runtime.ArrayEntries,    "noArg",     _ctx.Types.Object),
+            "keys"          => (runtime.ArrayKeys,       "noArg",     _ctx.Types.Object),
+            "values"        => (runtime.ArrayValues,     "noArg",     _ctx.Types.Object),
             _ => null,
         };
         if (sig is null)
@@ -530,6 +533,10 @@ public partial class ILEmitter
                     EmitBoxIfNeeded(methodArgs[i]);
                     IL.Emit(OpCodes.Stelem_Ref);
                 }
+                break;
+            case "noArg":
+                // Helper takes only the materialized list — no extra args
+                // (entries/keys/values).
                 break;
         }
 
