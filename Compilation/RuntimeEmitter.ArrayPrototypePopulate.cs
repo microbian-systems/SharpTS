@@ -20,13 +20,23 @@ public partial class RuntimeEmitter
     /// <c>ILEmitter.Calls.cs</c> still handles
     /// <c>Array.prototype.X.call(receiver, …)</c> syntactically.
     /// </remarks>
-    private void EmitArrayPrototypePopulate(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    /// <summary>
+    /// Defines the populate-method shell early so other emitters
+    /// (GetListProperty's prototype-chain fallback) can reference the
+    /// MethodBuilder before all Array* helper bodies have been emitted.
+    /// </summary>
+    private void DefineArrayPrototypePopulateShell(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
+        runtime.ArrayPrototypePopulateMethod = typeBuilder.DefineMethod(
             "_ArrayPrototypePopulate",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Void,
             Type.EmptyTypes);
+    }
+
+    private void EmitArrayPrototypePopulate(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = runtime.ArrayPrototypePopulateMethod;
 
         var il = method.GetILGenerator();
         var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item",
@@ -138,7 +148,5 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
 
         il.Emit(OpCodes.Ret);
-
-        runtime.ArrayPrototypePopulateMethod = method;
     }
 }

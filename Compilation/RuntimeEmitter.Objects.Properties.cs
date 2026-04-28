@@ -1192,7 +1192,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
         il.Emit(OpCodes.Ret);
 
+        // Final fallback: walk Array.prototype singleton dict. ECMA-262 says a
+        // List receiver inherits from %Array.prototype%, so user-added entries
+        // (`Array.prototype.foo = 1`) reach indexed-access reads as
+        // `arr.foo === 1`. Populate the prototype dict if not yet populated
+        // so `length` (set in the populate body) is included.
         il.MarkLabel(reallyNullLabel);
+        var arrayProtoFallbackLabel = il.DefineLabel();
+        il.Emit(OpCodes.Call, runtime.ArrayPrototypePopulateMethod);
+        var arrayProtoValLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, arrayProtoValLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue",
+            [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, arrayProtoFallbackLabel);
+        il.Emit(OpCodes.Ldloc, arrayProtoValLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(arrayProtoFallbackLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 

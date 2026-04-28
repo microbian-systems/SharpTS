@@ -372,6 +372,7 @@ public partial class RuntimeEmitter
         // Pre-define ObjectPrototypePopulate shell for ObjectStaticEmitter
         // to reference at compile time. Body emitted later.
         DefineObjectPrototypePopulateShell(typeBuilder, runtime);
+        DefineArrayPrototypePopulateShell(typeBuilder, runtime);
         EmitGetFunctionMethod(typeBuilder, runtime);  // For bind/call/apply on functions
         // Pre-define IsBoxedPrimitiveOfType shell so InstanceOf can reference
         // it. Body emitted later (after the prototype singletons are defined).
