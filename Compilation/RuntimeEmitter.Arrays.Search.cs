@@ -94,16 +94,26 @@ public partial class RuntimeEmitter
     /// behave correctly. Length is clamped at 1M to guard against accidental
     /// runaway <c>length: 2**53-1</c> configurations.
     /// </summary>
-    private void EmitArrayLikeMaterialize(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    /// <summary>
+    /// Phase 1 — declare the MethodBuilder so call sites emitted before
+    /// <see cref="EmitArrayLikeMaterialize"/> (notably InvokeMethodValue's
+    /// $BoundArrayMethod receiver-rebind path) can reference it. Body is
+    /// filled in by EmitArrayLikeMaterialize, which depends on $Runtime
+    /// helpers (GetProperty, ToNumber) emitted later in EmitRuntimeClass.
+    /// </summary>
+    internal void DeclareArrayLikeMaterialize(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
+        runtime.ArrayLikeMaterialize = typeBuilder.DefineMethod(
             "ArrayLikeMaterialize",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.ListOfObject,
             [_types.Object]
         );
-        runtime.ArrayLikeMaterialize = method;
+    }
 
+    private void EmitArrayLikeMaterialize(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = runtime.ArrayLikeMaterialize;
         var il = method.GetILGenerator();
 
         var throwLabel = il.DefineLabel();

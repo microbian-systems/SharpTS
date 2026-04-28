@@ -419,6 +419,10 @@ public partial class RuntimeEmitter
         DefineLookupBuiltInStaticMember(typeBuilder, runtime);
         // InvokeValue/InvokeMethodValue must come before GetFieldsProperty (needs InvokeMethodValue for getters)
         // and before Promise methods (needed by InvokeCallback)
+        // Pre-declare ArrayLikeMaterialize's MethodBuilder so InvokeMethodValue
+        // can reference it for the $BoundArrayMethod receiver-rebind path.
+        // The body is filled in later (EmitArrayLikeMaterialize, line 544).
+        DeclareArrayLikeMaterialize(typeBuilder, runtime);
         EmitInvokeValue(typeBuilder, runtime);
         EmitInvokeMethodValue(typeBuilder, runtime);
         EmitGetFieldsProperty(typeBuilder, runtime);

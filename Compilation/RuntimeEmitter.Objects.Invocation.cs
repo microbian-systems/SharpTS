@@ -578,13 +578,52 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notPromisifyCallbackLabel);
 
-        // Check $BoundArrayMethod
+        // Check $BoundArrayMethod. ECMA-262 array prototype methods are generic —
+        // when reached via prototype-chain walk on a non-list receiver
+        // (`f.reduce(...)` where `f.__proto__ === [1,2,3]`), the bound `_list` is
+        // the prototype's array, but the spec requires `this = f`. Without the
+        // override below we'd silently iterate the prototype's elements and ignore
+        // user-set properties on `f` (e.g., `f.length = 0`).
         var notBoundArrayMethodLabel = il.DefineLabel();
+        var useOriginalBamLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
         il.Emit(OpCodes.Brfalse, notBoundArrayMethodLabel);
+
+        var bamLocal = il.DeclareLocal(runtime.BoundArrayMethodType);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Stloc, bamLocal);
+
+        // If receiver is null/undefined → use bamLocal as-is (legacy behavior).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, useOriginalBamLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, useOriginalBamLabel);
+
+        // If receiver === bamLocal._list → use bamLocal as-is.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, bamLocal);
+        il.Emit(OpCodes.Ldfld, runtime.BoundArrayMethodListField);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brtrue, useOriginalBamLabel);
+
+        // Receiver differs from the bound list — materialize and rebuild.
+        // Stash the original receiver in `_currentArrayLikeReceiver` so the
+        // callback's array slot (per ECMA-262) sees `f`, not the materialized
+        // copy. Mirrors the Array.prototype.X.call(receiver, ...) pattern path.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stsfld, runtime.CurrentArrayLikeReceiverField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ArrayLikeMaterialize);
+        il.Emit(OpCodes.Ldloc, bamLocal);
+        il.Emit(OpCodes.Ldfld, runtime.BoundArrayMethodNameField);
+        il.Emit(OpCodes.Newobj, runtime.BoundArrayMethodCtor);
+        il.Emit(OpCodes.Stloc, bamLocal);
+
+        il.MarkLabel(useOriginalBamLabel);
+        il.Emit(OpCodes.Ldloc, bamLocal);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Callvirt, runtime.BoundArrayMethodInvoke);
         il.Emit(OpCodes.Ret);

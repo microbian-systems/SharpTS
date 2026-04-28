@@ -2252,6 +2252,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notListCtorLabel);
+        // Numeric-string index — `GetProperty(list, "0")` must return list[0] so
+        // that `f[0]` for `f.__proto__ === [1,2,3]` walks the prototype chain
+        // and finds the array element. Without this branch the proto-chain walk
+        // bottoms out in GetListProperty's null fallback.
+        var listIdxLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, listIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+        var listNotIndexLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, listNotIndexLabel);
+        il.Emit(OpCodes.Ldloc, listIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, listNotIndexLabel);
+        il.Emit(OpCodes.Ldloc, listIdxLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, listNotIndexLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Ldloc, listIdxLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(listNotIndexLabel);
         // For other properties on List (like methods push, pop, etc.), use GetListProperty
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.ListOfObject);
@@ -2327,6 +2351,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notTSArrayCtorLabel);
+        // Numeric-string index — same purpose as the listLabel branch above:
+        // proto-chain walks (`f.__proto__ === [1,2,3]; f[0]`) bottom out here
+        // when the prototype is a $Array. Without this, GetListProperty returns
+        // null for any digit-string name and the array element is invisible.
+        var tsArrIdxLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, tsArrIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+        var tsArrNotIndexLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, tsArrNotIndexLabel);
+        il.Emit(OpCodes.Ldloc, tsArrIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, tsArrNotIndexLabel);
+        il.Emit(OpCodes.Ldloc, tsArrIdxLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, tsArrNotIndexLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Ldloc, tsArrIdxLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(tsArrNotIndexLabel);
         // For other properties on $Array (method names like push/pop/sort/etc.),
         // reuse GetListProperty — it returns the $BoundArrayMethod wrapper, and
         // $Array IS a List<object?> by inheritance, so the cast works.
