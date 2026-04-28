@@ -489,13 +489,16 @@ public class StringMethodTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void String_ReplaceAll_EdgeCases(ExecutionMode mode)
     {
+        // ECMA-262 22.1.3.20: empty search inserts replacement at every
+        // position 0..length (one between each char + start + end), so
+        // "hello".replaceAll("", "x") → "xhxexlxlxox", not "hello".
         var source = """
             console.log("hello".replaceAll("x", "y"));
             console.log("hello".replaceAll("", "x"));
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("hello\nhello\n", output);
+        Assert.Equal("hello\nxhxexlxlxox\n", output);
     }
 
     #endregion

@@ -1112,14 +1112,53 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, doneLabel);
 
         il.MarkLabel(emptySearchLabel);
-        // Empty search: spec says return str + replacement padded between
-        // every char and at both ends. Materialize via the same Regex path
-        // (an empty-pattern Regex.Replace inserts replacement at every
-        // position, matching ECMA-262 GetSubstitution semantics).
+        // ECMA-262 22.1.3.20: empty search inserts replacement at every
+        // position 0..len (one between each char + start + end). .NET's
+        // Regex.Replace with empty pattern only inserts at position 0.
+        // Build manually: replacement + str[0] + replacement + str[1] + ... + str[len-1] + replacement.
+        // Result length: len + (len + 1) * replacement.Length, but we use
+        // StringBuilder for simplicity.
+        var sbLocalE = il.DeclareLocal(_types.StringBuilder);
+        var iLocalE = il.DeclareLocal(_types.Int32);
+        var loopStartE = il.DefineLabel();
+        var loopEndE = il.DefineLabel();
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, _types.EmptyTypes));
+        il.Emit(OpCodes.Stloc, sbLocalE);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocalE);
+
+        il.MarkLabel(loopStartE);
+        il.Emit(OpCodes.Ldloc, iLocalE);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Bgt, loopEndE);
+        // sb.Append(replacement)
+        il.Emit(OpCodes.Ldloc, sbLocalE);
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Replace", [_types.String, _types.String, _types.String])!);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        // if (i < length) sb.Append(str[i])
+        var skipChar = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, iLocalE);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, skipChar);
+        il.Emit(OpCodes.Ldloc, sbLocalE);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocalE);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.Char));
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(skipChar);
+        il.Emit(OpCodes.Ldloc, iLocalE);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocalE);
+        il.Emit(OpCodes.Br, loopStartE);
+
+        il.MarkLabel(loopEndE);
+        il.Emit(OpCodes.Ldloc, sbLocalE);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
 
         il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Ret);

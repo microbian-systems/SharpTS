@@ -435,7 +435,19 @@ public static class StringBuiltIns
         }
 
         var search = args[0].ToObject()?.ToString() ?? "";
-        if (search.Length == 0) return RuntimeValue.FromString(str);
+        if (search.Length == 0)
+        {
+            // ECMA-262 22.1.3.20: empty search inserts replacement at every
+            // position 0..length (between each char + start + end).
+            // E.g. "a".replaceAll("","_") → "_a_".
+            var sb = new StringBuilder();
+            for (int i = 0; i <= str.Length; i++)
+            {
+                sb.Append(replacement);
+                if (i < str.Length) sb.Append(str[i]);
+            }
+            return RuntimeValue.FromString(sb.ToString());
+        }
         return RuntimeValue.FromString(str.Replace(search, replacement));
     }
 
