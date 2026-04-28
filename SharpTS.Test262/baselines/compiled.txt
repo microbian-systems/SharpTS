@@ -2934,14 +2934,14 @@ test/built-ins/Array/prototype/splice/target-array-non-extensible.js TypeCheckEr
 test/built-ins/Array/prototype/splice/target-array-with-non-configurable-property.js TypeCheckError
 test/built-ins/Array/prototype/splice/target-array-with-non-writable-property.js TypeCheckError
 test/built-ins/Array/prototype/splice/throws-if-integer-limit-exceeded.js TypeCheckError
-test/built-ins/Array/prototype/toLocaleString/S15.4.4.3_A1_T1.js TypeCheckError
-test/built-ins/Array/prototype/toLocaleString/S15.4.4.3_A3_T1.js TypeCheckError
+test/built-ins/Array/prototype/toLocaleString/S15.4.4.3_A1_T1.js RuntimeError
+test/built-ins/Array/prototype/toLocaleString/S15.4.4.3_A3_T1.js RuntimeError
 test/built-ins/Array/prototype/toLocaleString/invoke-element-tolocalestring.js TypeCheckError
 test/built-ins/Array/prototype/toLocaleString/length.js TypeCheckError
 test/built-ins/Array/prototype/toLocaleString/name.js TypeCheckError
 test/built-ins/Array/prototype/toLocaleString/not-a-constructor.js Pass
-test/built-ins/Array/prototype/toLocaleString/primitive_this_value.js TypeCheckError
-test/built-ins/Array/prototype/toLocaleString/primitive_this_value_getter.js TypeCheckError
+test/built-ins/Array/prototype/toLocaleString/primitive_this_value.js Fail
+test/built-ins/Array/prototype/toLocaleString/primitive_this_value_getter.js Fail
 test/built-ins/Array/prototype/toLocaleString/prop-desc.js TypeCheckError
 test/built-ins/Array/prototype/toLocaleString/resizable-buffer.js TypeCheckError
 test/built-ins/Array/prototype/toLocaleString/user-provided-tolocalestring-grow.js TypeCheckError
@@ -3018,7 +3018,7 @@ test/built-ins/Array/prototype/toString/S15.4.4.2_A1_T1.js Pass
 test/built-ins/Array/prototype/toString/S15.4.4.2_A1_T2.js Pass
 test/built-ins/Array/prototype/toString/S15.4.4.2_A1_T3.js Pass
 test/built-ins/Array/prototype/toString/S15.4.4.2_A1_T4.js TypeCheckError
-test/built-ins/Array/prototype/toString/S15.4.4.2_A3_T1.js TypeCheckError
+test/built-ins/Array/prototype/toString/S15.4.4.2_A3_T1.js RuntimeError
 test/built-ins/Array/prototype/toString/call-with-boolean.js Fail
 test/built-ins/Array/prototype/toString/length.js TypeCheckError
 test/built-ins/Array/prototype/toString/name.js TypeCheckError
