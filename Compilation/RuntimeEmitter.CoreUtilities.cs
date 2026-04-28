@@ -2207,16 +2207,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(notSymbolConvLabel);
 
-        // ECMA-262 7.1.4 step 2: BigInt → TypeError.
-        var notBigIntConvLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.BigInteger);
-        il.Emit(OpCodes.Brfalse, notBigIntConvLabel);
-        il.Emit(OpCodes.Ldstr, "Cannot convert a BigInt to a number");
-        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
-        il.Emit(OpCodes.Call, runtime.CreateException);
-        il.Emit(OpCodes.Throw);
-        il.MarkLabel(notBigIntConvLabel);
+        // BigInt → Number conversion: kept as the legacy fall-through-to-NaN
+        // path. ECMA-262 21.1.1.1 step 5 specifies a real BigInt-to-Number
+        // conversion (not throw, not NaN) — implementing that needs a
+        // BigInteger explicit-cast helper that handles every reachable path
+        // (including the negation path that produced an InvalidCastException
+        // when first attempted). Deferred.
 
         // undefined => NaN
         il.Emit(OpCodes.Ldarg_0);
