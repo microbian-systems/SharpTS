@@ -132,7 +132,7 @@ public partial class RuntimeEmitter
 
         // replacer is List - convert to HashSet<string>
         il.MarkLabel(replacerIsListLabel);
-        EmitConvertListToHashSet(il, allowedKeysLocal);
+        EmitConvertListToHashSet(il, allowedKeysLocal, runtime);
 
         il.MarkLabel(replacerDoneLabel);
 
@@ -220,9 +220,12 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits code to convert List&lt;object?&gt; to HashSet&lt;string&gt; (filtering for strings only).
+    /// Emits code to convert List&lt;object?&gt; to HashSet&lt;string&gt;. Per ECMA-262
+    /// 25.5.2.1 step 4.b: strings pass through; numbers ToString-coerce; other
+    /// types are dropped. (Number/String wrapper objects per spec also coerce —
+    /// not handled here because compiled mode doesn't expose those wrappers.)
     /// </summary>
-    private void EmitConvertListToHashSet(ILGenerator il, LocalBuilder allowedKeysLocal)
+    private void EmitConvertListToHashSet(ILGenerator il, LocalBuilder allowedKeysLocal, EmittedRuntime runtime)
     {
         var listLocal = il.DeclareLocal(_types.ListOfObject);
         var iLocal = il.DeclareLocal(_types.Int32);
@@ -231,6 +234,8 @@ public partial class RuntimeEmitter
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
         var skipLabel = il.DefineLabel();
+        var addLabel = il.DefineLabel();
+        var keyLocal = il.DeclareLocal(_types.String);
 
         // Cast replacer to List<object?>
         il.Emit(OpCodes.Ldarg_1);
@@ -257,14 +262,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", [_types.Int32]));
         il.Emit(OpCodes.Stloc, elemLocal);
 
-        // if (elem is string) allowedKeys.Add((string)elem)
+        // if (elem is string) keyLocal = (string)elem
         il.Emit(OpCodes.Ldloc, elemLocal);
         il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brfalse, skipLabel);
-
-        il.Emit(OpCodes.Ldloc, allowedKeysLocal);
+        var notStringLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notStringLabel);
         il.Emit(OpCodes.Ldloc, elemLocal);
         il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, keyLocal);
+        il.Emit(OpCodes.Br, addLabel);
+        il.MarkLabel(notStringLabel);
+
+        // if (elem is double) keyLocal = $Runtime.Stringify(elem)
+        il.Emit(OpCodes.Ldloc, elemLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+        il.Emit(OpCodes.Ldloc, elemLocal);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Stloc, keyLocal);
+
+        il.MarkLabel(addLabel);
+        il.Emit(OpCodes.Ldloc, allowedKeysLocal);
+        il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.HashSetOfString, "Add", [_types.String]));
         il.Emit(OpCodes.Pop);  // discard bool
 
