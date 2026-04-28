@@ -1375,6 +1375,10 @@ public partial class RuntimeEmitter
         // pass-through).
         il.MarkLabel(invokeHelperLabel);
         // requireObjectCoercibleThis.Invoke(null, new object[] { args[0] }) — throws.
+        // The reflection invoke wraps the helper's TypeError in a
+        // TargetInvocationException; unwrap and rethrow the InnerException so
+        // the JS-level catch sees the original $TypeError (with __tsValue
+        // intact and `e.constructor === TypeError` holding correctly).
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Dup);
@@ -1384,11 +1388,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Stloc, oneArgLocal);
+        il.BeginExceptionBlock();
         il.Emit(OpCodes.Ldloc, requireObjectCoercibleThisLocal);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldloc, oneArgLocal);
         il.Emit(OpCodes.Callvirt, _types.MethodBase.GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
         il.Emit(OpCodes.Pop);
+        il.BeginCatchBlock(_types.TargetInvocationException);
+        // Rethrow inner exception so JS catch sees the original error shape.
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "InnerException").GetGetMethod()!);
+        il.Emit(OpCodes.Throw);
+        il.EndExceptionBlock();
         il.MarkLabel(skipNullishThisCheckLabel);
 
         // i = 0
