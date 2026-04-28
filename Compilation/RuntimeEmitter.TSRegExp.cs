@@ -1061,12 +1061,106 @@ public partial class RuntimeEmitter
         _tsRegExpSplitMethod = method;
 
         var il = method.GetILGenerator();
+        var partsLocal = il.DeclareLocal(typeof(string[]));
+        var startLocal = il.DeclareLocal(_types.Int32);
+        var endLocal = il.DeclareLocal(_types.Int32);
+        var resultLocal = il.DeclareLocal(typeof(string[]));
 
-        // return _regex.Split(input)
+        // var parts = _regex.Split(input)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpRegexField);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, typeof(Regex).GetMethod("Split", [_types.String])!);
+        il.Emit(OpCodes.Stloc, partsLocal);
+
+        // ECMA-262 22.1.3.21: empty-match regex (e.g. /(?:)/) should NOT
+        // produce empty entries at the split boundaries. .NET's Regex.Split
+        // inserts a leading "" before the first match and trailing "" after
+        // the last match when both occur at the string boundary, giving
+        // "hello".split(/(?:)/) → ["", "h", "e", "l", "l", "o", ""] (7) when
+        // the spec wants ["h", "e", "l", "l", "o"] (5). Detection: regex
+        // matches the empty string at position 0 of the empty input string
+        // (i.e. it can match with zero-width). Trim leading + trailing "".
+        var skipTrimLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpRegexField);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Callvirt, typeof(Regex).GetMethod("IsMatch", [_types.String])!);
+        il.Emit(OpCodes.Brfalse, skipTrimLabel);
+
+        // start = 0
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, startLocal);
+        // end = parts.Length
+        il.Emit(OpCodes.Ldloc, partsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, endLocal);
+
+        // while (start < end && parts[start] == "") start++;
+        var startLoopLabel = il.DefineLabel();
+        var startLoopEndLabel = il.DefineLabel();
+        il.MarkLabel(startLoopLabel);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Bge, startLoopEndLabel);
+        il.Emit(OpCodes.Ldloc, partsLocal);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("op_Equality", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Brfalse, startLoopEndLabel);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, startLocal);
+        il.Emit(OpCodes.Br, startLoopLabel);
+        il.MarkLabel(startLoopEndLabel);
+
+        // while (end > start && parts[end-1] == "") end--;
+        var endLoopLabel = il.DefineLabel();
+        var endLoopEndLabel = il.DefineLabel();
+        il.MarkLabel(endLoopLabel);
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ble, endLoopEndLabel);
+        il.Emit(OpCodes.Ldloc, partsLocal);
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("op_Equality", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Brfalse, endLoopEndLabel);
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, endLocal);
+        il.Emit(OpCodes.Br, endLoopLabel);
+        il.MarkLabel(endLoopEndLabel);
+
+        // var result = new string[end - start]
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Newarr, _types.String);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // Array.Copy(parts, start, result, 0, end - start)
+        il.Emit(OpCodes.Ldloc, partsLocal);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Call, typeof(Array).GetMethod("Copy", [typeof(Array), _types.Int32, typeof(Array), _types.Int32, _types.Int32])!);
+
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(skipTrimLabel);
+        il.Emit(OpCodes.Ldloc, partsLocal);
         il.Emit(OpCodes.Ret);
     }
 

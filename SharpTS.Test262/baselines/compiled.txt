@@ -4412,8 +4412,8 @@ test/built-ins/String/prototype/match/S15.5.4.10_A1_T13.js Pass
 test/built-ins/String/prototype/match/S15.5.4.10_A1_T14.js Pass
 test/built-ins/String/prototype/match/S15.5.4.10_A1_T3.js TypeCheckError
 test/built-ins/String/prototype/match/S15.5.4.10_A1_T4.js RuntimeError
-test/built-ins/String/prototype/match/S15.5.4.10_A1_T5.js Pass
-test/built-ins/String/prototype/match/S15.5.4.10_A1_T6.js Pass
+test/built-ins/String/prototype/match/S15.5.4.10_A1_T5.js RuntimeError
+test/built-ins/String/prototype/match/S15.5.4.10_A1_T6.js RuntimeError
 test/built-ins/String/prototype/match/S15.5.4.10_A1_T7.js RuntimeError
 test/built-ins/String/prototype/match/S15.5.4.10_A1_T8.js RuntimeError
 test/built-ins/String/prototype/match/S15.5.4.10_A1_T9.js RuntimeError
@@ -4547,7 +4547,7 @@ test/built-ins/String/prototype/replace/S15.5.4.11_A1_T13.js RuntimeError
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T14.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T15.js RuntimeError
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T16.js RuntimeError
-test/built-ins/String/prototype/replace/S15.5.4.11_A1_T17.js RuntimeError
+test/built-ins/String/prototype/replace/S15.5.4.11_A1_T17.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T2.js RuntimeError
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T4.js RuntimeError
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T5.js TypeCheckError
