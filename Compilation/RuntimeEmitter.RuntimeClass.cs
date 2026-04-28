@@ -353,7 +353,9 @@ public partial class RuntimeEmitter
         // Emit all methods - these are now in partial class files
         // Core utilities
         EmitStringify(typeBuilder, runtime);
-        EmitStringRaw(typeBuilder, runtime);
+        // EmitStringRaw is moved later in this method (after ToJsString/
+        // ToNumber/GetProperty are emitted) so the spec-form String.raw can
+        // resolve template.raw properties + ToString-coerce substitutions.
         // Format specifier helpers (must be emitted before ConsoleLog/ConsoleLogMultiple which call them)
         EmitHasFormatSpecifiers(typeBuilder, runtime);
         EmitFormatSingleArg(typeBuilder, runtime);
@@ -443,6 +445,9 @@ public partial class RuntimeEmitter
         EmitGetProperty(typeBuilder, runtime);
         // ToJsString depends on GetProperty + InvokeMethodValue + Stringify; emit after those.
         EmitToJsString(typeBuilder, runtime);
+        // String.raw lives here so its body can read `template.raw` via
+        // GetProperty and ToString-coerce substitutions via ToJsString.
+        EmitStringRaw(typeBuilder, runtime);
         EmitSetProperty(typeBuilder, runtime);
         EmitSetPropertyStrict(typeBuilder, runtime);
         EmitDeleteProperty(typeBuilder, runtime);

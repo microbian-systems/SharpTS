@@ -55,11 +55,35 @@ public sealed class StringStaticEmitter : IStaticTypeEmitterStrategy
                 return true;
 
             case "raw":
-                // String.raw is handled separately via tagged template literal emission
-                // For direct calls: String.raw(templateStrings, ...substitutions)
-                // This is a complex case that requires the template strings array
-                // For now, delegate to the runtime method
-                return false;
+                {
+                    // Direct call form: String.raw(template, ...substitutions)
+                    // Emit the template object as arg0, and the substitutions
+                    // collected into a List<object> as arg1. The legacy
+                    // tagged-template-literal path (EmitStringRawTaggedTemplate)
+                    // also calls this same MethodBuilder with the same shape.
+                    if (arguments.Count == 0)
+                    {
+                        il.Emit(OpCodes.Ldnull);
+                        il.Emit(OpCodes.Newobj, ctx.Types.GetDefaultConstructor(ctx.Types.ListOfObject));
+                        il.Emit(OpCodes.Call, ctx.Runtime!.StringRaw);
+                        return true;
+                    }
+                    emitter.EmitExpression(arguments[0]);
+                    emitter.EmitBoxIfNeeded(arguments[0]);
+                    var subsLocal = il.DeclareLocal(ctx.Types.ListOfObject);
+                    il.Emit(OpCodes.Newobj, ctx.Types.GetDefaultConstructor(ctx.Types.ListOfObject));
+                    il.Emit(OpCodes.Stloc, subsLocal);
+                    for (int i = 1; i < arguments.Count; i++)
+                    {
+                        il.Emit(OpCodes.Ldloc, subsLocal);
+                        emitter.EmitExpression(arguments[i]);
+                        emitter.EmitBoxIfNeeded(arguments[i]);
+                        il.Emit(OpCodes.Callvirt, ctx.Types.ListOfObject.GetMethod("Add", [ctx.Types.Object])!);
+                    }
+                    il.Emit(OpCodes.Ldloc, subsLocal);
+                    il.Emit(OpCodes.Call, ctx.Runtime!.StringRaw);
+                    return true;
+                }
 
             default:
                 return false;

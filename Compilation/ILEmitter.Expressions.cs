@@ -758,17 +758,19 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Stelem_Ref);
         }
 
-        // 2. Create expressions array
-        IL.Emit(OpCodes.Ldc_I4, ttl.Expressions.Count);
-        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+        // 2. Build expressions list. StringRaw's second param is List<object>
+        // (rest-param shape), so we need a List rather than a raw object[].
+        var listLocal = IL.DeclareLocal(_ctx.Types.ListOfObject);
+        IL.Emit(OpCodes.Newobj, _ctx.Types.GetDefaultConstructor(_ctx.Types.ListOfObject));
+        IL.Emit(OpCodes.Stloc, listLocal);
         for (int i = 0; i < ttl.Expressions.Count; i++)
         {
-            IL.Emit(OpCodes.Dup);
-            IL.Emit(OpCodes.Ldc_I4, i);
+            IL.Emit(OpCodes.Ldloc, listLocal);
             EmitExpression(ttl.Expressions[i]);
             EmitBoxIfNeeded(ttl.Expressions[i]);
-            IL.Emit(OpCodes.Stelem_Ref);
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.ListOfObject.GetMethod("Add", [_ctx.Types.Object])!);
         }
+        IL.Emit(OpCodes.Ldloc, listLocal);
 
         // 3. Call $Runtime.StringRaw(rawStrings, expressions)
         IL.Emit(OpCodes.Call, _ctx.Runtime!.StringRaw);

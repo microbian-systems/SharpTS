@@ -1971,7 +1971,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, method);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(tsObjectNoProto);
-        // No prototype — return undefined per JS semantics
+        // No own prototype — fall back to Object.prototype singleton (mirrors
+        // the dict-branch fallback). Catches `({}.toString)` style accesses on
+        // $Object instances created without an explicit prototype link.
+        var tsObjProtoFallbackMissLabel = il.DefineLabel();
+        il.Emit(OpCodes.Call, runtime.ObjectPrototypePopulateMethod);
+        var tsObjProtoFallbackLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, tsObjProtoFallbackLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue",
+            [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, tsObjProtoFallbackMissLabel);
+        il.Emit(OpCodes.Ldloc, tsObjProtoFallbackLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(tsObjProtoFallbackMissLabel);
+        // Property absent on object and Object.prototype — return undefined.
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
 
@@ -2171,6 +2186,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notDictCtorLabel);
+        // ECMA-262 19.1.3: every plain object inherits from Object.prototype.
+        // For Dictionary literals (`{}` etc.) without an explicit prototype,
+        // fall back to the ObjectPrototypeField singleton — that's where
+        // `valueOf`, `toString`, `propertyIsEnumerable`, and the toLocaleString
+        // wrapper live. Required for Test262 patterns that do
+        // `({}).toString.call(receiver)` or for ToPrimitive coercion to find
+        // the inherited methods on plain dicts. Lazy-populates on first read.
+        var protoFallbackMissLabel = il.DefineLabel();
+        il.Emit(OpCodes.Call, runtime.ObjectPrototypePopulateMethod);
+        var objProtoFallbackLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, objProtoFallbackLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue",
+            [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, protoFallbackMissLabel);
+        il.Emit(OpCodes.Ldloc, objProtoFallbackLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(protoFallbackMissLabel);
         // Return $Undefined.Instance for non-existent properties (JavaScript semantics)
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);

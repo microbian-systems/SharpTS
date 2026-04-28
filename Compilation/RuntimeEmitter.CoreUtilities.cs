@@ -403,94 +403,204 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits: public static string StringRaw(string[] rawStrings, object[] expressions)
-    /// Implements String.raw for tagged template literals.
+    /// Emits: <c>public static string StringRaw(object template, object[] substitutions)</c>.
+    /// Implements <c>String.raw</c> per ECMA-262 22.1.2.4. Accepts:
+    /// <list type="bullet">
+    /// <item><c>string[]</c> — the legacy tagged-template-literal calling convention
+    /// (used by <see cref="EmitStringRawTaggedTemplate"/>); used directly as the rawStrings array.</item>
+    /// <item>any object with a <c>raw</c> property — the spec form
+    /// (<c>String.raw({raw: [...]}, ...subs)</c>); reads <c>raw</c> via GetProperty,
+    /// reads its <c>length</c>, iterates indexed members.</item>
+    /// </list>
     /// </summary>
     private void EmitStringRaw(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Second param is `List<object> substitutions` (not object[]) so
+        // $TSFunction.AdjustArgs's rest-param recognition kicks in for direct
+        // `String.raw(template, ...subs)` calls — otherwise only the first
+        // substitution would land in the param.
         var method = typeBuilder.DefineMethod(
             "StringRaw",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.String,
-            [_types.StringArray, _types.ObjectArray]
+            [_types.Object, _types.ListOfObject]
         );
         runtime.StringRaw = method;
 
         var il = method.GetILGenerator();
 
-        // if (rawStrings.Length == 0) return ""
-        var hasStringsLabel = il.DefineLabel();
+        // We unify both shapes by extracting `length` and an indexed-access
+        // closure into locals. For string[]: length = arr.Length, get(i) = arr[i].
+        // For object: length = ToLength(template.length OR template.raw.length),
+        // get(i) = ToString(template.raw[i]).
+        var lengthLocal = il.DeclareLocal(_types.Int32);
+        var rawListLocal = il.DeclareLocal(_types.Object); // either string[] or List<object> from raw
+        var isStringArrayLocal = il.DeclareLocal(_types.Boolean);
+
+        // Detect string[] (legacy tagged-template path).
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.StringArray);
+        var notStringArrayLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notStringArrayLabel);
+        // string[] path: length = ((string[])arg0).Length, rawList = arg0
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.StringArray);
         il.Emit(OpCodes.Ldlen);
         il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Brtrue, hasStringsLabel);
+        il.Emit(OpCodes.Stloc, lengthLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, rawListLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, isStringArrayLocal);
+        var afterDispatchLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, afterDispatchLabel);
+
+        il.MarkLabel(notStringArrayLabel);
+        // Object path (spec form): raw = template.raw; length = ToLength(raw.length).
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, isStringArrayLocal);
+
+        // ECMA-262 22.1.2.4 step 2: ? RequireObjectCoercible(template). null/
+        // undefined throws TypeError. Catches String.raw(undefined) / .call(null).
+        il.Emit(OpCodes.Ldarg_0);
+        var notNullishLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, notNullishLabel);
+        var throwTypeErrorLabel = il.DefineLabel();
+        il.MarkLabel(throwTypeErrorLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notNullishLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, throwTypeErrorLabel);
+
+        // raw = template.raw  via $Runtime.GetProperty
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "raw");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, rawListLocal);
+
+        // ECMA-262 22.1.2.4 step 4: ? ToObject(raw). If raw is null/undefined,
+        // throw TypeError per spec. Required for `String.raw({raw: undefined})`
+        // and `String.raw({})` (raw absent → undefined).
+        il.Emit(OpCodes.Ldloc, rawListLocal);
+        il.Emit(OpCodes.Brfalse, throwTypeErrorLabel);
+        il.Emit(OpCodes.Ldloc, rawListLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, throwTypeErrorLabel);
+
+        // ToLength(raw.length): use $Runtime.GetProperty(raw, "length") then
+        // $Runtime.ToNumber → clamp to non-negative int.
+        il.Emit(OpCodes.Ldloc, rawListLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        var lenDouble = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Stloc, lenDouble);
+        // NaN / negative / -Infinity → 0
+        il.Emit(OpCodes.Ldloc, lenDouble);
+        il.Emit(OpCodes.Ldloc, lenDouble);
+        var notNaNLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brtrue, notNaNLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, lengthLocal);
+        il.Emit(OpCodes.Br, afterDispatchLabel);
+        il.MarkLabel(notNaNLabel);
+        il.Emit(OpCodes.Ldloc, lenDouble);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        var positiveLenLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bgt, positiveLenLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, lengthLocal);
+        il.Emit(OpCodes.Br, afterDispatchLabel);
+        il.MarkLabel(positiveLenLabel);
+        // length = (int)Math.Min(d, 1<<24) — guard against runaway alloc.
+        il.Emit(OpCodes.Ldloc, lenDouble);
+        il.Emit(OpCodes.Ldc_R8, (double)(1 << 24));
+        il.Emit(OpCodes.Call, _types.Math.GetMethod("Min", [_types.Double, _types.Double])!);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, lengthLocal);
+
+        il.MarkLabel(afterDispatchLabel);
+
+        // ECMA-262 22.1.2.4 step 7: If literalSegments ≤ 0, return the empty string.
+        il.Emit(OpCodes.Ldloc, lengthLocal);
+        var hasSegmentsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, hasSegmentsLabel);
         il.Emit(OpCodes.Ldstr, "");
         il.Emit(OpCodes.Ret);
+        il.MarkLabel(hasSegmentsLabel);
 
-        il.MarkLabel(hasStringsLabel);
-
-        // var sb = new StringBuilder()
+        // var sb = new StringBuilder();
         var sbLocal = il.DeclareLocal(_types.StringBuilder);
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, Type.EmptyTypes));
         il.Emit(OpCodes.Stloc, sbLocal);
 
-        // var i = 0
+        // for (int i = 0; i < length; i++) { ... }
         var iLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, iLocal);
-
-        // Loop: for (int i = 0; i < rawStrings.Length; i++)
         var loopStart = il.DefineLabel();
         var loopCondition = il.DefineLabel();
         il.Emit(OpCodes.Br, loopCondition);
 
         il.MarkLabel(loopStart);
 
-        // sb.Append(rawStrings[i])
-        il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldarg_0);
+        // segment = isStringArray ? rawList[i] : ToJsString(GetProperty(rawList, i.ToString()))
+        var segmentLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, isStringArrayLocal);
+        var segmentObjPathLabel = il.DefineLabel();
+        var segmentDoneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, segmentObjPathLabel);
+        // string[] path
+        il.Emit(OpCodes.Ldloc, rawListLocal);
+        il.Emit(OpCodes.Castclass, _types.StringArray);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, segmentLocal);
+        il.Emit(OpCodes.Br, segmentDoneLabel);
+        il.MarkLabel(segmentObjPathLabel);
+        // object path: ToJsString(GetProperty(raw, i.ToString()))
+        il.Emit(OpCodes.Ldloc, rawListLocal);
+        il.Emit(OpCodes.Ldloca, iLocal);
+        il.Emit(OpCodes.Call, _types.Int32.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Stloc, segmentLocal);
+        il.MarkLabel(segmentDoneLabel);
+
+        // sb.Append(segment)
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloc, segmentLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
         il.Emit(OpCodes.Pop);
 
-        // if (i < expressions.Length) sb.Append(expressions[i]?.ToString() ?? "")
-        var skipExpressionLabel = il.DefineLabel();
+        // if (i + 1 < length) append substitution
+        var skipSubLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldloc, lengthLocal);
+        il.Emit(OpCodes.Bge, skipSubLabel);
+        // if i < substitutions.Count, append ToJsString(substitutions[i])
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Bge, skipExpressionLabel);
-
-        // expressions[i]
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, skipSubLabel);
+        var subStrLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Ldelem_Ref);
-
-        // ?.ToString() ?? ""
-        var exprNullLabel = il.DefineLabel();
-        var appendExprLabel = il.DefineLabel();
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Brfalse, exprNullLabel);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-        il.Emit(OpCodes.Br, appendExprLabel);
-
-        il.MarkLabel(exprNullLabel);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ldstr, "");
-
-        il.MarkLabel(appendExprLabel);
-        // Stack has: [string] (either from ToString or "")
-        // sb.Append needs: [sb, string] on stack
-        // Store the string temporarily, then load sb, then load string back
-        var tempStringLocal = il.DeclareLocal(_types.String);
-        il.Emit(OpCodes.Stloc, tempStringLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Stloc, subStrLocal);
         il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldloc, tempStringLocal);
+        il.Emit(OpCodes.Ldloc, subStrLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
         il.Emit(OpCodes.Pop);
-
-        il.MarkLabel(skipExpressionLabel);
+        il.MarkLabel(skipSubLabel);
 
         // i++
         il.Emit(OpCodes.Ldloc, iLocal);
@@ -498,15 +608,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Stloc, iLocal);
 
-        // Loop condition: i < rawStrings.Length
         il.MarkLabel(loopCondition);
         il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldloc, lengthLocal);
         il.Emit(OpCodes.Blt, loopStart);
 
-        // return sb.ToString()
         il.Emit(OpCodes.Ldloc, sbLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
         il.Emit(OpCodes.Ret);
