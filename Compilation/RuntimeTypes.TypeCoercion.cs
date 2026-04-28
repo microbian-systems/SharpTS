@@ -38,7 +38,16 @@ public static partial class RuntimeTypes
                 return ((long)d).ToString(CultureInfo.InvariantCulture);
             return d.ToString("F0", CultureInfo.InvariantCulture);
         }
-        // Non-integer or >= 1e21: scientific notation with lowercase e + no leading zeros.
+        // ECMA-262 6.1.6.1.13: non-integer doubles use plain decimal when the
+        // leading-digit exponent ∈ [-6, 20], exponential otherwise. .NET's G
+        // format switches at < 1e-4 — wrong on the "0.000001" boundary.
+        if (Math.Abs(d) >= 1e-6)
+        {
+            // Plain-decimal: variable-precision fixed-point without exponential
+            // ever firing. Suppresses trailing zeros via `#` placeholder.
+            return d.ToString("0.################", CultureInfo.InvariantCulture);
+        }
+        // |d| < 1e-6: exponential, JS-style (lowercase e + no leading zeros).
         var s = d.ToString("G15", CultureInfo.InvariantCulture).Replace("E", "e");
         return System.Text.RegularExpressions.Regex.Replace(s, @"e([+-])0+(?=\d)", "e$1");
     }
