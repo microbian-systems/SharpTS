@@ -169,11 +169,37 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(System.IFormatProvider)])!);
         il.Emit(OpCodes.Br, endLabel);
 
-        // Non-integer: use G15 format with JS-style exponent fixup.
-        // .NET's "1.2345E-07" → JS spec's "1.2345e-7" (lowercase e + no
-        // leading zeros in exponent). Mirrors Stage 4e/4f's
-        // NumberToPrecision/Exponential fixups.
+        // Non-integer: use ECMA-262 6.1.6.1.13 formatting. Plain decimal when
+        // exponent ∈ [-6, 20], exponential otherwise. .NET's "G15" alone uses
+        // exponential for any value < 1e-4 — wrong by spec for 0.0001..1e-6.
         il.MarkLabel(notIntLabel);
+        // Compute Math.Abs(value) → for log10 + branch.
+        var absLocal = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldloc, doubleLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Abs", [_types.Double]));
+        il.Emit(OpCodes.Stloc, absLocal);
+
+        // Branch to exponential when abs < 1e-6.
+        var exponentialNonIntLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, absLocal);
+        il.Emit(OpCodes.Ldc_R8, 1e-6);
+        il.Emit(OpCodes.Blt, exponentialNonIntLabel);
+
+        // Plain-decimal path: use "0.################" pattern which emits
+        // variable-precision fixed-point (up to 16 fractional digits) WITHOUT
+        // ever switching to exponential. Matches ECMA-262 6.1.6.1.13's "plain
+        // decimal" rule when k-n ∈ [-6, 0]. Examples:
+        //   0.000001 → "0.000001"   0.1 → "0.1"   1.5 → "1.5"   123.456 → "123.456"
+        // .NET's `0` placeholder pads the integer part; `#` after decimal
+        // emits each digit only if non-zero, suppressing trailing zeros.
+        il.Emit(OpCodes.Ldloca, doubleLocal);
+        il.Emit(OpCodes.Ldstr, "0.################");
+        il.Emit(OpCodes.Call, typeof(System.Globalization.CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(System.IFormatProvider)])!);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Exponential path (abs < 1e-6 OR int-overflow above): G15 + JS fixup.
+        il.MarkLabel(exponentialNonIntLabel);
         il.Emit(OpCodes.Ldloca, doubleLocal);
         il.Emit(OpCodes.Ldstr, "G15");
         il.Emit(OpCodes.Call, typeof(System.Globalization.CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
