@@ -3311,7 +3311,7 @@ test/built-ins/JSON/stringify/replacer-function-arguments.js RuntimeError
 test/built-ins/JSON/stringify/replacer-function-array-circular.js Pass
 test/built-ins/JSON/stringify/replacer-function-object-circular.js Pass
 test/built-ins/JSON/stringify/replacer-function-object-deleted-property.js Fail
-test/built-ins/JSON/stringify/replacer-function-result-undefined.js Fail
+test/built-ins/JSON/stringify/replacer-function-result-undefined.js Pass
 test/built-ins/JSON/stringify/replacer-function-result.js HarnessError
 test/built-ins/JSON/stringify/replacer-function-tojson.js Fail
 test/built-ins/JSON/stringify/replacer-function-wrapper.js TypeCheckError
@@ -3330,7 +3330,7 @@ test/built-ins/JSON/stringify/value-array-proxy-revoked.js Fail
 test/built-ins/JSON/stringify/value-array-proxy.js Fail
 test/built-ins/JSON/stringify/value-bigint-cross-realm.js TypeCheckError
 test/built-ins/JSON/stringify/value-bigint-order.js TypeCheckError
-test/built-ins/JSON/stringify/value-bigint-replacer.js RuntimeError
+test/built-ins/JSON/stringify/value-bigint-replacer.js Pass
 test/built-ins/JSON/stringify/value-bigint-tojson-receiver.js TypeCheckError
 test/built-ins/JSON/stringify/value-bigint-tojson.js TypeCheckError
 test/built-ins/JSON/stringify/value-bigint.js Fail
@@ -3343,7 +3343,7 @@ test/built-ins/JSON/stringify/value-object-abrupt.js Fail
 test/built-ins/JSON/stringify/value-object-circular.js TypeCheckError
 test/built-ins/JSON/stringify/value-object-proxy-revoked.js Fail
 test/built-ins/JSON/stringify/value-object-proxy.js Fail
-test/built-ins/JSON/stringify/value-primitive-top-level.js Fail
+test/built-ins/JSON/stringify/value-primitive-top-level.js Pass
 test/built-ins/JSON/stringify/value-string-escape-ascii.js Fail
 test/built-ins/JSON/stringify/value-string-escape-unicode.js Fail
 test/built-ins/JSON/stringify/value-string-object.js Fail
