@@ -3704,7 +3704,7 @@ test/built-ins/Number/POSITIVE_INFINITY/S15.7.3.6_A1.js Pass
 test/built-ins/Number/POSITIVE_INFINITY/S15.7.3.6_A2.js TypeCheckError
 test/built-ins/Number/POSITIVE_INFINITY/prop-desc.js TypeCheckError
 test/built-ins/Number/POSITIVE_INFINITY/value.js Pass
-test/built-ins/Number/S15.7.1.1_A1.js Fail
+test/built-ins/Number/S15.7.1.1_A1.js Pass
 test/built-ins/Number/S15.7.1.1_A2.js Pass
 test/built-ins/Number/S15.7.2.1_A1.js Pass
 test/built-ins/Number/S15.7.2.1_A2.js Pass
