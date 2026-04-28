@@ -1403,10 +1403,11 @@ public partial class RuntimeEmitter
 
         // ECMA-262 21.1.3.2 step 2: ToInteger(fractionDigits) is observable
         // BEFORE the NaN/Infinity short-circuits in step 5. The arg coercion
-        // can throw (Symbol → TypeError); test262 patterns like
-        // `NaN.toExponential(Symbol())` rely on the throw. Pull the Symbol
-        // check up to fire before the NaN/Inf short-circuits; full ToInteger
-        // is still run inside digitsFromDoubleLabel below for non-symbol args.
+        // can throw (Symbol → TypeError, valueOf/toString throws); test262
+        // patterns like `NaN.toExponential(Symbol())` and
+        // `NaN.toExponential({valueOf:()=>{throw}})` rely on the throw firing.
+        // Pre-coerce here, then the NaN/Inf check below short-circuits without
+        // re-coercing.
         var notSymbolDigitsLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, notSymbolDigitsLabel);
@@ -1418,6 +1419,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
         il.MarkLabel(notSymbolDigitsLabel);
+
+        // Pre-coerce fractionDigits via ToIntegerOrInfinity unless it's
+        // undefined (spec keeps undefined as the "shortest representation"
+        // signal). Skip null too — null ToInteger-coerces to 0 and the call
+        // is side-effect-free. Side-effects only matter for object args, so
+        // the Isinst-Object guard limits the coercion to those.
+        var skipPreCoerceLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, skipPreCoerceLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        var checkTSObjectLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, checkTSObjectLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, skipPreCoerceLabel);
+        il.MarkLabel(checkTSObjectLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
+        il.Emit(OpCodes.Stloc, digitsLocal);
+        il.MarkLabel(skipPreCoerceLabel);
 
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Call, _types.Double.GetMethod("IsNaN", [_types.Double])!);
