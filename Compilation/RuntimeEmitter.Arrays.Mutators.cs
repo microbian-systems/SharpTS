@@ -968,21 +968,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, hasCompareFn);
         il.MarkLabel(noCompareFn);
 
-        // Default comparison: Stringify(a).CompareTo(Stringify(b)) using String.CompareOrdinal
-        // str1 = Stringify(defined[j-1])
+        // Default comparison: ToString(a).CompareTo(ToString(b)) per ECMA-262
+        // 23.1.3.30: SortCompare uses ToString which invokes valueOf/toString.
+        // Stringify produces a literal representation for objects (used by
+        // template literals + Array.toString) — that diverges from spec for
+        // objects with custom toString. ToJsString invokes the ToPrimitive
+        // protocol so `{toString: () => "-2"}` sorts as "-2".
+        // str1 = ToJsString(defined[j-1])
         il.Emit(OpCodes.Ldloc, definedLocal);
         il.Emit(OpCodes.Ldloc, jLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Sub);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, str1Local);
 
-        // str2 = Stringify(defined[j])
+        // str2 = ToJsString(defined[j])
         il.Emit(OpCodes.Ldloc, definedLocal);
         il.Emit(OpCodes.Ldloc, jLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, str2Local);
 
         // compareResult = String.CompareOrdinal(str1, str2)
