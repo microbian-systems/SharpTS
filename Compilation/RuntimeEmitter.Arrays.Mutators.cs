@@ -1196,6 +1196,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, coercedLocal);
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brtrue, isObjectLikeLabel);
+        // ECMA-262 ToNumber([1]) → ToPrimitive routes via valueOf/toString,
+        // and Array.prototype.toString returns the comma-joined representation.
+        // Treat List<object> as object-like here so `(123).toExponential([2])`
+        // reaches ToString("2") → ToNumber 2 per spec.
+        il.Emit(OpCodes.Ldloc, coercedLocal);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brtrue, isObjectLikeLabel);
         il.Emit(OpCodes.Br, notObjectLabel);
 
         il.MarkLabel(isObjectLikeLabel);
@@ -1244,6 +1251,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, stillObjectLabel);
         il.Emit(OpCodes.Ldloc, coercedLocal);
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, stillObjectLabel);
+        il.Emit(OpCodes.Ldloc, coercedLocal);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brfalse, afterToString);
         il.MarkLabel(stillObjectLabel);
         TryInvokePrim("toString", afterToString);
