@@ -2808,7 +2808,7 @@ test/built-ins/Array/prototype/sort/S15.4.4.11_A1.4_T2.js Pass
 test/built-ins/Array/prototype/sort/S15.4.4.11_A1.5_T1.js Pass
 test/built-ins/Array/prototype/sort/S15.4.4.11_A2.1_T1.js Pass
 test/built-ins/Array/prototype/sort/S15.4.4.11_A2.1_T2.js Pass
-test/built-ins/Array/prototype/sort/S15.4.4.11_A2.1_T3.js RuntimeError
+test/built-ins/Array/prototype/sort/S15.4.4.11_A2.1_T3.js Pass
 test/built-ins/Array/prototype/sort/S15.4.4.11_A2.2_T1.js RuntimeError
 test/built-ins/Array/prototype/sort/S15.4.4.11_A2.2_T2.js RuntimeError
 test/built-ins/Array/prototype/sort/S15.4.4.11_A2.2_T3.js RuntimeError
@@ -2818,7 +2818,7 @@ test/built-ins/Array/prototype/sort/S15.4.4.11_A4_T3.js TypeCheckError
 test/built-ins/Array/prototype/sort/S15.4.4.11_A5_T1.js TypeCheckError
 test/built-ins/Array/prototype/sort/S15.4.4.11_A6_T2.js TypeCheckError
 test/built-ins/Array/prototype/sort/S15.4.4.11_A8.js RuntimeError
-test/built-ins/Array/prototype/sort/bug_596_1.js RuntimeError
+test/built-ins/Array/prototype/sort/bug_596_1.js Pass
 test/built-ins/Array/prototype/sort/bug_596_2.js TypeCheckError
 test/built-ins/Array/prototype/sort/call-with-primitive.js TypeCheckError
 test/built-ins/Array/prototype/sort/comparefn-grow.js TypeCheckError
