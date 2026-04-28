@@ -1482,6 +1482,35 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.IsTypedArrayMethod);
         il.Emit(OpCodes.Brtrue, typedArrayLabel);
 
+        // Primitive bool/double receivers — look up the named property in the
+        // matching prototype singleton (Boolean.prototype / Number.prototype).
+        // ECMA-262 7.3.2 OrdinaryGetPrototypeOf treats every primitive as if
+        // wrapped via ToObject, so `(true).valueOf` walks Boolean.prototype.
+        // Without this branch, `b.valueOf` returned undefined for any-typed
+        // bools because the routing fell through to classInstanceLabel which
+        // can't resolve methods on a CLR `bool` value-type box.
+        var notBoolPrimLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, notBoolPrimLabel);
+        il.Emit(OpCodes.Call, runtime.BooleanPrototypePopulateMethod);
+        il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, method);  // recursive GetProperty lookup on the dict
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBoolPrimLabel);
+
+        var notDoublePrimLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, notDoublePrimLabel);
+        il.Emit(OpCodes.Call, runtime.NumberPrototypePopulateMethod);
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, method);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notDoublePrimLabel);
+
         // $Bound*Method and $BoundAnyFunction - callable wrappers that need .call/.apply/.bind
         // support. Route through GetFunctionMethod which handles bind/call/apply/length/name.
         // Bound methods already capture their receiver, so thisArg passed to .call/.apply is
