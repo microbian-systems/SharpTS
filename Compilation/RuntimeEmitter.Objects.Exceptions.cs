@@ -49,29 +49,33 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var fallbackLabel = il.DefineLabel();
         var checkTsValueLabel = il.DefineLabel();
+        var unwrapLoopLabel = il.DefineLabel();
         var tsValueLocal = il.DeclareLocal(_types.Object);
         var exLocal = il.DeclareLocal(_types.Exception);
+        var innerLocal = il.DeclareLocal(_types.Exception);
 
         // Store exception in local (we might need to unwrap it)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Stloc, exLocal);
 
-        // Check if ex is TargetInvocationException and unwrap to InnerException
+        // Loop: while (ex is TargetInvocationException && ex.InnerException != null)
+        //         ex = ex.InnerException
+        // Multiple levels can stack when JS code calls JS code calls a runtime
+        // helper — each MethodInfo.Invoke wraps once, so we may see TIE(TIE(real)).
+        il.MarkLabel(unwrapLoopLabel);
         il.Emit(OpCodes.Ldloc, exLocal);
         il.Emit(OpCodes.Isinst, _types.TargetInvocationException);
         il.Emit(OpCodes.Brfalse, checkTsValueLabel);
 
-        // It's a TargetInvocationException - get InnerException if not null
         il.Emit(OpCodes.Ldloc, exLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "InnerException").GetGetMethod()!);
-        var innerLocal = il.DeclareLocal(_types.Exception);
         il.Emit(OpCodes.Stloc, innerLocal);
         il.Emit(OpCodes.Ldloc, innerLocal);
-        il.Emit(OpCodes.Brfalse_S, checkTsValueLabel);  // If InnerException is null, use original
+        il.Emit(OpCodes.Brfalse, checkTsValueLabel);  // InnerException is null — stop unwrapping
 
-        // InnerException is not null - use it
         il.Emit(OpCodes.Ldloc, innerLocal);
         il.Emit(OpCodes.Stloc, exLocal);
+        il.Emit(OpCodes.Br, unwrapLoopLabel);
 
         il.MarkLabel(checkTsValueLabel);
 
