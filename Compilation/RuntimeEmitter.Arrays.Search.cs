@@ -631,14 +631,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, afterLen);
         il.MarkLabel(haveLen);
 
-        // ECMA-262 ToPrimitive: if lenVal is an object (Dictionary here), try
-        // valueOf() then toString() to coerce to a primitive. Without this,
-        // tests that use `length: { valueOf: () => 2 }` or `length: { toString:
-        // () => '2' }` get NaN from ToNumber and iterate nothing.
+        // ECMA-262 ToPrimitive: if lenVal is an object (Dictionary OR $Object —
+        // the latter when `obj.length` is `new Con()` whose proto carries
+        // valueOf/toString), try valueOf() then toString() to coerce to a
+        // primitive. Without this, tests that use `length: child` where
+        // `child = new Con(); Con.prototype.valueOf = () => 2` get NaN from
+        // ToNumber and iterate nothing. The $Object branch matters because
+        // user constructors emit instances as $Object, not as Dictionary.
         var notObjLen = il.DefineLabel();
+        var doToPrimLen = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, lenValLocal);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, doToPrimLen);
+        il.Emit(OpCodes.Ldloc, lenValLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brfalse, notObjLen);
+        il.MarkLabel(doToPrimLen);
         EmitLengthToPrimitive(il, runtime, lenValLocal);
         il.MarkLabel(notObjLen);
 
@@ -791,9 +799,13 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
             il.Emit(OpCodes.Stloc, resultLocal);
 
-            // If result is not a Dictionary, commit it to lenVal.
+            // If result is still an object (Dictionary or $Object), don't
+            // commit — fall through so the outer toString fallback runs.
             il.Emit(OpCodes.Ldloc, resultLocal);
             il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+            il.Emit(OpCodes.Brtrue, afterLabel);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Isinst, runtime.TSObjectType);
             il.Emit(OpCodes.Brtrue, afterLabel);
             il.Emit(OpCodes.Ldloc, resultLocal);
             il.Emit(OpCodes.Stloc, lenValLocal);
@@ -803,22 +815,30 @@ public partial class RuntimeEmitter
         TryInvoke("valueOf", afterValueOf);
         il.MarkLabel(afterValueOf);
 
-        // If still a Dictionary, try toString.
+        // If still an object (Dictionary or $Object), try toString.
         var afterToString = il.DefineLabel();
+        var stillObjForToString = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, lenValLocal);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, stillObjForToString);
+        il.Emit(OpCodes.Ldloc, lenValLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brfalse, afterToString);
+        il.MarkLabel(stillObjForToString);
         TryInvoke("toString", afterToString);
         il.MarkLabel(afterToString);
 
         // ECMA-262 ToPrimitive: if both valueOf and toString returned non-
-        // primitives (lenVal still a Dictionary), throw TypeError. Test262
-        // patterns like `length: { valueOf:()=>{}, toString:()=>{} }` expect
-        // `assert.throws(TypeError, ...)` to fire here.
+        // primitives (lenVal still an object), throw TypeError.
         var afterTypeErrorCheck = il.DefineLabel();
+        var stillObjForThrow = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, lenValLocal);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, stillObjForThrow);
+        il.Emit(OpCodes.Ldloc, lenValLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brfalse, afterTypeErrorCheck);
+        il.MarkLabel(stillObjForThrow);
         il.Emit(OpCodes.Ldstr, "Cannot convert object to primitive value");
         il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
         il.Emit(OpCodes.Call, runtime.CreateException);
