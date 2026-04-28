@@ -3256,7 +3256,7 @@ test/built-ins/JSON/parse/reviver-array-delete-err.js Fail
 test/built-ins/JSON/parse/reviver-array-get-prop-from-prototype.js Fail
 test/built-ins/JSON/parse/reviver-array-length-coerce-err.js Fail
 test/built-ins/JSON/parse/reviver-array-length-get-err.js Fail
-test/built-ins/JSON/parse/reviver-array-non-configurable-prop-create.js Fail
+test/built-ins/JSON/parse/reviver-array-non-configurable-prop-create.js Pass
 test/built-ins/JSON/parse/reviver-array-non-configurable-prop-delete.js Fail
 test/built-ins/JSON/parse/reviver-call-args-after-forward-modification.js RuntimeError
 test/built-ins/JSON/parse/reviver-call-err.js Fail
@@ -3269,8 +3269,8 @@ test/built-ins/JSON/parse/reviver-get-name-err.js Fail
 test/built-ins/JSON/parse/reviver-object-define-prop-err.js Fail
 test/built-ins/JSON/parse/reviver-object-delete-err.js Fail
 test/built-ins/JSON/parse/reviver-object-get-prop-from-prototype.js Fail
-test/built-ins/JSON/parse/reviver-object-non-configurable-prop-create.js Fail
-test/built-ins/JSON/parse/reviver-object-non-configurable-prop-delete.js Fail
+test/built-ins/JSON/parse/reviver-object-non-configurable-prop-create.js RuntimeError
+test/built-ins/JSON/parse/reviver-object-non-configurable-prop-delete.js RuntimeError
 test/built-ins/JSON/parse/reviver-object-own-keys-err.js Fail
 test/built-ins/JSON/parse/reviver-wrapper.js TypeCheckError
 test/built-ins/JSON/parse/text-negative-zero.js Pass
@@ -3307,9 +3307,9 @@ test/built-ins/JSON/stringify/replacer-array-string-object.js Fail
 test/built-ins/JSON/stringify/replacer-array-undefined.js Pass
 test/built-ins/JSON/stringify/replacer-array-wrong-type.js Fail
 test/built-ins/JSON/stringify/replacer-function-abrupt.js Fail
-test/built-ins/JSON/stringify/replacer-function-arguments.js Fail
+test/built-ins/JSON/stringify/replacer-function-arguments.js RuntimeError
 test/built-ins/JSON/stringify/replacer-function-array-circular.js Pass
-test/built-ins/JSON/stringify/replacer-function-object-circular.js Fail
+test/built-ins/JSON/stringify/replacer-function-object-circular.js Pass
 test/built-ins/JSON/stringify/replacer-function-object-deleted-property.js Fail
 test/built-ins/JSON/stringify/replacer-function-result-undefined.js Fail
 test/built-ins/JSON/stringify/replacer-function-result.js HarnessError
