@@ -195,6 +195,11 @@ public static class BuiltInTypes
                 new TypeInfo.Iterator(NumberType)),
             "values" => new TypeInfo.Function([],
                 new TypeInfo.Iterator(elementType)),
+            // ECMA-262 23.1.3.32 / 23.1.3.33: toString and toLocaleString
+            // exist on every Array. Without these, `arr.toString()` is a
+            // TypeChecker error even though it works at runtime.
+            "toString" => new TypeInfo.Function([], StringType),
+            "toLocaleString" => new TypeInfo.Function([], StringType),
             _ => null
         };
     }

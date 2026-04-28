@@ -268,6 +268,17 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayValues);
                 break;
 
+            // ECMA-262 23.1.3.32 / 23.1.3.33: Array.prototype.toString /
+            // toLocaleString. Both invoke join with default separator.
+            // Helper takes (object) — we have the List on stack, which is
+            // also the ArrayLikeMaterialize pass-through for List, so
+            // route there. Discards args (toString/toLocaleString ignore
+            // their args per spec).
+            case "toString":
+            case "toLocaleString":
+                il.Emit(OpCodes.Call, ctx.Runtime!.ArrayProtoToStringHelper);
+                break;
+
             default:
                 return false;
         }
