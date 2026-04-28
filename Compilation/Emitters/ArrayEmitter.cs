@@ -156,7 +156,20 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 break;
 
             case "join":
-                EmitSingleArgOrNull(emitter, arguments);
+                // Distinguish "no arg" (default ",") from "null arg" (→ "null"):
+                // emit $Undefined.Instance when missing so ArrayJoin's
+                // undefined-check fires while a passed null falls through to
+                // Stringify → "null". ECMA-262 23.1.3.16 step 4 only treats
+                // undefined as the default-separator trigger.
+                if (arguments.Count > 0)
+                {
+                    emitter.EmitExpression(arguments[0]);
+                    emitter.EmitBoxIfNeeded(arguments[0]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
+                }
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayJoin);
                 break;
 
