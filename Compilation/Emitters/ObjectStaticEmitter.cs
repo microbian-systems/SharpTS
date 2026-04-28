@@ -269,6 +269,19 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
             return true;
         }
 
+        // Constructor metadata properties (ECMA-262 §20.1.2): Object.length is 1, name is "Object".
+        if (propertyName == "length")
+        {
+            ctx.IL.Emit(OpCodes.Ldc_R8, 1.0);
+            ctx.IL.Emit(OpCodes.Box, ctx.Types.Double);
+            return true;
+        }
+        if (propertyName == "name")
+        {
+            ctx.IL.Emit(OpCodes.Ldstr, "Object");
+            return true;
+        }
+
         // Stage 4y: expose Object.* static methods as values so
         // `let f = Object.keys; f(obj)` works AND so test262's isConstructor
         // harness sees `typeof f === "function"`.

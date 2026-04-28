@@ -738,6 +738,7 @@ public partial class ILCompiler
         _typeEmitterRegistry.RegisterStatic("Symbol", new SymbolStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("Map", new MapStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("String", new StringStaticEmitter());
+        _typeEmitterRegistry.RegisterStatic("Boolean", new BooleanStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("process", new ProcessStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("globalThis", new GlobalThisStaticEmitter(_typeEmitterRegistry));
         _typeEmitterRegistry.RegisterStatic("Atomics", new AtomicsStaticEmitter());
