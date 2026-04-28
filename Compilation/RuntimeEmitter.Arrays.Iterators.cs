@@ -731,9 +731,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, scanStart);
 
         il.MarkLabel(scanEnd);
-        // No present element — TypeError per spec.
-        il.Emit(OpCodes.Ldstr, "TypeError: Reduce of empty array with no initial value");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        // No present element — TypeError per spec. Build a real $TypeError
+        // instance (not a raw .NET Exception) so test262 patterns like
+        // `e instanceof TypeError` and `e.constructor.name === 'TypeError'` hold.
+        il.Emit(OpCodes.Ldstr, "Reduce of empty array with no initial value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(scanFound);
@@ -913,8 +916,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, scanStart);
 
         il.MarkLabel(scanEnd);
-        il.Emit(OpCodes.Ldstr, "TypeError: Reduce of empty array with no initial value");
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        // No present element — TypeError per spec. Throw a real $TypeError
+        // instance (parity with EmitArrayReduce).
+        il.Emit(OpCodes.Ldstr, "Reduce of empty array with no initial value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(scanFound);
