@@ -100,6 +100,13 @@ public static partial class RuntimeTypes
     {
         s = s.Trim();
         if (s.Length == 0) return 0.0;
+        // ECMA-262 7.1.4: only the case-sensitive "Infinity"/"+Infinity"/
+        // "-Infinity" forms are valid Infinity literals. Double.TryParse
+        // would otherwise accept "infinity"/"INFINITY" via NumberStyles.Float.
+        if (s == "Infinity" || s == "+Infinity") return double.PositiveInfinity;
+        if (s == "-Infinity") return double.NegativeInfinity;
+        if (s.Contains("infinity", StringComparison.OrdinalIgnoreCase))
+            return double.NaN;
         if (double.TryParse(s, System.Globalization.NumberStyles.Float,
             System.Globalization.CultureInfo.InvariantCulture, out double result))
             return result;
