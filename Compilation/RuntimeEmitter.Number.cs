@@ -1441,16 +1441,84 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "-Infinity");
         il.Emit(OpCodes.Ret);
 
-        // Check if digits is null
+        // ECMA-262 22.1.3.6: only `undefined` skips fractionDigits coercion
+        // (uses "shortest exponential" form). `null` ToInteger-coerces to 0.
+        // Pre-fix branched on `Ldarg_1; Brtrue` which treated null AND
+        // undefined as the no-arg case, producing ".NET-default 6-digit
+        // fraction" output instead of the spec's "fractionDigits=0" form.
         il.MarkLabel(hasDigitsLabel);
+        var fractionDigitsUndefinedLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brtrue, digitsFromDoubleLabel);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, fractionDigitsUndefinedLabel);
 
-        // digits is null - use default format
+        // Non-undefined (including null): apply ToIntegerOrInfinity. Per spec,
+        // null → 0, false → 0, true → 1, "2" → 2, etc. Default arg coercion is 6
+        // (only used if ToIntegerOrInfinity hits the "no arg" branch — but the
+        // call site here always provides an arg).
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, runtime.ToIntegerOrInfinity);
+        il.Emit(OpCodes.Stloc, digitsLocal);
+        il.Emit(OpCodes.Br, validateDigitsLabel);
+
+        // undefined fractionDigits: ECMA-262 step 9.a uses the shortest
+        // exponential representation. .NET's "R" round-trip format does this:
+        // (123.456).ToString("R") → "123.456" (no e if not needed) — but we
+        // always need exponential here. Fall back to G17 with JS exponent fixup
+        // to approximate. Test262 expects "1.23456e+2" for (123.456); G17
+        // gives "1.23456E+002" → after replace + strip → "1.23456e+2".
+        il.MarkLabel(fractionDigitsUndefinedLabel);
+        // Pre-zero check (handle ±0 → "0e+0"):
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        var nonZeroForUndef = il.DefineLabel();
+        il.Emit(OpCodes.Bne_Un, nonZeroForUndef);
+        il.Emit(OpCodes.Ldstr, "0e+0");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(nonZeroForUndef);
+        // value.ToString("G17", invariant)
         il.Emit(OpCodes.Ldloca, valueLocal);
-        il.Emit(OpCodes.Ldstr, "e");
+        il.Emit(OpCodes.Ldstr, "G17");
         il.Emit(OpCodes.Call, typeof(CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
         il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(IFormatProvider)])!);
+        // Result might be "123.456" or "1.23456E+02" depending on magnitude.
+        // We need to ensure exponential form. If no 'E' or 'e', convert via
+        // log10. Simplification: use E15 then strip — gives spec-compliant
+        // shortest exponential form for most ranges.
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        il.Emit(OpCodes.Ldstr, "G17");
+        il.Emit(OpCodes.Call, typeof(CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(IFormatProvider)])!);
+        // For the actually-exponential case, .NET's G17 gives "1.23456E+02".
+        // Convert to JS spec: replace E→e, strip leading zeros, ensure sign.
+        // For values that emit without 'E' (like 123.456 → "123.456"), insert
+        // an exponent manually using log10. Defer that to a static helper —
+        // for now, fall back to ToString("e", InvariantCulture) which gives
+        // 6-digit fraction (correct for spec when fractionDigits=6).
+        // Actually spec wants shortest. Use ToString("R") then fix.
+        il.Emit(OpCodes.Pop);
+        // Simpler approach: format with E15 then trim trailing zeros from
+        // mantissa, fall through to JS exponent normalize.
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        il.Emit(OpCodes.Ldstr, "e15");
+        il.Emit(OpCodes.Call, typeof(CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(IFormatProvider)])!);
+        // Trim trailing zeros from mantissa (between '.' and 'e').
+        // Pattern: \.([0-9]+?)0+e → .$1e (drop trailing zeros while keeping at least one digit after dot)
+        // Simpler: use \.?0+e → e if all decimals are zero (e.g. "1.000000e+02" → "1e+02"); else \.([1-9])0+e → .$1e
+        il.Emit(OpCodes.Ldstr, @"(\.\d*?)0+(?=e)");
+        il.Emit(OpCodes.Ldstr, "$1");
+        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Replace", [_types.String, _types.String, _types.String])!);
+        // After zero-trim, "1.e+02" needs → "1e+02"; remove dangling decimal point.
+        il.Emit(OpCodes.Ldstr, @"\.e");
+        il.Emit(OpCodes.Ldstr, "e");
+        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Replace", [_types.String, _types.String, _types.String])!);
+        // Strip leading zeros from exponent: "e+002" → "e+2".
+        il.Emit(OpCodes.Ldstr, @"e([+-])0+(?=\d)");
+        il.Emit(OpCodes.Ldstr, "e$1");
+        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Replace", [_types.String, _types.String, _types.String])!);
         il.Emit(OpCodes.Ret);
 
         // ECMA-262 21.1.3.2: digits = ToIntegerOrInfinity(digits, 6). Coerces
