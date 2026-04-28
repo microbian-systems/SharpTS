@@ -813,6 +813,7 @@ public class EmittedRuntime
     public MethodBuilder DateValueOf { get; set; } = null!;
 
     // RegExp support - $Runtime wrapper methods
+    public MethodBuilder RegExpCoerceArg { get; set; } = null!;
     public MethodBuilder CreateRegExp { get; set; } = null!;
     public MethodBuilder CreateRegExpWithFlags { get; set; } = null!;
     public MethodBuilder RegExpTest { get; set; } = null!;

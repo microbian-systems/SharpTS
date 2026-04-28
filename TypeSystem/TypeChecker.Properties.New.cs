@@ -108,11 +108,13 @@ public partial class TypeChecker
                 throw new TypeCheckException("RegExp constructor accepts at most 2 arguments.");
             }
 
-            // Validate argument types
+            // Validate argument types. ECMA-262 21.2.3.1: undefined pattern/flags
+            // is treated as the empty string (`new RegExp(undefined) === /(?:)/`).
             if (newExpr.Arguments.Count >= 1)
             {
                 var patternType = CheckExpr(newExpr.Arguments[0]);
-                if (!IsString(patternType) && patternType is not TypeInfo.Any)
+                if (!IsString(patternType) && patternType is not TypeInfo.Any
+                    && patternType is not TypeInfo.Undefined && patternType is not TypeInfo.Null)
                 {
                     throw new TypeCheckException($" RegExp pattern must be a string, got '{patternType}'.");
                 }
@@ -121,7 +123,8 @@ public partial class TypeChecker
             if (newExpr.Arguments.Count == 2)
             {
                 var flagsType = CheckExpr(newExpr.Arguments[1]);
-                if (!IsString(flagsType) && flagsType is not TypeInfo.Any)
+                if (!IsString(flagsType) && flagsType is not TypeInfo.Any
+                    && flagsType is not TypeInfo.Undefined && flagsType is not TypeInfo.Null)
                 {
                     throw new TypeCheckException($" RegExp flags must be a string, got '{flagsType}'.");
                 }

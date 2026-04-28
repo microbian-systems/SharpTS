@@ -630,6 +630,17 @@ public abstract partial class ExpressionEmitterBase
 
     private void EmitNewRegExpConstructor(List<Expr> arguments)
     {
+        // ECMA-262 22.2.3.1: undefined pattern/flags is treated as empty string
+        // — `new RegExp(undefined) === /(?:)/`, `new RegExp("a", undefined)`
+        // applies pattern with no flags. Stringify(undefined) → "undefined"
+        // would otherwise build the literal /undefined/ pattern.
+        void EmitArgAsStringSpec(Expr arg)
+        {
+            EmitExpression(arg);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.RegExpCoerceArg);
+        }
+
         switch (arguments.Count)
         {
             case 0:
@@ -638,18 +649,12 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateRegExpWithFlags);
                 break;
             case 1:
-                EmitExpression(arguments[0]);
-                EnsureBoxed();
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.Stringify);
+                EmitArgAsStringSpec(arguments[0]);
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateRegExp);
                 break;
             default:
-                EmitExpression(arguments[0]);
-                EnsureBoxed();
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.Stringify);
-                EmitExpression(arguments[1]);
-                EnsureBoxed();
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.Stringify);
+                EmitArgAsStringSpec(arguments[0]);
+                EmitArgAsStringSpec(arguments[1]);
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateRegExpWithFlags);
                 break;
         }

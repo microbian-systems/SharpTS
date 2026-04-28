@@ -12,6 +12,7 @@ public partial class RuntimeEmitter
 {
     private void EmitRegExpMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        EmitRegExpCoerceArg(typeBuilder, runtime);
         EmitCreateRegExp(typeBuilder, runtime);
         EmitCreateRegExpWithFlags(typeBuilder, runtime);
         EmitRegExpTest(typeBuilder, runtime);
@@ -30,6 +31,50 @@ public partial class RuntimeEmitter
         EmitStringReplaceAllRegExp(typeBuilder, runtime);
         EmitStringSearchRegExp(typeBuilder, runtime);
         EmitStringSplitRegExp(typeBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Coerces a RegExp constructor argument to its spec-compliant string form.
+    /// ECMA-262 22.2.3.1 RegExp(pattern, flags): if either argument is undefined,
+    /// substitute "" (the empty string); otherwise invoke the standard
+    /// ToString protocol. Without this, `new RegExp(undefined)` would compile
+    /// the literal /undefined/ pattern instead of the empty pattern /(?:)/,
+    /// failing String.prototype.match Sputnik tests.
+    /// </summary>
+    private void EmitRegExpCoerceArg(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "RegExpCoerceArg",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]
+        );
+        runtime.RegExpCoerceArg = method;
+
+        var il = method.GetILGenerator();
+
+        var notNullLabel = il.DefineLabel();
+        var notUndefLabel = il.DefineLabel();
+
+        // null → ""
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNullLabel);
+
+        // $Undefined.Instance → ""
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, notUndefLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notUndefLabel);
+
+        // Otherwise: ECMA-262 ToString protocol.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
@@ -471,6 +516,7 @@ public partial class RuntimeEmitter
         var regexpLocal = il.DeclareLocal(runtime.TSRegExpType);
         var isStringPatternLabel = il.DefineLabel();
         var globalMatchLabel = il.DefineLabel();
+        var globalMatchLabelEntryFromCoerced = il.DefineLabel();
         var searchLocal = il.DeclareLocal(_types.String);
         var idxLocal = il.DeclareLocal(_types.Int32);
         var notFoundLabel = il.DefineLabel();
@@ -480,12 +526,38 @@ public partial class RuntimeEmitter
         var loopStartLabel = il.DefineLabel();
         var loopEndLabel = il.DefineLabel();
 
+        // ECMA-262 22.1.3.13 String.prototype.match: when pattern is null or
+        // undefined, set rx = new RegExp(pattern) which coerces to /(?:)/.
+        // The exec result then has the spec-compliant index/input/length
+        // properties — without this, the string-fallback path returns a bare
+        // [match] array missing those fields.
+        var notNullPatternLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brtrue, notNullPatternLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Newobj, runtime.TSRegExpCtorPattern);
+        il.Emit(OpCodes.Castclass, runtime.TSRegExpType);
+        il.Emit(OpCodes.Stloc, regexpLocal);
+        il.Emit(OpCodes.Br, globalMatchLabelEntryFromCoerced);
+        il.MarkLabel(notNullPatternLabel);
+        var notUndefPatternLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, notUndefPatternLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Newobj, runtime.TSRegExpCtorPattern);
+        il.Emit(OpCodes.Castclass, runtime.TSRegExpType);
+        il.Emit(OpCodes.Stloc, regexpLocal);
+        il.Emit(OpCodes.Br, globalMatchLabelEntryFromCoerced);
+        il.MarkLabel(notUndefPatternLabel);
+
         // var regexp = pattern as $RegExp
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
         il.Emit(OpCodes.Stloc, regexpLocal);
 
         // if (regexp != null)
+        il.MarkLabel(globalMatchLabelEntryFromCoerced);
         il.Emit(OpCodes.Ldloc, regexpLocal);
         il.Emit(OpCodes.Brfalse, isStringPatternLabel);
 

@@ -857,6 +857,20 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(loopEndLabel);
 
+        // ECMA-262 22.2.5.6: exec result is an Array exotic object with
+        // numeric-indexed entries plus `length`, `index`, `input`, `groups`.
+        // Without `length`, `__matched.length === __expected.length` test262
+        // checks fail. length = total capture-group count (whole match + each
+        // numbered group) = match.Groups.Count.
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Ldloc, matchLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Match).GetProperty("Groups")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, typeof(GroupCollection).GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Callvirt, dictSetItem);
+
         // return new $Object(fields)
         il.Emit(OpCodes.Ldloc, fieldsLocal);
         il.Emit(OpCodes.Newobj, runtime.TSObjectCtor!);
