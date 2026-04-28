@@ -1192,10 +1192,13 @@ public partial class RuntimeEmitter
         il.MarkLabel(deadInfLabel);
         il.Emit(OpCodes.Ret);
 
-        // return Regex.Replace(value.ToString($"G{precision}", InvariantCulture).Replace("E","e"),
-        //                      @"e([+-])0+(?=\d)", "e$1");
-        // The regex strips leading zeros from the exponent so .NET's "1E+02" matches
-        // JS spec's "1e+2".
+        // ECMA-262 21.1.3.5: when e < -6 OR e >= p, return exponential form
+        // with EXACTLY p significant digits (so trailing zeros must be preserved
+        // — e.g., 100.toPrecision(2) → "1.0e+2", not "1e+2"). When in fixed
+        // range, use "G{precision}" which already gives p significant digits.
+        // Detection: format with "G{precision}" first; if the result contains
+        // "E", we're in exponential-required range so reformat with "E{precision-1}"
+        // to preserve trailing zeros.
         il.MarkLabel(formatLabel);
         // ECMA-262: -0 formatted as "0" (no sign).
         il.Emit(OpCodes.Ldloc, valueLocal);
@@ -1205,6 +1208,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_R8, 0.0);
         il.Emit(OpCodes.Stloc, valueLocal);
         il.MarkLabel(nonZeroPLabel);
+
+        // Pass 1: G{precision} for the in-range / decision case.
+        var gResultLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Ldstr, "G");
         il.Emit(OpCodes.Ldloc, precisionLocal);
@@ -1212,6 +1218,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.Object])!);
         il.Emit(OpCodes.Call, typeof(CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
         il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(IFormatProvider)])!);
+        il.Emit(OpCodes.Stloc, gResultLocal);
+
+        // If the G-formatted result contains "E", we're in exponential range —
+        // reformat with E{precision-1} to preserve trailing zeros.
+        il.Emit(OpCodes.Ldloc, gResultLocal);
+        il.Emit(OpCodes.Ldstr, "E");
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Contains", [_types.String])!);
+        var notExponentialLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notExponentialLabel);
+
+        // Reformat with E{precision-1} (digits-after-decimal count = precision-1).
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        il.Emit(OpCodes.Ldstr, "E");
+        il.Emit(OpCodes.Ldloc, precisionLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.Object])!);
+        il.Emit(OpCodes.Call, typeof(CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(IFormatProvider)])!);
+        il.Emit(OpCodes.Stloc, gResultLocal);
+
+        il.MarkLabel(notExponentialLabel);
+        il.Emit(OpCodes.Ldloc, gResultLocal);
         il.Emit(OpCodes.Ldstr, "E");
         il.Emit(OpCodes.Ldstr, "e");
         il.Emit(OpCodes.Call, _types.String.GetMethod("Replace", [_types.String, _types.String])!);
