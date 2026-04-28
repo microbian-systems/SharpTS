@@ -2530,7 +2530,43 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notStrCtorLabel);
-        il.Emit(OpCodes.Ldnull);
+
+        // Numeric index: `"hello"[0]` returns "h". Pre-fix returned null
+        // because the string fallback didn't honor numeric-string keys —
+        // only the typed-string dispatch did.
+        var notNumericKeyLabel = il.DefineLabel();
+        var strIdxLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, strIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, notNumericKeyLabel);
+        il.Emit(OpCodes.Ldloc, strIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, notNumericKeyLabel);
+        il.Emit(OpCodes.Ldloc, strIdxLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, notNumericKeyLabel);
+        // Return str[idx].ToString()
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldloc, strIdxLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
+        var charLocalStr = il.DeclareLocal(_types.Char);
+        il.Emit(OpCodes.Stloc, charLocalStr);
+        il.Emit(OpCodes.Ldloca, charLocalStr);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Char, "ToString"));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNumericKeyLabel);
+
+        // ECMA-262 7.3.2: walk String.prototype for borrowed-method patterns
+        // (`s.valueOf`, `s.toString`, `s.toLowerCase`, etc.). Pre-fix returned
+        // null for any property other than length/constructor.
+        il.Emit(OpCodes.Call, runtime.StringPrototypePopulateMethod);
+        il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, method);
         il.Emit(OpCodes.Ret);
     }
 
