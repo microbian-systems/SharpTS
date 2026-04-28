@@ -208,11 +208,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Stelem_Ref);
 
-        // Call reviver.Invoke(args)
+        // Call reviver.InvokeWithThis(null, args). Function expressions emit a
+        // leading `__this` parameter; raw Invoke([key, val]) shifts the args
+        // and the user's `(k, v)` ends up seeing (__this=key, k=val, v=undef).
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
         il.Emit(OpCodes.Ret);
 
         return method;

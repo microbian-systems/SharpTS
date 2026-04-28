@@ -628,21 +628,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, elemLocal);
         il.Emit(OpCodes.Br, callDoneLabel);
 
-        // isTSFunctionLabel: call $TSFunction.Invoke
+        // isTSFunctionLabel: call $TSFunction.InvokeWithThis(null, args).
+        // Function expressions emit a leading `__this` parameter; calling raw
+        // Invoke([key, val]) shifts the args and the user function sees
+        // (__this=key, k=val, v=undefined). Routing through InvokeWithThis with
+        // null thisArg lets the wrapper detect the __this slot and prepend
+        // null itself, so the user's `(k, v)` lines up with [key, val].
         il.MarkLabel(isTSFunctionLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
         il.Emit(OpCodes.Stloc, elemLocal);
         il.Emit(OpCodes.Br, callDoneLabel);
 
-        // isBoundLabel: call $BoundTSFunction.Invoke
+        // isBoundLabel: call $BoundTSFunction.InvokeWithThis(null, args)
         il.MarkLabel(isBoundLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvokeWithThis);
         il.Emit(OpCodes.Stloc, elemLocal);
 
         il.MarkLabel(callDoneLabel);
@@ -694,21 +701,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, callDoneLabel);
 
-        // isTSFunctionLabel: call $TSFunction.Invoke
+        // isTSFunctionLabel: call $TSFunction.InvokeWithThis(null, args) — see
+        // EmitCallReplacerIfNeeded above for the __this arg-shift rationale.
         il.MarkLabel(isTSFunctionLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, callDoneLabel);
 
-        // isBoundLabel: call $BoundTSFunction.Invoke
+        // isBoundLabel: call $BoundTSFunction.InvokeWithThis(null, args)
         il.MarkLabel(isBoundLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvokeWithThis);
         il.Emit(OpCodes.Stloc, valueLocal);
 
         il.MarkLabel(callDoneLabel);
