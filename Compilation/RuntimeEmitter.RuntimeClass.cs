@@ -542,6 +542,10 @@ public partial class RuntimeEmitter
         // Stage 3 deferral note). Kept in the runtime class so a future
         // full-prototype-surface implementation can wire it up.
         EmitArrayLikeMaterialize(typeBuilder, runtime);
+        // RequireObjectCoercible(this) — emitted after TSError so it can
+        // construct $TypeError directly. Called from $TSFunction.CoercePrimitiveArgs
+        // via late-bound reflection.
+        EmitRequireObjectCoercibleThis(typeBuilder, runtime);
         EmitArrayJoin(typeBuilder, runtime);
         EmitArrayConcat(typeBuilder, runtime);
         EmitArrayReverse(typeBuilder, runtime);

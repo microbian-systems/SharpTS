@@ -1228,6 +1228,10 @@ public partial class RuntimeEmitter
             "_arrayLikeMaterializeCache",
             _types.MethodInfo,
             FieldAttributes.Private | FieldAttributes.Static);
+        var requireObjectCoercibleThisCacheField = typeBuilder.DefineField(
+            "_requireObjectCoercibleThisCache",
+            _types.MethodInfo,
+            FieldAttributes.Private | FieldAttributes.Static);
 
         var method = typeBuilder.DefineMethod(
             "CoercePrimitiveArgs",
@@ -1248,6 +1252,7 @@ public partial class RuntimeEmitter
         var toJsStringLocal = il.DeclareLocal(_types.MethodInfo);
         var toNumberLocal = il.DeclareLocal(_types.MethodInfo);
         var arrayLikeMaterializeLocal = il.DeclareLocal(_types.MethodInfo);
+        var requireObjectCoercibleThisLocal = il.DeclareLocal(_types.MethodInfo);
         var oneArgLocal = il.DeclareLocal(_types.ObjectArray);
 
         // params = method.GetParameters()
@@ -1304,6 +1309,7 @@ public partial class RuntimeEmitter
         ResolveRuntimeMethod("ToJsString", toJsStringCacheField, toJsStringLocal);
         ResolveRuntimeMethod("ToNumber", toNumberCacheField, toNumberLocal);
         ResolveRuntimeMethod("ArrayLikeMaterialize", arrayLikeMaterializeCacheField, arrayLikeMaterializeLocal);
+        ResolveRuntimeMethod("RequireObjectCoercibleThis", requireObjectCoercibleThisCacheField, requireObjectCoercibleThisLocal);
 
         // If any resolution failed, bail. Each branch checks its own resolved
         // method again before invoking, so the bail-on-any approach is
@@ -1317,6 +1323,82 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, bail);
         il.Emit(OpCodes.Ldloc, arrayLikeMaterializeLocal);
         il.Emit(OpCodes.Brfalse, bail);
+
+        // ECMA-262 RequireObjectCoercible(this) for String.prototype helpers
+        // and the few Array.prototype helpers whose `this` slot the wire layer
+        // names "__this". Detection: params[0].Name == "__this" AND args[0]
+        // is null or $Undefined → throw TypeError before per-arg coercion can
+        // mask the nullish receiver. Late-bound to avoid forward-referencing
+        // TSTypeErrorCtor from TSFunction's IL (TSError is emitted later).
+        // Closes ~50 String.prototype/* and Array.prototype/* tests in the
+        // `this-value-not-obj-coercible.js` / `this-is-{null,undefined}-throws`
+        // / `return-abrupt-from-this.js` clusters.
+        var skipNullishThisCheckLabel = il.DefineLabel();
+        var invokeHelperLabel = il.DefineLabel();
+        // Need params.Length > 0 and args.Length > 0
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brfalse, skipNullishThisCheckLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brfalse, skipNullishThisCheckLabel);
+        // Check params[0].ParameterType == typeof(string) — narrows to
+        // String.prototype.* helpers specifically. Array.prototype.* helpers
+        // also name their first param "__this" but take List<object>; they
+        // already throw via ArrayLikeMaterialize when the receiver is null/
+        // undefined, so applying the same RequireObjectCoercible here would
+        // double-throw and break legitimate non-prototype-method paths
+        // (e.g. CJS accessor imports that pass null receivers through
+        // __this-named slots intentionally).
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("ParameterType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, stringTypeLocal);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Brfalse, skipNullishThisCheckLabel);
+        // Check params[0].Name == "__this".
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("Name")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__this");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, skipNullishThisCheckLabel);
+        // args[0] is null or $Undefined?
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        var arg0NotNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, arg0NotNullLabel);
+        // args[0] == null → call helper (which throws).
+        il.Emit(OpCodes.Br, invokeHelperLabel);
+        il.MarkLabel(arg0NotNullLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, skipNullishThisCheckLabel);
+        // Falls through to invokeHelperLabel.
+        il.MarkLabel(invokeHelperLabel);
+        // requireObjectCoercibleThis.Invoke(null, new object[] { args[0] }) — throws.
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, oneArgLocal);
+        il.Emit(OpCodes.Ldloc, requireObjectCoercibleThisLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, oneArgLocal);
+        il.Emit(OpCodes.Callvirt, _types.MethodBase.GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(skipNullishThisCheckLabel);
 
         // i = 0
         il.Emit(OpCodes.Ldc_I4_0);

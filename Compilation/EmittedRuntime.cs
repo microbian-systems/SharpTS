@@ -193,6 +193,11 @@ public class EmittedRuntime
     public MethodBuilder ArrayKeys { get; set; } = null!;
     public MethodBuilder ArrayValues { get; set; } = null!;
     public MethodBuilder ArrayLikeMaterialize { get; set; } = null!;
+    // ECMA-262 RequireObjectCoercible(this) — throws TypeError if `this` is
+    // null or undefined. Called from $TSFunction.CoercePrimitiveArgs via
+    // late-bound reflection so the IL emitted before TSError ctors are built
+    // doesn't have to forward-reference TSTypeErrorCtor directly.
+    public MethodBuilder RequireObjectCoercibleThis { get; set; } = null!;
 
     // $TSFunction static factory + instance cache: stable identity for
     // function-declaration references (see RuntimeEmitter.TSFunction.cs).

@@ -231,6 +231,58 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits <c>$Runtime.RequireObjectCoercibleThis(object)</c> — the ECMA-262
+    /// 7.1.18 RequireObjectCoercible step that all <c>String.prototype.*</c>
+    /// (and several <c>Array.prototype.*</c>) methods perform on their
+    /// <c>this</c> value before any other work. Throws TypeError if the input
+    /// is null or undefined; otherwise returns the input unchanged.
+    /// </summary>
+    /// <remarks>
+    /// Called from <c>$TSFunction.CoercePrimitiveArgs</c> via late-bound
+    /// reflection (<c>Type.GetType("$Runtime").GetMethod("RequireObjectCoercibleThis")</c>),
+    /// because TSFunction's IL is emitted before the TSError class is built.
+    /// Routing through this helper lets us throw a real <c>$TypeError</c>
+    /// instance that <c>e instanceof TypeError</c> sees correctly, without
+    /// each <c>String.prototype.X</c> helper repeating the null check.
+    /// </remarks>
+    private void EmitRequireObjectCoercibleThis(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "RequireObjectCoercibleThis",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        runtime.RequireObjectCoercibleThis = method;
+
+        var il = method.GetILGenerator();
+        var passThroughLabel = il.DefineLabel();
+
+        // null → throw
+        il.Emit(OpCodes.Ldarg_0);
+        var notNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notNullLabel);
+
+        // $Undefined → throw
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, passThroughLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        // Pass-through
+        il.MarkLabel(passThroughLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Materializes a list from any receiver via $Runtime.GetProperty calls
     /// (length + indexed reads). Used for $Object instances where prototype-
     /// chain walks for `length` matter and indexed reads must go through the
