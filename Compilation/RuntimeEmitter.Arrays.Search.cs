@@ -1083,14 +1083,18 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // separator: ECMA-262 23.1.3.16 step 4 — only `undefined` triggers the
-        // "," default. Explicit `null` separator must coerce to "null" via
-        // Stringify (per ToString protocol). The call site emits
-        // $Undefined.Instance for no-arg cases so we distinguish missing-arg
-        // (→ ",") from arr.join(null) (→ "null").
+        // separator = (arg1 == null || arg1 is $Undefined) ? "," : Stringify(arg1).
+        // ECMA-262 23.1.3.16 step 4 specifies undefined → ",". The compiler's
+        // TSFunction wrapper pads missing args with `null` (not $Undefined),
+        // so wrapper-invoked join() with no args reaches here as null, which
+        // we also treat as the default-trigger. This trades spec compliance
+        // for `arr.join(null) === "null"` against correctness for the more
+        // common `arr.join()` case.
         var sepLocal = il.DeclareLocal(_types.String);
         var hasSep = il.DefineLabel();
         var afterSep = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, afterSep);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, afterSep);
