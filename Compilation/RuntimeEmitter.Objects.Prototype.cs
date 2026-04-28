@@ -436,6 +436,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, tryGetValue!);
         il.Emit(OpCodes.Brtrue, foundInLocalLabel);
 
+        // Default-prototype fallback per ECMA-262: plain objects/arrays/dicts
+        // have %Object.prototype% as their [[Prototype]] unless overridden.
+        // Without this, Object.getPrototypeOf({}) returns null instead of
+        // Object.prototype, breaking JSON.parse + literal-object tests.
+        var notDictForProtoLabel = il.DefineLabel();
+        var notListForProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, notDictForProtoLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notDictForProtoLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brfalse, notListForProtoLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notListForProtoLabel);
+
         // Not found in either: return null
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
