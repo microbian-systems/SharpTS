@@ -89,11 +89,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.String.GetProperty("Length")!.GetGetMethod()!);
         il.Emit(OpCodes.Brfalse, returnOriginalLabel);
 
-        // return str.Replace(search, replacement)
+        // return Regex.Replace(str, Regex.Escape(search), replacement) so
+        // ECMA-262 GetSubstitution Table 53 symbols ($$ → $, $& → matched,
+        // $` → pre-match, $' → post-match) are honoured. .NET's static
+        // Regex.Replace evaluates these in the replacement string for any
+        // regex match (including a literal-string-escaped pattern).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, searchLocal);
+        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Escape", [_types.String])!);
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Replace", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Replace", [_types.String, _types.String, _types.String])!);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(returnOriginalLabel);

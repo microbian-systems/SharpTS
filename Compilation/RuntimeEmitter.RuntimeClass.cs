@@ -325,6 +325,14 @@ public partial class RuntimeEmitter
         // JoinWithStringify must be emitted before ConsoleLogMultiple which uses it
         EmitJoinWithStringify(typeBuilder, runtime);
         EmitConsoleLogMultiple(typeBuilder, runtime);
+        // Exception helpers must come before ToNumber, since ToNumber emits a
+        // CreateException + TSTypeErrorCtor throw on Symbol receivers per
+        // ECMA-262 7.1.4 step 2. Without this earlier emit, runtime.CreateException
+        // would be null at IL emission time → "Value cannot be null. (Parameter 'meth')"
+        // bubbles up to every compiled program. The original line-378 EmitCreateException
+        // is left in place; calling here just reuses the same MethodBuilder slot.
+        EmitCreateException(typeBuilder, runtime);
+        EmitWrapException(typeBuilder, runtime);
         EmitToNumber(typeBuilder, runtime);
         EmitConvertToNumber(typeBuilder, runtime);
         EmitJsToInt32(typeBuilder, runtime);
@@ -372,11 +380,9 @@ public partial class RuntimeEmitter
         EmitGetListProperty(typeBuilder, runtime);
         EmitGetMapProperty(typeBuilder, runtime);
         EmitGetSetProperty(typeBuilder, runtime);
-        // Exception helpers must come before SetFieldsPropertyStrict (which references
-        // CreateException to throw spec-compliant $TypeError on frozen/sealed writes)
-        // and before Promise methods (Promise.any uses CreateException).
-        EmitCreateException(typeBuilder, runtime);
-        EmitWrapException(typeBuilder, runtime);
+        // Exception helpers were moved earlier (above EmitToNumber) since
+        // ToNumber's Symbol-throw branch emits a CreateException call that
+        // must resolve to a non-null MethodBuilder.
         EmitSetFieldsProperty(typeBuilder, runtime);
         EmitSetFieldsPropertyStrict(typeBuilder, runtime);
         // Promise methods must come before GetProperty (which needs PromiseThen for typeof p.then)
