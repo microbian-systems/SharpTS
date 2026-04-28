@@ -97,6 +97,38 @@ public partial class Interpreter
                 : newThis;
         }
 
+        // Function expressions (named or anonymous) used as constructors:
+        // `var Ctor = function(x) { this.x = x; }; new Ctor(1);` or
+        // `(function Foo(){...})()`-defined constructors. Same semantics as
+        // SharpTSFunction case above — without this, `new fnExpr(...)` falls
+        // through to the generic ISharpTSCallable branch which loses the
+        // `this`-binding/prototype-link/return-value-fallback dance and
+        // returns null. The harness's
+        // `Test262Error = function(m) { __orig.call(this,m); this.name = ... }`
+        // wrapper depends on this — without it, `new Test262Error("x")` is
+        // null and every assert.* throws "Only instances and objects have
+        // properties" instead of the spec'd Test262Error.
+        if (klass is SharpTSArrowFunction userArrowFn && userArrowFn.HasOwnThis)
+        {
+            List<object?> arrowArgs = await ctx.EvaluateAllAsync(newExpr.Arguments);
+            // Function expressions have prototype too — lazy-create on first read.
+            if (!userArrowFn.TryGetProperty("prototype", out var protoObj))
+            {
+                protoObj = new SharpTSObject(new Dictionary<string, object?>());
+                userArrowFn.SetProperty("prototype", protoObj);
+            }
+            var newThis = new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["__proto__"] = protoObj,
+                ["constructor"] = userArrowFn,
+            });
+            var bound = userArrowFn.Bind(newThis);
+            var result = bound.Call(this, arrowArgs);
+            return result is SharpTSObject or SharpTSInstance or SharpTSArray
+                ? result
+                : newThis;
+        }
+
         // Prototype-method wrappers and Object.prototype unbound methods are
         // not constructors per ECMA-262. They look callable but `new` on them
         // must surface a TypeError (covers \`new Error.prototype.toString()\`
@@ -221,6 +253,34 @@ public partial class Interpreter
             });
             var bound = userFn.BindThis(newThis);
             var result = bound.Call(this, fnArgs);
+            return RuntimeValue.FromBoxed(result is SharpTSObject or SharpTSInstance or SharpTSArray
+                ? result
+                : newThis);
+        }
+
+        // Function expressions used as constructors — same shape as
+        // SharpTSFunction case above. The Test262 harness's Test262Error
+        // wrapper relies on this (`new Test262Error("...")`); without the
+        // case, every assert.* throw lands as null instead of a usable error.
+        if (klass is SharpTSArrowFunction userArrowFn && userArrowFn.HasOwnThis)
+        {
+            List<object?> arrowArgs = [];
+            foreach (var arg in newExpr.Arguments)
+            {
+                arrowArgs.Add(Evaluate(arg));
+            }
+            if (!userArrowFn.TryGetProperty("prototype", out var protoObj))
+            {
+                protoObj = new SharpTSObject(new Dictionary<string, object?>());
+                userArrowFn.SetProperty("prototype", protoObj);
+            }
+            var newThis = new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["__proto__"] = protoObj,
+                ["constructor"] = userArrowFn,
+            });
+            var bound = userArrowFn.Bind(newThis);
+            var result = bound.Call(this, arrowArgs);
             return RuntimeValue.FromBoxed(result is SharpTSObject or SharpTSInstance or SharpTSArray
                 ? result
                 : newThis);

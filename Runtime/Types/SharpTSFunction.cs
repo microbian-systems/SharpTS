@@ -414,6 +414,22 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
         {
             environment.Define("this", _boundThis);
         }
+        else if (HasOwnThis && !_closure.TryGet("this", out _))
+        {
+            // ECMA-262: a function expression invoked as `fn()` (bare call) has
+            // its own `this` — globalThis in sloppy mode, undefined in strict
+            // mode. Without this binding, the harness-loading IIFE
+            // `(function(){...})()` (which writes to `this.name = ...`) throws
+            // "Undefined variable 'this'" at the resolver level, taking out
+            // the entire test262 harness and cascading to ~830 tests showing
+            // as RuntimeError rather than their real outcome.
+            //
+            // True arrow functions (HasOwnThis=false) inherit `this` from the
+            // enclosing closure per spec, so this branch only fires for
+            // function expressions.
+            environment.Define("this",
+                functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
+        }
 
         // Function expressions (HasOwnThis) bind their own `arguments`; true arrows
         // (HasOwnThis=false) inherit it from the enclosing scope per JS spec. Needed
@@ -480,6 +496,13 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
         if (_hasBoundThis)
         {
             environment.Define("this", _boundThis);
+        }
+        else if (HasOwnThis && !_closure.TryGet("this", out _))
+        {
+            // ECMA-262: function-expression's own `this` is globalThis (sloppy)
+            // or undefined (strict). Mirrors the legacy Call path above.
+            environment.Define("this",
+                functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
         }
 
         // Function expressions (HasOwnThis) bind their own `arguments`; true arrows do not.
