@@ -530,7 +530,7 @@ public class StringMethodTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("null\nnull\n", output);
+        Assert.Equal("undefined\nundefined\n", output);
     }
 
     #endregion
@@ -750,7 +750,7 @@ public class StringMethodTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("null\nnull\n", output);
+        Assert.Equal("undefined\nundefined\n", output);
     }
 
     [Theory]

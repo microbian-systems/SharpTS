@@ -367,7 +367,7 @@ public static class StringBuiltIns
     {
         var index = (int)args[0].AsNumber();
         if (index < 0) index = str.Length + index;
-        if (index < 0 || index >= str.Length) return RuntimeValue.Null;
+        if (index < 0 || index >= str.Length) return RuntimeValue.Undefined;
         return RuntimeValue.FromString(str[index].ToString());
     }
 
@@ -416,7 +416,7 @@ public static class StringBuiltIns
     private static RuntimeValue CodePointAtV2(Interpreter _, string str, ReadOnlySpan<RuntimeValue> args)
     {
         var index = (int)args[0].AsNumber();
-        if (index < 0 || index >= str.Length) return RuntimeValue.Null;
+        if (index < 0 || index >= str.Length) return RuntimeValue.Undefined;
         if (char.IsHighSurrogate(str[index]) && index + 1 < str.Length && char.IsLowSurrogate(str[index + 1]))
             return RuntimeValue.FromNumber(char.ConvertToUtf32(str[index], str[index + 1]));
         return RuntimeValue.FromNumber(str[index]);
