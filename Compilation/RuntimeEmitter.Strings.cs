@@ -1077,6 +1077,13 @@ public partial class RuntimeEmitter
     private void EmitStringReplaceAll(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // StringReplaceAll(string str, string search, string replacement) -> string
+        // ECMA-262 22.1.3.20 GetSubstitution requires `$$` → `$`, `$&` →
+        // matched, ``$` ``→ pre-match, `$'` → post-match. .NET's Regex.Replace
+        // honours the same syntax for these symbols (and additionally
+        // `$_`/`${name}`, but those aren't reachable from a literal-string
+        // search). Routing through Regex.Replace(Regex.Escape(search), …)
+        // gives us spec-compliant substitution without re-implementing the
+        // scanner.
         var method = typeBuilder.DefineMethod(
             "StringReplaceAll",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -1086,23 +1093,34 @@ public partial class RuntimeEmitter
         runtime.StringReplaceAll = method;
 
         var il = method.GetILGenerator();
-        var returnOriginal = il.DefineLabel();
+        var emptySearchLabel = il.DefineLabel();
         var doneLabel = il.DefineLabel();
 
-        // if (search.Length == 0) return str
+        // if (search.Length == 0) handle below — spec says insert replacement
+        // at every position, including ends. Defer to Regex (it handles empty
+        // patterns too: matches every position-of-zero-width).
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, returnOriginal);
+        il.Emit(OpCodes.Brfalse, emptySearchLabel);
 
-        // return str.Replace(search, replacement)
+        // return Regex.Replace(str, Regex.Escape(search), replacement)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Escape", [_types.String])!);
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Replace", _types.String, _types.String));
+        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Replace", [_types.String, _types.String, _types.String])!);
         il.Emit(OpCodes.Br, doneLabel);
 
-        il.MarkLabel(returnOriginal);
+        il.MarkLabel(emptySearchLabel);
+        // Empty search: spec says return str + replacement padded between
+        // every char and at both ends. Materialize via the same Regex path
+        // (an empty-pattern Regex.Replace inserts replacement at every
+        // position, matching ECMA-262 GetSubstitution semantics).
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Replace", [_types.String, _types.String, _types.String])!);
+
         il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Ret);
     }

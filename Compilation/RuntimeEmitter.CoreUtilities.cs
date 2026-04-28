@@ -1880,6 +1880,20 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var resultLocal = il.DeclareLocal(_types.Double);
 
+        // ECMA-262 7.1.4 ToNumber on Symbol → throws TypeError. Without this,
+        // Convert.ToDouble would catch the InvalidCastException → NaN → 0,
+        // silently masking the spec-required throw (e.g. `(0).toFixed(Symbol())`
+        // must throw, not silently produce "0").
+        var notSymbolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brfalse, notSymbolLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert a Symbol value to a number");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notSymbolLabel);
+
         // ECMA-262 ToNumber: strings with "0x"/"0X" prefix parse as hex. Convert.ToDouble
         // throws on those, so special-case before the fallback. Without this, tests that
         // set `length: "0x0002"` on array-likes surface as NaN → 0 → empty iteration.
@@ -2166,6 +2180,19 @@ public partial class RuntimeEmitter
         // null => 0.0
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // ECMA-262 21.1.1.1 → 7.1.4: Number(Symbol) throws TypeError. Without
+        // this branch the value falls through to the "everything else → NaN"
+        // tail, masking the spec-required throw.
+        var notSymbolConvLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brfalse, notSymbolConvLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert a Symbol value to a number");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notSymbolConvLabel);
 
         // undefined => NaN
         il.Emit(OpCodes.Ldarg_0);

@@ -563,6 +563,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.IListOfObject);
         il.Emit(OpCodes.Brtrue, trueLabel);
 
+        // ECMA-262 23.1.3: Array.prototype itself is an Array exotic object.
+        // Tests probe `Array.isArray(Array.prototype)` and expect true. We
+        // back the prototype with a Dictionary singleton (so user code can
+        // do `Array.prototype.X = ...`), so reference-equality unlocks the
+        // spec without changing the prototype's actual storage type.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+
         // False
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Br, endLabel);
