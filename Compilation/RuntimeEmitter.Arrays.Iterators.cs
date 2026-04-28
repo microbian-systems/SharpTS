@@ -705,7 +705,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, callbackLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, reduceCallableThrow);
-        il.Emit(OpCodes.Br, reduceCallableOk);
+        // Positive callable check — bool/number/string/dict/list/etc. all
+        // throw TypeError per ECMA-262 IsCallable. Mirrors
+        // EmitThrowIfCallbackNotCallable used by every/filter/map.
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, reduceCallableOk);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brtrue, reduceCallableOk);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.FunctionBindWrapperType);
+        il.Emit(OpCodes.Brtrue, reduceCallableOk);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.FunctionCallWrapperType);
+        il.Emit(OpCodes.Brtrue, reduceCallableOk);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.FunctionApplyWrapperType);
+        il.Emit(OpCodes.Brtrue, reduceCallableOk);
+        il.Emit(OpCodes.Br, reduceCallableThrow);
         il.MarkLabel(reduceCallableThrow);
         il.Emit(OpCodes.Ldstr, "Array.prototype.reduce callback is not callable");
         il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
@@ -889,7 +907,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, callbackLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, reduceRCallableThrow);
-        il.Emit(OpCodes.Br, reduceRCallableOk);
+        // Positive callable check (mirrors reduce / EmitThrowIfCallbackNotCallable).
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, reduceRCallableOk);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brtrue, reduceRCallableOk);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.FunctionBindWrapperType);
+        il.Emit(OpCodes.Brtrue, reduceRCallableOk);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.FunctionCallWrapperType);
+        il.Emit(OpCodes.Brtrue, reduceRCallableOk);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.FunctionApplyWrapperType);
+        il.Emit(OpCodes.Brtrue, reduceRCallableOk);
+        il.Emit(OpCodes.Br, reduceRCallableThrow);
         il.MarkLabel(reduceRCallableThrow);
         il.Emit(OpCodes.Ldstr, "Array.prototype.reduceRight callback is not callable");
         il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
