@@ -134,6 +134,49 @@ public partial class RuntimeEmitter
         EmitTag("[object Math]");
         il.MarkLabel(notMathLabel);
 
+        // Stage 4z19 boxed primitive wrappers — $TSObject with __primitiveType
+        // marker. Read the marker via direct dict TryGetValue (avoid recursing
+        // through GetProperty which would walk the prototype chain). Tag using
+        // the primitive type so `(new Number()).toString.call(obj) === "[object Number]"`.
+        var notBoxedTSObjectLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notBoxedTSObjectLabel);
+        var boxedTypeLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectFieldsGetter);
+        il.Emit(OpCodes.Ldstr, "__primitiveType");
+        il.Emit(OpCodes.Ldloca, boxedTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue",
+            [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, notBoxedTSObjectLabel);
+        // Compare with "Number" / "String" / "Boolean" markers and emit the
+        // matching tag. String marker isn't actually used since `new String(x)`
+        // stays primitive, but include for completeness.
+        var notNumberMarkerLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, boxedTypeLocal);
+        il.Emit(OpCodes.Ldstr, "Number");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
+        il.Emit(OpCodes.Brfalse, notNumberMarkerLabel);
+        EmitTag("[object Number]");
+        il.MarkLabel(notNumberMarkerLabel);
+        var notBoolMarkerLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, boxedTypeLocal);
+        il.Emit(OpCodes.Ldstr, "Boolean");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
+        il.Emit(OpCodes.Brfalse, notBoolMarkerLabel);
+        EmitTag("[object Boolean]");
+        il.MarkLabel(notBoolMarkerLabel);
+        var notStringMarkerLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, boxedTypeLocal);
+        il.Emit(OpCodes.Ldstr, "String");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
+        il.Emit(OpCodes.Brfalse, notStringMarkerLabel);
+        EmitTag("[object String]");
+        il.MarkLabel(notStringMarkerLabel);
+        il.MarkLabel(notBoxedTSObjectLabel);
+
         // JSON singleton
         var notJsonLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);

@@ -284,6 +284,7 @@ public partial class RuntimeEmitter
         EmitPDSIsWritable(typeBuilder, runtime, frozenSealedField, frozenSealedTryGet, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue);
         EmitPDSSetPrototype(typeBuilder, runtime, prototypeStoreField, prototypeGetOrCreate);
         EmitPDSGetPrototype(typeBuilder, runtime, prototypeStoreField, prototypeTryGet);
+        EmitPDSHasPrototypeEntry(typeBuilder, runtime, prototypeStoreField, prototypeTryGet);
         EmitPDSDefineProperty(typeBuilder, runtime, descriptorsField, descriptorsGetOrCreate, descriptorsDictType, descriptorsDictSetItem);
         EmitPDSGetPropertyDescriptor(typeBuilder, runtime, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue);
 
@@ -841,6 +842,35 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(returnNullLabel);
         il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static bool HasPrototypeEntry(object obj). Returns true
+    /// iff the prototype store contains an entry for <paramref name="obj"/>,
+    /// regardless of whether the stored value is null. Used by
+    /// Object.getPrototypeOf to distinguish "no entry" (fall through to default
+    /// prototype fallback) from "entry exists with null value" (e.g.
+    /// Object.create(null) — must return null, not Object.prototype).
+    /// </summary>
+    private void EmitPDSHasPrototypeEntry(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder prototypeStoreField, MethodInfo tryGetValue)
+    {
+        var method = typeBuilder.DefineMethod(
+            "HasPrototypeEntry",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object]
+        );
+        runtime.PDSHasPrototypeEntry = method;
+
+        var il = method.GetILGenerator();
+        var infoLocal = il.DeclareLocal(runtime.PrototypeInfoType);
+
+        il.Emit(OpCodes.Ldsfld, prototypeStoreField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, infoLocal);
+        il.Emit(OpCodes.Callvirt, tryGetValue);
         il.Emit(OpCodes.Ret);
     }
 

@@ -2334,6 +2334,7 @@ public class EmittedRuntime
     public MethodBuilder PDSIsWritable { get; set; } = null!;
     public MethodBuilder PDSSetPrototype { get; set; } = null!;
     public MethodBuilder PDSGetPrototype { get; set; } = null!;
+    public MethodBuilder PDSHasPrototypeEntry { get; set; } = null!;
     public MethodBuilder PDSDefineProperty { get; set; } = null!;
     public MethodBuilder PDSGetPropertyDescriptor { get; set; } = null!;
 

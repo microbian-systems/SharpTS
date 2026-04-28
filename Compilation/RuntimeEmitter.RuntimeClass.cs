@@ -234,6 +234,18 @@ public partial class RuntimeEmitter
         );
         runtime.ConsoleGroupLevelField = consoleGroupLevelField;
 
+        // Pre-define populate-method shells before the cctor IL is generated
+        // so the cctor can `Call` each populate to eagerly fill the
+        // singletons. Without eager-population, `delete Number.prototype.toString;
+        // n.toString` walks the chain and finds an empty Object.prototype dict
+        // because populate is only invoked when Object.prototype is explicitly
+        // referenced. Idempotent — populate methods early-return if Count > 0.
+        DefineObjectPrototypePopulateShell(typeBuilder, runtime);
+        DefineArrayPrototypePopulateShell(typeBuilder, runtime);
+        DefineStringPrototypePopulateShell(typeBuilder, runtime);
+        DefineNumberPrototypePopulateShell(typeBuilder, runtime);
+        DefineBooleanPrototypePopulateShell(typeBuilder, runtime);
+
         // Static constructor to initialize Random and symbol storage
         var cctorBuilder = typeBuilder.DefineConstructor(
             MethodAttributes.Static | MethodAttributes.Private | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
@@ -326,6 +338,16 @@ public partial class RuntimeEmitter
         // emitted while we still hold the cctor IL generator so the field gets initialized.
         EmitEventSubscriptionHelpers(typeBuilder, runtime, cctorIL);
 
+        // Eagerly populate the prototype singletons so cross-prototype-chain
+        // walks (e.g. `delete Number.prototype.toString; n.toString` should
+        // fall through to Object.prototype.toString) hit populated dicts.
+        // Each populate is idempotent (early-returns if Count > 0).
+        cctorIL.Emit(OpCodes.Call, runtime.ObjectPrototypePopulateMethod);
+        cctorIL.Emit(OpCodes.Call, runtime.ArrayPrototypePopulateMethod);
+        cctorIL.Emit(OpCodes.Call, runtime.NumberPrototypePopulateMethod);
+        cctorIL.Emit(OpCodes.Call, runtime.BooleanPrototypePopulateMethod);
+        cctorIL.Emit(OpCodes.Call, runtime.StringPrototypePopulateMethod);
+
         cctorIL.Emit(OpCodes.Ret);
 
         // Emit all methods - these are now in partial class files
@@ -368,11 +390,13 @@ public partial class RuntimeEmitter
         // GetFunctionMethod so the corresponding arms can return $TSFunction
         // wrappers.
         EmitHasOwnPropertyHelper(typeBuilder, runtime);
+        // Shell ObjectGetPrototypeOf early so IsPrototypeOfHelper can call it
+        // and pick up the default-fallback to Object.prototype / Array.prototype
+        // for plain Dict/List receivers without explicit PDS entries.
+        DefineObjectGetPrototypeOfShell(typeBuilder, runtime);
         EmitIsPrototypeOfHelper(typeBuilder, runtime);
-        // Pre-define ObjectPrototypePopulate shell for ObjectStaticEmitter
-        // to reference at compile time. Body emitted later.
-        DefineObjectPrototypePopulateShell(typeBuilder, runtime);
-        DefineArrayPrototypePopulateShell(typeBuilder, runtime);
+        // ObjectPrototypePopulate / ArrayPrototypePopulate shells already
+        // defined above (before cctor) so the cctor can call them eagerly.
         EmitGetFunctionMethod(typeBuilder, runtime);  // For bind/call/apply on functions
         // Pre-define IsBoxedPrimitiveOfType shell so InstanceOf can reference
         // it. Body emitted later (after the prototype singletons are defined).
@@ -410,12 +434,8 @@ public partial class RuntimeEmitter
         EmitPromiseMethods(typeBuilder, runtime);
         // TypedArray detection helpers must come before GetProperty (which uses IsTypedArrayMethod)
         EmitTypedArrayDetectionHelpers(typeBuilder, runtime);
-        // Pre-define populate shells so GetProperty's Type-prototype branch can
-        // reference them as MethodBuilders. Bodies emitted later (after the
-        // wrapped helpers exist).
-        DefineStringPrototypePopulateShell(typeBuilder, runtime);
-        DefineNumberPrototypePopulateShell(typeBuilder, runtime);
-        DefineBooleanPrototypePopulateShell(typeBuilder, runtime);
+        // String/Number/Boolean populate shells already defined above
+        // (before cctor) so the cctor can call them eagerly.
         EmitGetProperty(typeBuilder, runtime);
         // ToJsString depends on GetProperty + InvokeMethodValue + Stringify; emit after those.
         EmitToJsString(typeBuilder, runtime);

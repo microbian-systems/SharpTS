@@ -44,7 +44,7 @@ public partial class RuntimeEmitter
         // }
         var currentLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.PDSGetPrototype);
+        il.Emit(OpCodes.Call, runtime.ObjectGetPrototypeOf);
         il.Emit(OpCodes.Stloc, currentLocal);
 
         var loopStart = il.DefineLabel();
@@ -59,7 +59,7 @@ public partial class RuntimeEmitter
 
         // current = PDSGetPrototype(current)
         il.Emit(OpCodes.Ldloc, currentLocal);
-        il.Emit(OpCodes.Call, runtime.PDSGetPrototype);
+        il.Emit(OpCodes.Call, runtime.ObjectGetPrototypeOf);
         il.Emit(OpCodes.Stloc, currentLocal);
         il.Emit(OpCodes.Br, loopStart);
 

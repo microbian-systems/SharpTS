@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 
 namespace SharpTS.Compilation;
 
@@ -395,36 +396,43 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Pre-defines the ObjectGetPrototypeOf MethodBuilder so emitters that fire
+    /// earlier (e.g. IsPrototypeOfHelper) can reference it. Body emitted in
+    /// EmitObjectGetPrototypeOf.
+    /// </summary>
+    private void DefineObjectGetPrototypeOfShell(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.ObjectGetPrototypeOf = typeBuilder.DefineMethod(
+            "ObjectGetPrototypeOf",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+    }
+
+    /// <summary>
     /// Emits Object.getPrototypeOf(obj) - returns the prototype of an object.
     /// Signature: object ObjectGetPrototypeOf(object obj)
     /// Checks PropertyDescriptorStore first, then local table for compatibility.
     /// </summary>
     private void EmitObjectGetPrototypeOf(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder prototypeStoreField)
     {
-        var method = typeBuilder.DefineMethod(
-            "ObjectGetPrototypeOf",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            [_types.Object]
-        );
-        runtime.ObjectGetPrototypeOf = method;
-
+        var method = runtime.ObjectGetPrototypeOf;
         var il = method.GetILGenerator();
         var checkLocalTableLabel = il.DefineLabel();
         var foundInLocalLabel = il.DefineLabel();
 
-        var resultLocal = il.DeclareLocal(_types.Object);
         var tempLocal = il.DeclareLocal(_types.Object);
 
-        // Check $PropertyDescriptorStore.GetPrototype(obj) - fully standalone, no reflection
+        // Distinguish "no PDS entry" from "entry with null value" so explicit
+        // Object.create(null) / Object.setPrototypeOf(o, null) survive the
+        // default-fallback below. HasPrototypeEntry returns the success bit
+        // separately; GetPrototype returns the value.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSHasPrototypeEntry);
+        il.Emit(OpCodes.Brfalse, checkLocalTableLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.PDSGetPrototype);
-        il.Emit(OpCodes.Stloc, resultLocal);
-
-        // If result is not null, return it
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Brfalse, checkLocalTableLabel);
-        il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 
         // Also check local _prototypeStore table for backward compatibility

@@ -3089,7 +3089,7 @@ test/built-ins/Boolean/S15.6.1.1_A2.js Pass
 test/built-ins/Boolean/S15.6.2.1_A1.js Pass
 test/built-ins/Boolean/S15.6.2.1_A2.js Pass
 test/built-ins/Boolean/S15.6.2.1_A3.js Pass
-test/built-ins/Boolean/S15.6.2.1_A4.js Fail
+test/built-ins/Boolean/S15.6.2.1_A4.js Pass
 test/built-ins/Boolean/S15.6.3_A1.js Pass
 test/built-ins/Boolean/S15.6.3_A2.js TypeCheckError
 test/built-ins/Boolean/S15.6.3_A3.js Fail
@@ -3709,7 +3709,7 @@ test/built-ins/Number/S15.7.1.1_A2.js Pass
 test/built-ins/Number/S15.7.2.1_A1.js Pass
 test/built-ins/Number/S15.7.2.1_A2.js Pass
 test/built-ins/Number/S15.7.2.1_A3.js Pass
-test/built-ins/Number/S15.7.2.1_A4.js Fail
+test/built-ins/Number/S15.7.2.1_A4.js Pass
 test/built-ins/Number/S15.7.3_A1.js Pass
 test/built-ins/Number/S15.7.3_A2.js Pass
 test/built-ins/Number/S15.7.3_A3.js Pass
@@ -4143,7 +4143,7 @@ test/built-ins/String/prototype/S15.5.3.1_A1.js Pass
 test/built-ins/String/prototype/S15.5.3.1_A2.js Pass
 test/built-ins/String/prototype/S15.5.3.1_A3.js TypeCheckError
 test/built-ins/String/prototype/S15.5.3.1_A4.js TypeCheckError
-test/built-ins/String/prototype/S15.5.4_A1.js RuntimeError
+test/built-ins/String/prototype/S15.5.4_A1.js Pass
 test/built-ins/String/prototype/S15.5.4_A2.js RuntimeError
 test/built-ins/String/prototype/S15.5.4_A3.js Pass
 test/built-ins/String/prototype/Symbol.iterator/length.js TypeCheckError
@@ -4804,7 +4804,7 @@ test/built-ins/String/prototype/split/cstm-split-on-string-primitive.js RuntimeE
 test/built-ins/String/prototype/split/instance-is-array-1-2-3-4-5.js Pass
 test/built-ins/String/prototype/split/instance-is-boolean.js Pass
 test/built-ins/String/prototype/split/instance-is-function.js TypeCheckError
-test/built-ins/String/prototype/split/instance-is-math.js Fail
+test/built-ins/String/prototype/split/instance-is-math.js Pass
 test/built-ins/String/prototype/split/instance-is-new-string.js Fail
 test/built-ins/String/prototype/split/instance-is-number-1234567890.js Pass
 test/built-ins/String/prototype/split/instance-is-number-1e21.js Pass
