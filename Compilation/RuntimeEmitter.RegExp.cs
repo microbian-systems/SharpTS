@@ -526,20 +526,13 @@ public partial class RuntimeEmitter
         var loopStartLabel = il.DefineLabel();
         var loopEndLabel = il.DefineLabel();
 
-        // ECMA-262 22.1.3.13 String.prototype.match: when pattern is null or
-        // undefined, set rx = new RegExp(pattern) which coerces to /(?:)/.
-        // The exec result then has the spec-compliant index/input/length
-        // properties — without this, the string-fallback path returns a bare
-        // [match] array missing those fields.
-        var notNullPatternLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brtrue, notNullPatternLabel);
-        il.Emit(OpCodes.Ldstr, "");
-        il.Emit(OpCodes.Newobj, runtime.TSRegExpCtorPattern);
-        il.Emit(OpCodes.Castclass, runtime.TSRegExpType);
-        il.Emit(OpCodes.Stloc, regexpLocal);
-        il.Emit(OpCodes.Br, globalMatchLabelEntryFromCoerced);
-        il.MarkLabel(notNullPatternLabel);
+        // ECMA-262 22.1.3.13 String.prototype.match: when pattern is undefined,
+        // RegExpCreate coerces to /(?:)/ and the exec path returns the
+        // spec-compliant result object with index/input/length. Pre-fix, undefined
+        // fell through to the string-fallback which returned a bare [match]
+        // array missing index/input/length. Null is NOT special-cased — per spec
+        // ToString(null) = "null", so match(null) searches for the literal "null"
+        // substring (the string-pattern fallback below handles that correctly).
         var notUndefPatternLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
