@@ -3844,7 +3844,7 @@ test/built-ins/Number/prototype/toExponential/return-values.js Fail
 test/built-ins/Number/prototype/toExponential/this-is-0-fractiondigits-is-0.js Pass
 test/built-ins/Number/prototype/toExponential/this-is-0-fractiondigits-is-not-0.js Pass
 test/built-ins/Number/prototype/toExponential/this-type-not-number-or-number-object.js Pass
-test/built-ins/Number/prototype/toExponential/tointeger-fractiondigits.js Fail
+test/built-ins/Number/prototype/toExponential/tointeger-fractiondigits.js Pass
 test/built-ins/Number/prototype/toExponential/undefined-fractiondigits.js Fail
 test/built-ins/Number/prototype/toFixed/S15.7.4.5_A1.1_T01.js Pass
 test/built-ins/Number/prototype/toFixed/S15.7.4.5_A1.1_T02.js Pass
@@ -3881,7 +3881,7 @@ test/built-ins/Number/prototype/toPrecision/return-values.js Pass
 test/built-ins/Number/prototype/toPrecision/this-is-0-precision-is-1.js Pass
 test/built-ins/Number/prototype/toPrecision/this-is-0-precision-is-gter-than-1.js Pass
 test/built-ins/Number/prototype/toPrecision/this-type-not-number-or-number-object.js Pass
-test/built-ins/Number/prototype/toPrecision/tointeger-precision.js RuntimeError
+test/built-ins/Number/prototype/toPrecision/tointeger-precision.js Pass
 test/built-ins/Number/prototype/toPrecision/undefined-precision-arg.js Pass
 test/built-ins/Number/prototype/toString/S15.7.4.2_A1_T01.js Pass
 test/built-ins/Number/prototype/toString/S15.7.4.2_A1_T02.js Pass
