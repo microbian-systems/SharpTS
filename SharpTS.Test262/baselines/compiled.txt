@@ -3298,7 +3298,7 @@ test/built-ins/JSON/stringify/replacer-array-abrupt.js Fail
 test/built-ins/JSON/stringify/replacer-array-duplicates.js Fail
 test/built-ins/JSON/stringify/replacer-array-empty.js Pass
 test/built-ins/JSON/stringify/replacer-array-number-object.js Fail
-test/built-ins/JSON/stringify/replacer-array-number.js Fail
+test/built-ins/JSON/stringify/replacer-array-number.js Pass
 test/built-ins/JSON/stringify/replacer-array-order.js Fail
 test/built-ins/JSON/stringify/replacer-array-proxy-revoked-realm.js TypeCheckError
 test/built-ins/JSON/stringify/replacer-array-proxy-revoked.js Fail
