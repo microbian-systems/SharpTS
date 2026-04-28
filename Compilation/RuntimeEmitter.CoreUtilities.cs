@@ -1894,6 +1894,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(notSymbolLabel);
 
+        // ECMA-262 7.1.4 step 2: BigInt → TypeError. `(0).toFixed(0n)` must
+        // throw not silently coerce. Convert.ToDouble would otherwise narrow
+        // BigInteger to its double value (or throw OverflowException → NaN).
+        var notBigIntLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.BigInteger);
+        il.Emit(OpCodes.Brfalse, notBigIntLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert a BigInt to a number");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notBigIntLabel);
+
         // ECMA-262 ToNumber: strings with "0x"/"0X" prefix parse as hex. Convert.ToDouble
         // throws on those, so special-case before the fallback. Without this, tests that
         // set `length: "0x0002"` on array-likes surface as NaN → 0 → empty iteration.
@@ -2193,6 +2206,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
         il.MarkLabel(notSymbolConvLabel);
+
+        // ECMA-262 7.1.4 step 2: BigInt → TypeError.
+        var notBigIntConvLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.BigInteger);
+        il.Emit(OpCodes.Brfalse, notBigIntConvLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert a BigInt to a number");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notBigIntConvLabel);
 
         // undefined => NaN
         il.Emit(OpCodes.Ldarg_0);
