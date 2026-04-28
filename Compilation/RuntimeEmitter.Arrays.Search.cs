@@ -49,8 +49,12 @@ public partial class RuntimeEmitter
         il.MarkLabel(notHole);
         il.MarkLabel(holeCheckDone);
 
+        // ECMA-262 SameValueZero: like StrictEquals but treats NaN === NaN.
+        // We approximate via StrictEquals (which already routes through
+        // Object.Equals → IEEE compare for doubles). Object.Equals(NaN, NaN)
+        // returns true in CLR, so SameValueZero parity is preserved.
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Equals);
+        il.Emit(OpCodes.Call, runtime.StrictEquals);
 
         var notMatch = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notMatch);
@@ -798,11 +802,12 @@ public partial class RuntimeEmitter
         // ECMA-262 23.1.3.14: indexOf SKIPS holes.
         EmitSkipIfHole(il, indexLocal, advance, runtime);
 
+        // Spec uses StrictEqualityComparison — null and undefined are distinct.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Equals);
+        il.Emit(OpCodes.Call, runtime.StrictEquals);
 
         var notMatch = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notMatch);
@@ -963,11 +968,12 @@ public partial class RuntimeEmitter
 
         EmitSkipIfHole(il, indexLocal, advance, runtime);
 
+        // ECMA-262 23.1.3.18 lastIndexOf — StrictEqualityComparison (===).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Equals);
+        il.Emit(OpCodes.Call, runtime.StrictEquals);
 
         var notMatch = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notMatch);

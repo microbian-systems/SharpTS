@@ -127,6 +127,7 @@ public class EmittedRuntime
     // Operator methods
     public MethodBuilder Add { get; set; } = null!;
     public new MethodBuilder Equals { get; set; } = null!;
+    public MethodBuilder StrictEquals { get; set; } = null!;
 
     // Array methods
     public MethodBuilder SetArrayElement { get; set; } = null!;

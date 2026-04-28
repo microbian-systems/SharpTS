@@ -3075,5 +3075,73 @@ public partial class RuntimeEmitter
         il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);
     }
+
+    private void EmitStrictEquals(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // ECMA-262 IsStrictlyEqual semantics: null/undefined are distinct values
+        // (unlike loose ==). Used by Array.prototype.indexOf/lastIndexOf/includes,
+        // which all forbid null/undefined unification per spec.
+        var method = typeBuilder.DefineMethod(
+            "StrictEquals",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object, _types.Object]
+        );
+        runtime.StrictEquals = method;
+
+        var il = method.GetILGenerator();
+        var trueLabel = il.DefineLabel();
+        var falseLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        var leftIsNull = il.DefineLabel();
+        var leftNotUndef = il.DefineLabel();
+
+        // If left is CLR null → match iff right is CLR null.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, leftIsNull);
+
+        // If left is $Undefined → match iff right is $Undefined.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, leftNotUndef);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Cgt_Un);
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(leftNotUndef);
+        // Left is non-null, non-undefined. If right is null or undefined → false.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, falseLabel);
+
+        // Both are concrete values — defer to Object.Equals (handles double,
+        // string, reference equality for objects).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(leftIsNull);
+        // Left is CLR null. Match iff right is also CLR null (NOT $Undefined).
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(trueLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(falseLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ret);
+    }
 }
 

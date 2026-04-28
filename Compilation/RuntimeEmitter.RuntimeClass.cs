@@ -332,6 +332,7 @@ public partial class RuntimeEmitter
         EmitTypeOf(typeBuilder, runtime);
         EmitAdd(typeBuilder, runtime);
         EmitEquals(typeBuilder, runtime);
+        EmitStrictEquals(typeBuilder, runtime);
         // Object methods - must come BEFORE iterator methods since GetProperty, InvokeMethodValue are needed
         EmitCreateObject(typeBuilder, runtime);
         EmitGetArrayMethod(typeBuilder, runtime);
