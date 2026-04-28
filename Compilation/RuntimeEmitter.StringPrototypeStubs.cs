@@ -34,6 +34,161 @@ public partial class RuntimeEmitter
         // tolerant of null/undefined receivers (returns empty string) since
         // those wirings legitimately call with non-string receivers.
         runtime.StringPrototypeGenericStub = EmitStringStringStub(typeBuilder, runtime, "_StringPrototypeStub", "ToString", strictReceiver: false);
+
+        // ECMA-262 19.1.3.6 Object.prototype.toString — returns "[object X]"
+        // brand based on receiver type. Wired into the Object.prototype slot
+        // for borrowed-method patterns. Mirrors the syntactic
+        // `Object.prototype.toString.call(...)` pattern matcher in
+        // ILEmitter.Calls.cs.
+        runtime.ObjectProtoToStringHelper = EmitObjectProtoToStringHelper(typeBuilder, runtime);
+    }
+
+    private MethodBuilder EmitObjectProtoToStringHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectProtoToString",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]
+        );
+        // Name first parameter "__this" so $TSFunction.InvokeWithThis (called
+        // when the helper is borrowed via `obj.toString = Object.prototype.toString`)
+        // prepends the receiver as arg0 instead of treating the user-supplied
+        // arg list as the actual JS arguments.
+        method.DefineParameter(1, ParameterAttributes.None, "__this");
+
+        var il = method.GetILGenerator();
+        var endLabel = il.DefineLabel();
+
+        void EmitTag(string tag)
+        {
+            il.Emit(OpCodes.Ldstr, tag);
+            il.Emit(OpCodes.Br, endLabel);
+        }
+
+        // null
+        var notNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        EmitTag("[object Null]");
+        il.MarkLabel(notNullLabel);
+
+        // undefined
+        var notUndefLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, notUndefLabel);
+        EmitTag("[object Undefined]");
+        il.MarkLabel(notUndefLabel);
+
+        // Math singleton
+        var notMathLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
+        il.Emit(OpCodes.Bne_Un, notMathLabel);
+        EmitTag("[object Math]");
+        il.MarkLabel(notMathLabel);
+
+        // JSON singleton
+        var notJsonLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.JsonSingletonField);
+        il.Emit(OpCodes.Bne_Un, notJsonLabel);
+        EmitTag("[object JSON]");
+        il.MarkLabel(notJsonLabel);
+
+        // Number/String/Boolean/Array prototype singletons
+        var notNumberProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        il.Emit(OpCodes.Bne_Un, notNumberProtoLabel);
+        EmitTag("[object Number]");
+        il.MarkLabel(notNumberProtoLabel);
+
+        var notStringProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
+        il.Emit(OpCodes.Bne_Un, notStringProtoLabel);
+        EmitTag("[object String]");
+        il.MarkLabel(notStringProtoLabel);
+
+        var notBoolProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+        il.Emit(OpCodes.Bne_Un, notBoolProtoLabel);
+        EmitTag("[object Boolean]");
+        il.MarkLabel(notBoolProtoLabel);
+
+        var notArrayProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+        il.Emit(OpCodes.Bne_Un, notArrayProtoLabel);
+        EmitTag("[object Array]");
+        il.MarkLabel(notArrayProtoLabel);
+
+        // object[]
+        var notArgsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ObjectArray);
+        il.Emit(OpCodes.Brfalse, notArgsLabel);
+        EmitTag("[object Arguments]");
+        il.MarkLabel(notArgsLabel);
+
+        // List<object>
+        var notListLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brfalse, notListLabel);
+        EmitTag("[object Array]");
+        il.MarkLabel(notListLabel);
+
+        // $Array
+        var notTSArrayLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brfalse, notTSArrayLabel);
+        EmitTag("[object Array]");
+        il.MarkLabel(notTSArrayLabel);
+
+        // string
+        var notStringLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+        EmitTag("[object String]");
+        il.MarkLabel(notStringLabel);
+
+        // bool
+        var notBoolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, notBoolLabel);
+        EmitTag("[object Boolean]");
+        il.MarkLabel(notBoolLabel);
+
+        // double
+        var notDoubleLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, notDoubleLabel);
+        EmitTag("[object Number]");
+        il.MarkLabel(notDoubleLabel);
+
+        // $TSFunction
+        var notTSFunctionLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notTSFunctionLabel);
+        EmitTag("[object Function]");
+        il.MarkLabel(notTSFunctionLabel);
+
+        // Default
+        il.Emit(OpCodes.Ldstr, "[object Object]");
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ret);
+
+        return method;
     }
 
     private MethodBuilder EmitStringStringStub(TypeBuilder typeBuilder, EmittedRuntime runtime, string runtimeName, string netName, bool strictReceiver)

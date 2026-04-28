@@ -55,9 +55,14 @@ public partial class RuntimeEmitter
 
         Wire("hasOwnProperty", runtime.HasOwnPropertyHelperMethod, 1);
         Wire("isPrototypeOf",  runtime.IsPrototypeOfHelperMethod,  1);
-        // toString and valueOf — back with the generic stub so they pass
-        // typeof/IsConstructor probes. Real semantics handled inline.
-        Wire("toString",       runtime.StringPrototypeGenericStub, 0);
+        // toString — ECMA-262 19.1.3.6 returns "[object X]" brand. Borrowed-
+        // method patterns (`obj.getClass = Object.prototype.toString;
+        // obj.getClass()`) need a real brand-tag function (the generic stub
+        // returns Convert.ToString of receiver, which is wrong for arrays).
+        Wire("toString",       runtime.ObjectProtoToStringHelper, 0);
+        // valueOf and friends keep the tolerant stub (returns Convert.ToString,
+        // which equals the receiver itself for primitives — matches spec for
+        // valueOf since it returns this).
         Wire("valueOf",        runtime.StringPrototypeGenericStub, 0);
         Wire("toLocaleString", runtime.StringPrototypeGenericStub, 0);
         Wire("propertyIsEnumerable", runtime.StringPrototypeGenericStub, 1);

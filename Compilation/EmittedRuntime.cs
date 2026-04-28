@@ -328,6 +328,8 @@ public class EmittedRuntime
     public MethodBuilder NumberPrototypePopulateMethod { get; set; } = null!;
     /// <summary>Generic <c>$Runtime</c> stub used as MethodInfo backing for String.prototype wrappers without dedicated helpers (match/search/toString/valueOf/etc.) — only typeof + isConstructor are ever observed.</summary>
     public MethodBuilder StringPrototypeGenericStub { get; set; } = null!;
+    /// <summary>$Runtime.ObjectProtoToString(this) — ECMA-262 19.1.3.6 toString returns "[object X]" branded by receiver type. Wired into Object.prototype.toString slot for borrowed-method dispatch (`obj.toString = Object.prototype.toString; obj.toString()`).</summary>
+    public MethodBuilder ObjectProtoToStringHelper { get; set; } = null!;
     /// <summary>Populates <see cref="BooleanPrototypeField"/> with $TSFunction wrappers for toString/valueOf; idempotent.</summary>
     public MethodBuilder BooleanPrototypePopulateMethod { get; set; } = null!;
     /// <summary>$Runtime.HasOwnPropertyHelper(obj, name) — backs <c>obj.hasOwnProperty(name)</c> for $TSFunction / $Object / Dictionary / List receivers.</summary>
