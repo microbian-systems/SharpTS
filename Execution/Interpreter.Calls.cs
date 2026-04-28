@@ -740,6 +740,13 @@ public partial class Interpreter
         if (right is SharpTSBufferConstructor)
             return left is SharpTSBuffer;
 
+        // Array is registered as a namespace singleton (SharpTSArrayGlobal), not
+        // as a SharpTSBuiltInConstructor — so `arr instanceof Array` lands here.
+        // Real arrays AND the Array.prototype dict itself satisfy the check
+        // (ECMA-262 23.1.3 — Array.prototype is itself an Array exotic object).
+        if (right is SharpTSArrayGlobal)
+            return left is SharpTSArray || left is SharpTSArrayPrototype;
+
         // Constructor-function instanceof (JS `new Func()` pattern).
         // An object is `instanceof Func` when any link in its prototype
         // chain === Func.prototype.
