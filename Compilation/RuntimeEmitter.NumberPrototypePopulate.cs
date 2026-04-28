@@ -92,12 +92,12 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits Number.prototype.valueOf helper. Per ECMA-262 21.1.3.7
-    /// thisNumberValue: returns the underlying primitive number, unwrapping
-    /// the boxed wrapper if needed. Returns NaN when receiver is not a
-    /// number-shaped value (matches what `Number.prototype.valueOf.call(x)`
-    /// does for non-Numbers — actually spec throws TypeError but compiled
-    /// mode's looser behavior here is fine for the tests we exercise).
+    /// Emits Number.prototype.valueOf helper per ECMA-262 21.1.3.7
+    /// thisNumberValue. Returns the receiver if it's a double primitive,
+    /// the boxed wrapper's <c>__primitiveValue</c> when it's a real number,
+    /// or 0 when the receiver is the Number.prototype singleton. All other
+    /// receivers (String wrappers, plain objects, etc.) throw TypeError —
+    /// matches Test262's `Number.prototype.valueOf.call(non-Number)` checks.
     /// </summary>
     private MethodBuilder EmitNumberValueOfHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -108,43 +108,48 @@ public partial class RuntimeEmitter
             [_types.Object]);
         var il = method.GetILGenerator();
 
-        // If receiver has __primitiveValue, return it (boxed-Number unwrap).
-        // GetProperty returns null for missing fields and $Undefined when the
-        // property exists but is undefined; treat both as "not boxed".
-        var primValLocal = il.DeclareLocal(_types.Object);
-        var notBoxedLabel = il.DefineLabel();
+        // Double primitive — return as-is.
+        var notDoubleLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, notBoxedLabel); // null receiver: skip
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, notDoubleLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
-        il.Emit(OpCodes.Brfalse, notBoxedLabel); // non-$Object: skip
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldstr, "__primitiveValue");
-        il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Stloc, primValLocal);
-        il.Emit(OpCodes.Ldloc, primValLocal);
-        il.Emit(OpCodes.Brfalse, notBoxedLabel);
-        il.Emit(OpCodes.Ldloc, primValLocal);
-        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brtrue, notBoxedLabel);
-        il.Emit(OpCodes.Ldloc, primValLocal);
         il.Emit(OpCodes.Ret);
+        il.MarkLabel(notDoubleLabel);
 
-        il.MarkLabel(notBoxedLabel);
         // ECMA-262 §21.1.3: Number.prototype's [[NumberData]] is +0.
-        // `Number.prototype.valueOf()` must return 0, not the prototype dict.
+        var notNumberPrototypeLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
-        var notNumberPrototypeLabel = il.DefineLabel();
         il.Emit(OpCodes.Bne_Un, notNumberPrototypeLabel);
         il.Emit(OpCodes.Ldc_R8, 0.0);
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notNumberPrototypeLabel);
 
-        // Not boxed: return the receiver as-is.
+        // Boxed Number wrapper: only when __primitiveValue is itself a double.
+        var primValLocal = il.DeclareLocal(_types.Object);
+        var throwTypeErrorLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, throwTypeErrorLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, throwTypeErrorLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, primValLocal);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, throwTypeErrorLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
         il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(throwTypeErrorLabel);
+        il.Emit(OpCodes.Ldstr, "Number.prototype.valueOf requires that 'this' be a Number");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
 
         return method;
     }
