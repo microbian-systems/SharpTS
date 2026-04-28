@@ -189,7 +189,7 @@ test/built-ins/Array/isArray/15.4.3.2-0-1.js Pass
 test/built-ins/Array/isArray/15.4.3.2-0-2.js Pass
 test/built-ins/Array/isArray/15.4.3.2-0-3.js Pass
 test/built-ins/Array/isArray/15.4.3.2-0-4.js Pass
-test/built-ins/Array/isArray/15.4.3.2-0-5.js Fail
+test/built-ins/Array/isArray/15.4.3.2-0-5.js Pass
 test/built-ins/Array/isArray/15.4.3.2-0-6.js Pass
 test/built-ins/Array/isArray/15.4.3.2-0-7.js Pass
 test/built-ins/Array/isArray/15.4.3.2-1-1.js Pass
@@ -1370,9 +1370,9 @@ test/built-ins/Array/prototype/indexOf/15.4.4.14-9-10.js Fail
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-11.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-2.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-3.js Pass
-test/built-ins/Array/prototype/indexOf/15.4.4.14-9-4.js Fail
+test/built-ins/Array/prototype/indexOf/15.4.4.14-9-4.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-5.js Pass
-test/built-ins/Array/prototype/indexOf/15.4.4.14-9-6.js Fail
+test/built-ins/Array/prototype/indexOf/15.4.4.14-9-6.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-7.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-8.js Fail
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-9.js Fail
@@ -1408,7 +1408,7 @@ test/built-ins/Array/prototype/indexOf/15.4.4.14-9-b-i-17.js Fail
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-b-i-18.js Fail
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-b-i-19.js Fail
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-b-i-2.js Pass
-test/built-ins/Array/prototype/indexOf/15.4.4.14-9-b-i-20.js Pass
+test/built-ins/Array/prototype/indexOf/15.4.4.14-9-b-i-20.js Fail
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-b-i-21.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-b-i-22.js Fail
 test/built-ins/Array/prototype/indexOf/15.4.4.14-9-b-i-25.js Pass
@@ -1501,7 +1501,7 @@ test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-6.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-7.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-8.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-9.js Fail
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-2-1.js Fail
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-2-1.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-2-10.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-2-11.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-2-12.js Pass
@@ -1602,9 +1602,9 @@ test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-10.js Fail
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-11.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-2.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-3.js Pass
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-4.js Fail
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-4.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-5.js Pass
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-6.js Fail
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-6.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-7.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-8.js Fail
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-8-9.js Fail
@@ -3860,7 +3860,7 @@ test/built-ins/Number/prototype/toFixed/prop-desc.js TypeCheckError
 test/built-ins/Number/prototype/toFixed/range.js Pass
 test/built-ins/Number/prototype/toFixed/return-type.js Pass
 test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-bigint.js Fail
-test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-symbol.js Fail
+test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-symbol.js Pass
 test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-toprimitive.js Fail
 test/built-ins/Number/prototype/toLocaleString/length.js TypeCheckError
 test/built-ins/Number/prototype/toLocaleString/name.js TypeCheckError
@@ -3984,7 +3984,7 @@ test/built-ins/Number/prototype/valueOf/length.js TypeCheckError
 test/built-ins/Number/prototype/valueOf/name.js TypeCheckError
 test/built-ins/Number/prototype/valueOf/not-a-constructor.js Pass
 test/built-ins/Number/prototype/valueOf/prop-desc.js TypeCheckError
-test/built-ins/Number/return-abrupt-tonumber-value-symbol.js Fail
+test/built-ins/Number/return-abrupt-tonumber-value-symbol.js Pass
 test/built-ins/Number/return-abrupt-tonumber-value.js Fail
 test/built-ins/Number/string-binary-literal-invalid.js Pass
 test/built-ins/Number/string-binary-literal.js Pass
@@ -4123,7 +4123,7 @@ test/built-ins/String/fromCharCode/name.js TypeCheckError
 test/built-ins/String/fromCharCode/not-a-constructor.js Pass
 test/built-ins/String/fromCharCode/touint16-tonumber-throws-bigint.js Fail
 test/built-ins/String/fromCharCode/touint16-tonumber-throws-valueof.js Fail
-test/built-ins/String/fromCodePoint/argument-is-Symbol.js Fail
+test/built-ins/String/fromCodePoint/argument-is-Symbol.js Pass
 test/built-ins/String/fromCodePoint/argument-is-not-integer.js Pass
 test/built-ins/String/fromCodePoint/argument-not-coercible.js Fail
 test/built-ins/String/fromCodePoint/arguments-is-empty.js Pass
@@ -4596,12 +4596,12 @@ test/built-ins/String/prototype/replaceAll/cstm-replaceall-on-bigint-primitive.j
 test/built-ins/String/prototype/replaceAll/cstm-replaceall-on-boolean-primitive.js RuntimeError
 test/built-ins/String/prototype/replaceAll/cstm-replaceall-on-number-primitive.js RuntimeError
 test/built-ins/String/prototype/replaceAll/cstm-replaceall-on-string-primitive.js RuntimeError
-test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024-0x0024.js Fail
-test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024-0x0026.js Fail
-test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024-0x0027.js Fail
+test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024-0x0024.js Pass
+test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024-0x0026.js Pass
+test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024-0x0027.js Pass
 test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024-0x003C.js RuntimeError
-test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024-0x0060.js Fail
-test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024.js Fail
+test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024-0x0060.js Pass
+test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024.js Pass
 test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024N.js RuntimeError
 test/built-ins/String/prototype/replaceAll/getSubstitution-0x0024NN.js RuntimeError
 test/built-ins/String/prototype/replaceAll/length.js TypeCheckError
