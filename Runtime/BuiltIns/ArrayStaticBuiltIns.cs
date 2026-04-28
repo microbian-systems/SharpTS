@@ -1,3 +1,4 @@
+using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Runtime.BuiltIns;
@@ -17,8 +18,24 @@ public static class ArrayStaticBuiltIns
             }),
             "from" => new BuiltInMethod("from", 1, 2, (interpreter, _, args) =>
             {
-                var iterable = args[0] ?? throw new Exception("Runtime Error: Array.from requires an iterable argument.");
-                var mapFn = args.Count > 1 ? args[1] as ISharpTSCallable : null;
+                // ECMA-262 23.1.2.1: Array.from(null) and Array.from(undefined) throw TypeError
+                // (via the GetMethod(@@iterator) → Get → ToObject(items) chain).
+                if (args[0] is null or SharpTSUndefined)
+                    throw new ThrowException(new SharpTSTypeError(
+                        "Cannot convert undefined or null to object"));
+                var iterable = args[0]!;
+
+                // ECMA-262 23.1.2.1 step 3a: if mapfn is provided and not undefined,
+                // it must be callable. `null` is NOT a stand-in for "no mapfn" — it
+                // explicitly throws TypeError per spec (only `undefined` short-circuits).
+                ISharpTSCallable? mapFn = null;
+                if (args.Count > 1 && args[1] is not SharpTSUndefined)
+                {
+                    if (args[1] is not ISharpTSCallable mapFnCallable)
+                        throw new ThrowException(new SharpTSTypeError(
+                            "Array.from mapFn argument must be a function"));
+                    mapFn = mapFnCallable;
+                }
 
                 var elements = interpreter.GetIterableElements(iterable).ToList();
 
