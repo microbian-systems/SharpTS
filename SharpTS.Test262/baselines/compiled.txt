@@ -872,7 +872,7 @@ test/built-ins/Array/prototype/filter/call-with-boolean.js Pass
 test/built-ins/Array/prototype/filter/callbackfn-resize-arraybuffer.js TypeCheckError
 test/built-ins/Array/prototype/filter/create-ctor-non-object.js TypeCheckError
 test/built-ins/Array/prototype/filter/create-ctor-poisoned.js TypeCheckError
-test/built-ins/Array/prototype/filter/create-non-array.js Fail
+test/built-ins/Array/prototype/filter/create-non-array.js Pass
 test/built-ins/Array/prototype/filter/create-proto-from-ctor-realm-array.js TypeCheckError
 test/built-ins/Array/prototype/filter/create-proto-from-ctor-realm-non-array.js TypeCheckError
 test/built-ins/Array/prototype/filter/create-proxy.js TypeCheckError
@@ -1879,7 +1879,7 @@ test/built-ins/Array/prototype/map/callbackfn-resize-arraybuffer.js TypeCheckErr
 test/built-ins/Array/prototype/map/create-ctor-non-object.js Fail
 test/built-ins/Array/prototype/map/create-ctor-poisoned.js Fail
 test/built-ins/Array/prototype/map/create-non-array-invalid-len.js Fail
-test/built-ins/Array/prototype/map/create-non-array.js Fail
+test/built-ins/Array/prototype/map/create-non-array.js Pass
 test/built-ins/Array/prototype/map/create-proto-from-ctor-realm-array.js TypeCheckError
 test/built-ins/Array/prototype/map/create-proto-from-ctor-realm-non-array.js TypeCheckError
 test/built-ins/Array/prototype/map/create-proxy.js TypeCheckError
@@ -2557,7 +2557,7 @@ test/built-ins/Array/prototype/slice/coerced-start-end-shrink.js TypeCheckError
 test/built-ins/Array/prototype/slice/create-ctor-non-object.js Fail
 test/built-ins/Array/prototype/slice/create-ctor-poisoned.js Fail
 test/built-ins/Array/prototype/slice/create-non-array-invalid-len.js Fail
-test/built-ins/Array/prototype/slice/create-non-array.js Fail
+test/built-ins/Array/prototype/slice/create-non-array.js Pass
 test/built-ins/Array/prototype/slice/create-proto-from-ctor-realm-array.js TypeCheckError
 test/built-ins/Array/prototype/slice/create-proto-from-ctor-realm-non-array.js TypeCheckError
 test/built-ins/Array/prototype/slice/create-proxied-array-invalid-len.js Fail
@@ -2907,7 +2907,7 @@ test/built-ins/Array/prototype/splice/clamps-length-to-integer-limit.js TypeChec
 test/built-ins/Array/prototype/splice/create-ctor-non-object.js Fail
 test/built-ins/Array/prototype/splice/create-ctor-poisoned.js Fail
 test/built-ins/Array/prototype/splice/create-non-array-invalid-len.js Fail
-test/built-ins/Array/prototype/splice/create-non-array.js Fail
+test/built-ins/Array/prototype/splice/create-non-array.js Pass
 test/built-ins/Array/prototype/splice/create-proto-from-ctor-realm-array.js TypeCheckError
 test/built-ins/Array/prototype/splice/create-proto-from-ctor-realm-non-array.js TypeCheckError
 test/built-ins/Array/prototype/splice/create-proxy.js TypeCheckError
@@ -3241,7 +3241,7 @@ test/built-ins/JSON/parse/15.12.2-2-6.js RuntimeError
 test/built-ins/JSON/parse/15.12.2-2-7.js RuntimeError
 test/built-ins/JSON/parse/15.12.2-2-8.js RuntimeError
 test/built-ins/JSON/parse/15.12.2-2-9.js RuntimeError
-test/built-ins/JSON/parse/S15.12.2_A1.js Fail
+test/built-ins/JSON/parse/S15.12.2_A1.js Pass
 test/built-ins/JSON/parse/builtin.js TypeCheckError
 test/built-ins/JSON/parse/duplicate-proto.js Pass
 test/built-ins/JSON/parse/invalid-whitespace.js Pass
