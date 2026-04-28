@@ -29,7 +29,28 @@ public partial class RuntimeEmitter
         il.Emit(loadOp);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, throwLabel);
-        il.Emit(OpCodes.Br, okLabel);
+
+        // Positive callable check: $TSFunction / $BoundTSFunction / Function*
+        // wrappers pass; anything else (bool, double, string, dict, list, …)
+        // throws TypeError. ECMA-262 IsCallable returns true only for
+        // function-like values; tests like `arr.every(true)` rely on the throw.
+        il.Emit(loadOp);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, okLabel);
+        il.Emit(loadOp);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brtrue, okLabel);
+        il.Emit(loadOp);
+        il.Emit(OpCodes.Isinst, runtime.FunctionBindWrapperType);
+        il.Emit(OpCodes.Brtrue, okLabel);
+        il.Emit(loadOp);
+        il.Emit(OpCodes.Isinst, runtime.FunctionCallWrapperType);
+        il.Emit(OpCodes.Brtrue, okLabel);
+        il.Emit(loadOp);
+        il.Emit(OpCodes.Isinst, runtime.FunctionApplyWrapperType);
+        il.Emit(OpCodes.Brtrue, okLabel);
+        // Default: not a recognized function-like → throw.
+        il.Emit(OpCodes.Br, throwLabel);
 
         il.MarkLabel(throwLabel);
         // Build a real $TypeError instance + wrap in .NET Exception via CreateException
