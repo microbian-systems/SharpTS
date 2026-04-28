@@ -42,6 +42,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(doFillLabel);
 
+        // ECMA-262 20.3.3 Boolean.prototype.constructor === Boolean. Compiled
+        // bare `Boolean` resolves to typeof(bool).
+        il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Ldtoken, _types.Boolean);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Callvirt, setItem);
+
         // Wire with explicit JS-spec name + length per ECMA-262.
         // Boolean.prototype.{toString,valueOf} take (thisBooleanValue) — name
         // first param "__this" so $TSFunction.InvokeWithThis prepends the receiver.

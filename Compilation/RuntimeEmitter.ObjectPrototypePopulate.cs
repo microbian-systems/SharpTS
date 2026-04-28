@@ -34,6 +34,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(doFillLabel);
 
+        // ECMA-262 19.1.3 Object.prototype.constructor === Object. Compiled
+        // bare `Object` resolves to typeof(object) (per ObjectStaticEmitter).
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Callvirt, setItem);
+
         // Wire methods backed by $Runtime helpers. Each wrapper has the
         // helper as its MethodInfo and uses TSFunctionCtorWithCache for
         // proper .name + .length per ECMA-262.

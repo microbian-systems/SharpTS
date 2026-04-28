@@ -48,6 +48,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(doFillLabel);
 
+        // ECMA-262 22.1.3 String.prototype.constructor === String. Compiled
+        // bare `String` resolves to typeof(string).
+        il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Ldtoken, _types.String);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Callvirt, setItem);
+
         // Wire with explicit JS-spec name + length via TSFunctionCtorWithCache.
         // Length is the user-callable arg count per ECMA-262 (e.g. substring
         // = 2, even though the underlying StringSubstring takes 3 .NET params

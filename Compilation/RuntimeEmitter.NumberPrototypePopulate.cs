@@ -40,6 +40,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(doFillLabel);
 
+        // ECMA-262 21.1.3 Number.prototype.constructor === Number. Compiled
+        // bare `Number` resolves to typeof(double) (per ILEmitter.Expressions
+        // and InstanceOf semantics).
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Ldtoken, _types.Double);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Callvirt, setItem);
+
         // Wire with explicit JS-spec name + length per ECMA-262. Number's
         // prototype methods take (thisNumberValue, digits/precision/radix);
         // name first param "__this" so $TSFunction.InvokeWithThis prepends

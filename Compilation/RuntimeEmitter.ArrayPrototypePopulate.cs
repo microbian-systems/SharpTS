@@ -59,6 +59,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Callvirt, setItem);
 
+        // ECMA-262 23.1.3 Array.prototype.constructor === Array. Compiled
+        // bare `Array` resolves to typeof(IList<object>) (per
+        // GlobalThisStaticEmitter). Mirror it here so
+        // `Array.prototype.hasOwnProperty("constructor") === true` and
+        // `Array.prototype.constructor === Array` both hold.
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Callvirt, setItem);
+
         // For each named method: dict[jsName] = new $TSFunction(null, methodInfo)
         // The 2-arg ctor without name/length is fine — IsConstructor only needs
         // DeclaringType to detect "$Runtime", and typeof returns "function".
