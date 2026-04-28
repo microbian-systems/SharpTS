@@ -41,6 +41,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(doFillLabel);
 
+        // ECMA-262 23.1.3 Array prototype "length" property is 0. Without
+        // this entry, `Array.prototype.length` reads as undefined.
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Callvirt, setItem);
+
         // For each named method: dict[jsName] = new $TSFunction(null, methodInfo)
         // The 2-arg ctor without name/length is fine — IsConstructor only needs
         // DeclaringType to detect "$Runtime", and typeof returns "function".
