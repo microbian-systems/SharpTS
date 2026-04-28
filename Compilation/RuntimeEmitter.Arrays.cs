@@ -1085,6 +1085,29 @@ public partial class RuntimeEmitter
         EmitArgsArrayCase("fill", runtime.ArrayFill);
         EmitArgsArrayCase("copyWithin", runtime.ArrayCopyWithin);
 
+        // toString / toLocaleString — call ArrayProtoToStringHelper(__this).
+        // Helper takes the receiver as `__this`-named param and internally
+        // materializes + joins. We pass the bound list directly (already a
+        // List<object>) since it satisfies the materializer's pass-through.
+        void EmitToStringCase(string methodName)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, methodNameField);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, listField);
+            il.Emit(OpCodes.Call, runtime.ArrayProtoToStringHelper);
+            il.Emit(OpCodes.Br, endLabel);
+
+            il.MarkLabel(skipLabel);
+        }
+        EmitToStringCase("toString");
+        EmitToStringCase("toLocaleString");
+
         // Default: return null
         il.Emit(OpCodes.Ldnull);
 

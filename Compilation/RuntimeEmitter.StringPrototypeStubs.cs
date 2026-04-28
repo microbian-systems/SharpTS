@@ -41,6 +41,51 @@ public partial class RuntimeEmitter
         // `Object.prototype.toString.call(...)` pattern matcher in
         // ILEmitter.Calls.cs.
         runtime.ObjectProtoToStringHelper = EmitObjectProtoToStringHelper(typeBuilder, runtime);
+
+        // ECMA-262 23.1.3.32 Array.prototype.toString — returns the join of
+        // the array elements with no separator (defaults to ","). Previously
+        // wired to the generic ToString stub which returned Convert.ToString
+        // (System.Object[] for compiled List<object>) — broke any Test262
+        // test that did `arr.toString()` directly.
+        runtime.ArrayProtoToStringHelper = EmitArrayProtoToStringHelper(typeBuilder, runtime);
+    }
+
+    private MethodBuilder EmitArrayProtoToStringHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ArrayProtoToString",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]
+        );
+        method.DefineParameter(1, ParameterAttributes.None, "__this");
+
+        var il = method.GetILGenerator();
+
+        var emptyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, emptyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, emptyLabel);
+
+        // Pass `this` through ArrayLikeMaterialize so $Array, List<object>,
+        // object[] (compiled arguments), and any-like receivers all reduce
+        // to a List<object>. Then ArrayJoin with undefined separator (spec
+        // default ","). Mirrors ECMA-262 23.1.3.32 step 2.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ArrayLikeMaterialize);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Call, runtime.ArrayJoin);
+        il.Emit(OpCodes.Ret);
+
+        // null/undefined receiver → empty string. Defensive; the materializer
+        // would throw, but tolerance matches the generic-stub legacy.
+        il.MarkLabel(emptyLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ret);
+
+        return method;
     }
 
     private MethodBuilder EmitObjectProtoToStringHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)

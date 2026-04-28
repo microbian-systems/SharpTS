@@ -330,6 +330,8 @@ public class EmittedRuntime
     public MethodBuilder StringPrototypeGenericStub { get; set; } = null!;
     /// <summary>$Runtime.ObjectProtoToString(this) — ECMA-262 19.1.3.6 toString returns "[object X]" branded by receiver type. Wired into Object.prototype.toString slot for borrowed-method dispatch (`obj.toString = Object.prototype.toString; obj.toString()`).</summary>
     public MethodBuilder ObjectProtoToStringHelper { get; set; } = null!;
+    /// <summary>$Runtime.ArrayProtoToString(this) — ECMA-262 23.1.3.32. Returns join of elements with default separator (",").</summary>
+    public MethodBuilder ArrayProtoToStringHelper { get; set; } = null!;
     /// <summary>Populates <see cref="BooleanPrototypeField"/> with $TSFunction wrappers for toString/valueOf; idempotent.</summary>
     public MethodBuilder BooleanPrototypePopulateMethod { get; set; } = null!;
     /// <summary>$Runtime.HasOwnPropertyHelper(obj, name) — backs <c>obj.hasOwnProperty(name)</c> for $TSFunction / $Object / Dictionary / List receivers.</summary>

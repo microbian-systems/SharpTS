@@ -115,10 +115,14 @@ public partial class RuntimeEmitter
         Wire("shift",          runtime.ArrayShift,          0);
         Wire("unshift",        runtime.ArrayUnshift,        1);
 
-        // Methods without dedicated $Runtime helpers — wired to a generic
-        // stub so typeof + isConstructor probes pass.
-        Wire("toString",       runtime.StringPrototypeGenericStub, 0);
-        Wire("toLocaleString", runtime.StringPrototypeGenericStub, 0);
+        // ECMA-262 23.1.3.32 Array.prototype.toString — returns the join with
+        // default separator. Borrowed-method dispatch (`arr.toString =
+        // Array.prototype.toString; arr.toString()`) and direct `[1,2].toString()`
+        // both flow through this slot when the typed inline-emit path falls
+        // back to dynamic dispatch. The helper is `__this`-named so the
+        // receiver flows through InvokeWithThis correctly.
+        Wire("toString",       runtime.ArrayProtoToStringHelper, 0);
+        Wire("toLocaleString", runtime.ArrayProtoToStringHelper, 0);
 
         // Per ECMA-262 §23.1.3 Array.prototype's [[Prototype]] is %Object.prototype%.
         il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);

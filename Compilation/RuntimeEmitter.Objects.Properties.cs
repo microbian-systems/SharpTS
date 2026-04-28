@@ -1156,7 +1156,8 @@ public partial class RuntimeEmitter
             "flat", "flatMap", "at",
             "toSorted", "toSpliced", "toReversed", "with",
             "fill", "copyWithin",
-            "entries", "keys", "values"
+            "entries", "keys", "values",
+            "toString", "toLocaleString"
         ];
 
         foreach (var methodName in methodNames)
