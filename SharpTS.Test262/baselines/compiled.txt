@@ -74,8 +74,8 @@ test/built-ins/Array/from/iter-set-elem-prop-non-writable.js TypeCheckError
 test/built-ins/Array/from/iter-set-elem-prop.js TypeCheckError
 test/built-ins/Array/from/iter-set-length-err.js TypeCheckError
 test/built-ins/Array/from/iter-set-length.js TypeCheckError
-test/built-ins/Array/from/mapfn-is-not-callable-typeerror.js Fail
-test/built-ins/Array/from/mapfn-is-symbol-throws.js Fail
+test/built-ins/Array/from/mapfn-is-not-callable-typeerror.js Pass
+test/built-ins/Array/from/mapfn-is-symbol-throws.js Pass
 test/built-ins/Array/from/mapfn-throws-exception.js Fail
 test/built-ins/Array/from/not-a-constructor.js Pass
 test/built-ins/Array/from/proto-from-ctor-realm.js TypeCheckError
@@ -3841,8 +3841,8 @@ test/built-ins/Number/prototype/toExponential/range.js Pass
 test/built-ins/Number/prototype/toExponential/return-abrupt-tointeger-fractiondigits-symbol.js Fail
 test/built-ins/Number/prototype/toExponential/return-abrupt-tointeger-fractiondigits.js Fail
 test/built-ins/Number/prototype/toExponential/return-values.js Fail
-test/built-ins/Number/prototype/toExponential/this-is-0-fractiondigits-is-0.js Fail
-test/built-ins/Number/prototype/toExponential/this-is-0-fractiondigits-is-not-0.js Fail
+test/built-ins/Number/prototype/toExponential/this-is-0-fractiondigits-is-0.js Pass
+test/built-ins/Number/prototype/toExponential/this-is-0-fractiondigits-is-not-0.js Pass
 test/built-ins/Number/prototype/toExponential/this-type-not-number-or-number-object.js Fail
 test/built-ins/Number/prototype/toExponential/tointeger-fractiondigits.js Fail
 test/built-ins/Number/prototype/toExponential/undefined-fractiondigits.js Fail
@@ -3878,7 +3878,7 @@ test/built-ins/Number/prototype/toPrecision/range.js Fail
 test/built-ins/Number/prototype/toPrecision/return-abrupt-tointeger-precision-symbol.js Fail
 test/built-ins/Number/prototype/toPrecision/return-abrupt-tointeger-precision.js Fail
 test/built-ins/Number/prototype/toPrecision/return-values.js Fail
-test/built-ins/Number/prototype/toPrecision/this-is-0-precision-is-1.js Fail
+test/built-ins/Number/prototype/toPrecision/this-is-0-precision-is-1.js Pass
 test/built-ins/Number/prototype/toPrecision/this-is-0-precision-is-gter-than-1.js Fail
 test/built-ins/Number/prototype/toPrecision/this-type-not-number-or-number-object.js Fail
 test/built-ins/Number/prototype/toPrecision/tointeger-precision.js RuntimeError
