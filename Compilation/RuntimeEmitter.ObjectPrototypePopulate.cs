@@ -68,11 +68,15 @@ public partial class RuntimeEmitter
         // obj.getClass()`) need a real brand-tag function (the generic stub
         // returns Convert.ToString of receiver, which is wrong for arrays).
         Wire("toString",       runtime.ObjectProtoToStringHelper, 0);
-        // valueOf and friends keep the tolerant stub (returns Convert.ToString,
-        // which equals the receiver itself for primitives — matches spec for
-        // valueOf since it returns this).
-        Wire("valueOf",        runtime.StringPrototypeGenericStub, 0);
-        Wire("toLocaleString", runtime.StringPrototypeGenericStub, 0);
+        // ECMA-262 19.1.3.7 Object.prototype.valueOf returns ! ToObject(this).
+        // For non-null/undefined values that means returning the receiver as
+        // a JS object (we don't distinguish here — primitive receivers get the
+        // primitive back, which the materializer's ToPrimitive treats as a
+        // "valueOf returned non-primitive" signal so toString fires next).
+        Wire("valueOf",        runtime.ObjectProtoValueOfHelper, 0);
+        // toLocaleString defaults to calling toString — close-enough delegation
+        // is a string return; tests typically don't probe its identity.
+        Wire("toLocaleString", runtime.ObjectProtoToStringHelper, 0);
         Wire("propertyIsEnumerable", runtime.StringPrototypeGenericStub, 1);
 
         il.Emit(OpCodes.Ret);

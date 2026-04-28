@@ -41,6 +41,7 @@ public partial class RuntimeEmitter
         // `Object.prototype.toString.call(...)` pattern matcher in
         // ILEmitter.Calls.cs.
         runtime.ObjectProtoToStringHelper = EmitObjectProtoToStringHelper(typeBuilder, runtime);
+        runtime.ObjectProtoValueOfHelper = EmitObjectProtoValueOfHelper(typeBuilder, runtime);
 
         // ECMA-262 23.1.3.32 Array.prototype.toString — returns the join of
         // the array elements with no separator (defaults to ","). Previously
@@ -85,6 +86,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "");
         il.Emit(OpCodes.Ret);
 
+        return method;
+    }
+
+    private MethodBuilder EmitObjectProtoValueOfHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // ECMA-262 19.1.3.7: returns ! ToObject(this). For our purposes we
+        // pass the receiver through unchanged — primitives stay primitive
+        // (`(5).valueOf() === 5` etc.), and objects stay objects, which the
+        // materializer's ToPrimitive treats as "valueOf returned non-primitive"
+        // so the toString fallback fires per spec for plain objects.
+        var method = typeBuilder.DefineMethod(
+            "ObjectProtoValueOf",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        method.DefineParameter(1, ParameterAttributes.None, "__this");
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
         return method;
     }
 
