@@ -495,7 +495,7 @@ test/built-ins/Array/prototype/every/15.4.4.16-5-18.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-5-19.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-5-2.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-5-21.js Pass
-test/built-ins/Array/prototype/every/15.4.4.16-5-22.js RuntimeError
+test/built-ins/Array/prototype/every/15.4.4.16-5-22.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-5-23.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-5-24.js RuntimeError
 test/built-ins/Array/prototype/every/15.4.4.16-5-3.js Pass
@@ -563,7 +563,7 @@ test/built-ins/Array/prototype/every/15.4.4.16-7-c-ii-10.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-ii-11.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-ii-12.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-ii-13.js Pass
-test/built-ins/Array/prototype/every/15.4.4.16-7-c-ii-16.js Fail
+test/built-ins/Array/prototype/every/15.4.4.16-7-c-ii-16.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-ii-17.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-ii-18.js RuntimeError
 test/built-ins/Array/prototype/every/15.4.4.16-7-c-ii-19.js Pass
@@ -738,7 +738,7 @@ test/built-ins/Array/prototype/filter/15.4.4.20-5-18.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-5-19.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-5-2.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-5-21.js Pass
-test/built-ins/Array/prototype/filter/15.4.4.20-5-22.js Fail
+test/built-ins/Array/prototype/filter/15.4.4.20-5-22.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-5-23.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-5-24.js Fail
 test/built-ins/Array/prototype/filter/15.4.4.20-5-27.js Pass
@@ -818,7 +818,7 @@ test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-10.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-11.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-12.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-13.js Pass
-test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-16.js Fail
+test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-16.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-17.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-18.js Fail
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-19.js Pass
@@ -1113,7 +1113,7 @@ test/built-ins/Array/prototype/forEach/15.4.4.18-5-18.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-5-19.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-5-2.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-5-21.js Pass
-test/built-ins/Array/prototype/forEach/15.4.4.18-5-22.js RuntimeError
+test/built-ins/Array/prototype/forEach/15.4.4.18-5-22.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-5-23.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-5-24.js RuntimeError
 test/built-ins/Array/prototype/forEach/15.4.4.18-5-25.js Pass
@@ -1181,7 +1181,7 @@ test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-10.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-11.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-12.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-13.js Pass
-test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-16.js Fail
+test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-16.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-17.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-18.js RuntimeError
 test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-19.js Pass
@@ -1771,7 +1771,7 @@ test/built-ins/Array/prototype/map/15.4.4.19-5-18.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-5-19.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-5-2.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-5-21.js Pass
-test/built-ins/Array/prototype/map/15.4.4.19-5-22.js Fail
+test/built-ins/Array/prototype/map/15.4.4.19-5-22.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-5-23.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-5-24.js Fail
 test/built-ins/Array/prototype/map/15.4.4.19-5-3.js Pass
@@ -1841,7 +1841,7 @@ test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-10.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-11.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-12.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-13.js Pass
-test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-16.js Fail
+test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-16.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-17.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-18.js Fail
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-19.js Pass
@@ -2666,7 +2666,7 @@ test/built-ins/Array/prototype/some/15.4.4.17-5-18.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-5-19.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-5-2.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-5-21.js Pass
-test/built-ins/Array/prototype/some/15.4.4.17-5-22.js RuntimeError
+test/built-ins/Array/prototype/some/15.4.4.17-5-22.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-5-23.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-5-24.js RuntimeError
 test/built-ins/Array/prototype/some/15.4.4.17-5-25.js Pass
@@ -2734,7 +2734,7 @@ test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-10.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-11.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-12.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-13.js Pass
-test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-16.js RuntimeError
+test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-16.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-17.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-18.js RuntimeError
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-19.js Pass
@@ -3130,7 +3130,7 @@ test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T5.js TypeCheckError
 test/built-ins/Boolean/prototype/valueOf/length.js TypeCheckError
 test/built-ins/Boolean/prototype/valueOf/name.js TypeCheckError
 test/built-ins/Boolean/prototype/valueOf/not-a-constructor.js Pass
-test/built-ins/Boolean/symbol-coercion.js Fail
+test/built-ins/Boolean/symbol-coercion.js Pass
 test/built-ins/Error/cause_abrupt.js Fail
 test/built-ins/Error/cause_property.js TypeCheckError
 test/built-ins/Error/constructor.js TypeCheckError
@@ -4972,9 +4972,9 @@ test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T2.js Pass
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T3.js TypeCheckError
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T4.js TypeCheckError
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T5.js Pass
-test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T6.js RuntimeError
-test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T7.js RuntimeError
-test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T8.js RuntimeError
+test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T6.js Pass
+test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T7.js Pass
+test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T8.js Pass
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T9.js TypeCheckError
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A2_T1.js RuntimeError
 test/built-ins/String/prototype/toLowerCase/S15.5.4.16_A6.js Pass
@@ -5008,9 +5008,9 @@ test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T2.js Pass
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T3.js TypeCheckError
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T4.js TypeCheckError
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T5.js Pass
-test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T6.js RuntimeError
-test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T7.js RuntimeError
-test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T8.js RuntimeError
+test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T6.js Pass
+test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T7.js Pass
+test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T8.js Pass
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T9.js TypeCheckError
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A2_T1.js RuntimeError
 test/built-ins/String/prototype/toUpperCase/S15.5.4.18_A6.js Pass
