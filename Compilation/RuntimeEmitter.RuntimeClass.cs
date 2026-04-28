@@ -291,6 +291,26 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ConditionalWeakTable));
         cctorIL.Emit(OpCodes.Stsfld, prototypeStoreField);
 
+        // Link the built-in singletons (Math, JSON, Boolean/Number/String/Array
+        // prototypes) to Object.prototype via PDS. ECMA-262 declares each of
+        // these intrinsic objects has [[Prototype]] = %Object.prototype% — tests
+        // probe `Object.getPrototypeOf(Math) === Object.prototype` etc. PDS
+        // entries are keyed by reference, so this only fires for the singleton
+        // dictionaries themselves; user-built objects that mutate Math (e.g.
+        // `Math.length = 1`) still see the linked prototype.
+        void EmitLinkProto(FieldBuilder child)
+        {
+            cctorIL.Emit(OpCodes.Ldsfld, child);
+            cctorIL.Emit(OpCodes.Ldsfld, objectPrototypeField);
+            cctorIL.Emit(OpCodes.Call, runtime.PDSSetPrototype);
+        }
+        EmitLinkProto(mathSingletonField);
+        EmitLinkProto(jsonSingletonField);
+        EmitLinkProto(booleanPrototypeField);
+        EmitLinkProto(numberPrototypeField);
+        EmitLinkProto(stringPrototypeField);
+        EmitLinkProto(arrayPrototypeField);
+
         // Initialize _mapNullSentinel = new object()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.Object));
         cctorIL.Emit(OpCodes.Stsfld, mapNullSentinelField);
