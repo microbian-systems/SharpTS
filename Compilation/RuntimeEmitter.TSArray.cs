@@ -397,7 +397,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_3);
         il.Emit(OpCodes.Brfalse, frozenReturnLabel);
 
-        EmitInlineThrowErrorInline(il, "Cannot assign to read only property of array", runtime.TSTypeErrorCtor);
+        EmitInlineThrowErrorInline(il, "TypeError: Cannot assign to read only property of array", runtime.TSTypeErrorCtor);
 
         il.MarkLabel(frozenReturnLabel);
         il.Emit(OpCodes.Ret);
@@ -1069,7 +1069,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, frozenReturnLabel);
 
         // throw TypeError
-        EmitInlineThrowErrorInline(il, "Cannot assign to read only property of array", runtime.TSTypeErrorCtor);
+        EmitInlineThrowErrorInline(il, "TypeError: Cannot assign to read only property of array", runtime.TSTypeErrorCtor);
 
         il.MarkLabel(frozenReturnLabel);
         il.Emit(OpCodes.Ret);
