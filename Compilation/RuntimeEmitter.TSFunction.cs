@@ -1367,21 +1367,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "__this");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, skipNullishThisCheckLabel);
-        // args[0] is null or $Undefined?
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldelem_Ref);
-        var arg0NotNullLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, arg0NotNullLabel);
-        // args[0] == null → call helper (which throws).
-        il.Emit(OpCodes.Br, invokeHelperLabel);
-        il.MarkLabel(arg0NotNullLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brfalse, skipNullishThisCheckLabel);
-        // Falls through to invokeHelperLabel.
+        // Always call the helper for String.prototype __this slots — it
+        // handles null/undefined/Symbol → TypeError and passes through valid
+        // receivers. Avoids per-type IL checks (and the TSSymbolType forward
+        // reference that fails because TSSymbol class is emitted after
+        // TSFunction). The helper is fast for the common case (Brfalse on
+        // pass-through).
         il.MarkLabel(invokeHelperLabel);
         // requireObjectCoercibleThis.Invoke(null, new object[] { args[0] }) — throws.
         il.Emit(OpCodes.Ldc_I4_1);

@@ -231,11 +231,13 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits <c>$Runtime.RequireObjectCoercibleThis(object)</c> — the ECMA-262
-    /// 7.1.18 RequireObjectCoercible step that all <c>String.prototype.*</c>
-    /// (and several <c>Array.prototype.*</c>) methods perform on their
-    /// <c>this</c> value before any other work. Throws TypeError if the input
-    /// is null or undefined; otherwise returns the input unchanged.
+    /// Emits <c>$Runtime.RequireObjectCoercibleThis(object)</c> — combines
+    /// ECMA-262 7.1.18 RequireObjectCoercible (null/undefined → TypeError)
+    /// and the Symbol-rejection that ToString performs on receivers. All
+    /// <c>String.prototype.*</c> methods do "Let O = ? RequireObjectCoercible(this)"
+    /// followed by "Let S = ? ToString(O)" — both can throw TypeError, so a
+    /// single guard at the dispatch site catches both for any string-typed
+    /// <c>__this</c> slot.
     /// </summary>
     /// <remarks>
     /// Called from <c>$TSFunction.CoercePrimitiveArgs</c> via late-bound
@@ -243,7 +245,7 @@ public partial class RuntimeEmitter
     /// because TSFunction's IL is emitted before the TSError class is built.
     /// Routing through this helper lets us throw a real <c>$TypeError</c>
     /// instance that <c>e instanceof TypeError</c> sees correctly, without
-    /// each <c>String.prototype.X</c> helper repeating the null check.
+    /// each <c>String.prototype.X</c> helper repeating the null/Symbol check.
     /// </remarks>
     private void EmitRequireObjectCoercibleThis(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -257,7 +259,7 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var passThroughLabel = il.DefineLabel();
 
-        // null → throw
+        // null → throw TypeError "null/undefined"
         il.Emit(OpCodes.Ldarg_0);
         var notNullLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, notNullLabel);
@@ -267,16 +269,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(notNullLabel);
 
-        // $Undefined → throw
+        // $Undefined → throw TypeError "null/undefined"
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brfalse, passThroughLabel);
+        var notUndefLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notUndefLabel);
         il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
         il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
+        il.MarkLabel(notUndefLabel);
 
-        // Pass-through
+        // Symbol → throw TypeError "Cannot convert a Symbol to a string".
+        // ECMA-262 7.1.5 ToString(symbol) throws — every String.prototype.*
+        // does this implicitly via "Let S = ? ToString(O)". Catches the
+        // `return-abrupt-from-this-as-symbol.js` cluster (~6 tests).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brfalse, passThroughLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert a Symbol value to a string");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        // Pass-through (string, $TSObject, etc.).
         il.MarkLabel(passThroughLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
