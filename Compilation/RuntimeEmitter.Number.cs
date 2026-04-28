@@ -1298,6 +1298,25 @@ public partial class RuntimeEmitter
         // Handle special values first
         // if (double.IsNaN(value)) return "NaN"
         il.MarkLabel(notNaNLabel);
+
+        // ECMA-262 21.1.3.2 step 2: ToInteger(fractionDigits) is observable
+        // BEFORE the NaN/Infinity short-circuits in step 5. The arg coercion
+        // can throw (Symbol → TypeError); test262 patterns like
+        // `NaN.toExponential(Symbol())` rely on the throw. Pull the Symbol
+        // check up to fire before the NaN/Inf short-circuits; full ToInteger
+        // is still run inside digitsFromDoubleLabel below for non-symbol args.
+        var notSymbolDigitsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, notSymbolDigitsLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brfalse, notSymbolDigitsLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert a Symbol value to a number");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notSymbolDigitsLabel);
+
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Call, _types.Double.GetMethod("IsNaN", [_types.Double])!);
         il.Emit(OpCodes.Brfalse, notPosInfLabel);
