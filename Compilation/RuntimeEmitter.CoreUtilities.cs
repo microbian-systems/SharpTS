@@ -2351,6 +2351,49 @@ public partial class RuntimeEmitter
         EmitParsePrefixedInt(il, trimmedLocal, resultLocal, 'b', 2);
         EmitParsePrefixedInt(il, trimmedLocal, resultLocal, 'o', 8);
 
+        // ECMA-262 7.1.4: only the case-sensitive forms "Infinity", "+Infinity",
+        // "-Infinity" are valid Infinity literals. .NET's Double.TryParse
+        // (NumberStyles.Float) accepts "infinity"/"INFINITY"/etc case-
+        // insensitively — must reject those before TryParse runs.
+        var notCiInfLabel = il.DefineLabel();
+        // Exact case-sensitive forms first → return ±Infinity.
+        var trimEqInfLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Ldstr, "Infinity");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, trimEqInfLabel);
+        il.Emit(OpCodes.Ldc_R8, double.PositiveInfinity);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(trimEqInfLabel);
+        var trimEqPlusInfLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Ldstr, "+Infinity");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, trimEqPlusInfLabel);
+        il.Emit(OpCodes.Ldc_R8, double.PositiveInfinity);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(trimEqPlusInfLabel);
+        var trimEqMinusInfLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Ldstr, "-Infinity");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, trimEqMinusInfLabel);
+        il.Emit(OpCodes.Ldc_R8, double.NegativeInfinity);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(trimEqMinusInfLabel);
+        // Now reject any string that contains "infinity" case-insensitively
+        // (since the exact-case forms have already been short-circuited).
+        // Use String.Contains(string, StringComparison) — net8+ overload.
+        il.Emit(OpCodes.Ldloc, trimmedLocal);
+        il.Emit(OpCodes.Ldstr, "infinity");
+        il.Emit(OpCodes.Ldc_I4_5); // StringComparison.OrdinalIgnoreCase
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Contains", [_types.String, typeof(StringComparison)])!);
+        il.Emit(OpCodes.Brfalse, notCiInfLabel);
+        // Case-insensitive but not exact → NaN.
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notCiInfLabel);
+
         // double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out result)
         il.Emit(OpCodes.Ldloc, trimmedLocal);
         il.Emit(OpCodes.Ldc_I4, (int)System.Globalization.NumberStyles.Float);
