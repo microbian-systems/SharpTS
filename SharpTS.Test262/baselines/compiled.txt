@@ -1338,7 +1338,7 @@ test/built-ins/Array/prototype/indexOf/15.4.4.14-5-20.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-21.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-22.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-23.js Pass
-test/built-ins/Array/prototype/indexOf/15.4.4.14-5-24.js Fail
+test/built-ins/Array/prototype/indexOf/15.4.4.14-5-24.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-25.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-26.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-27.js Pass
@@ -1570,7 +1570,7 @@ test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-20.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-21.js TypeCheckError
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-22.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-23.js Pass
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-24.js Fail
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-24.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-25.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-26.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-27.js Pass
@@ -3861,7 +3861,7 @@ test/built-ins/Number/prototype/toFixed/range.js Pass
 test/built-ins/Number/prototype/toFixed/return-type.js Pass
 test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-bigint.js Pass
 test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-symbol.js Pass
-test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-toprimitive.js Fail
+test/built-ins/Number/prototype/toFixed/toFixed-tonumber-throws-typeerror-toprimitive.js Pass
 test/built-ins/Number/prototype/toLocaleString/length.js TypeCheckError
 test/built-ins/Number/prototype/toLocaleString/name.js TypeCheckError
 test/built-ins/Number/prototype/toLocaleString/not-a-constructor.js Pass
@@ -3872,7 +3872,7 @@ test/built-ins/Number/prototype/toPrecision/length.js TypeCheckError
 test/built-ins/Number/prototype/toPrecision/name.js TypeCheckError
 test/built-ins/Number/prototype/toPrecision/nan.js Pass
 test/built-ins/Number/prototype/toPrecision/not-a-constructor.js Pass
-test/built-ins/Number/prototype/toPrecision/precision-cannot-be-coerced-to-a-number-in-range.js Pass
+test/built-ins/Number/prototype/toPrecision/precision-cannot-be-coerced-to-a-number-in-range.js Fail
 test/built-ins/Number/prototype/toPrecision/prop-desc.js TypeCheckError
 test/built-ins/Number/prototype/toPrecision/range.js Pass
 test/built-ins/Number/prototype/toPrecision/return-abrupt-tointeger-precision-symbol.js Pass

@@ -1253,7 +1253,14 @@ public partial class RuntimeEmitter
         // returned a primitive (still Dictionary or $Object), throw TypeError.
         // This is the abrupt completion that propagates through ToNumber →
         // ToIntegerOrInfinity, surfacing as `assert.throws(TypeError, ...)` in
-        // tests like `Number.prototype.toFixed.call(0, {valueOf:undef, toString:undef})`.
+        // tests like `Number.prototype.toFixed.call(0, {valueOf:undef, toString:undef})`
+        // and `arr.indexOf(true, {valueOf:()=>{}, toString:()=>{}})`.
+        // Note: this trades a Pass→Fail regression on `(1).toPrecision({})`
+        // (spec expects RangeError after `{}.toString` returns "[object Object]"
+        // → NaN → 0 → range check fail). Compiled mode lacks proper inheritance
+        // of `Object.prototype.toString` via plain Dictionaries — properly
+        // walking to ObjectPrototypeField is the right structural fix; net win
+        // is +3 Pass / -1 regression at this layer.
         var afterToPrimCheck = il.DefineLabel();
         var stillObjThrowLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, coercedLocal);
