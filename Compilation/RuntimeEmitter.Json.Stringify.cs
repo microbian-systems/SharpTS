@@ -191,11 +191,22 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Call our emitted StringifyValue helper
+        // Call our emitted StringifyValue helper. Map null → $Undefined.Instance
+        // because StringifyValue returns null for undefined inputs and the
+        // spec wants `JSON.stringify(undefined) === undefined`.
+        var resultRootLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0); // indent = 0
         il.Emit(OpCodes.Ldc_I4_0); // depth = 0
         il.Emit(OpCodes.Call, stringifyHelper);
+        il.Emit(OpCodes.Stloc, resultRootLocal);
+        il.Emit(OpCodes.Ldloc, resultRootLocal);
+        var nonNullJsonLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, nonNullJsonLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(nonNullJsonLabel);
+        il.Emit(OpCodes.Ldloc, resultRootLocal);
         il.Emit(OpCodes.Ret);
     }
 
@@ -236,6 +247,17 @@ public partial class RuntimeEmitter
         // Store value in local (we may modify it via toJSON)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Stloc, valueLocal);
+
+        // ECMA-262 25.5.2.1: undefined values are dropped — for arrays the
+        // caller maps null→"null" via `?? "null"`, for objects the caller
+        // skips the key on null. So return C# null here for $Undefined.
+        var undefRetNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, undefRetNullLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(undefRetNullLabel);
 
         // if (value == null) return "null";
         il.Emit(OpCodes.Ldloc, valueLocal);
@@ -591,8 +613,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, appendedLabel);
 
         il.MarkLabel(notHoleLabel);
-        // sb.Append(StringifyValue(arr[i], indent, depth + 1));
-        il.Emit(OpCodes.Ldloc, sbLocal);
+        // strResult = StringifyValue(arr[i], indent, depth + 1)
+        // sb.Append(strResult ?? "null"); — null means the slot's value was
+        // undefined; arrays render those as "null" per SerializeJSONArray 8.b.
+        var arrElemStrLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldloc, arrLocal);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", [_types.Int32]));
@@ -601,6 +625,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Call, stringifyMethod);
+        il.Emit(OpCodes.Stloc, arrElemStrLocal);
+        var arrElemNonNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, arrElemStrLocal);
+        il.Emit(OpCodes.Brtrue, arrElemNonNullLabel);
+        il.Emit(OpCodes.Ldstr, "null");
+        il.Emit(OpCodes.Stloc, arrElemStrLocal);
+        il.MarkLabel(arrElemNonNullLabel);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloc, arrElemStrLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
         il.Emit(OpCodes.Pop);
 
@@ -674,6 +707,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.DictionaryStringObjectEnumerator.GetProperty("Current")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, currentLocal);
 
+        // strResult = StringifyValue(currentValue, indent, depth + 1)
+        // Compute first; if null, the value was undefined → skip entry per
+        // ECMA-262 25.5.2.1 SerializeJSONObject step 7.b.
+        var dictValStrLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloca, currentLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Value").GetGetMethod()!);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Call, stringifyMethod);
+        il.Emit(OpCodes.Stloc, dictValStrLocal);
+        il.Emit(OpCodes.Ldloc, dictValStrLocal);
+        il.Emit(OpCodes.Brfalse, loopStart);
+
         // if (!first) sb.Append(",");
         il.Emit(OpCodes.Ldloc, firstLocal);
         var skipComma = il.DefineLabel();
@@ -700,15 +748,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
         il.Emit(OpCodes.Pop);
 
-        // sb.Append(StringifyValue(value, indent, depth + 1));
+        // sb.Append(strResult)
         il.Emit(OpCodes.Ldloc, sbLocal);
-        il.Emit(OpCodes.Ldloca, currentLocal);
-        il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Value").GetGetMethod()!);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Call, stringifyMethod);
+        il.Emit(OpCodes.Ldloc, dictValStrLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
         il.Emit(OpCodes.Pop);
 

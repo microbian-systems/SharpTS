@@ -136,14 +136,86 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(replacerDoneLabel);
 
+        // ECMA-262 25.5.2.1 step 12: SerializeJSONProperty("", { "": value }).
+        // The replacer function (if any) is called at the root with key=""
+        // and value=value, and the return value is what gets stringified.
+        // Without this root-level invocation, `JSON.stringify({prop:1}, fn)`
+        // bypasses fn for the outermost wrapper — the inner object iteration
+        // calls fn for "prop" but fn never sees ("", {prop:1}). Per spec, an
+        // undefined return at root makes JSON.stringify return undefined too.
+        var rootValueLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, rootValueLocal);
+
+        var skipRootReplacerLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, replacerFuncLocal);
+        il.Emit(OpCodes.Brfalse, skipRootReplacerLabel);
+
+        var rootArgsLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, rootValueLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Stloc, rootArgsLocal);
+
+        var rootIsTSFunctionLabel = il.DefineLabel();
+        var rootIsBoundLabel = il.DefineLabel();
+        var rootCallDoneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, replacerFuncLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, rootIsTSFunctionLabel);
+        il.Emit(OpCodes.Ldloc, replacerFuncLocal);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brtrue, rootIsBoundLabel);
+        il.Emit(OpCodes.Br, rootCallDoneLabel);
+
+        il.MarkLabel(rootIsTSFunctionLabel);
+        il.Emit(OpCodes.Ldloc, replacerFuncLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, rootArgsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
+        il.Emit(OpCodes.Stloc, rootValueLocal);
+        il.Emit(OpCodes.Br, rootCallDoneLabel);
+
+        il.MarkLabel(rootIsBoundLabel);
+        il.Emit(OpCodes.Ldloc, replacerFuncLocal);
+        il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, rootArgsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvokeWithThis);
+        il.Emit(OpCodes.Stloc, rootValueLocal);
+
+        il.MarkLabel(rootCallDoneLabel);
+        il.MarkLabel(skipRootReplacerLabel);
+
         // ============ Call helper method ============
         // return StringifyValueFull(value, replacerFunc, allowedKeys, indentStr, 0)
-        il.Emit(OpCodes.Ldarg_0);           // value
+        // ECMA-262: a null helper return at root means "JSON.stringify returns
+        // undefined" (e.g. `JSON.stringify(undefined)` or replacer returning
+        // undefined for the root). Map null → $Undefined.Instance so the JS
+        // surface sees the spec's `undefined`.
+        var resultLocalRoot = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, rootValueLocal);     // value (post-replacer)
         il.Emit(OpCodes.Ldloc, replacerFuncLocal);   // replacer
         il.Emit(OpCodes.Ldloc, allowedKeysLocal);    // allowedKeys
         il.Emit(OpCodes.Ldloc, indentStrLocal);      // indentStr
         il.Emit(OpCodes.Ldc_I4_0);                   // depth = 0
         il.Emit(OpCodes.Call, stringifyFullHelper);
+        il.Emit(OpCodes.Stloc, resultLocalRoot);
+        il.Emit(OpCodes.Ldloc, resultLocalRoot);
+        var resultNonNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, resultNonNullLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(resultNonNullLabel);
+        il.Emit(OpCodes.Ldloc, resultLocalRoot);
         il.Emit(OpCodes.Ret);
     }
 
@@ -249,6 +321,20 @@ public partial class RuntimeEmitter
         // Store value in local
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Stloc, valueLocal);
+
+        // ECMA-262 25.5.2.1: undefined values are dropped — for arrays the
+        // caller maps null→"null" via `?? "null"`, for objects the caller
+        // skips the key on null. So return C# null here for $Undefined.
+        // `JSON.stringify(undefined)` returns undefined; `[undefined]` →
+        // `"[null]"`; `{a: undefined}` → `"{}"`. Replacer-returned undefined
+        // also flows through this path.
+        var undefRetNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, undefRetNullLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(undefRetNullLabel);
 
         // if (value == null) return "null";
         il.Emit(OpCodes.Ldloc, valueLocal);
