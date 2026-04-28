@@ -40,14 +40,17 @@ public static partial class RuntimeTypes
         }
         // ECMA-262 6.1.6.1.13: non-integer doubles use plain decimal when the
         // leading-digit exponent ∈ [-6, 20], exponential otherwise. .NET's G
-        // format switches at < 1e-4 — wrong on the "0.000001" boundary.
-        if (Math.Abs(d) >= 1e-6)
+        // format switches at < 1e-4 — wrong on the "0.000001" boundary; and
+        // |x| ≥ 1e21 (the integer-branch upper bound) must use exponential
+        // even for values like 1e21 itself which lands here when not strictly
+        // less than 1e21.
+        if (Math.Abs(d) >= 1e-6 && Math.Abs(d) < 1e21)
         {
             // Plain-decimal: variable-precision fixed-point without exponential
             // ever firing. Suppresses trailing zeros via `#` placeholder.
             return d.ToString("0.################", CultureInfo.InvariantCulture);
         }
-        // |d| < 1e-6: exponential, JS-style (lowercase e + no leading zeros).
+        // |d| < 1e-6 OR |d| ≥ 1e21: exponential, JS-style.
         var s = d.ToString("G15", CultureInfo.InvariantCulture).Replace("E", "e");
         return System.Text.RegularExpressions.Regex.Replace(s, @"e([+-])0+(?=\d)", "e$1");
     }

@@ -170,8 +170,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, endLabel);
 
         // Non-integer: use ECMA-262 6.1.6.1.13 formatting. Plain decimal when
-        // exponent ∈ [-6, 20], exponential otherwise. .NET's "G15" alone uses
-        // exponential for any value < 1e-4 — wrong by spec for 0.0001..1e-6.
+        // |x| ∈ [1e-6, 1e21), exponential otherwise. .NET's "G15" alone uses
+        // exponential for any value < 1e-4 — wrong by spec for 0.0001..1e-6;
+        // and |x| ≥ 1e21 must also use exponential (matches the integer
+        // branch's < 1e21 upper bound for boundary values like 1e21 itself).
         il.MarkLabel(notIntLabel);
         // Compute Math.Abs(value) → for log10 + branch.
         var absLocal = il.DeclareLocal(_types.Double);
@@ -184,6 +186,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, absLocal);
         il.Emit(OpCodes.Ldc_R8, 1e-6);
         il.Emit(OpCodes.Blt, exponentialNonIntLabel);
+        // Branch to exponential when abs >= 1e21.
+        il.Emit(OpCodes.Ldloc, absLocal);
+        il.Emit(OpCodes.Ldc_R8, 1e21);
+        il.Emit(OpCodes.Bge, exponentialNonIntLabel);
 
         // Plain-decimal path: use "0.################" pattern which emits
         // variable-precision fixed-point (up to 16 fractional digits) WITHOUT
