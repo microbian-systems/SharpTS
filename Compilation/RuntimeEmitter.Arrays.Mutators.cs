@@ -1249,6 +1249,26 @@ public partial class RuntimeEmitter
         TryInvokePrim("toString", afterToString);
         il.MarkLabel(afterToString);
 
+        // ECMA-262 7.1.1 OrdinaryToPrimitive: if neither valueOf nor toString
+        // returned a primitive (still Dictionary or $Object), throw TypeError.
+        // This is the abrupt completion that propagates through ToNumber →
+        // ToIntegerOrInfinity, surfacing as `assert.throws(TypeError, ...)` in
+        // tests like `Number.prototype.toFixed.call(0, {valueOf:undef, toString:undef})`.
+        var afterToPrimCheck = il.DefineLabel();
+        var stillObjThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, coercedLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, stillObjThrowLabel);
+        il.Emit(OpCodes.Ldloc, coercedLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, afterToPrimCheck);
+        il.MarkLabel(stillObjThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert object to primitive value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(afterToPrimCheck);
+
         il.MarkLabel(notObjectLabel);
 
         // Now coercedLocal is hopefully a primitive — coerce via ToNumber.
