@@ -31,7 +31,7 @@ public partial class RuntimeEmitter
         // Locals
         var indentStrLocal = il.DeclareLocal(_types.String);     // string indentStr
         var replacerFuncLocal = il.DeclareLocal(_types.Object);  // $TSFunction or null
-        var allowedKeysLocal = il.DeclareLocal(_types.HashSetOfString);  // HashSet<string> or null
+        var allowedKeysLocal = il.DeclareLocal(_types.ListOfString);  // HashSet<string> or null
         var spaceDoubleLocal = il.DeclareLocal(_types.Double);
         var countLocal = il.DeclareLocal(_types.Int32);
 
@@ -243,7 +243,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, listLocal);
 
         // allowedKeys = new HashSet<string>()
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.HashSetOfString, Type.EmptyTypes));
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfString, Type.EmptyTypes));
         il.Emit(OpCodes.Stloc, allowedKeysLocal);
 
         // for (int i = 0; i < list.Count; i++)
@@ -282,10 +282,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, keyLocal);
 
         il.MarkLabel(addLabel);
+        // Dedup before Add (List<T>.Contains is O(n) but replacer arrays are
+        // typically small; preserves insertion order per spec PropertyList).
         il.Emit(OpCodes.Ldloc, allowedKeysLocal);
         il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.HashSetOfString, "Add", [_types.String]));
-        il.Emit(OpCodes.Pop);  // discard bool
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfString, "Contains", [_types.String]));
+        il.Emit(OpCodes.Brtrue, skipLabel);
+        il.Emit(OpCodes.Ldloc, allowedKeysLocal);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfString, "Add", [_types.String]));
 
         il.MarkLabel(skipLabel);
 
@@ -309,7 +314,7 @@ public partial class RuntimeEmitter
             "StringifyValueFull",
             MethodAttributes.Private | MethodAttributes.Static,
             _types.String,
-            [_types.Object, _types.Object, _types.HashSetOfString, _types.String, _types.Int32]
+            [_types.Object, _types.Object, _types.ListOfString, _types.String, _types.Int32]
             // value, replacer, allowedKeys, indentStr, depth
         );
 
@@ -551,7 +556,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(notHoleLabel);
 
         // If replacer function exists, call it: elem = InvokeCallback(replacer, i, elem)
-        EmitCallReplacerIfNeeded(il, elemLocal, iLocal, runtime);
+        EmitCallReplacerIfNeeded(il, elemLocal, iLocal, arrLocal, runtime);
 
         // strResult = StringifyValueFull(elem, replacer, allowedKeys, indentStr, depth + 1)
         il.Emit(OpCodes.Ldloc, elemLocal);
@@ -686,10 +691,12 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits code to call the replacer function if it exists.
-    /// For arrays: replacer(index, elem) -> elem
+    /// For arrays: replacer.call(holder, index, elem) -> elem.
+    /// Per ECMA-262 25.5.2.1 SerializeJSONProperty step 3.a, the replacer is
+    /// invoked with the holder (parent array) as `this`.
     /// Handles both $TSFunction and $BoundTSFunction.
     /// </summary>
-    private void EmitCallReplacerIfNeeded(ILGenerator il, LocalBuilder elemLocal, LocalBuilder indexLocal, EmittedRuntime runtime)
+    private void EmitCallReplacerIfNeeded(ILGenerator il, LocalBuilder elemLocal, LocalBuilder indexLocal, LocalBuilder holderLocal, EmittedRuntime runtime)
     {
         var skipLabel = il.DefineLabel();
         var isTSFunctionLabel = il.DefineLabel();
@@ -733,26 +740,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, elemLocal);
         il.Emit(OpCodes.Br, callDoneLabel);
 
-        // isTSFunctionLabel: call $TSFunction.InvokeWithThis(null, args).
-        // Function expressions emit a leading `__this` parameter; calling raw
-        // Invoke([key, val]) shifts the args and the user function sees
-        // (__this=key, k=val, v=undefined). Routing through InvokeWithThis with
-        // null thisArg lets the wrapper detect the __this slot and prepend
-        // null itself, so the user's `(k, v)` lines up with [key, val].
+        // isTSFunctionLabel: call $TSFunction.InvokeWithThis(holder, args).
+        // Per spec the replacer's `this` is the parent (holder); function
+        // expressions emit a leading `__this` parameter so InvokeWithThis is
+        // the right entry point — prepends holder under the __this slot so the
+        // user's `(k, v)` lines up with [key, val].
         il.MarkLabel(isTSFunctionLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, holderLocal);
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
         il.Emit(OpCodes.Stloc, elemLocal);
         il.Emit(OpCodes.Br, callDoneLabel);
 
-        // isBoundLabel: call $BoundTSFunction.InvokeWithThis(null, args)
+        // isBoundLabel: call $BoundTSFunction.InvokeWithThis(holder, args)
         il.MarkLabel(isBoundLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, holderLocal);
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvokeWithThis);
         il.Emit(OpCodes.Stloc, elemLocal);
@@ -763,9 +769,10 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits code to call the replacer function with a string key.
+    /// Spec: replacer.call(holder, key, value) where holder is the parent.
     /// Handles both $TSFunction and $BoundTSFunction.
     /// </summary>
-    private void EmitCallReplacerWithKey(ILGenerator il, LocalBuilder valueLocal, LocalBuilder keyLocal, EmittedRuntime runtime)
+    private void EmitCallReplacerWithKey(ILGenerator il, LocalBuilder valueLocal, LocalBuilder keyLocal, LocalBuilder holderLocal, EmittedRuntime runtime)
     {
         var skipLabel = il.DefineLabel();
         var isTSFunctionLabel = il.DefineLabel();
@@ -806,22 +813,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, callDoneLabel);
 
-        // isTSFunctionLabel: call $TSFunction.InvokeWithThis(null, args) — see
-        // EmitCallReplacerIfNeeded above for the __this arg-shift rationale.
+        // isTSFunctionLabel: call $TSFunction.InvokeWithThis(holder, args).
         il.MarkLabel(isTSFunctionLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, holderLocal);
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, callDoneLabel);
 
-        // isBoundLabel: call $BoundTSFunction.InvokeWithThis(null, args)
+        // isBoundLabel: call $BoundTSFunction.InvokeWithThis(holder, args)
         il.MarkLabel(isBoundLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, holderLocal);
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvokeWithThis);
         il.Emit(OpCodes.Stloc, valueLocal);
@@ -895,42 +901,65 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("GetEnumerator")!);
         il.Emit(OpCodes.Stloc, enumeratorLocal);
 
+        // ECMA-262 25.5.2.4 step 5: when PropertyList is provided, iterate
+        // PropertyList order; else iterate own enumerable keys of the source.
+        // We pre-bind keyLocal/valLocal at the top of each iteration so the
+        // shared body below works for both shapes.
+        var iLocalObj = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocalObj);
+
         il.MarkLabel(loopStart);
+
+        // Dispatch: if allowedKeys != null, advance via i over allowedKeys;
+        // else MoveNext on dict enumerator.
+        var sourcePathLabel = il.DefineLabel();
+        var iterDoneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, sourcePathLabel);
+
+        // allowedKeys path: bounds-check, fetch key, look up in dict (skip if absent)
+        il.Emit(OpCodes.Ldloc, iLocalObj);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfString, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, loopEnd);
+        // key = allowedKeys[i]
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldloc, iLocalObj);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfString, "get_Item", [_types.Int32]));
+        il.Emit(OpCodes.Stloc, keyLocal);
+        // i++ (bump now so `continue` (Br loopStart) advances)
+        il.Emit(OpCodes.Ldloc, iLocalObj);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocalObj);
+        // val = dict.TryGetValue(key) ? value : skip
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldloca, valLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
+        il.Emit(OpCodes.Brfalse, loopStart);  // not present → next allowedKeys entry
+        il.Emit(OpCodes.Br, iterDoneLabel);
+
+        // Source-dict enumeration path
+        il.MarkLabel(sourcePathLabel);
         il.Emit(OpCodes.Ldloca, enumeratorLocal);
         il.Emit(OpCodes.Call, _types.DictionaryStringObjectEnumerator.GetMethod("MoveNext")!);
         il.Emit(OpCodes.Brfalse, loopEnd);
-
         il.Emit(OpCodes.Ldloca, enumeratorLocal);
         il.Emit(OpCodes.Call, _types.DictionaryStringObjectEnumerator.GetProperty("Current")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, currentLocal);
-
-        // key = current.Key
         il.Emit(OpCodes.Ldloca, currentLocal);
         il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Key").GetGetMethod()!);
         il.Emit(OpCodes.Stloc, keyLocal);
-
-        // if (allowedKeys != null && !allowedKeys.Contains(key)) continue;
-        var keyAllowedLabel = il.DefineLabel();
-        var skipKeyCheckLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_2);  // allowedKeys
-        il.Emit(OpCodes.Brfalse, skipKeyCheckLabel);
-
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.HashSetOfString, "Contains", [_types.String]));
-        il.Emit(OpCodes.Brtrue, keyAllowedLabel);
-        il.Emit(OpCodes.Br, loopStart);  // skip this key
-
-        il.MarkLabel(skipKeyCheckLabel);
-        il.MarkLabel(keyAllowedLabel);
-
-        // val = current.Value
         il.Emit(OpCodes.Ldloca, currentLocal);
         il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Value").GetGetMethod()!);
         il.Emit(OpCodes.Stloc, valLocal);
 
+        il.MarkLabel(iterDoneLabel);
+
         // Call replacer if needed
-        EmitCallReplacerWithKey(il, valLocal, keyLocal, runtime);
+        EmitCallReplacerWithKey(il, valLocal, keyLocal, dictLocal, runtime);
 
         // strResult = StringifyValueFull(val, replacer, allowedKeys, indentStr, depth + 1)
         il.Emit(OpCodes.Ldloc, valLocal);
