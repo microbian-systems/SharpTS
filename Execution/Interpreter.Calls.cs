@@ -461,9 +461,11 @@ public partial class Interpreter
                 case OperatorDescriptor.Comparison:
                     return RuntimeValue.FromBoolean(EvaluateComparison(binary.Operator.Type, l, r));
                 case OperatorDescriptor.Equality eq:
-                    // Use Equals() not == for NaN consistency: double.NaN.Equals(NaN) is true in C#
-                    // (matches existing interpreter behavior where NaN === NaN is true)
-                    bool equal = l.Equals(r);
+                    // ECMA-262 7.2.16: NaN is never strictly equal to anything
+                    // (including itself). Use IEEE 754 `==` which returns false
+                    // for NaN comparisons; Double.Equals is .NET-specific and
+                    // treats NaN as equal to itself.
+                    bool equal = l == r;
                     return RuntimeValue.FromBoolean(eq.IsNegated ? !equal : equal);
                 case OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift:
                     return RuntimeValue.FromNumber(EvaluateBitwise(binary.Operator.Type, JsToInt32(l), JsToInt32(r)));

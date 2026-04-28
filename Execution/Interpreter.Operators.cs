@@ -597,6 +597,11 @@ public partial class Interpreter
         if (a is SharpTSUndefined && b is SharpTSUndefined) return true;
         if (a == null || b == null || a is SharpTSUndefined || b is SharpTSUndefined) return false;
         if (a.GetType() != b.GetType()) return false;
+        // ECMA-262 7.2.16 IsStrictlyEqual: NaN is never equal to anything,
+        // including itself. Object.Equals defers to Double.Equals which
+        // treats NaN as equal to itself; check explicitly.
+        if (a is double da && b is double db && (double.IsNaN(da) || double.IsNaN(db)))
+            return false;
         return a.Equals(b);
     }
 

@@ -33,12 +33,12 @@ public class GlobalConstantsTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NaN_StrictEqualityBehavior(ExecutionMode mode)
     {
-        // Note: In JavaScript, NaN === NaN is false, but SharpTS interpreter
-        // may have different behavior. This test verifies current behavior.
+        // ECMA-262 7.2.16 IsStrictlyEqual: NaN is never strictly equal to
+        // anything, including itself. (Pre-fix the test expected the buggy
+        // "true" output — interpreter and compiled both now match spec.)
         var source = "console.log(NaN === NaN);";
         var output = TestHarness.Run(source, mode);
-        // Interpreter currently returns true (differs from JS spec)
-        Assert.Equal("true\n", output);
+        Assert.Equal("false\n", output);
     }
 
     [Theory]

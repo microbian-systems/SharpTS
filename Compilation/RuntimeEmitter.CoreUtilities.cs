@@ -3166,6 +3166,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, falseLabel);
 
+        // ECMA-262 IsStrictlyEqual: NaN !== NaN. Object.Equals(NaN, NaN) is true
+        // in .NET (Double.Equals special-cases NaN as equal to itself), so test
+        // upfront via double.IsNaN. Pre-fix `[NaN].indexOf(NaN)` returned 0
+        // instead of -1.
+        var notDoubleSEqLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, notDoubleSEqLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, notDoubleSEqLabel);
+        // Both are double — if either is NaN, return false.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("IsNaN", [_types.Double])!);
+        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("IsNaN", [_types.Double])!);
+        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.MarkLabel(notDoubleSEqLabel);
+
         // Both are concrete values — defer to Object.Equals (handles double,
         // string, reference equality for objects).
         il.Emit(OpCodes.Ldarg_0);
