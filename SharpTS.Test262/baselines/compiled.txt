@@ -830,7 +830,7 @@ test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-23.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-4.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-5.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-6.js Pass
-test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-7.js Fail
+test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-7.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-8.js Fail
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-ii-9.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-1-1.js Pass
@@ -1193,7 +1193,7 @@ test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-23.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-4.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-5.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-6.js Pass
-test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-7.js Fail
+test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-7.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-8.js RuntimeError
 test/built-ins/Array/prototype/forEach/15.4.4.18-7-c-ii-9.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-8-1.js Pass
@@ -1343,9 +1343,9 @@ test/built-ins/Array/prototype/indexOf/15.4.4.14-5-25.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-26.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-27.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-28.js Pass
-test/built-ins/Array/prototype/indexOf/15.4.4.14-5-29.js Fail
+test/built-ins/Array/prototype/indexOf/15.4.4.14-5-29.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-3.js Pass
-test/built-ins/Array/prototype/indexOf/15.4.4.14-5-30.js Fail
+test/built-ins/Array/prototype/indexOf/15.4.4.14-5-30.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-31.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-32.js Pass
 test/built-ins/Array/prototype/indexOf/15.4.4.14-5-33.js Pass
@@ -1575,9 +1575,9 @@ test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-25.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-26.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-27.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-28.js Pass
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-29.js Fail
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-29.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-3.js Pass
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-30.js Fail
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-30.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-31.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-32.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-33.js Pass
@@ -1853,7 +1853,7 @@ test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-23.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-4.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-5.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-6.js Pass
-test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-7.js Fail
+test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-7.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-8.js Fail
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-ii-9.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-8-c-iii-1.js Pass
@@ -2199,7 +2199,7 @@ test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-37.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-4-s.js RuntimeError
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-4.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-5.js Pass
-test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-7.js Fail
+test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-7.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-8.js RuntimeError
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-9.js Pass
 test/built-ins/Array/prototype/reduce/call-with-boolean.js Pass
@@ -2747,7 +2747,7 @@ test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-3.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-4.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-5.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-6.js Pass
-test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-7.js Fail
+test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-7.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-8.js RuntimeError
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-ii-9.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-7-c-iii-1.js Pass
@@ -3113,9 +3113,9 @@ test/built-ins/Boolean/prototype/constructor/S15.6.4.1_A1.js Pass
 test/built-ins/Boolean/prototype/toString/S15.6.4.2_A1_T1.js Pass
 test/built-ins/Boolean/prototype/toString/S15.6.4.2_A1_T2.js Pass
 test/built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T1.js Fail
-test/built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T2.js Fail
+test/built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T2.js Pass
 test/built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T3.js TypeCheckError
-test/built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T4.js Fail
+test/built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T4.js Pass
 test/built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T5.js TypeCheckError
 test/built-ins/Boolean/prototype/toString/length.js TypeCheckError
 test/built-ins/Boolean/prototype/toString/name.js TypeCheckError
@@ -3123,9 +3123,9 @@ test/built-ins/Boolean/prototype/toString/not-a-constructor.js Pass
 test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A1_T1.js Pass
 test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A1_T2.js Pass
 test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T1.js Fail
-test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T2.js Fail
+test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T2.js Pass
 test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T3.js TypeCheckError
-test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T4.js Fail
+test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T4.js Pass
 test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T5.js TypeCheckError
 test/built-ins/Boolean/prototype/valueOf/length.js TypeCheckError
 test/built-ins/Boolean/prototype/valueOf/name.js TypeCheckError
@@ -3843,7 +3843,7 @@ test/built-ins/Number/prototype/toExponential/return-abrupt-tointeger-fractiondi
 test/built-ins/Number/prototype/toExponential/return-values.js Fail
 test/built-ins/Number/prototype/toExponential/this-is-0-fractiondigits-is-0.js Pass
 test/built-ins/Number/prototype/toExponential/this-is-0-fractiondigits-is-not-0.js Pass
-test/built-ins/Number/prototype/toExponential/this-type-not-number-or-number-object.js Fail
+test/built-ins/Number/prototype/toExponential/this-type-not-number-or-number-object.js Pass
 test/built-ins/Number/prototype/toExponential/tointeger-fractiondigits.js Fail
 test/built-ins/Number/prototype/toExponential/undefined-fractiondigits.js Fail
 test/built-ins/Number/prototype/toFixed/S15.7.4.5_A1.1_T01.js Pass
@@ -3872,15 +3872,15 @@ test/built-ins/Number/prototype/toPrecision/length.js TypeCheckError
 test/built-ins/Number/prototype/toPrecision/name.js TypeCheckError
 test/built-ins/Number/prototype/toPrecision/nan.js Pass
 test/built-ins/Number/prototype/toPrecision/not-a-constructor.js Pass
-test/built-ins/Number/prototype/toPrecision/precision-cannot-be-coerced-to-a-number-in-range.js Fail
+test/built-ins/Number/prototype/toPrecision/precision-cannot-be-coerced-to-a-number-in-range.js Pass
 test/built-ins/Number/prototype/toPrecision/prop-desc.js TypeCheckError
 test/built-ins/Number/prototype/toPrecision/range.js Pass
-test/built-ins/Number/prototype/toPrecision/return-abrupt-tointeger-precision-symbol.js Fail
+test/built-ins/Number/prototype/toPrecision/return-abrupt-tointeger-precision-symbol.js Pass
 test/built-ins/Number/prototype/toPrecision/return-abrupt-tointeger-precision.js Fail
 test/built-ins/Number/prototype/toPrecision/return-values.js Pass
 test/built-ins/Number/prototype/toPrecision/this-is-0-precision-is-1.js Pass
 test/built-ins/Number/prototype/toPrecision/this-is-0-precision-is-gter-than-1.js Pass
-test/built-ins/Number/prototype/toPrecision/this-type-not-number-or-number-object.js Fail
+test/built-ins/Number/prototype/toPrecision/this-type-not-number-or-number-object.js Pass
 test/built-ins/Number/prototype/toPrecision/tointeger-precision.js RuntimeError
 test/built-ins/Number/prototype/toPrecision/undefined-precision-arg.js Pass
 test/built-ins/Number/prototype/toString/S15.7.4.2_A1_T01.js Pass
@@ -4180,7 +4180,7 @@ test/built-ins/String/prototype/charAt/S15.5.4.4_A3.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A4_T1.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A4_T2.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A4_T3.js Pass
-test/built-ins/String/prototype/charAt/S15.5.4.4_A5.js RuntimeError
+test/built-ins/String/prototype/charAt/S15.5.4.4_A5.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A6.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A7.js Pass
 test/built-ins/String/prototype/charAt/S15.5.4.4_A8.js Pass
@@ -4207,7 +4207,7 @@ test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T8.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T9.js RuntimeError
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A2.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A3.js Pass
-test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A4.js RuntimeError
+test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A4.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A6.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A7.js Pass
 test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A8.js Pass
@@ -4334,8 +4334,8 @@ test/built-ins/String/prototype/indexOf/S15.5.4.7_A3_T3.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A4_T1.js TypeCheckError
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A4_T2.js RuntimeError
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A4_T3.js TypeCheckError
-test/built-ins/String/prototype/indexOf/S15.5.4.7_A4_T4.js RuntimeError
-test/built-ins/String/prototype/indexOf/S15.5.4.7_A4_T5.js RuntimeError
+test/built-ins/String/prototype/indexOf/S15.5.4.7_A4_T4.js Pass
+test/built-ins/String/prototype/indexOf/S15.5.4.7_A4_T5.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A5_T1.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A5_T2.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A5_T3.js Pass
@@ -4382,8 +4382,8 @@ test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T9.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A4_T1.js TypeCheckError
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A4_T2.js RuntimeError
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A4_T3.js TypeCheckError
-test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A4_T4.js RuntimeError
-test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A4_T5.js RuntimeError
+test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A4_T4.js Pass
+test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A4_T5.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A6.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A7.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A8.js Pass
@@ -4986,7 +4986,7 @@ test/built-ins/String/prototype/toLowerCase/not-a-constructor.js Pass
 test/built-ins/String/prototype/toLowerCase/special_casing.js Fail
 test/built-ins/String/prototype/toLowerCase/special_casing_conditional.js Fail
 test/built-ins/String/prototype/toLowerCase/supplementary_plane.js Pass
-test/built-ins/String/prototype/toLowerCase/this-value-not-obj-coercible.js Fail
+test/built-ins/String/prototype/toLowerCase/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/toLowerCase/this-value-tostring-throws-symbol.js Fail
 test/built-ins/String/prototype/toLowerCase/this-value-tostring-throws-toprimitive.js Fail
 test/built-ins/String/prototype/toString/length.js TypeCheckError
@@ -5021,7 +5021,7 @@ test/built-ins/String/prototype/toUpperCase/name.js TypeCheckError
 test/built-ins/String/prototype/toUpperCase/not-a-constructor.js Pass
 test/built-ins/String/prototype/toUpperCase/special_casing.js Fail
 test/built-ins/String/prototype/toUpperCase/supplementary_plane.js Pass
-test/built-ins/String/prototype/toUpperCase/this-value-not-obj-coercible.js Fail
+test/built-ins/String/prototype/toUpperCase/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/toWellFormed/length.js TypeCheckError
 test/built-ins/String/prototype/toWellFormed/name.js TypeCheckError
 test/built-ins/String/prototype/toWellFormed/not-a-constructor.js Pass
@@ -5032,8 +5032,8 @@ test/built-ins/String/prototype/toWellFormed/to-string-primitive.js TypeCheckErr
 test/built-ins/String/prototype/toWellFormed/to-string.js Fail
 test/built-ins/String/prototype/trim/15.5.4.20-0-1.js Pass
 test/built-ins/String/prototype/trim/15.5.4.20-0-2.js Pass
-test/built-ins/String/prototype/trim/15.5.4.20-1-1.js Fail
-test/built-ins/String/prototype/trim/15.5.4.20-1-2.js Fail
+test/built-ins/String/prototype/trim/15.5.4.20-1-1.js Pass
+test/built-ins/String/prototype/trim/15.5.4.20-1-2.js Pass
 test/built-ins/String/prototype/trim/15.5.4.20-1-3.js Pass
 test/built-ins/String/prototype/trim/15.5.4.20-1-4.js Pass
 test/built-ins/String/prototype/trim/15.5.4.20-1-5.js Pass
@@ -5165,7 +5165,7 @@ test/built-ins/String/prototype/trimEnd/not-a-constructor.js Pass
 test/built-ins/String/prototype/trimEnd/prop-desc.js TypeCheckError
 test/built-ins/String/prototype/trimEnd/this-value-boolean.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-line-terminator.js Pass
-test/built-ins/String/prototype/trimEnd/this-value-not-obj-coercible.js Fail
+test/built-ins/String/prototype/trimEnd/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-number.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-object-cannot-convert-to-primitive-err.js Fail
 test/built-ins/String/prototype/trimEnd/this-value-object-toprimitive-call-err.js HarnessError
@@ -5188,7 +5188,7 @@ test/built-ins/String/prototype/trimStart/not-a-constructor.js Pass
 test/built-ins/String/prototype/trimStart/prop-desc.js TypeCheckError
 test/built-ins/String/prototype/trimStart/this-value-boolean.js Pass
 test/built-ins/String/prototype/trimStart/this-value-line-terminator.js Pass
-test/built-ins/String/prototype/trimStart/this-value-not-obj-coercible.js Fail
+test/built-ins/String/prototype/trimStart/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/trimStart/this-value-number.js Pass
 test/built-ins/String/prototype/trimStart/this-value-object-cannot-convert-to-primitive-err.js Fail
 test/built-ins/String/prototype/trimStart/this-value-object-toprimitive-call-err.js HarnessError
