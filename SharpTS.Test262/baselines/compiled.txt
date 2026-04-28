@@ -3087,7 +3087,7 @@ test/built-ins/Boolean/S15.6.1.1_A1_T4.js Pass
 test/built-ins/Boolean/S15.6.1.1_A1_T5.js Pass
 test/built-ins/Boolean/S15.6.1.1_A2.js Pass
 test/built-ins/Boolean/S15.6.2.1_A1.js Pass
-test/built-ins/Boolean/S15.6.2.1_A2.js Fail
+test/built-ins/Boolean/S15.6.2.1_A2.js Pass
 test/built-ins/Boolean/S15.6.2.1_A3.js Pass
 test/built-ins/Boolean/S15.6.2.1_A4.js Fail
 test/built-ins/Boolean/S15.6.3_A1.js Pass
@@ -3109,7 +3109,7 @@ test/built-ins/Boolean/prototype/S15.6.3.1_A2.js TypeCheckError
 test/built-ins/Boolean/prototype/S15.6.3.1_A3.js TypeCheckError
 test/built-ins/Boolean/prototype/S15.6.3.1_A4.js Pass
 test/built-ins/Boolean/prototype/S15.6.4_A2.js Pass
-test/built-ins/Boolean/prototype/constructor/S15.6.4.1_A1.js Fail
+test/built-ins/Boolean/prototype/constructor/S15.6.4.1_A1.js Pass
 test/built-ins/Boolean/prototype/toString/S15.6.4.2_A1_T1.js Pass
 test/built-ins/Boolean/prototype/toString/S15.6.4.2_A1_T2.js Pass
 test/built-ins/Boolean/prototype/toString/S15.6.4.2_A2_T1.js Fail
@@ -3707,7 +3707,7 @@ test/built-ins/Number/POSITIVE_INFINITY/value.js Pass
 test/built-ins/Number/S15.7.1.1_A1.js Fail
 test/built-ins/Number/S15.7.1.1_A2.js Pass
 test/built-ins/Number/S15.7.2.1_A1.js Pass
-test/built-ins/Number/S15.7.2.1_A2.js Fail
+test/built-ins/Number/S15.7.2.1_A2.js Pass
 test/built-ins/Number/S15.7.2.1_A3.js Pass
 test/built-ins/Number/S15.7.2.1_A4.js Fail
 test/built-ins/Number/S15.7.3_A1.js Pass
@@ -3822,7 +3822,7 @@ test/built-ins/Number/prototype/S15.7.3.1_A2_T2.js Fail
 test/built-ins/Number/prototype/S15.7.3.1_A3.js RuntimeError
 test/built-ins/Number/prototype/S15.7.4_A1.js Fail
 test/built-ins/Number/prototype/S15.7.4_A2.js Pass
-test/built-ins/Number/prototype/S15.7.4_A3.1.js Fail
+test/built-ins/Number/prototype/S15.7.4_A3.1.js Pass
 test/built-ins/Number/prototype/S15.7.4_A3.2.js Pass
 test/built-ins/Number/prototype/S15.7.4_A3.3.js Pass
 test/built-ins/Number/prototype/S15.7.4_A3.4.js Pass
@@ -4256,7 +4256,7 @@ test/built-ins/String/prototype/concat/S15.5.4.6_A9.js RuntimeError
 test/built-ins/String/prototype/concat/name.js TypeCheckError
 test/built-ins/String/prototype/concat/not-a-constructor.js Pass
 test/built-ins/String/prototype/concat/this-value-not-obj-coercible.js Fail
-test/built-ins/String/prototype/constructor/S15.5.4.1_A1_T1.js RuntimeError
+test/built-ins/String/prototype/constructor/S15.5.4.1_A1_T1.js Pass
 test/built-ins/String/prototype/constructor/S15.5.4.1_A1_T2.js RuntimeError
 test/built-ins/String/prototype/endsWith/String.prototype.endsWith_Fail.js Pass
 test/built-ins/String/prototype/endsWith/String.prototype.endsWith_Fail_2.js TypeCheckError
