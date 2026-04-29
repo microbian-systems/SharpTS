@@ -401,6 +401,14 @@ public partial class ILCompiler
                 CollectArrowsFromExpr(forOf.Iterable);
                 CollectArrowsFromStmt(forOf.Body);
                 break;
+            case Stmt.ForIn forIn:
+                CollectArrowsFromExpr(forIn.Object);
+                CollectArrowsFromStmt(forIn.Body);
+                break;
+            case Stmt.DoWhile dw:
+                CollectArrowsFromStmt(dw.Body);
+                CollectArrowsFromExpr(dw.Condition);
+                break;
             case Stmt.Block b:
                 foreach (var s in b.Statements)
                     CollectArrowsFromStmt(s);
