@@ -2005,7 +2005,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitToNumber(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    /// <summary>
+    /// Pre-declares the $Runtime.ToNumber MethodBuilder slot. Body is filled
+    /// in by <see cref="EmitToNumber"/> later, after GetProperty/InvokeMethodValue
+    /// are available so the ToPrimitive(value, "number") chain can call them.
+    /// </summary>
+    internal void DeclareToNumber(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
             "ToNumber",
@@ -2014,16 +2019,108 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
         runtime.ToNumber = method;
+    }
+
+    private void EmitToNumber(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = (MethodBuilder)runtime.ToNumber;
 
         var il = method.GetILGenerator();
         var resultLocal = il.DeclareLocal(_types.Double);
+
+        // ECMA-262 7.1.4 ToNumber on object: ToPrimitive(value, "number") which
+        // tries valueOf first, then toString. Without this, Math.hypot(obj-with-
+        // throwing-valueOf) silently returns NaN instead of propagating the
+        // throw. Apply for Dictionary or $Object only.
+        var argLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, argLocal);
+
+        var skipToPrimLabelTop = il.DefineLabel();
+        var doToPrimLabelTop = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, doToPrimLabelTop);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, skipToPrimLabelTop);
+        il.MarkLabel(doToPrimLabelTop);
+
+        var emptyArgsLocalT = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, emptyArgsLocalT);
+
+        void TryToPrim2(string name, Label afterLabel)
+        {
+            var fnLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldloc, argLocal);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Stloc, fnLocal);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Brfalse, afterLabel);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brtrue, afterLabel);
+
+            var resLoc = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldloc, argLocal);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Ldloc, emptyArgsLocalT);
+            il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+            il.Emit(OpCodes.Stloc, resLoc);
+
+            il.Emit(OpCodes.Ldloc, resLoc);
+            il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+            il.Emit(OpCodes.Brtrue, afterLabel);
+            il.Emit(OpCodes.Ldloc, resLoc);
+            il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+            il.Emit(OpCodes.Brtrue, afterLabel);
+            il.Emit(OpCodes.Ldloc, resLoc);
+            il.Emit(OpCodes.Stloc, argLocal);
+        }
+
+        var afterValueOfT = il.DefineLabel();
+        TryToPrim2("valueOf", afterValueOfT);
+        il.MarkLabel(afterValueOfT);
+
+        var afterToStringT = il.DefineLabel();
+        var stillObjT = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, stillObjT);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, afterToStringT);
+        il.MarkLabel(stillObjT);
+        TryToPrim2("toString", afterToStringT);
+        il.MarkLabel(afterToStringT);
+
+        // ECMA-262 7.1.1.1: if both methods returned non-primitives, throw TypeError.
+        var afterTeT = il.DefineLabel();
+        var stillObjTeT = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, stillObjTeT);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, afterTeT);
+        il.MarkLabel(stillObjTeT);
+        il.Emit(OpCodes.Ldstr, "Cannot convert object to primitive value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(afterTeT);
+
+        il.MarkLabel(skipToPrimLabelTop);
 
         // ECMA-262 7.1.4 ToNumber on Symbol → throws TypeError. Without this,
         // Convert.ToDouble would catch the InvalidCastException → NaN → 0,
         // silently masking the spec-required throw (e.g. `(0).toFixed(Symbol())`
         // must throw, not silently produce "0").
         var notSymbolLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
         il.Emit(OpCodes.Brfalse, notSymbolLabel);
         il.Emit(OpCodes.Ldstr, "Cannot convert a Symbol value to a number");
@@ -2036,7 +2133,7 @@ public partial class RuntimeEmitter
         // throw not silently coerce. Convert.ToDouble would otherwise narrow
         // BigInteger to its double value (or throw OverflowException → NaN).
         var notBigIntLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Isinst, _types.BigInteger);
         il.Emit(OpCodes.Brfalse, notBigIntLabel);
         il.Emit(OpCodes.Ldstr, "Cannot convert a BigInt to a number");
@@ -2051,7 +2148,7 @@ public partial class RuntimeEmitter
         var tryParseInt64 = _types.GetMethod(_types.Int64, "Parse", _types.String, typeof(System.Globalization.NumberStyles), typeof(System.IFormatProvider));
         var notHexLabel = il.DefineLabel();
         var strLocal = il.DeclareLocal(_types.String);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Stloc, strLocal);
@@ -2152,7 +2249,7 @@ public partial class RuntimeEmitter
 
         // Use Convert.ToDouble with try-catch fallback to NaN
         il.BeginExceptionBlock();
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
         il.Emit(OpCodes.Stloc, resultLocal);
         il.BeginCatchBlock(_types.Exception);
