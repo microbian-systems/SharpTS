@@ -3191,7 +3191,7 @@ test/built-ins/Error/tostring-1.js Fail
 test/built-ins/Error/tostring-2.js Fail
 test/built-ins/JSON/15.12-0-1.js Pass
 test/built-ins/JSON/15.12-0-2.js Pass
-test/built-ins/JSON/15.12-0-3.js Fail
+test/built-ins/JSON/15.12-0-3.js Pass
 test/built-ins/JSON/15.12-0-4.js Pass
 test/built-ins/JSON/Symbol.toStringTag.js TypeCheckError
 test/built-ins/JSON/isRawJSON/basic.js Fail
