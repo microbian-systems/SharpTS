@@ -82,7 +82,7 @@ public static class BuiltInTypes
             "replaceAll" => new TypeInfo.Function([AnyType, AnyType], StringType),
             "at" => new TypeInfo.Function([NumberType], StringType), // returns string | undefined in TS
             "normalize" => new TypeInfo.Function([StringType], StringType, RequiredParams: 0),
-            "localeCompare" => new TypeInfo.Function([StringType], NumberType),
+            "localeCompare" => new TypeInfo.Function([StringType], NumberType, RequiredParams: 0),
             "toString" => new TypeInfo.Function([], StringType), // primitive wrapper method
             "match" => new TypeInfo.Function([AnyType], AnyType),
             "matchAll" => new TypeInfo.Function([AnyType], new TypeInfo.Array(AnyType)),

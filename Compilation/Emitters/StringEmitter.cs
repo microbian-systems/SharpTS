@@ -731,7 +731,10 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         }
         else
         {
-            il.Emit(OpCodes.Ldstr, "");
+            // ECMA-262 22.1.3.10: missing arg is treated as undefined →
+            // ToString(undefined) === "undefined". Pre-fix used "" which
+            // diverged from `.localeCompare(undefined)` and `.localeCompare("undefined")`.
+            il.Emit(OpCodes.Ldstr, "undefined");
         }
         il.Emit(OpCodes.Call, ctx.Runtime!.StringLocaleCompare);
         il.Emit(OpCodes.Box, ctx.Types.Double);
