@@ -261,7 +261,12 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         {
             emitter.EmitExpression(arguments[1]);
             emitter.EmitBoxIfNeeded(arguments[1]);
-            il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Convert, "ToDouble", ctx.Types.Object));
+            // ECMA-262: fromIndex coerced via ToInteger which routes ToNumber
+            // first — invokes valueOf/toString on object args. Going through
+            // Convert.ToDouble here threw InvalidCastException for Dictionary
+            // and skipped the toString throw the spec requires.
+            il.Emit(OpCodes.Call, ctx.Runtime!.ToNumber);
+            il.Emit(OpCodes.Unbox_Any, ctx.Types.Double);
             il.Emit(OpCodes.Call, ctx.Runtime!.StringIndexOfFrom);
         }
         else
@@ -630,6 +635,20 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         {
             il.Emit(OpCodes.Ldstr, "");
         }
+
+        // ECMA-262 22.1.3.10 step 5: ToIntegerOrInfinity(position) is performed
+        // before the actual lastIndexOf scan, so a throwing toString/valueOf
+        // on the position argument must propagate. Evaluate via $Runtime.ToNumber
+        // (handles object/Symbol/etc.) and discard — current StringLastIndexOf
+        // helper doesn't yet support an explicit fromIndex.
+        if (arguments.Count >= 2)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+            il.Emit(OpCodes.Call, ctx.Runtime!.ToNumber);
+            il.Emit(OpCodes.Pop);
+        }
+
         il.Emit(OpCodes.Call, ctx.Runtime!.StringLastIndexOf);
         il.Emit(OpCodes.Box, ctx.Types.Double);
     }

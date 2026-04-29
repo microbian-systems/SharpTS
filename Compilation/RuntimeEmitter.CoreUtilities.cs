@@ -1815,6 +1815,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, fallbackLabel);
 
+        // ECMA-262 7.1.17 ToString — Symbol primitives throw TypeError.
+        var notSymbolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brfalse, notSymbolLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert a Symbol value to a string");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notSymbolLabel);
+
         // Already a string → return as-is (avoid CLR ToString round-trip).
         var alreadyStringLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);

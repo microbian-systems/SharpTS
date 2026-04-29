@@ -75,7 +75,7 @@ public static class BuiltInTypes
             "charCodeAt" => new TypeInfo.Function([NumberType], NumberType),
             "codePointAt" => new TypeInfo.Function([NumberType], NumberType),
             "concat" => new TypeInfo.Function([new TypeInfo.Array(StringType)], StringType, RequiredParams: 0, HasRestParam: true), // variadic - takes 0 or more string arguments
-            "lastIndexOf" => new TypeInfo.Function([StringType], NumberType),
+            "lastIndexOf" => new TypeInfo.Function([StringType, NumberType], NumberType, RequiredParams: 1),
             "trimStart" => new TypeInfo.Function([], StringType),
             "trimEnd" => new TypeInfo.Function([], StringType),
             // replaceAll accepts string | RegExp for the pattern.

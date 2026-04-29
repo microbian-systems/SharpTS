@@ -222,15 +222,27 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 break;
 
             case "findLast":
-                EmitSingleArgOrNull(emitter, arguments);
+            {
+                var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFindLast);
+                var resLocal = il.DeclareLocal(ctx.Types.Object);
+                il.Emit(OpCodes.Stloc, resLocal);
+                EmitRestoreCallbackThisArg(emitter, saved);
+                il.Emit(OpCodes.Ldloc, resLocal);
                 break;
+            }
 
             case "findLastIndex":
-                EmitSingleArgOrNull(emitter, arguments);
+            {
+                var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFindLastIndex);
+                var resLocal = il.DeclareLocal(ctx.Types.Double);
+                il.Emit(OpCodes.Stloc, resLocal);
+                EmitRestoreCallbackThisArg(emitter, saved);
+                il.Emit(OpCodes.Ldloc, resLocal);
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 break;
+            }
 
             case "toReversed":
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayToReversed);
