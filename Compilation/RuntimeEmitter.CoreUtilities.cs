@@ -3493,6 +3493,79 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Or);
         il.Emit(OpCodes.Brtrue, falseLabel);
 
+        // ECMA-262 7.2.14 IsLooselyEqual: when one side is a Dictionary/$Object
+        // and the other is a primitive (number/string/boolean), coerce the
+        // object via ToNumber (which now invokes ToPrimitive valueOf/toString).
+        // Then compare the resulting doubles. Without this, `Number.prototype
+        // == 0` returns false (Object.Equals on the singleton dict vs 0 is
+        // reference inequality) — but spec wants Number.prototype.valueOf() = 0
+        // → 0 == 0 → true.
+        var afterCoerceLabel = il.DefineLabel();
+
+        // If LEFT is Dict/$Object and RIGHT is double/string/bool → coerce LEFT.
+        var notLeftCoercibleLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        var leftIsDictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, leftIsDictLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notLeftCoercibleLabel);
+        il.MarkLabel(leftIsDictLabel);
+        // Right must be primitive (double/bool/string). If so, coerce LEFT to
+        // number and compare numerically.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        var rightIsDoubleLeftLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, rightIsDoubleLeftLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, rightIsDoubleLeftLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notLeftCoercibleLabel);
+        il.MarkLabel(rightIsDoubleLeftLabel);
+        // ToNumber both sides (right is primitive, ToNumber is no-op-ish; left
+        // gets ToPrimitive then ToNumber).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(notLeftCoercibleLabel);
+
+        // Symmetric: RIGHT is Dict/$Object and LEFT is primitive.
+        var notRightCoercibleLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        var rightIsDictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, rightIsDictLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notRightCoercibleLabel);
+        il.MarkLabel(rightIsDictLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        var leftIsDoubleRightLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, leftIsDoubleRightLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, leftIsDoubleRightLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notRightCoercibleLabel);
+        il.MarkLabel(leftIsDoubleRightLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(notRightCoercibleLabel);
+
+        il.MarkLabel(afterCoerceLabel);
+
         // Neither is nullish - use object.Equals
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
