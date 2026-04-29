@@ -297,6 +297,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
+        // ECMA-262 25.5.2.3: $RegExp has no own enumerable properties → "{}".
+        var notRegExpLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+        il.Emit(OpCodes.Brfalse, notRegExpLabel);
+        il.Emit(OpCodes.Ldstr, "{}");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notRegExpLabel);
+
         // Check if it's an emitted $Object instance
         EmitIsClassInstanceCheck(il, valueLocal, classInstanceLabel, runtime);
 
