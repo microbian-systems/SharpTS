@@ -1176,12 +1176,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, dictLocal);
 
         var completionLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Stloc, completionLocal);
         il.BeginExceptionBlock();
         il.Emit(OpCodes.Ldloc, enumLocal);
         il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.IEnumeratorOfObject, "Current"));
+        var currentLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, currentLocal);
+        il.Emit(OpCodes.Ldloc, currentLocal);
+        var keepLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, keepLabel);
+        il.Emit(OpCodes.Ldloc, currentLocal);
         il.Emit(OpCodes.Stloc, completionLocal);
+        il.MarkLabel(keepLabel);
         il.BeginCatchBlock(typeof(Exception));
         il.Emit(OpCodes.Pop);
         il.EndExceptionBlock();

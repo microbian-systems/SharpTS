@@ -25,9 +25,25 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Convert fd (object?) to int
+        // Coerce fd → int via $Runtime.ToNumber (handles undefined/null/NaN/Infinity gracefully).
+        // Use a try/catch around Convert.ToInt32 so non-finite doubles don't propagate as
+        // OverflowException (e.g. Debug package passes `process.stderr.fd` which may be NaN
+        // when the host has no real FDs).
+        var fdInt = il.DeclareLocal(typeof(int));
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(Convert).GetMethod("ToInt32", [typeof(object)])!);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        var dblLocal = il.DeclareLocal(typeof(double));
+        il.Emit(OpCodes.Stloc, dblLocal);
+        il.BeginExceptionBlock();
+        il.Emit(OpCodes.Ldloc, dblLocal);
+        il.Emit(OpCodes.Call, typeof(Convert).GetMethod("ToInt32", [typeof(double)])!);
+        il.Emit(OpCodes.Stloc, fdInt);
+        il.BeginCatchBlock(typeof(Exception));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Stloc, fdInt);
+        il.EndExceptionBlock();
+        il.Emit(OpCodes.Ldloc, fdInt);
 
         var case1 = il.DefineLabel();
         var case2 = il.DefineLabel();

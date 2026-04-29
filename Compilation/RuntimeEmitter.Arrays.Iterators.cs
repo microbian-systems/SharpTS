@@ -1148,7 +1148,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(loopEnd);
+        // Wrap List<object> → stateful IEnumerator<object> so .next() advances.
+        // Pre-fix returned the List directly, which made every call to .next()
+        // re-fetch position 0. Test262 entries/iteration.js depends on stateful
+        // iteration.
         il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Call, runtime.NormalizeToEnumerator);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1202,7 +1207,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopStart);
 
         il.MarkLabel(loopEnd);
+        // Same NormalizeToEnumerator wrapping as ArrayEntries — stateful .next().
         il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Call, runtime.NormalizeToEnumerator);
         il.Emit(OpCodes.Ret);
     }
 
