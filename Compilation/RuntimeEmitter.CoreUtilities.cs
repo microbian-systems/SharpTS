@@ -2551,12 +2551,45 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(notSymbolConvLabel);
 
-        // BigInt → Number conversion: kept as the legacy fall-through-to-NaN
-        // path. ECMA-262 21.1.1.1 step 5 specifies a real BigInt-to-Number
-        // conversion (not throw, not NaN) — implementing that needs a
-        // BigInteger explicit-cast helper that handles every reachable path
-        // (including the negation path that produced an InvalidCastException
-        // when first attempted). Deferred.
+        // ECMA-262 21.1.1.1 step 5: Number(BigInt) returns a Number with the
+        // same mathematical value (rounded per 21.1.1.1.1 NumberFromBigInt).
+        // System.Numerics.BigInteger has an explicit op_Explicit(BigInteger)
+        // → double — use it. Don't throw (ToNumber's spec wants throw, but
+        // ConvertToNumber backs the Number() constructor's spec which coerces).
+        var notBigIntConvLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, _types.BigInteger);
+        il.Emit(OpCodes.Brfalse, notBigIntConvLabel);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.BigInteger);
+        // System.Numerics.BigInteger has multiple op_Explicit overloads
+        // (one per primitive return type). Pick the BigInteger → double one
+        // by walking the candidate set explicitly.
+        System.Reflection.MethodInfo? explicitToDouble = null;
+        foreach (var m in _types.BigInteger.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+        {
+            if (m.Name != "op_Explicit") continue;
+            if (m.ReturnType != _types.Double) continue;
+            var ps = m.GetParameters();
+            if (ps.Length == 1 && ps[0].ParameterType == _types.BigInteger)
+            {
+                explicitToDouble = m;
+                break;
+            }
+        }
+        if (explicitToDouble != null)
+        {
+            il.Emit(OpCodes.Call, explicitToDouble);
+            il.Emit(OpCodes.Ret);
+        }
+        else
+        {
+            // Fallback: Convert.ToDouble(BigInteger) via boxed object.
+            il.Emit(OpCodes.Box, _types.BigInteger);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
+            il.Emit(OpCodes.Ret);
+        }
+        il.MarkLabel(notBigIntConvLabel);
 
         // undefined => NaN
         il.Emit(OpCodes.Ldloc, argLocal);
