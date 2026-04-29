@@ -264,9 +264,9 @@ public sealed class StringEmitter : ITypeEmitterStrategy
             // ECMA-262: fromIndex coerced via ToInteger which routes ToNumber
             // first — invokes valueOf/toString on object args. Going through
             // Convert.ToDouble here threw InvalidCastException for Dictionary
-            // and skipped the toString throw the spec requires.
+            // and skipped the toString throw the spec requires. ToNumber
+            // returns an unboxed `double`, so no Unbox_Any.
             il.Emit(OpCodes.Call, ctx.Runtime!.ToNumber);
-            il.Emit(OpCodes.Unbox_Any, ctx.Types.Double);
             il.Emit(OpCodes.Call, ctx.Runtime!.StringIndexOfFrom);
         }
         else
