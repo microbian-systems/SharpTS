@@ -259,6 +259,11 @@ public partial class RuntimeEmitter
         // other small emitted wrapper types.
         EmitCjsModuleClass(moduleBuilder, runtime);
 
+        // Emit $Arguments : List<object> marker subclass. Must come before
+        // any IL that constructs `arguments` (ILCompiler.Functions.cs uses
+        // runtime.ArgumentsDefaultCtor / ArgumentsEnumerableCtor).
+        EmitArgumentsTypeDefinition(moduleBuilder, runtime);
+
         // Emit $BoundArrayMethod type and constructor (Phase 1)
         // Must come before EmitRuntimeClass so GetListProperty can use the constructor
         EmitBoundArrayMethodTypeDefinition(moduleBuilder, runtime);

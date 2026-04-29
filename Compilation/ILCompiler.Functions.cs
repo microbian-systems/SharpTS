@@ -490,6 +490,19 @@ public partial class ILCompiler
         var argsLocal = il.DeclareLocal(listType);
         var addMethod = ctx.Types.GetMethod(listType, "Add", ctx.Types.Object);
 
+        // Stage 6h: bind `arguments` as a $Arguments : List<object> marker
+        // subclass instance so the brand-tagger can return "[object Arguments]"
+        // and Array.isArray returns false per ECMA-262 sloppy-arguments spec.
+        // The runtime helpers (Castclass List<object>, Isinst List<object>)
+        // continue working transparently via inheritance — only the construction
+        // sites switch to the marker ctors. The local stays typed as
+        // List<object> because that's the lowest-common-denominator type for
+        // every code path that reads `arguments`.
+        var argsCtorEmpty = ctx.Runtime?.ArgumentsDefaultCtor
+            ?? (System.Reflection.ConstructorInfo)listType.GetConstructor(Type.EmptyTypes)!;
+        var argsCtorEnum = ctx.Runtime?.ArgumentsEnumerableCtor
+            ?? (System.Reflection.ConstructorInfo)listType.GetConstructor([ctx.Types.IEnumerableOfObject])!;
+
         // Fast-path: if $TSFunction._currentArguments is set (we were invoked via
         // $TSFunction.Invoke, which publishes the full caller args before AdjustArgs
         // truncates), rebuild `arguments` from that array so extras past the declared
@@ -525,7 +538,7 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Conv_I4);
                 il.Emit(OpCodes.Stloc, lenLocal);
 
-                il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+                il.Emit(OpCodes.Newobj, argsCtorEmpty);
                 il.Emit(OpCodes.Stloc, argsLocal);
 
                 il.Emit(OpCodes.Ldc_I4, publishedArgsLeadingSkip);
@@ -552,11 +565,10 @@ public partial class ILCompiler
             }
             else
             {
-                // arguments = new List<object>(_currentArguments)  — the List<T>(IEnumerable<T>)
-                // constructor handles the copy efficiently.
-                var listFromEnumerableCtor = listType.GetConstructor([ctx.Types.IEnumerableOfObject])!;
+                // arguments = new $Arguments(_currentArguments) — copies the
+                // caller's arg array into the marker subclass.
                 il.Emit(OpCodes.Ldloc, currentArgsLocal);
-                il.Emit(OpCodes.Newobj, listFromEnumerableCtor);
+                il.Emit(OpCodes.Newobj, argsCtorEnum);
                 il.Emit(OpCodes.Stloc, argsLocal);
             }
 
@@ -569,7 +581,7 @@ public partial class ILCompiler
         }
 
         il.MarkLabel(useDeclaredParamsLabel);
-        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Newobj, argsCtorEmpty);
         il.Emit(OpCodes.Stloc, argsLocal);
 
         for (int i = 0; i < parameters.Count; i++)

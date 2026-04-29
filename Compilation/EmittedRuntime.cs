@@ -432,6 +432,14 @@ public class EmittedRuntime
     public FieldBuilder BoundArrayMethodListField { get; set; } = null!;
     public FieldBuilder BoundArrayMethodNameField { get; set; } = null!;
 
+    // $Arguments : List<object> — marker subclass for the JS arguments object.
+    // Used to brand sloppy-arguments instances so the brand-tagger returns
+    // "[object Arguments]" and Array.isArray returns false per ECMA-262.
+    public TypeBuilder ArgumentsType { get; set; } = null!;
+    public ConstructorBuilder ArgumentsDefaultCtor { get; set; } = null!;
+    public ConstructorBuilder ArgumentsCapacityCtor { get; set; } = null!;
+    public ConstructorBuilder ArgumentsEnumerableCtor { get; set; } = null!;
+
     // Bound map method for dynamic Map property access (duck typing across module boundaries)
     public TypeBuilder BoundMapMethodType { get; set; } = null!;
     public ConstructorBuilder BoundMapMethodCtor { get; set; } = null!;

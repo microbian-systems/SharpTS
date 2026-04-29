@@ -558,6 +558,17 @@ public partial class RuntimeEmitter
         var trueLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
+        // ECMA-262 23.1.2.2: Array.isArray returns false for arguments objects.
+        // The $Arguments marker subclass would otherwise match the IList check
+        // below (it inherits from List<object>), so screen it out first.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.ArgumentsType);
+        var notArgumentsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notArgumentsLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notArgumentsLabel);
+
         // Check if IList<object?> (covers List<object?>, $Array, and any other array-like type)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.IListOfObject);

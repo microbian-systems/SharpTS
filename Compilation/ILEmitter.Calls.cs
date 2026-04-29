@@ -283,7 +283,19 @@ public partial class ILEmitter
         EmitTag("[object Array]");
         IL.MarkLabel(notArrayProtoLabel);
 
-        // object[] (compiled `arguments` representation)
+        // $Arguments : List<object> — sloppy arguments object marker. Must
+        // come before the List<object> check since $Arguments inherits from it
+        // and would otherwise fall through to "[object Array]".
+        var notArgumentsTypeLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Isinst, runtime.ArgumentsType);
+        IL.Emit(OpCodes.Brfalse, notArgumentsTypeLabel);
+        EmitTag("[object Arguments]");
+        IL.MarkLabel(notArgumentsTypeLabel);
+
+        // object[] (raw .NET object[] — used by the $TSFunction _currentArguments
+        // thread-static and a few legacy bridge paths). Distinct from $Arguments
+        // but shares the brand tag.
         var notArgsLabel = IL.DefineLabel();
         IL.Emit(OpCodes.Ldloc, receiverLocal);
         IL.Emit(OpCodes.Isinst, _ctx.Types.ObjectArray);
