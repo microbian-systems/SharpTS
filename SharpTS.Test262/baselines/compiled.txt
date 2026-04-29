@@ -910,7 +910,7 @@ test/built-ins/Array/prototype/find/resizable-buffer-grow-mid-iteration.js TypeC
 test/built-ins/Array/prototype/find/resizable-buffer-shrink-mid-iteration.js TypeCheckError
 test/built-ins/Array/prototype/find/resizable-buffer.js TypeCheckError
 test/built-ins/Array/prototype/find/return-abrupt-from-predicate-call.js TypeCheckError
-test/built-ins/Array/prototype/find/return-abrupt-from-property.js Fail
+test/built-ins/Array/prototype/find/return-abrupt-from-property.js Pass
 test/built-ins/Array/prototype/find/return-abrupt-from-this-length-as-symbol.js TypeCheckError
 test/built-ins/Array/prototype/find/return-abrupt-from-this-length.js Fail
 test/built-ins/Array/prototype/find/return-abrupt-from-this.js Pass
@@ -933,9 +933,9 @@ test/built-ins/Array/prototype/findIndex/resizable-buffer-grow-mid-iteration.js 
 test/built-ins/Array/prototype/findIndex/resizable-buffer-shrink-mid-iteration.js TypeCheckError
 test/built-ins/Array/prototype/findIndex/resizable-buffer.js TypeCheckError
 test/built-ins/Array/prototype/findIndex/return-abrupt-from-predicate-call.js TypeCheckError
-test/built-ins/Array/prototype/findIndex/return-abrupt-from-property.js Fail
+test/built-ins/Array/prototype/findIndex/return-abrupt-from-property.js Pass
 test/built-ins/Array/prototype/findIndex/return-abrupt-from-this-length-as-symbol.js TypeCheckError
-test/built-ins/Array/prototype/findIndex/return-abrupt-from-this-length.js Fail
+test/built-ins/Array/prototype/findIndex/return-abrupt-from-this-length.js Pass
 test/built-ins/Array/prototype/findIndex/return-abrupt-from-this.js Pass
 test/built-ins/Array/prototype/findIndex/return-index-predicate-result-is-true.js TypeCheckError
 test/built-ins/Array/prototype/findIndex/return-negative-one-if-predicate-returns-false-value.js TypeCheckError
@@ -948,7 +948,7 @@ test/built-ins/Array/prototype/findLast/name.js TypeCheckError
 test/built-ins/Array/prototype/findLast/not-a-constructor.js Pass
 test/built-ins/Array/prototype/findLast/predicate-call-parameters.js Pass
 test/built-ins/Array/prototype/findLast/predicate-call-this-non-strict.js Fail
-test/built-ins/Array/prototype/findLast/predicate-call-this-strict.js Fail
+test/built-ins/Array/prototype/findLast/predicate-call-this-strict.js Pass
 test/built-ins/Array/prototype/findLast/predicate-called-for-each-array-property.js Pass
 test/built-ins/Array/prototype/findLast/predicate-is-not-callable-throws.js TypeCheckError
 test/built-ins/Array/prototype/findLast/predicate-not-called-on-empty-array.js Pass
@@ -957,7 +957,7 @@ test/built-ins/Array/prototype/findLast/resizable-buffer-grow-mid-iteration.js T
 test/built-ins/Array/prototype/findLast/resizable-buffer-shrink-mid-iteration.js TypeCheckError
 test/built-ins/Array/prototype/findLast/resizable-buffer.js TypeCheckError
 test/built-ins/Array/prototype/findLast/return-abrupt-from-predicate-call.js TypeCheckError
-test/built-ins/Array/prototype/findLast/return-abrupt-from-property.js Fail
+test/built-ins/Array/prototype/findLast/return-abrupt-from-property.js Pass
 test/built-ins/Array/prototype/findLast/return-abrupt-from-this-length-as-symbol.js TypeCheckError
 test/built-ins/Array/prototype/findLast/return-abrupt-from-this-length.js Fail
 test/built-ins/Array/prototype/findLast/return-abrupt-from-this.js Pass
@@ -972,7 +972,7 @@ test/built-ins/Array/prototype/findLastIndex/name.js TypeCheckError
 test/built-ins/Array/prototype/findLastIndex/not-a-constructor.js Pass
 test/built-ins/Array/prototype/findLastIndex/predicate-call-parameters.js Pass
 test/built-ins/Array/prototype/findLastIndex/predicate-call-this-non-strict.js Fail
-test/built-ins/Array/prototype/findLastIndex/predicate-call-this-strict.js Fail
+test/built-ins/Array/prototype/findLastIndex/predicate-call-this-strict.js Pass
 test/built-ins/Array/prototype/findLastIndex/predicate-called-for-each-array-property.js Pass
 test/built-ins/Array/prototype/findLastIndex/predicate-is-not-callable-throws.js TypeCheckError
 test/built-ins/Array/prototype/findLastIndex/predicate-not-called-on-empty-array.js Pass
@@ -981,13 +981,13 @@ test/built-ins/Array/prototype/findLastIndex/resizable-buffer-grow-mid-iteration
 test/built-ins/Array/prototype/findLastIndex/resizable-buffer-shrink-mid-iteration.js TypeCheckError
 test/built-ins/Array/prototype/findLastIndex/resizable-buffer.js TypeCheckError
 test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-predicate-call.js TypeCheckError
-test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-property.js Fail
+test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-property.js Pass
 test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-this-length-as-symbol.js TypeCheckError
-test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-this-length.js Fail
+test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-this-length.js Pass
 test/built-ins/Array/prototype/findLastIndex/return-abrupt-from-this.js Pass
 test/built-ins/Array/prototype/findLastIndex/return-index-predicate-result-is-true.js TypeCheckError
 test/built-ins/Array/prototype/findLastIndex/return-negative-one-if-predicate-returns-false-value.js TypeCheckError
-test/built-ins/Array/prototype/flat/array-like-objects.js RuntimeError
+test/built-ins/Array/prototype/flat/array-like-objects.js Pass
 test/built-ins/Array/prototype/flat/bound-function-call.js RuntimeError
 test/built-ins/Array/prototype/flat/call-with-boolean.js Pass
 test/built-ins/Array/prototype/flat/empty-array-elements.js Pass
@@ -1006,7 +1006,7 @@ test/built-ins/Array/prototype/flat/symbol-object-create-null-depth-throws.js Ty
 test/built-ins/Array/prototype/flat/target-array-non-extensible.js TypeCheckError
 test/built-ins/Array/prototype/flat/target-array-with-non-configurable-property.js TypeCheckError
 test/built-ins/Array/prototype/flat/target-array-with-non-writable-property.js TypeCheckError
-test/built-ins/Array/prototype/flatMap/array-like-objects-nested.js RuntimeError
+test/built-ins/Array/prototype/flatMap/array-like-objects-nested.js Pass
 test/built-ins/Array/prototype/flatMap/array-like-objects-poisoned-length.js TypeCheckError
 test/built-ins/Array/prototype/flatMap/array-like-objects-typedarrays.js RuntimeError
 test/built-ins/Array/prototype/flatMap/array-like-objects.js RuntimeError
@@ -1028,7 +1028,7 @@ test/built-ins/Array/prototype/flatMap/this-value-ctor-object-species-bad-throws
 test/built-ins/Array/prototype/flatMap/this-value-ctor-object-species-custom-ctor-poisoned-throws.js ParseError
 test/built-ins/Array/prototype/flatMap/this-value-ctor-object-species-custom-ctor.js ParseError
 test/built-ins/Array/prototype/flatMap/this-value-ctor-object-species.js HarnessError
-test/built-ins/Array/prototype/flatMap/this-value-null-undefined-throws.js Fail
+test/built-ins/Array/prototype/flatMap/this-value-null-undefined-throws.js Pass
 test/built-ins/Array/prototype/flatMap/thisArg-argument.js RuntimeError
 test/built-ins/Array/prototype/forEach/15.4.4.18-1-1.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-1-10.js Pass
@@ -1235,12 +1235,12 @@ test/built-ins/Array/prototype/includes/not-a-constructor.js Pass
 test/built-ins/Array/prototype/includes/prop-desc.js TypeCheckError
 test/built-ins/Array/prototype/includes/resizable-buffer-special-float-values.js TypeCheckError
 test/built-ins/Array/prototype/includes/resizable-buffer.js TypeCheckError
-test/built-ins/Array/prototype/includes/return-abrupt-get-length.js Fail
-test/built-ins/Array/prototype/includes/return-abrupt-get-prop.js Fail
+test/built-ins/Array/prototype/includes/return-abrupt-get-length.js Pass
+test/built-ins/Array/prototype/includes/return-abrupt-get-prop.js Pass
 test/built-ins/Array/prototype/includes/return-abrupt-tointeger-fromindex-symbol.js TypeCheckError
 test/built-ins/Array/prototype/includes/return-abrupt-tointeger-fromindex.js TypeCheckError
-test/built-ins/Array/prototype/includes/return-abrupt-tonumber-length-symbol.js Fail
-test/built-ins/Array/prototype/includes/return-abrupt-tonumber-length.js Fail
+test/built-ins/Array/prototype/includes/return-abrupt-tonumber-length-symbol.js Pass
+test/built-ins/Array/prototype/includes/return-abrupt-tonumber-length.js Pass
 test/built-ins/Array/prototype/includes/samevaluezero.js TypeCheckError
 test/built-ins/Array/prototype/includes/search-found-returns-true.js Pass
 test/built-ins/Array/prototype/includes/search-not-found-returns-false.js TypeCheckError
@@ -3335,7 +3335,7 @@ test/built-ins/JSON/stringify/value-bigint-tojson-receiver.js TypeCheckError
 test/built-ins/JSON/stringify/value-bigint-tojson.js TypeCheckError
 test/built-ins/JSON/stringify/value-bigint.js Fail
 test/built-ins/JSON/stringify/value-boolean-object.js Fail
-test/built-ins/JSON/stringify/value-function.js Fail
+test/built-ins/JSON/stringify/value-function.js Pass
 test/built-ins/JSON/stringify/value-number-negative-zero.js Pass
 test/built-ins/JSON/stringify/value-number-non-finite.js Pass
 test/built-ins/JSON/stringify/value-number-object.js Fail
@@ -3347,7 +3347,7 @@ test/built-ins/JSON/stringify/value-primitive-top-level.js Pass
 test/built-ins/JSON/stringify/value-string-escape-ascii.js Fail
 test/built-ins/JSON/stringify/value-string-escape-unicode.js Fail
 test/built-ins/JSON/stringify/value-string-object.js Fail
-test/built-ins/JSON/stringify/value-symbol.js Fail
+test/built-ins/JSON/stringify/value-symbol.js Pass
 test/built-ins/JSON/stringify/value-tojson-abrupt.js Pass
 test/built-ins/JSON/stringify/value-tojson-arguments.js Fail
 test/built-ins/JSON/stringify/value-tojson-array-circular.js Fail
@@ -4987,7 +4987,7 @@ test/built-ins/String/prototype/toLowerCase/special_casing.js Fail
 test/built-ins/String/prototype/toLowerCase/special_casing_conditional.js Fail
 test/built-ins/String/prototype/toLowerCase/supplementary_plane.js Pass
 test/built-ins/String/prototype/toLowerCase/this-value-not-obj-coercible.js Pass
-test/built-ins/String/prototype/toLowerCase/this-value-tostring-throws-symbol.js Fail
+test/built-ins/String/prototype/toLowerCase/this-value-tostring-throws-symbol.js Pass
 test/built-ins/String/prototype/toLowerCase/this-value-tostring-throws-toprimitive.js Fail
 test/built-ins/String/prototype/toString/length.js TypeCheckError
 test/built-ins/String/prototype/toString/name.js TypeCheckError
@@ -5180,7 +5180,7 @@ test/built-ins/String/prototype/trimEnd/this-value-object-valueof-call-err.js Ha
 test/built-ins/String/prototype/trimEnd/this-value-object-valueof-meth-err.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-object-valueof-meth-priority.js HarnessError
 test/built-ins/String/prototype/trimEnd/this-value-object-valueof-returns-object-err.js Pass
-test/built-ins/String/prototype/trimEnd/this-value-symbol-typeerror.js Fail
+test/built-ins/String/prototype/trimEnd/this-value-symbol-typeerror.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-whitespace.js Pass
 test/built-ins/String/prototype/trimStart/length.js TypeCheckError
 test/built-ins/String/prototype/trimStart/name.js TypeCheckError
@@ -5203,7 +5203,7 @@ test/built-ins/String/prototype/trimStart/this-value-object-valueof-call-err.js 
 test/built-ins/String/prototype/trimStart/this-value-object-valueof-meth-err.js Pass
 test/built-ins/String/prototype/trimStart/this-value-object-valueof-meth-priority.js HarnessError
 test/built-ins/String/prototype/trimStart/this-value-object-valueof-returns-object-err.js Pass
-test/built-ins/String/prototype/trimStart/this-value-symbol-typeerror.js Fail
+test/built-ins/String/prototype/trimStart/this-value-symbol-typeerror.js Pass
 test/built-ins/String/prototype/trimStart/this-value-whitespace.js Pass
 test/built-ins/String/prototype/valueOf/length.js TypeCheckError
 test/built-ins/String/prototype/valueOf/name.js TypeCheckError
@@ -5214,7 +5214,7 @@ test/built-ins/String/prototype/valueOf/string-object.js Fail
 test/built-ins/String/prototype/valueOf/string-primitive.js TypeCheckError
 test/built-ins/String/raw/length.js TypeCheckError
 test/built-ins/String/raw/name.js TypeCheckError
-test/built-ins/String/raw/nextkey-is-symbol-throws.js Fail
+test/built-ins/String/raw/nextkey-is-symbol-throws.js Pass
 test/built-ins/String/raw/not-a-constructor.js Pass
 test/built-ins/String/raw/raw.js TypeCheckError
 test/built-ins/String/raw/return-empty-string-from-empty-array-length.js Pass
@@ -5230,7 +5230,7 @@ test/built-ins/String/raw/return-the-string-value-from-template.js Pass
 test/built-ins/String/raw/return-the-string-value.js Pass
 test/built-ins/String/raw/returns-abrupt-from-next-key-toString.js Pass
 test/built-ins/String/raw/returns-abrupt-from-next-key.js Pass
-test/built-ins/String/raw/returns-abrupt-from-substitution-symbol.js Fail
+test/built-ins/String/raw/returns-abrupt-from-substitution-symbol.js Pass
 test/built-ins/String/raw/returns-abrupt-from-substitution.js Pass
 test/built-ins/String/raw/special-characters.js Fail
 test/built-ins/String/raw/substitutions-are-appended-on-same-index.js Pass
@@ -5243,7 +5243,7 @@ test/built-ins/String/raw/template-raw-throws.js Pass
 test/built-ins/String/raw/template-substitutions-are-appended-on-same-index.js Pass
 test/built-ins/String/raw/zero-literal-segments.js Pass
 test/built-ins/String/symbol-string-coercion.js TypeCheckError
-test/built-ins/String/symbol-wrapping.js Fail
+test/built-ins/String/symbol-wrapping.js Pass
 test/language/expressions/new/S11.2.2_A1.1.js TypeCheckError
 test/language/expressions/new/S11.2.2_A1.2.js TypeCheckError
 test/language/expressions/new/S11.2.2_A2.js TypeCheckError
