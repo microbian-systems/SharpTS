@@ -4543,7 +4543,7 @@ test/built-ins/String/prototype/replace/S15.5.4.11_A1_T1.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T10.js Fail
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T11.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T12.js Pass
-test/built-ins/String/prototype/replace/S15.5.4.11_A1_T13.js Fail
+test/built-ins/String/prototype/replace/S15.5.4.11_A1_T13.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T14.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T15.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T16.js Pass
@@ -4588,7 +4588,7 @@ test/built-ins/String/prototype/replace/not-a-constructor.js Pass
 test/built-ins/String/prototype/replace/regexp-capture-by-index.js Fail
 test/built-ins/String/prototype/replace/regexp-prototype-replace-v-u-flag.js Skipped:skip-feature:regexp-v-flag
 test/built-ins/String/prototype/replace/replaceValue-evaluation-order-regexp-object.js RuntimeError
-test/built-ins/String/prototype/replace/replaceValue-evaluation-order.js Fail
+test/built-ins/String/prototype/replace/replaceValue-evaluation-order.js Pass
 test/built-ins/String/prototype/replace/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/replace/tostring-this-throws-symbol.js Pass
 test/built-ins/String/prototype/replace/tostring-this-throws-toprimitive.js Fail
