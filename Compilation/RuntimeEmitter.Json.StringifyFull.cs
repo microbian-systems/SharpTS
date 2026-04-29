@@ -47,18 +47,74 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "");
         il.Emit(OpCodes.Stloc, indentStrLocal);
 
-        // if (space == null) goto spaceDoneLabel
+        // Stage 6s: ECMA-262 25.5.2 unbox Number/String wrappers before space typecheck.
+        // `JSON.stringify(obj, null, new Number(5))` should treat the wrapper as a
+        // primitive number per spec step 4 (`If space has a [[NumberData]] internal slot`).
+        // Boxed wrappers in compiled mode are $Object instances with `__primitiveType`
+        // and `__primitiveValue` marker fields (see RuntimeEmitter.BoxedPrimitives.cs).
+        var spaceLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stloc, spaceLocal);
+
+        // If space is $Object with __primitiveType == "Number"|"String", unbox.
+        var notWrapperLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, spaceLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notWrapperLabel);
+        // GetProperty(space, "__primitiveType") - check for "Number" or "String"
+        il.Emit(OpCodes.Ldloc, spaceLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveType");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        var typeTagLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, typeTagLocal);
+        // if typeTag is null/undefined, skip
+        il.Emit(OpCodes.Ldloc, typeTagLocal);
+        il.Emit(OpCodes.Brfalse, notWrapperLabel);
+        il.Emit(OpCodes.Ldloc, typeTagLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notWrapperLabel);
+        // If type tag is "Number" or "String", replace space with primitive value.
+        var isNumberTagLabel = il.DefineLabel();
+        var isStringTagLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, typeTagLocal);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldstr, "Number");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, isNumberTagLabel);
+        il.Emit(OpCodes.Ldloc, typeTagLocal);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldstr, "String");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, isStringTagLabel);
+        il.Emit(OpCodes.Br, notWrapperLabel);
+
+        il.MarkLabel(isNumberTagLabel);
+        il.Emit(OpCodes.Ldloc, spaceLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, spaceLocal);
+        il.Emit(OpCodes.Br, notWrapperLabel);
+
+        il.MarkLabel(isStringTagLabel);
+        il.Emit(OpCodes.Ldloc, spaceLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, spaceLocal);
+
+        il.MarkLabel(notWrapperLabel);
+
+        // if (space == null) goto spaceDoneLabel
+        il.Emit(OpCodes.Ldloc, spaceLocal);
         il.Emit(OpCodes.Brfalse, spaceDoneLabel);
 
         // if (space is double)
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldloc, spaceLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
         il.Emit(OpCodes.Brfalse, spaceIsStringLabel);
 
         // space is double - convert to int spaces
         // count = (int)Math.Min(Math.Max((double)space, 0), 10)
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldloc, spaceLocal);
         il.Emit(OpCodes.Unbox_Any, _types.Double);
         il.Emit(OpCodes.Stloc, spaceDoubleLocal);
 
@@ -84,12 +140,12 @@ public partial class RuntimeEmitter
 
         // space is string
         il.MarkLabel(spaceIsStringLabel);
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldloc, spaceLocal);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brfalse, spaceDoneLabel);
 
         // indentStr = space.Length > 10 ? space.Substring(0, 10) : space
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldloc, spaceLocal);
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);

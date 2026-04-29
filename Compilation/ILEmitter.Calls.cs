@@ -439,6 +439,10 @@ public partial class ILEmitter
             "entries"       => (runtime.ArrayEntries,    "noArg",     _ctx.Types.Object),
             "keys"          => (runtime.ArrayKeys,       "noArg",     _ctx.Types.Object),
             "values"        => (runtime.ArrayValues,     "noArg",     _ctx.Types.Object),
+            "toReversed"    => (runtime.ArrayToReversed, "noArg",     _ctx.Types.Object),
+            "toSorted"      => (runtime.ArrayToSorted,   "single",    _ctx.Types.Object),
+            "toSpliced"     => (runtime.ArrayToSpliced,  "argsArray", _ctx.Types.Object),
+            "with"          => (runtime.ArrayWith,       "argsArray", _ctx.Types.Object),
             _ => null,
         };
         if (sig is null)
