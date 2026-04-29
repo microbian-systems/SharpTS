@@ -730,7 +730,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, lenLocal);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        // If dict.TryGetValue(i.ToString(), out val): list.Add(val); else list.Add(ArrayHole.Instance)
+        // First try TryGetValue on the dict to distinguish "absent" (hole) from
+        // "present-but-undefined". If present, push the value. If absent, check
+        // PDS for an accessor descriptor (Object.defineProperty(obj, "1",
+        // {get: ...})); invoke the getter via GetProperty so the throw
+        // propagates. If no PDS entry either, push ArrayHole sentinel.
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ldloca, idxLocal);
         il.Emit(OpCodes.Call, _types.Int32.GetMethod("ToString", Type.EmptyTypes)!);
@@ -738,8 +742,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, tryGetValue);
         var wasPresent = il.DefineLabel();
         var afterPush = il.DefineLabel();
+        var pushHole_dict = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, wasPresent);
-        // hole
+        // Absent from _fields: ask GetProperty (which checks PDS getter first).
+        // If GetProperty returns null/$Undefined, the property genuinely doesn't
+        // exist — push ArrayHole. Otherwise the getter ran and returned a value.
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldloca, idxLocal);
+        il.Emit(OpCodes.Call, _types.Int32.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, valLocal);
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Brfalse, pushHole_dict);
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, pushHole_dict);
+        il.Emit(OpCodes.Br, wasPresent);
+        il.MarkLabel(pushHole_dict);
         il.Emit(OpCodes.Ldloc, listLocal);
         il.Emit(OpCodes.Ldsfld, runtime.ArrayHoleInstance);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));

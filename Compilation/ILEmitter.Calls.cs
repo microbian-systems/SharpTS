@@ -182,6 +182,15 @@ public partial class ILEmitter
         }
         else
         {
+            // Syntactic shortcut: `Object.prototype.toString.call(arguments)`
+            // — `arguments` is bound as List<object> in compiled mode, which
+            // would fall through to "[object Array]" in the runtime ladder.
+            // Per ECMA-262 sloppy-arguments brand, emit directly.
+            if (c.Arguments[0] is Expr.Variable v && v.Name.Lexeme == "arguments")
+            {
+                IL.Emit(OpCodes.Ldstr, "[object Arguments]");
+                return true;
+            }
             EmitExpression(c.Arguments[0]);
             EmitBoxIfNeeded(c.Arguments[0]);
         }
