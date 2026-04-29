@@ -66,9 +66,11 @@ public partial class ILEmitter
             case Comparison cmp:
                 // JS AbstractRelationalComparison: when both operands are
                 // statically known strings, use lexicographic comparison via
-                // string.CompareOrdinal. Otherwise coerce to number (current
-                // fast path). The TypeChecker rejects mixed string/number
-                // comparison, so only same-type paths reach here.
+                // string.CompareOrdinal (fast path). When both are statically
+                // numeric, direct double IL (fast path). Otherwise route
+                // through $Runtime.JsLessThan which handles the both-strings
+                // case at runtime (was a FormatException with Convert.ToDouble
+                // for sort callbacks like (x, y) => String(x) < String(y)).
                 if (IsStringComparison(b))
                 {
                     EmitExpression(b.Left);
@@ -78,21 +80,52 @@ public partial class ILEmitter
                     IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.String, "CompareOrdinal", _ctx.Types.String, _ctx.Types.String));
                     IL.Emit(OpCodes.Ldc_I4_0);
                     IL.Emit(cmp.Opcode);
+                    if (cmp.Negated)
+                    {
+                        IL.Emit(OpCodes.Ldc_I4_0);
+                        IL.Emit(OpCodes.Ceq);
+                    }
                 }
-                else
+                else if (IsNumericComparison(b))
                 {
                     EmitExpressionAsDouble(b.Left);
                     EmitExpressionAsDouble(b.Right);
                     IL.Emit(cmp.Opcode);
+                    if (cmp.Negated)
+                    {
+                        IL.Emit(OpCodes.Ldc_I4_0);
+                        IL.Emit(OpCodes.Ceq);
+                    }
                 }
-                if (cmp.Negated)
+                else
                 {
-                    // For <= and >=, we use the inverse opcode and negate
-                    IL.Emit(OpCodes.Ldc_I4_0);
-                    IL.Emit(OpCodes.Ceq);
+                    // Generic path: route through JsLessThan with operand
+                    // ordering chosen per the operator. Decoder:
+                    //   <  : Clt, !negated → JsLessThan(a, b)
+                    //   >  : Cgt, !negated → JsLessThan(b, a)
+                    //   <= : Cgt,  negated → !JsLessThan(b, a)
+                    //   >= : Clt,  negated → !JsLessThan(a, b)
+                    bool swapArgs = cmp.Opcode == OpCodes.Cgt;
+                    EmitExpression(b.Left);
+                    EmitBoxIfNeeded(b.Left);
+                    EmitExpression(b.Right);
+                    EmitBoxIfNeeded(b.Right);
+                    if (swapArgs)
+                    {
+                        var tmp = IL.DeclareLocal(_ctx.Types.Object);
+                        IL.Emit(OpCodes.Stloc, tmp);
+                        var leftLocal = IL.DeclareLocal(_ctx.Types.Object);
+                        IL.Emit(OpCodes.Stloc, leftLocal);
+                        IL.Emit(OpCodes.Ldloc, tmp);
+                        IL.Emit(OpCodes.Ldloc, leftLocal);
+                    }
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.JsLessThan);
+                    if (cmp.Negated)
+                    {
+                        IL.Emit(OpCodes.Ldc_I4_0);
+                        IL.Emit(OpCodes.Ceq);
+                    }
                 }
-                // Leave as unboxed bool (int32 0/1) — consumers that need
-                // object? will auto-box via EmitBoxIfNeeded/EnsureBoxed.
                 SetStackType(StackType.Boolean);
                 break;
 
@@ -1464,6 +1497,26 @@ public partial class ILEmitter
         // Union where every branch is string (e.g. a union of string literals
         // produced by widening different literal elements of an array).
         TypeSystem.TypeInfo.Union u => u.FlattenedTypes.All(IsStringTypeInfo),
+        _ => false
+    };
+
+    /// <summary>
+    /// Both operands statically known numeric — safe to emit direct double
+    /// comparison without going through JsLessThan.
+    /// </summary>
+    private bool IsNumericComparison(Expr.Binary b)
+    {
+        if (_ctx.TypeMap == null) return false;
+        var leftType = _ctx.TypeMap.Get(b.Left);
+        var rightType = _ctx.TypeMap.Get(b.Right);
+        return IsNumericTypeInfo(leftType) && IsNumericTypeInfo(rightType);
+    }
+
+    private static bool IsNumericTypeInfo(TypeSystem.TypeInfo? type) => type switch
+    {
+        TypeSystem.TypeInfo.Primitive { Type: Parsing.TokenType.TYPE_NUMBER } => true,
+        TypeSystem.TypeInfo.NumberLiteral => true,
+        TypeSystem.TypeInfo.Union u => u.FlattenedTypes.All(IsNumericTypeInfo),
         _ => false
     };
 

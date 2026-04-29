@@ -385,6 +385,8 @@ public partial class RuntimeEmitter
         DeclareToNumber(typeBuilder, runtime);
         DeclareConvertToNumber(typeBuilder, runtime);
         EmitJsToInt32(typeBuilder, runtime);
+        EmitJsLessThan(typeBuilder, runtime);
+        EmitJsLessOrEqual(typeBuilder, runtime);
         EmitIsTruthy(typeBuilder, runtime);
         EmitTypeOf(typeBuilder, runtime);
         EmitAdd(typeBuilder, runtime);

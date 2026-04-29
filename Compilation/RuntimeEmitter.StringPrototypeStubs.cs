@@ -24,9 +24,15 @@ public partial class RuntimeEmitter
         // .NET "False").
         runtime.StringToUpperCase = EmitStringStringStub(typeBuilder, runtime, "StringToUpperCase", "ToUpper", strictReceiver: true);
         runtime.StringToLowerCase = EmitStringStringStub(typeBuilder, runtime, "StringToLowerCase", "ToLower", strictReceiver: true);
-        runtime.StringTrim = EmitStringStringStub(typeBuilder, runtime, "StringTrim", "Trim", strictReceiver: true);
-        runtime.StringTrimStart = EmitStringStringStub(typeBuilder, runtime, "StringTrimStart", "TrimStart", strictReceiver: true);
-        runtime.StringTrimEnd = EmitStringStringStub(typeBuilder, runtime, "StringTrimEnd", "TrimEnd", strictReceiver: true);
+        // JsTrim(string, int mode) for inline call sites that already have a
+        // string on the stack. mode: 0=both, 1=start, 2=end. Define BEFORE
+        // StringTrim* stubs since those forward to it.
+        runtime.JsTrimInline = EmitJsTrimInline(typeBuilder, runtime);
+        // Trim variants need ECMA-262 whitespace set, which differs from .NET's
+        // char.IsWhiteSpace by including ﻿ (ZWNBSP). Use a custom helper.
+        runtime.StringTrim = EmitJsTrimHelper(typeBuilder, runtime, "StringTrim", trimMode: 0, strictReceiver: true);
+        runtime.StringTrimStart = EmitJsTrimHelper(typeBuilder, runtime, "StringTrimStart", trimMode: 1, strictReceiver: true);
+        runtime.StringTrimEnd = EmitJsTrimHelper(typeBuilder, runtime, "StringTrimEnd", trimMode: 2, strictReceiver: true);
 
         // Generic stub for methods without specific helpers — used only for
         // typeof + isConstructor probes via $TSFunction wrappers, AND wired
@@ -359,5 +365,208 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         return method;
+    }
+
+    /// <summary>
+    /// Emits <c>$Runtime.JsTrim*(object) -&gt; string</c> using the ECMA-262
+    /// 7.2.10 IsWhiteSpace + IsLineTerminator predicate (which adds U+FEFF
+    /// vs .NET's <c>char.IsWhiteSpace</c>).
+    /// </summary>
+    private MethodBuilder EmitJsTrimHelper(TypeBuilder typeBuilder, EmittedRuntime runtime, string runtimeName, int trimMode, bool strictReceiver)
+    {
+        var method = typeBuilder.DefineMethod(
+            runtimeName,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]);
+
+        var il = method.GetILGenerator();
+
+        if (strictReceiver)
+        {
+            var notNullLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Brtrue, notNullLabel);
+            il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(notNullLabel);
+
+            var notUndefLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brfalse, notUndefLabel);
+            il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(notUndefLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.ToJsString);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToString", _types.Object));
+        }
+
+        // Now stack has the string. Inline the trim algorithm.
+        il.Emit(OpCodes.Ldc_I4, trimMode);
+        il.Emit(OpCodes.Call, runtime.JsTrimInline);
+        il.Emit(OpCodes.Ret);
+
+        return method;
+    }
+
+    /// <summary>
+    /// Emits <c>$Runtime.JsTrimInline(string s, int mode) -&gt; string</c>:
+    /// JS-spec trim that adds U+FEFF (ZWNBSP) to the .NET whitespace set.
+    /// mode: 0=both, 1=start only, 2=end only.
+    /// </summary>
+    private MethodBuilder EmitJsTrimInline(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "JsTrimInline",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.String, _types.Int32]);
+
+        var il = method.GetILGenerator();
+
+        var startLocal = il.DeclareLocal(_types.Int32);
+        var endLocal = il.DeclareLocal(_types.Int32);
+        var lenLocal = il.DeclareLocal(_types.Int32);
+
+        var nullLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        // if (s == null) return s
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // len = s.Length
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocal);
+
+        // start = 0; end = len - 1
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, startLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, endLocal);
+
+        // mode != 2 → trim start
+        var skipStart = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Beq, skipStart);
+
+        var startLoop = il.DefineLabel();
+        var startLoopEnd = il.DefineLabel();
+        il.MarkLabel(startLoop);
+        // start < len?
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, startLoopEnd);
+        // c = s[start]
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
+        // is JS whitespace?
+        EmitJsWhitespaceCheck(il);
+        il.Emit(OpCodes.Brfalse, startLoopEnd);
+        // start++
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, startLocal);
+        il.Emit(OpCodes.Br, startLoop);
+        il.MarkLabel(startLoopEnd);
+        il.MarkLabel(skipStart);
+
+        // mode != 1 → trim end
+        var skipEnd = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Beq, skipEnd);
+
+        var endLoop = il.DefineLabel();
+        var endLoopEnd = il.DefineLabel();
+        il.MarkLabel(endLoop);
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Blt, endLoopEnd);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
+        EmitJsWhitespaceCheck(il);
+        il.Emit(OpCodes.Brfalse, endLoopEnd);
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, endLocal);
+        il.Emit(OpCodes.Br, endLoop);
+        il.MarkLabel(endLoopEnd);
+        il.MarkLabel(skipEnd);
+
+        // result = s.Substring(start, end - start + 1)
+        // if end < start, return ""
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        var notEmpty = il.DefineLabel();
+        il.Emit(OpCodes.Bge, notEmpty);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notEmpty);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Ldloc, endLocal);
+        il.Emit(OpCodes.Ldloc, startLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Substring", _types.Int32, _types.Int32));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(nullLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        return method;
+    }
+
+    /// <summary>
+    /// Stack: char → int (1 if whitespace, 0 otherwise). char.IsWhiteSpace || c == '﻿'.
+    /// </summary>
+    private void EmitJsWhitespaceCheck(ILGenerator il)
+    {
+        // Stack: char. Dup; check IsWhiteSpace; if false, check == ﻿.
+        var trueLabel = il.DefineLabel();
+        var falseLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Char, "IsWhiteSpace", _types.Char));
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        // Stack still has the char (we duped). Compare to ﻿.
+        il.Emit(OpCodes.Ldc_I4, 0xFEFF);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(trueLabel);
+        // Pop the duped char and push 1.
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4_1);
+
+        il.MarkLabel(doneLabel);
     }
 }

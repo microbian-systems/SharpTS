@@ -100,6 +100,8 @@ public class EmittedRuntime
     public MethodBuilder ToNumber { get; set; } = null!;
     public MethodBuilder ConvertToNumber { get; set; } = null!;
     public MethodBuilder JsToInt32 { get; set; } = null!;
+    public MethodBuilder JsLessThan { get; set; } = null!;
+    public MethodBuilder JsLessOrEqual { get; set; } = null!;
     public MethodBuilder IsTruthy { get; set; } = null!;
     public MethodBuilder TypeOf { get; set; } = null!;
     public MethodBuilder InstanceOf { get; set; } = null!;
@@ -230,6 +232,7 @@ public class EmittedRuntime
     public MethodBuilder StringLastIndexOf { get; set; } = null!;
     public MethodBuilder StringTrimStart { get; set; } = null!;
     public MethodBuilder StringTrimEnd { get; set; } = null!;
+    public MethodBuilder JsTrimInline { get; set; } = null!;
     public MethodBuilder StringReplaceAll { get; set; } = null!;
     public MethodBuilder StringAt { get; set; } = null!;
     public MethodBuilder StringFromCharCode { get; set; } = null!;

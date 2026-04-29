@@ -724,56 +724,90 @@ public class StateMachineEmitHelpers
     }
 
     /// <summary>
-    /// Emit numeric comparison with both operands converted to double.
-    /// Stack: [left, right] -> [bool_boxed]
+    /// Emit ECMA-262 abstract relational comparison for &lt; and &gt;.
+    /// Routes through $Runtime.JsLessThan which handles the both-strings
+    /// case lexicographically (was a FormatException with Convert.ToDouble).
+    /// Stack: [left, right] -> [bool_unboxed (int32)]
     /// </summary>
     public void EmitNumericComparison(OpCode compareOp)
     {
-        var rightLocal = _il.DeclareLocal(_types.Object);
-        _il.Emit(OpCodes.Stloc, rightLocal);
+        if (_runtime?.JsLessThan != null)
+        {
+            // For Clt: JsLessThan(left, right). For Cgt: JsLessThan(right, left).
+            if (compareOp == OpCodes.Cgt)
+            {
+                // Stack is [left, right]. Swap so it becomes [right, left].
+                var tmp = _il.DeclareLocal(_types.Object);
+                _il.Emit(OpCodes.Stloc, tmp);
+                var leftLocal = _il.DeclareLocal(_types.Object);
+                _il.Emit(OpCodes.Stloc, leftLocal);
+                _il.Emit(OpCodes.Ldloc, tmp);
+                _il.Emit(OpCodes.Ldloc, leftLocal);
+            }
+            _il.Emit(OpCodes.Call, _runtime.JsLessThan);
+            _stackType = StackType.Boolean;
+            return;
+        }
+        // Legacy fallback (should not be hit once runtime is wired up).
+        var rightLocal2 = _il.DeclareLocal(_types.Object);
+        _il.Emit(OpCodes.Stloc, rightLocal2);
         _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
-        _il.Emit(OpCodes.Ldloc, rightLocal);
+        _il.Emit(OpCodes.Ldloc, rightLocal2);
         _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
         _il.Emit(compareOp);
-        // Leave as unboxed bool — EnsureBoxed() will auto-box if needed.
         _stackType = StackType.Boolean;
     }
 
     /// <summary>
-    /// Emit less-than-or-equal comparison (a <= b).
+    /// Emit less-than-or-equal comparison (a &lt;= b) via $Runtime.JsLessOrEqual.
     /// Stack: [left, right] -> [bool_unboxed (int32)]
     /// </summary>
     public void EmitNumericComparisonLe()
     {
+        if (_runtime?.JsLessOrEqual != null)
+        {
+            _il.Emit(OpCodes.Call, _runtime.JsLessOrEqual);
+            _stackType = StackType.Boolean;
+            return;
+        }
         var rightLocal = _il.DeclareLocal(_types.Object);
         _il.Emit(OpCodes.Stloc, rightLocal);
         _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
         _il.Emit(OpCodes.Ldloc, rightLocal);
         _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
-        // a <= b is equivalent to !(a > b)
         _il.Emit(OpCodes.Cgt);
         _il.Emit(OpCodes.Ldc_I4_0);
         _il.Emit(OpCodes.Ceq);
-        // Leave as unboxed bool — EnsureBoxed() will auto-box if needed.
         _stackType = StackType.Boolean;
     }
 
     /// <summary>
-    /// Emit greater-than-or-equal comparison (a >= b).
+    /// Emit greater-than-or-equal comparison (a &gt;= b) — JsLessOrEqual(b, a).
     /// Stack: [left, right] -> [bool_unboxed (int32)]
     /// </summary>
     public void EmitNumericComparisonGe()
     {
-        var rightLocal = _il.DeclareLocal(_types.Object);
-        _il.Emit(OpCodes.Stloc, rightLocal);
+        if (_runtime?.JsLessOrEqual != null)
+        {
+            // Swap operands: [left, right] → [right, left] so JsLessOrEqual(right, left) returns true iff a >= b.
+            var rightLocal = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, rightLocal);
+            var leftLocal = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, leftLocal);
+            _il.Emit(OpCodes.Ldloc, rightLocal);
+            _il.Emit(OpCodes.Ldloc, leftLocal);
+            _il.Emit(OpCodes.Call, _runtime.JsLessOrEqual);
+            _stackType = StackType.Boolean;
+            return;
+        }
+        var rightLocal2 = _il.DeclareLocal(_types.Object);
+        _il.Emit(OpCodes.Stloc, rightLocal2);
         _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
-        _il.Emit(OpCodes.Ldloc, rightLocal);
+        _il.Emit(OpCodes.Ldloc, rightLocal2);
         _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
-        // a >= b is equivalent to !(a < b)
         _il.Emit(OpCodes.Clt);
         _il.Emit(OpCodes.Ldc_I4_0);
         _il.Emit(OpCodes.Ceq);
-        // Leave as unboxed bool — EnsureBoxed() will auto-box if needed.
         _stackType = StackType.Boolean;
     }
 

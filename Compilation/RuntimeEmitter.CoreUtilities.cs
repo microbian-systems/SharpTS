@@ -2403,6 +2403,140 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits <c>$Runtime.JsLessThan(object x, object y) -&gt; bool</c>:
+    /// ECMA-262 7.2.13 IsLessThan abstract algorithm (LeftFirst=true).
+    /// If both operands are strings, lexicographic comparison.
+    /// Otherwise both are coerced via ToNumber and numerically compared
+    /// (NaN on either side yields false).
+    /// </summary>
+    private void EmitJsLessThan(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "JsLessThan",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object, _types.Object]);
+        runtime.JsLessThan = method;
+
+        var il = method.GetILGenerator();
+
+        // If both args are strings, do lexicographic comparison (CompareOrdinal < 0).
+        var notBothStrings = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notBothStrings);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notBothStrings);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        var compareOrdinal = _types.GetMethod(_types.String, "CompareOrdinal", _types.String, _types.String);
+        il.Emit(OpCodes.Call, compareOrdinal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Clt);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notBothStrings);
+        // Numeric path: a = ToNumber(arg0); b = ToNumber(arg1); a < b ? true : false (NaN → false).
+        var aLocal = il.DeclareLocal(_types.Double);
+        var bLocal = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, aLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, bLocal);
+        // NaN check: a == a, b == b
+        var notNaN = il.DefineLabel();
+        var falseLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, aLocal);
+        il.Emit(OpCodes.Ldloc, aLocal);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldloc, bLocal);
+        il.Emit(OpCodes.Ldloc, bLocal);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.MarkLabel(notNaN);
+        il.Emit(OpCodes.Ldloc, aLocal);
+        il.Emit(OpCodes.Ldloc, bLocal);
+        il.Emit(OpCodes.Clt);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(falseLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits <c>$Runtime.JsLessOrEqual(object x, object y) -&gt; bool</c>:
+    /// ECMA-262 abstract relational comparison: x &lt;= y is "y &lt; x is false
+    /// AND neither operand is NaN". Implemented as !JsLessThan(y, x) provided
+    /// neither is NaN; we replicate the helper inline to avoid double ToNumber.
+    /// </summary>
+    private void EmitJsLessOrEqual(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "JsLessOrEqual",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object, _types.Object]);
+        runtime.JsLessOrEqual = method;
+
+        var il = method.GetILGenerator();
+
+        // If both strings: CompareOrdinal <= 0
+        var notBothStrings = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notBothStrings);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notBothStrings);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        var compareOrdinal = _types.GetMethod(_types.String, "CompareOrdinal", _types.String, _types.String);
+        il.Emit(OpCodes.Call, compareOrdinal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Cgt);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notBothStrings);
+        var aLocal = il.DeclareLocal(_types.Double);
+        var bLocal = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, aLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, bLocal);
+        var falseLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, aLocal);
+        il.Emit(OpCodes.Ldloc, aLocal);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldloc, bLocal);
+        il.Emit(OpCodes.Ldloc, bLocal);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        // a <= b → !(a > b) → !(b < a)
+        il.Emit(OpCodes.Ldloc, bLocal);
+        il.Emit(OpCodes.Ldloc, aLocal);
+        il.Emit(OpCodes.Clt);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(falseLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits ConvertToNumber — matches JS Number(value) semantics.
     /// Differs from ToNumber in that empty/whitespace strings return 0 (not NaN).
     /// </summary>

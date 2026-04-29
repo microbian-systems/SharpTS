@@ -71,15 +71,18 @@ public partial class ILEmitter
                 break;
 
             case "trim":
-                IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethodNoParams(_ctx.Types.String, "Trim"));
+                IL.Emit(OpCodes.Ldc_I4_0);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.JsTrimInline);
                 break;
 
             case "trimStart":
-                IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethodNoParams(_ctx.Types.String, "TrimStart"));
+                IL.Emit(OpCodes.Ldc_I4_1);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.JsTrimInline);
                 break;
 
             case "trimEnd":
-                IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethodNoParams(_ctx.Types.String, "TrimEnd"));
+                IL.Emit(OpCodes.Ldc_I4_2);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.JsTrimInline);
                 break;
 
             case "toUpperCase":

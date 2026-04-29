@@ -49,7 +49,8 @@ public sealed class StringEmitter : ITypeEmitterStrategy
                 return true;
 
             case "trim":
-                il.Emit(OpCodes.Callvirt, ctx.Types.GetMethodNoParams(ctx.Types.String, "Trim"));
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Call, ctx.Runtime!.JsTrimInline);
                 return true;
 
             case "replace":
@@ -117,11 +118,13 @@ public sealed class StringEmitter : ITypeEmitterStrategy
                 return true;
 
             case "trimStart":
-                il.Emit(OpCodes.Callvirt, ctx.Types.GetMethodNoParams(ctx.Types.String, "TrimStart"));
+                il.Emit(OpCodes.Ldc_I4_1);
+                il.Emit(OpCodes.Call, ctx.Runtime!.JsTrimInline);
                 return true;
 
             case "trimEnd":
-                il.Emit(OpCodes.Callvirt, ctx.Types.GetMethodNoParams(ctx.Types.String, "TrimEnd"));
+                il.Emit(OpCodes.Ldc_I4_2);
+                il.Emit(OpCodes.Call, ctx.Runtime!.JsTrimInline);
                 return true;
 
             case "replaceAll":
