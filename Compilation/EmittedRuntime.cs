@@ -439,6 +439,9 @@ public class EmittedRuntime
     public ConstructorBuilder ArgumentsDefaultCtor { get; set; } = null!;
     public ConstructorBuilder ArgumentsCapacityCtor { get; set; } = null!;
     public ConstructorBuilder ArgumentsEnumerableCtor { get; set; } = null!;
+    /// <summary>$Arguments._length — JS-visible length (per ECMA-262 sloppy
+    /// arguments, "length" doesn't auto-update on out-of-range indexed sets).</summary>
+    public FieldBuilder ArgumentsLengthField { get; set; } = null!;
 
     // Bound map method for dynamic Map property access (duck typing across module boundaries)
     public TypeBuilder BoundMapMethodType { get; set; } = null!;

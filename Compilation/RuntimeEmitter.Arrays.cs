@@ -113,6 +113,19 @@ public partial class RuntimeEmitter
         var tsArrayLabel = il.DefineLabel();
         var stringLabel = il.DefineLabel();
 
+        // $Arguments — return _length (sloppy arguments object, ECMA-262 10.4.4).
+        // Must come before the List<object> check below since $Arguments inherits
+        // from List<object>.
+        var notArgumentsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.ArgumentsType);
+        il.Emit(OpCodes.Brfalse, notArgumentsLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.ArgumentsType);
+        il.Emit(OpCodes.Ldfld, runtime.ArgumentsLengthField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notArgumentsLabel);
+
         // $Array (wrapper around List<object?>) - check before typed lists
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSArrayType);

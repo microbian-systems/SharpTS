@@ -1213,8 +1213,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
-        // length case: return (double)list.Count
+        // length case: return (double)list.Count — except for $Arguments,
+        // which exposes its own _length field (sloppy arguments objects
+        // don't auto-update length on out-of-range indexed writes per
+        // ECMA-262 10.4.4).
         il.MarkLabel(lengthLabel);
+        var notArgumentsLengthLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.ArgumentsType);
+        il.Emit(OpCodes.Brfalse, notArgumentsLengthLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.ArgumentsType);
+        il.Emit(OpCodes.Ldfld, runtime.ArgumentsLengthField);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notArgumentsLengthLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.ListOfObject, "Count"));
         il.Emit(OpCodes.Conv_R8);

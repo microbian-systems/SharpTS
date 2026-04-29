@@ -29,7 +29,18 @@ public partial class RuntimeEmitter
         );
         runtime.ArgumentsType = typeBuilder;
 
-        // Ctor: public $Arguments() : base() { }
+        // public int _length — JS-visible length (per ECMA-262 10.4.4 sloppy
+        // arguments objects use ordinary "length" property that does NOT
+        // auto-update when arguments[i] = v is set out-of-range). Independent
+        // from the underlying List.Count, which DOES grow on out-of-range
+        // writes (semver/uuid runtime behavior depends on this).
+        var lengthField = typeBuilder.DefineField(
+            "_length",
+            _types.Int32,
+            FieldAttributes.Public);
+        runtime.ArgumentsLengthField = lengthField;
+
+        // Ctor: public $Arguments() : base() { _length = 0; }
         var defaultCtor = typeBuilder.DefineConstructor(
             MethodAttributes.Public,
             CallingConventions.Standard,
@@ -38,10 +49,13 @@ public partial class RuntimeEmitter
         var defaultIL = defaultCtor.GetILGenerator();
         defaultIL.Emit(OpCodes.Ldarg_0);
         defaultIL.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.ListOfObject));
+        defaultIL.Emit(OpCodes.Ldarg_0);
+        defaultIL.Emit(OpCodes.Ldc_I4_0);
+        defaultIL.Emit(OpCodes.Stfld, lengthField);
         defaultIL.Emit(OpCodes.Ret);
         runtime.ArgumentsDefaultCtor = defaultCtor;
 
-        // Ctor: public $Arguments(int capacity) : base(capacity) { }
+        // Ctor: public $Arguments(int capacity) : base(capacity) { _length = 0; }
         var capacityCtor = typeBuilder.DefineConstructor(
             MethodAttributes.Public,
             CallingConventions.Standard,
@@ -51,10 +65,15 @@ public partial class RuntimeEmitter
         capIL.Emit(OpCodes.Ldarg_0);
         capIL.Emit(OpCodes.Ldarg_1);
         capIL.Emit(OpCodes.Call, _types.GetConstructor(_types.ListOfObject, _types.Int32));
+        capIL.Emit(OpCodes.Ldarg_0);
+        capIL.Emit(OpCodes.Ldc_I4_0);
+        capIL.Emit(OpCodes.Stfld, lengthField);
         capIL.Emit(OpCodes.Ret);
         runtime.ArgumentsCapacityCtor = capacityCtor;
 
-        // Ctor: public $Arguments(IEnumerable<object> source) : base(source) { }
+        // Ctor: public $Arguments(IEnumerable<object> source) : base(source)
+        // { _length = base.Count; }  — copies the source and snapshots the
+        // count as the JS-visible length.
         var enumCtor = typeBuilder.DefineConstructor(
             MethodAttributes.Public,
             CallingConventions.Standard,
@@ -64,6 +83,10 @@ public partial class RuntimeEmitter
         enumIL.Emit(OpCodes.Ldarg_0);
         enumIL.Emit(OpCodes.Ldarg_1);
         enumIL.Emit(OpCodes.Call, _types.GetConstructor(_types.ListOfObject, _types.IEnumerableOfObject));
+        enumIL.Emit(OpCodes.Ldarg_0);
+        enumIL.Emit(OpCodes.Ldarg_0);
+        enumIL.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.ListOfObject, "Count"));
+        enumIL.Emit(OpCodes.Stfld, lengthField);
         enumIL.Emit(OpCodes.Ret);
         runtime.ArgumentsEnumerableCtor = enumCtor;
 
