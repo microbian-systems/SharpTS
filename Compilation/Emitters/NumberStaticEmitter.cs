@@ -222,5 +222,5 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
         "NEGATIVE_INFINITY" or "MAX_SAFE_INTEGER" or "MIN_SAFE_INTEGER" or "EPSILON"
         or "isNaN" or "isFinite" or "isInteger" or "isSafeInteger"
         or "parseInt" or "parseFloat"
-        or "length" or "name";
+        or "length" or "name" or "prototype";
 }

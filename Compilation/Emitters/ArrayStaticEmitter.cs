@@ -169,4 +169,8 @@ public sealed class ArrayStaticEmitter : IStaticTypeEmitterStrategy
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
         return true;
     }
+
+    public bool HasStaticProperty(string memberName) => memberName is
+        "isArray" or "from" or "of" or "fromAsync" or
+        "length" or "name" or "prototype";
 }

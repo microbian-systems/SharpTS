@@ -147,4 +147,8 @@ public sealed class StringStaticEmitter : IStaticTypeEmitterStrategy
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
         return true;
     }
+
+    public bool HasStaticProperty(string memberName) => memberName is
+        "fromCharCode" or "fromCodePoint" or "raw" or
+        "length" or "name" or "prototype";
 }
