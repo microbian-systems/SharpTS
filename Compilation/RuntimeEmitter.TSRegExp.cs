@@ -838,7 +838,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, typeof(Group).GetProperty("Success")!.GetGetMethod()!);
         il.Emit(OpCodes.Brtrue, groupSuccessLabel);
 
-        il.Emit(OpCodes.Ldnull);
+        // ECMA-262 22.2.5.2.6 RegExpBuiltinExec: unmatched optional capture
+        // groups produce `undefined`, not null. Tests check `r[2] === undefined`.
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Br, addGroupEndLabel);
 
         il.MarkLabel(groupSuccessLabel);
