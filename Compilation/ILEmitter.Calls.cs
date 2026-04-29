@@ -399,14 +399,28 @@ public partial class ILEmitter
     /// </summary>
     private bool TryEmitArrayPrototypeCall(Expr.Call c)
     {
-        // Pattern: Get("call", Get(METHOD, Get("prototype", Variable("Array"))))
+        // Pattern A: Get("call", Get(METHOD, Get("prototype", Variable("Array"))))
+        // Pattern B: Get("call", Get(METHOD, ArrayLiteral([])))
+        //   The B form covers test262's idiom `[].find.call(receiver, …)` —
+        //   semantically identical to A because Array.prototype is the receiver
+        //   either way. The literal must be empty (otherwise its elements
+        //   would matter to the inherited method's behavior).
         if (c.Callee is not Expr.Get callGet || callGet.Name.Lexeme != "call")
             return false;
         if (callGet.Object is not Expr.Get methodGet)
             return false;
-        if (methodGet.Object is not Expr.Get protoGet || protoGet.Name.Lexeme != "prototype")
-            return false;
-        if (protoGet.Object is not Expr.Variable arrayVar || arrayVar.Name.Lexeme != "Array")
+
+        bool matchedPrototypeForm =
+            methodGet.Object is Expr.Get protoGet
+            && protoGet.Name.Lexeme == "prototype"
+            && protoGet.Object is Expr.Variable arrayVar
+            && arrayVar.Name.Lexeme == "Array";
+
+        bool matchedEmptyArrayLiteral =
+            methodGet.Object is Expr.ArrayLiteral arrLit
+            && arrLit.Elements.Count == 0;
+
+        if (!matchedPrototypeForm && !matchedEmptyArrayLiteral)
             return false;
 
         var methodName = methodGet.Name.Lexeme;
