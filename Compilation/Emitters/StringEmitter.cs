@@ -285,10 +285,18 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         {
             emitter.EmitExpression(arguments[0]);
             emitter.EmitBoxIfNeeded(arguments[0]);
-            // Don't cast - let runtime handle string or RegExp
             emitter.EmitExpression(arguments[1]);
             emitter.EmitBoxIfNeeded(arguments[1]);
-            il.Emit(OpCodes.Call, ctx.Runtime!.Stringify); // replacement is always string
+            // ECMA-262 ToString protocol — handles objects with custom toString
+            // (a throwing toString on the replacement now propagates instead of
+            // being silently debug-dumped by the legacy `Stringify` path).
+            //
+            // Functional replacement (callable replaceValue per ECMA-262
+            // 22.1.3.18 step 3) is NOT yet wired through — partial impl
+            // attempted broke real-world callers (debug npm formatter relies
+            // on capture-group args). Skip until proper capture-group
+            // forwarding lands.
+            il.Emit(OpCodes.Call, ctx.Runtime!.ToJsString);
         }
         else
         {
