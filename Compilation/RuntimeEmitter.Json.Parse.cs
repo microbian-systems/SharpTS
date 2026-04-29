@@ -77,6 +77,8 @@ public partial class RuntimeEmitter
 
     private MethodBuilder EmitJsonParseStaticHelper(TypeBuilder typeBuilder)
     {
+        var validateControlChars = EmitJsonValidateControlChars(typeBuilder);
+
         var method = typeBuilder.DefineMethod(
             "ParseJsonValue",
             MethodAttributes.Private | MethodAttributes.Static,
@@ -96,6 +98,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
         il.Emit(OpCodes.Stloc, strLocal);
+
+        // ECMA-262 25.5.1 JSON grammar: control chars (U+0000–U+001F except
+        // \t \n \r as whitespace) are forbidden — both inside string literals
+        // (must be escaped as \u00XX) and in the JSON structural body.
+        // System.Text.Json.JsonDocument is lenient about some of these, so
+        // pre-validate and throw before Parse runs. The throw converts to
+        // SyntaxError via the outer catch in EmitJsonParse.
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Call, validateControlChars);
 
         // Parse using JsonDocument - keep typeof() for System.Text.Json types
         var parseMethod = typeof(System.Text.Json.JsonDocument).GetMethod("Parse",
@@ -130,6 +141,153 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notNullLabel);
         il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+
+        return method;
+    }
+
+    /// <summary>
+    /// Emits a string-validator helper that walks the input JSON text and
+    /// throws Exception on any control-char violation per ECMA-262 25.5.1
+    /// JSON grammar:
+    ///   - Inside string literals ("..."): U+0000–U+001F are forbidden
+    ///     (must be escaped as \u00XX, or via \b\t\n\f\r mnemonics).
+    ///   - Outside string literals: only \t \n \r are allowed as whitespace
+    ///     in the U+0000–U+001F range. Other control chars are forbidden.
+    ///
+    /// State machine: tracks in-string flag and a one-char escape lookahead.
+    /// The outer JsonParse catch converts the thrown Exception to SyntaxError.
+    /// </summary>
+    private MethodBuilder EmitJsonValidateControlChars(TypeBuilder typeBuilder)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ValidateJsonControlChars",
+            MethodAttributes.Private | MethodAttributes.Static,
+            _types.Void,
+            [_types.String]
+        );
+
+        var il = method.GetILGenerator();
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var lenLocal = il.DeclareLocal(_types.Int32);
+        var inStringLocal = il.DeclareLocal(_types.Boolean);
+        var afterEscapeLocal = il.DeclareLocal(_types.Boolean);
+        var cLocal = il.DeclareLocal(_types.Char);
+
+        var nullRetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, nullRetLabel);
+
+        // len = s.Length
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        // i = 0; inString = false; afterEscape = false;
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, inStringLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, afterEscapeLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var advanceLabel = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // c = s[i]
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Stloc, cLocal);
+
+        // if (afterEscape) { afterEscape = false; goto advance; }
+        var notAfterEscapeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, afterEscapeLocal);
+        il.Emit(OpCodes.Brfalse, notAfterEscapeLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, afterEscapeLocal);
+        il.Emit(OpCodes.Br, advanceLabel);
+        il.MarkLabel(notAfterEscapeLabel);
+
+        // if (inString) { ... } else { ... }
+        var elseBranchLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, inStringLocal);
+        il.Emit(OpCodes.Brfalse, elseBranchLabel);
+
+        // INSIDE STRING: any U+0000–U+001F is invalid (must be escaped).
+        var notControlInStrLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0x20);
+        il.Emit(OpCodes.Bge, notControlInStrLabel);
+        il.Emit(OpCodes.Br, throwLabel);
+        il.MarkLabel(notControlInStrLabel);
+        // if (c == '\\') afterEscape = true; goto advance;
+        var notBackslashLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'\\');
+        il.Emit(OpCodes.Bne_Un, notBackslashLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, afterEscapeLocal);
+        il.Emit(OpCodes.Br, advanceLabel);
+        il.MarkLabel(notBackslashLabel);
+        // if (c == '"') inString = false;
+        var notQuoteLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'"');
+        il.Emit(OpCodes.Bne_Un, notQuoteLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, inStringLocal);
+        il.MarkLabel(notQuoteLabel);
+        il.Emit(OpCodes.Br, advanceLabel);
+
+        // OUTSIDE STRING:
+        il.MarkLabel(elseBranchLabel);
+        // c < 0x20 and c != \t \n \r → invalid.
+        var notControlOutLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0x20);
+        il.Emit(OpCodes.Bge, notControlOutLabel);
+        // c == '\t' (0x09)?
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0x09);
+        il.Emit(OpCodes.Beq, notControlOutLabel);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0x0A);
+        il.Emit(OpCodes.Beq, notControlOutLabel);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0x0D);
+        il.Emit(OpCodes.Beq, notControlOutLabel);
+        il.Emit(OpCodes.Br, throwLabel);
+        il.MarkLabel(notControlOutLabel);
+        // if (c == '"') inString = true;
+        var notOpenQuoteLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'"');
+        il.Emit(OpCodes.Bne_Un, notOpenQuoteLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, inStringLocal);
+        il.MarkLabel(notOpenQuoteLabel);
+
+        il.MarkLabel(advanceLabel);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "Bad control character in string literal in JSON");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(loopEnd);
+        il.MarkLabel(nullRetLabel);
         il.Emit(OpCodes.Ret);
 
         return method;
