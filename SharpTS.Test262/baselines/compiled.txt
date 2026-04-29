@@ -3351,7 +3351,7 @@ test/built-ins/JSON/stringify/value-symbol.js Pass
 test/built-ins/JSON/stringify/value-tojson-abrupt.js Pass
 test/built-ins/JSON/stringify/value-tojson-arguments.js Fail
 test/built-ins/JSON/stringify/value-tojson-array-circular.js Fail
-test/built-ins/JSON/stringify/value-tojson-not-function.js Fail
+test/built-ins/JSON/stringify/value-tojson-not-function.js Pass
 test/built-ins/JSON/stringify/value-tojson-object-circular.js TypeCheckError
 test/built-ins/JSON/stringify/value-tojson-result.js Fail
 test/built-ins/Math/E/prop-desc.js TypeCheckError
