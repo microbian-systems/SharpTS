@@ -291,7 +291,8 @@ public partial class ILEmitter
                 }
                 else
                 {
-                    IL.Emit(OpCodes.Ldstr, "");
+                    // ECMA-262 22.1.3.10: missing arg → undefined → "undefined".
+                    IL.Emit(OpCodes.Ldstr, "undefined");
                 }
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.StringLocaleCompare);
                 IL.Emit(OpCodes.Box, _ctx.Types.Double);
