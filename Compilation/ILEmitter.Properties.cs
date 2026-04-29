@@ -20,6 +20,45 @@ public partial class ILEmitter
         // CommonJS: `module.exports` reads → ldsfld $exports
         if (TryEmitCjsGet(g)) return;
 
+        // Syntactic shortcut: `arguments.length` → load $Arguments._length
+        // directly. The static-type-driven dispatch path emits .NET
+        // List<object>.Count (via a helper that bypasses GetProperty),
+        // missing the JS-visible length per ECMA-262 sloppy arguments.
+        // Catches direct uses inside the function body — the most common
+        // pattern in test262's "applied to Arguments object" cluster.
+        if (g.Name.Lexeme == "length"
+            && g.Object is Expr.Variable argsVar
+            && argsVar.Name.Lexeme == "arguments"
+            && _ctx.Runtime?.ArgumentsType != null
+            && _ctx.Runtime?.ArgumentsLengthField != null)
+        {
+            EmitExpression(g.Object);
+            EmitBoxIfNeeded(g.Object);
+            var argsLocal = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, argsLocal);
+            var notArgsTypeLabel = IL.DefineLabel();
+            var endLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, argsLocal);
+            IL.Emit(OpCodes.Isinst, _ctx.Runtime!.ArgumentsType);
+            IL.Emit(OpCodes.Brfalse, notArgsTypeLabel);
+            IL.Emit(OpCodes.Ldloc, argsLocal);
+            IL.Emit(OpCodes.Castclass, _ctx.Runtime!.ArgumentsType);
+            IL.Emit(OpCodes.Ldfld, _ctx.Runtime!.ArgumentsLengthField);
+            IL.Emit(OpCodes.Conv_R8);
+            IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            IL.Emit(OpCodes.Br, endLabel);
+            IL.MarkLabel(notArgsTypeLabel);
+            // Fallback: arg may have been overwritten by user code with a
+            // non-$Arguments value (`arguments = ...`). Use GetLength.
+            IL.Emit(OpCodes.Ldloc, argsLocal);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.GetLength);
+            IL.Emit(OpCodes.Conv_R8);
+            IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            IL.MarkLabel(endLabel);
+            SetStackUnknown();
+            return;
+        }
+
         // Static type property dispatch via registry (Math.PI, Number.MAX_VALUE, Symbol.iterator, etc.)
         if (g.Object is Expr.Variable staticVar && _ctx.TypeEmitterRegistry != null)
         {
