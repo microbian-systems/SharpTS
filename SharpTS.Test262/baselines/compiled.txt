@@ -28,7 +28,7 @@ test/built-ins/Array/S15.4.5.2_A1_T1.js Pass
 test/built-ins/Array/S15.4.5.2_A1_T2.js RuntimeError
 test/built-ins/Array/S15.4.5.2_A2_T1.js Pass
 test/built-ins/Array/S15.4.5.2_A3_T1.js Pass
-test/built-ins/Array/S15.4.5.2_A3_T2.js RuntimeError
+test/built-ins/Array/S15.4.5.2_A3_T2.js Pass
 test/built-ins/Array/S15.4.5.2_A3_T3.js Pass
 test/built-ins/Array/S15.4_A1.1_T10.js Pass
 test/built-ins/Array/S15.4_A1.1_T4.js Pass
@@ -3552,7 +3552,7 @@ test/built-ins/Math/log2/name.js TypeCheckError
 test/built-ins/Math/log2/not-a-constructor.js Pass
 test/built-ins/Math/log2/prop-desc.js TypeCheckError
 test/built-ins/Math/max/15.8.2.11-1.js Pass
-test/built-ins/Math/max/Math.max_each-element-coerced.js Fail
+test/built-ins/Math/max/Math.max_each-element-coerced.js Pass
 test/built-ins/Math/max/S15.8.2.11_A1.js Pass
 test/built-ins/Math/max/S15.8.2.11_A2.js Pass
 test/built-ins/Math/max/S15.8.2.11_A4.js Pass
@@ -3562,7 +3562,7 @@ test/built-ins/Math/max/not-a-constructor.js Pass
 test/built-ins/Math/max/prop-desc.js TypeCheckError
 test/built-ins/Math/max/zeros.js Pass
 test/built-ins/Math/min/15.8.2.12-1.js Pass
-test/built-ins/Math/min/Math.min_each-element-coerced.js Fail
+test/built-ins/Math/min/Math.min_each-element-coerced.js Pass
 test/built-ins/Math/min/S15.8.2.12_A1.js Pass
 test/built-ins/Math/min/S15.8.2.12_A2.js Pass
 test/built-ins/Math/min/S15.8.2.12_A4.js Pass
@@ -4114,8 +4114,8 @@ test/built-ins/String/fromCharCode/S15.5.3.2_A4.js Pass
 test/built-ins/String/fromCharCode/S9.7_A1.js Pass
 test/built-ins/String/fromCharCode/S9.7_A2.1.js Pass
 test/built-ins/String/fromCharCode/S9.7_A2.2.js Pass
-test/built-ins/String/fromCharCode/S9.7_A3.1_T1.js Fail
-test/built-ins/String/fromCharCode/S9.7_A3.1_T2.js Fail
+test/built-ins/String/fromCharCode/S9.7_A3.1_T1.js Pass
+test/built-ins/String/fromCharCode/S9.7_A3.1_T2.js Pass
 test/built-ins/String/fromCharCode/S9.7_A3.1_T3.js Pass
 test/built-ins/String/fromCharCode/S9.7_A3.1_T4.js TypeCheckError
 test/built-ins/String/fromCharCode/S9.7_A3.2_T1.js Pass
@@ -4133,7 +4133,7 @@ test/built-ins/String/fromCodePoint/name.js TypeCheckError
 test/built-ins/String/fromCodePoint/not-a-constructor.js Pass
 test/built-ins/String/fromCodePoint/number-is-out-of-range.js Pass
 test/built-ins/String/fromCodePoint/return-string-value.js Pass
-test/built-ins/String/fromCodePoint/to-number-conversions.js RuntimeError
+test/built-ins/String/fromCodePoint/to-number-conversions.js Pass
 test/built-ins/String/is-a-constructor.js Pass
 test/built-ins/String/length.js TypeCheckError
 test/built-ins/String/numeric-properties.js TypeCheckError
@@ -4507,7 +4507,7 @@ test/built-ins/String/prototype/padEnd/function-property-descriptor.js TypeCheck
 test/built-ins/String/prototype/padEnd/max-length-not-greater-than-string.js TypeCheckError
 test/built-ins/String/prototype/padEnd/normal-operation.js Pass
 test/built-ins/String/prototype/padEnd/not-a-constructor.js Pass
-test/built-ins/String/prototype/padEnd/observable-operations.js Fail
+test/built-ins/String/prototype/padEnd/observable-operations.js RuntimeError
 test/built-ins/String/prototype/padStart/exception-fill-string-symbol.js TypeCheckError
 test/built-ins/String/prototype/padStart/exception-not-object-coercible.js Fail
 test/built-ins/String/prototype/padStart/exception-symbol.js Pass
@@ -4520,7 +4520,7 @@ test/built-ins/String/prototype/padStart/function-property-descriptor.js TypeChe
 test/built-ins/String/prototype/padStart/max-length-not-greater-than-string.js TypeCheckError
 test/built-ins/String/prototype/padStart/normal-operation.js Pass
 test/built-ins/String/prototype/padStart/not-a-constructor.js Pass
-test/built-ins/String/prototype/padStart/observable-operations.js Fail
+test/built-ins/String/prototype/padStart/observable-operations.js RuntimeError
 test/built-ins/String/prototype/repeat/count-coerced-to-zero-returns-empty-string.js TypeCheckError
 test/built-ins/String/prototype/repeat/count-is-infinity-throws.js Pass
 test/built-ins/String/prototype/repeat/count-is-zero-returns-empty-string.js Pass
@@ -4820,7 +4820,7 @@ test/built-ins/String/prototype/split/separator-comma-instance-is-string-one-two
 test/built-ins/String/prototype/split/separator-empty-string-instance-is-string.js Pass
 test/built-ins/String/prototype/split/separator-number-limit-math-pow-2-32-1-instance-is-number.js Pass
 test/built-ins/String/prototype/split/separator-override-tostring-limit-override-valueof-throws.js TypeCheckError
-test/built-ins/String/prototype/split/separator-override-tostring-limit-override-valueof-tostring-throws.js Fail
+test/built-ins/String/prototype/split/separator-override-tostring-limit-override-valueof-tostring-throws.js Pass
 test/built-ins/String/prototype/split/separator-override-tostring-limit-override-valueof-tostring.js TypeCheckError
 test/built-ins/String/prototype/split/separator-override-tostring-limit-override-valueof.js TypeCheckError
 test/built-ins/String/prototype/split/separator-override-tostring-throws-limit-override-valueof-throws.js Fail
