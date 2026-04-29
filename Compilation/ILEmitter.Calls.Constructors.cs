@@ -246,9 +246,12 @@ public partial class ILEmitter
             }
             else
             {
-                // The callee didn't resolve anywhere — preserve legacy Ldnull.
-                IL.Emit(OpCodes.Ldnull);
-                return;
+                // Last resort: evaluate the bare-Variable callee through the
+                // standard expression emit path, which knows about non-resolver
+                // globals (JSON, Math, Reflect, etc.) — those are non-constructable
+                // singletons that should reach NewOnFunction's "not a constructor"
+                // TypeError throw rather than vanish into a silent Ldnull.
+                EmitExpression(n.Callee);
             }
         }
 
