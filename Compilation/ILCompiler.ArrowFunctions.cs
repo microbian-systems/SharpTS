@@ -409,6 +409,13 @@ public partial class ILCompiler
                 CollectArrowsFromStmt(dw.Body);
                 CollectArrowsFromExpr(dw.Condition);
                 break;
+            case Stmt.LabeledStatement ls:
+                CollectArrowsFromStmt(ls.Statement);
+                break;
+            case Stmt.StaticBlock sb:
+                foreach (var s in sb.Body)
+                    CollectArrowsFromStmt(s);
+                break;
             case Stmt.Block b:
                 foreach (var s in b.Statements)
                     CollectArrowsFromStmt(s);
