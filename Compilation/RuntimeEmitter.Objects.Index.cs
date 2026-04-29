@@ -102,6 +102,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brtrue, tsObjectIdxLabel);
 
+        // $TSFunction indexed read: route through GetProperty so PDS-stored
+        // entries from `fun[i] = v` (set via the matching SetIndex branch)
+        // round-trip. Mirrors the $Object handling above.
+        var tsFunctionIdxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, tsFunctionIdxLabel);
+
         // Class instance: check if index is string or numeric, then use GetFieldsProperty
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.String);
@@ -208,6 +216,14 @@ public partial class RuntimeEmitter
 
         // $Object indexed get: route through $Runtime.GetProperty(obj, index.ToString())
         il.MarkLabel(tsObjectIdxLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Ret);
+
+        // $TSFunction indexed get — same shape as $Object indexed get.
+        il.MarkLabel(tsFunctionIdxLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
@@ -526,6 +542,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brtrue, tsObjectIdxSetLabel);
 
+        // $TSFunction indexed set: route to $Runtime.SetProperty so PDS-backed
+        // storage handles `fun[0] = 12` patterns (Test262's
+        // `Array.prototype.X.call(fnLikeArray, ...)` which decorates functions
+        // with indexed elements before iterating them). Reuses the $Object
+        // path's index-to-string coercion via SetProperty under the hood.
+        var tsFunctionIdxSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, tsFunctionIdxSetLabel);
+
         // Class instance / unknown receiver fallback: route to SetFieldsProperty
         // with index coerced to string. SetFieldsProperty's own scoped PDS-store
         // fallback handles ad-hoc indexed writes on Date/RegExp/Promise; other
@@ -543,6 +569,17 @@ public partial class RuntimeEmitter
 
         // $Object indexed set handler: SetProperty(obj, index.ToString(), value)
         il.MarkLabel(tsObjectIdxSetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+        il.Emit(OpCodes.Ret);
+
+        // $TSFunction indexed set — coerce key to string and route to SetProperty.
+        // SetProperty's $TSFunction branch stores via PDS so the same key reads
+        // back through GetProperty/GetIndex.
+        il.MarkLabel(tsFunctionIdxSetLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
