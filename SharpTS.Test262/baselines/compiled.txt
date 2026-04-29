@@ -5086,7 +5086,7 @@ test/built-ins/String/prototype/trim/15.5.4.20-2-47.js Pass
 test/built-ins/String/prototype/trim/15.5.4.20-2-49.js TypeCheckError
 test/built-ins/String/prototype/trim/15.5.4.20-2-5.js Pass
 test/built-ins/String/prototype/trim/15.5.4.20-2-50.js Pass
-test/built-ins/String/prototype/trim/15.5.4.20-2-51.js Fail
+test/built-ins/String/prototype/trim/15.5.4.20-2-51.js Pass
 test/built-ins/String/prototype/trim/15.5.4.20-2-6.js Pass
 test/built-ins/String/prototype/trim/15.5.4.20-2-7.js Pass
 test/built-ins/String/prototype/trim/15.5.4.20-2-8.js Pass
