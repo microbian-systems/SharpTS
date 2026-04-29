@@ -410,7 +410,8 @@ public sealed class Test262Runner
             {
                 // $Object / $Error subclass — read "name"/"message" via the emitted
                 // $IHasFields interface (compiled $Object implements it). Fall back
-                // to private `_fields` dictionary, then to ToString.
+                // to private `_fields` dictionary, then $Runtime.GetProperty (which
+                // walks the prototype chain), then ToString.
                 try
                 {
                     var t = tsValue.GetType();
@@ -430,6 +431,22 @@ public sealed class Test262Runner
                         {
                             if (fd.TryGetValue("name", out var fn) && fn is string fns) name = fns;
                             if (fd.TryGetValue("message", out var fm) && fm is string fms) userMessage = fms;
+                        }
+                    }
+                    if (name == null)
+                    {
+                        // Walk the prototype chain via $Runtime.GetProperty (the
+                        // per-test-DLL helper that walks PDS-tracked prototypes).
+                        // This catches `Test262Error.prototype.name = "Test262Error"`
+                        // and similar harness-side patches.
+                        var runtimeType = t.Assembly.GetType("$Runtime");
+                        var rtGetProp = runtimeType?.GetMethod("GetProperty",
+                            new[] { typeof(object), typeof(string) });
+                        if (rtGetProp != null)
+                        {
+                            name = rtGetProp.Invoke(null, [tsValue, "name"]) as string;
+                            if (userMessage == null)
+                                userMessage = rtGetProp.Invoke(null, [tsValue, "message"]) as string;
                         }
                     }
                 }
