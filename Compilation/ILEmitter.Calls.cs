@@ -452,15 +452,12 @@ public partial class ILEmitter
             // Pop the duplicated receiver from the stack — we won't be
             // calling materialize.
             IL.Emit(OpCodes.Pop);
-            // Read length: GetProperty(receiver, "length") to trigger getter,
-            // then ToNumber to trigger ToPrimitive (valueOf/toString) on the
-            // returned value per ECMA-262 LengthOfArrayLike → ToLength →
-            // ToInteger. Discard the resulting double — the throw path doesn't
-            // use the length value.
+            // Read length: GetProperty(receiver, "length") to trigger getter.
+            // Discard the result — the materialize-replacement path always
+            // throws before using it.
             IL.Emit(OpCodes.Ldloc, receiverLocal);
             IL.Emit(OpCodes.Ldstr, "length");
             IL.Emit(OpCodes.Call, runtime.GetProperty);
-            IL.Emit(OpCodes.Call, runtime.ToNumber);
             IL.Emit(OpCodes.Pop);
             // Throw: TypeError("undefined is not a function")
             IL.Emit(OpCodes.Ldstr, "undefined is not a function");
@@ -501,12 +498,9 @@ public partial class ILEmitter
             IL.MarkLabel(throwPath);
             // Pop the duplicated receiver — won't reach materialize.
             IL.Emit(OpCodes.Pop);
-            // Read length + ToNumber to fire any accessor side-effects per
-            // ECMA-262 LengthOfArrayLike → ToLength → ToInteger ordering.
             IL.Emit(OpCodes.Ldloc, receiverLocal);
             IL.Emit(OpCodes.Ldstr, "length");
             IL.Emit(OpCodes.Call, runtime.GetProperty);
-            IL.Emit(OpCodes.Call, runtime.ToNumber);
             IL.Emit(OpCodes.Pop);
             IL.Emit(OpCodes.Ldstr, "undefined is not a function");
             IL.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
