@@ -1832,6 +1832,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, alreadyStringLabel);
 
+        // ECMA-262 22.3.7 Arguments.prototype.toString inherits from
+        // Object.prototype.toString → "[object Arguments]". Without this
+        // check, $Arguments (which extends List<object>) hits the List
+        // branch and gets comma-joined. Real-world code rarely relies on
+        // this brand string, but Test262's `String.prototype.trim.call(arguments)`
+        // test asserts on it.
+        var notArgumentsBrandLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.ArgumentsType);
+        il.Emit(OpCodes.Brfalse, notArgumentsBrandLabel);
+        il.Emit(OpCodes.Ldstr, "[object Arguments]");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notArgumentsBrandLabel);
+
         // List<object> → ECMA-262 Array.prototype.toString returns join(","),
         // not Stringify's debug-style "[a, b]". Build the comma-joined form
         // inline so `String([1,2,3]) === "1,2,3"`. Recursively Stringify each
