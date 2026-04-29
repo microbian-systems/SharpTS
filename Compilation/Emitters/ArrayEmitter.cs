@@ -187,6 +187,10 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
             case "indexOf":
             case "lastIndexOf":
                 // searchElement (arg 0) + optional fromIndex (arg 1).
+                // For missing fromIndex, pass $Undefined.Instance so the helper
+                // can distinguish "scan whole" from a user-passed null
+                // (`arr.lastIndexOf(x, null)` per ECMA-262 23.1.3.18 coerces
+                // null via ToIntegerOrInfinity → 0, scans only index 0).
                 EmitSingleArgOrNull(emitter, arguments);
                 if (arguments.Count >= 2)
                 {
@@ -195,7 +199,7 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 }
                 else
                 {
-                    il.Emit(OpCodes.Ldnull);
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
                 }
                 il.Emit(OpCodes.Call, methodName == "indexOf" ? ctx.Runtime!.ArrayIndexOf : ctx.Runtime!.ArrayLastIndexOf);
                 il.Emit(OpCodes.Box, ctx.Types.Double);

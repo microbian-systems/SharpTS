@@ -625,7 +625,10 @@ public partial class ILEmitter
                 }
                 break;
             case "search":
-                // searchElement + optional fromIndex
+                // searchElement + optional fromIndex. Missing fromIndex passes
+                // $Undefined.Instance (not CIL null) so the helper can
+                // distinguish "scan whole" from a user-passed null per
+                // ECMA-262 23.1.3.18 (null coerces to 0 via ToIntegerOrInfinity).
                 if (methodArgs.Count > 0)
                 {
                     EmitExpression(methodArgs[0]);
@@ -642,7 +645,7 @@ public partial class ILEmitter
                 }
                 else
                 {
-                    IL.Emit(OpCodes.Ldnull);
+                    IL.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
                 }
                 break;
             case "argsArray":

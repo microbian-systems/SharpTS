@@ -1178,10 +1178,20 @@ public partial class RuntimeEmitter
         var nLocal = il.DeclareLocal(_types.Int32);
         var hasFromIndex = il.DefineLabel();
         var done = il.DefineLabel();
+        var noFromIndexLabel = il.DefineLabel();
 
-        // If fromIndex is null → start = len - 1
+        // ECMA-262 23.1.3.18 step 4: if fromIndex was passed (even as null),
+        // coerce via ToIntegerOrInfinity. ONLY `undefined` (or absent) gets the
+        // "scan whole array" default. Pre-fix treated CIL-null AS undefined,
+        // which broke `arr.lastIndexOf(x, null)` — null should coerce to 0
+        // (start = 0, iterate one step backwards from index 0).
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Brtrue, hasFromIndex);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, noFromIndexLabel);
+        // Non-undefined value → fall through to coercion branch.
+        il.Emit(OpCodes.Br, hasFromIndex);
+
+        il.MarkLabel(noFromIndexLabel);
         il.Emit(OpCodes.Ldloc, lenLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Sub);
