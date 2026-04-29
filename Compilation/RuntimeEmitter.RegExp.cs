@@ -683,12 +683,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Blt, notFoundLabel);
 
-        // return new $Array([search])
+        // ECMA-262 22.2.5.4 (and 21.2.5.7 for non-global match) — the result
+        // array carries `index` and `input` properties. The plain $Array we
+        // returned previously was missing those, so test262 tests that read
+        // `m.index` / `m.input` got null. Build the array, then attach the
+        // properties via $Runtime.SetProperty so they appear as own props.
+        var matchArrayLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldloc, searchLocal);
         il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
         il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
+        il.Emit(OpCodes.Stloc, matchArrayLocal);
+
+        // matchArray.index = (double)idx
+        il.Emit(OpCodes.Ldloc, matchArrayLocal);
+        il.Emit(OpCodes.Ldstr, "index");
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        // matchArray.input = str
+        il.Emit(OpCodes.Ldloc, matchArrayLocal);
+        il.Emit(OpCodes.Ldstr, "input");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
+
+        il.Emit(OpCodes.Ldloc, matchArrayLocal);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notFoundLabel);
