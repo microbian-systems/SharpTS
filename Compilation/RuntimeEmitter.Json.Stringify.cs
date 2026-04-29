@@ -269,6 +269,9 @@ public partial class RuntimeEmitter
         // Check for toJSON() method and call it if present
         EmitToJsonCheck(il, valueLocal, runtime);
 
+        // ECMA-262 25.5.2.3 step 9: skip callable values (return undefined).
+        EmitFunctionSkipCheck(il, valueLocal, runtime);
+
         // if (value is bool)
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Isinst, _types.Boolean);
@@ -391,6 +394,39 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(notBigIntLabel);
+    }
+
+    /// <summary>
+    /// ECMA-262 25.5.2.3 step 9: if Type(value) is Object and IsCallable(value)
+    /// is true, set value to undefined. We model "value becomes undefined" by
+    /// returning C# null from the helper — the caller treats null as "drop"
+    /// for object properties and "null" for array elements, matching the spec.
+    /// Functions/bound functions/arrow functions all isinst $TSFunction or
+    /// $BoundTSFunction (the only callable shapes the compiler emits for JS).
+    /// </summary>
+    private void EmitFunctionSkipCheck(ILGenerator il, LocalBuilder valueLocal, EmittedRuntime runtime)
+    {
+        var skipLabel = il.DefineLabel();
+        var notSkippedLabel = il.DefineLabel();
+
+        // Symbols (ECMA-262 25.5.2.3 step 3) are ignored as values.
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brtrue, skipLabel);
+
+        // Functions / bound functions (ECMA-262 25.5.2.3 step 9) → undefined.
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, skipLabel);
+
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brfalse, notSkippedLabel);
+
+        il.MarkLabel(skipLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notSkippedLabel);
     }
 
     private void EmitToJsonCheck(ILGenerator il, LocalBuilder valueLocal, EmittedRuntime runtime)

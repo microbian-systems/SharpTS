@@ -426,6 +426,9 @@ public partial class RuntimeEmitter
         // Check for toJSON() method
         EmitToJsonCheck(il, valueLocal, runtime);
 
+        // ECMA-262 25.5.2.3 step 9: skip callable values (return undefined).
+        EmitFunctionSkipCheck(il, valueLocal, runtime);
+
         // Type checks
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Isinst, _types.Boolean);
