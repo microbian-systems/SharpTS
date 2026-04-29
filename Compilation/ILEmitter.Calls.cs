@@ -446,8 +446,8 @@ public partial class ILEmitter
         // when called with no args.
         bool needsCallableFirstArg = methodName is "every" or "some" or "filter"
             or "map" or "forEach" or "find" or "findIndex" or "findLast"
-            or "findLastIndex" or "flatMap" or "reduce" or "reduceRight";
-        if (methodArgs.Count == 0 && needsCallableFirstArg)
+            or "findLastIndex" or "flatMap";
+        if (kind == "single" && methodArgs.Count == 0 && needsCallableFirstArg)
         {
             // Pop the duplicated receiver from the stack — we won't be
             // calling materialize.
@@ -466,52 +466,6 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Throw);
             // Unreachable, but keep stack balanced for any dead-code analysis.
             return true;
-        }
-
-        // Runtime null/undefined callback check (when user passes the literal
-        // undefined or a null-valued variable). Without this, the materializer
-        // fires accessor getters on element indices BEFORE the runtime helper
-        // validates callbackfn — but ECMA-262 requires "ToLength(O.length) →
-        // throw on bad callback → iterate" order. Test262 tests like
-        // `Array.prototype.reduceRight.call(obj, undefined)` set Object
-        // .defineProperty(obj, "0", {get: side-effect}) and assert the side
-        // effect did NOT fire. Read length first (spec wants this access),
-        // then throw without invoking element getters.
-        if (needsCallableFirstArg && methodArgs.Count >= 1)
-        {
-            var cbLocal = IL.DeclareLocal(_ctx.Types.Object);
-            EmitExpression(methodArgs[0]);
-            EmitBoxIfNeeded(methodArgs[0]);
-            IL.Emit(OpCodes.Stloc, cbLocal);
-
-            var throwPath = IL.DefineLabel();
-            var cbValid = IL.DefineLabel();
-            // null → throw
-            IL.Emit(OpCodes.Ldloc, cbLocal);
-            IL.Emit(OpCodes.Brfalse, throwPath);
-            // $Undefined → throw
-            IL.Emit(OpCodes.Ldloc, cbLocal);
-            IL.Emit(OpCodes.Isinst, runtime.UndefinedType);
-            IL.Emit(OpCodes.Brtrue, throwPath);
-            IL.Emit(OpCodes.Br, cbValid);
-
-            IL.MarkLabel(throwPath);
-            // Pop the duplicated receiver — won't reach materialize.
-            IL.Emit(OpCodes.Pop);
-            IL.Emit(OpCodes.Ldloc, receiverLocal);
-            IL.Emit(OpCodes.Ldstr, "length");
-            IL.Emit(OpCodes.Call, runtime.GetProperty);
-            IL.Emit(OpCodes.Pop);
-            IL.Emit(OpCodes.Ldstr, "undefined is not a function");
-            IL.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
-            IL.Emit(OpCodes.Call, runtime.CreateException);
-            IL.Emit(OpCodes.Throw);
-
-            IL.MarkLabel(cbValid);
-            // Note: the callback expression is re-emitted later when methodArgs
-            // are materialized into the call. This is a benign double-eval
-            // (callbacks are typically bare identifiers / literals); we tolerate
-            // it to avoid a methodArgs rewrite.
         }
 
         // list = ArrayLikeMaterialize(receiver) — the Dup'd receiver is on the stack
