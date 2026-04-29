@@ -4392,7 +4392,7 @@ test/built-ins/String/prototype/lastIndexOf/name.js TypeCheckError
 test/built-ins/String/prototype/lastIndexOf/not-a-constructor.js Pass
 test/built-ins/String/prototype/lastIndexOf/not-a-substring.js Pass
 test/built-ins/String/prototype/lastIndexOf/this-value-not-obj-coercible.js Pass
-test/built-ins/String/prototype/localeCompare/15.5.4.9_3.js Fail
+test/built-ins/String/prototype/localeCompare/15.5.4.9_3.js Pass
 test/built-ins/String/prototype/localeCompare/15.5.4.9_CE.js Fail
 test/built-ins/String/prototype/localeCompare/S15.5.4.9_A10.js TypeCheckError
 test/built-ins/String/prototype/localeCompare/S15.5.4.9_A11.js Pass
