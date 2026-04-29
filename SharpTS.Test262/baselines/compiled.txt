@@ -3725,7 +3725,7 @@ test/built-ins/Number/S15.7.5_A1_T04.js Pass
 test/built-ins/Number/S15.7.5_A1_T05.js Pass
 test/built-ins/Number/S15.7.5_A1_T06.js Pass
 test/built-ins/Number/S15.7.5_A1_T07.js Pass
-test/built-ins/Number/S8.12.8_A3.js Fail
+test/built-ins/Number/S8.12.8_A3.js Pass
 test/built-ins/Number/S8.12.8_A4.js Fail
 test/built-ins/Number/S9.1_A1_T1.js TypeCheckError
 test/built-ins/Number/S9.3.1_A1.js Pass
@@ -3773,7 +3773,7 @@ test/built-ins/Number/S9.3_A2_T1.js Pass
 test/built-ins/Number/S9.3_A3_T1.js Pass
 test/built-ins/Number/S9.3_A4.1_T1.js Pass
 test/built-ins/Number/S9.3_A4.2_T1.js Pass
-test/built-ins/Number/S9.3_A5_T1.js Fail
+test/built-ins/Number/S9.3_A5_T1.js Pass
 test/built-ins/Number/bigint-conversion.js Fail
 test/built-ins/Number/is-a-constructor.js Pass
 test/built-ins/Number/isFinite/arg-is-not-number.js Pass
