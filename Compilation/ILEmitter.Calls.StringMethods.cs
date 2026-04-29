@@ -100,12 +100,13 @@ public partial class ILEmitter
                     EmitBoxIfNeeded(arguments[0]);
                     EmitExpression(arguments[1]);
                     EmitBoxIfNeeded(arguments[1]);
-                    IL.Emit(OpCodes.Call, _ctx.Runtime!.Stringify);
+                    // Pass both args as-is. Helper ToJsString-coerces in spec
+                    // order (search first, then replacement).
                 }
                 else
                 {
                     IL.Emit(OpCodes.Ldstr, "");
-                    IL.Emit(OpCodes.Ldstr, "");
+                    IL.Emit(OpCodes.Ldnull);
                 }
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.StringReplaceRegExp);
                 break;

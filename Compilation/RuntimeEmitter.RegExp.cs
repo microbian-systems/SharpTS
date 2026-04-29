@@ -932,12 +932,16 @@ public partial class RuntimeEmitter
 
     private void EmitStringReplaceRegExp(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // StringReplace(string str, object? pattern, string replacement) -> string
+        // StringReplace(string str, object? pattern, object replacement) -> string
+        // ECMA-262 22.1.3.18: ToString(searchValue) (step 4) happens BEFORE
+        // ToString(replaceValue) (step 5). The helper performs both coercions
+        // here in this order so a throwing toString on either argument
+        // propagates with the correct exception identity.
         var method = typeBuilder.DefineMethod(
             "StringReplaceRegExp",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.String,
-            [_types.String, _types.Object, _types.String]
+            [_types.String, _types.Object, _types.Object]
         );
         runtime.StringReplaceRegExp = method;
 
@@ -945,6 +949,7 @@ public partial class RuntimeEmitter
         var regexpLocal = il.DeclareLocal(runtime.TSRegExpType);
         var isStringPatternLabel = il.DefineLabel();
         var searchLocal = il.DeclareLocal(_types.String);
+        var replacementLocal = il.DeclareLocal(_types.String);
         var idxLocal = il.DeclareLocal(_types.Int32);
         var notFoundLabel = il.DefineLabel();
 
@@ -957,20 +962,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, regexpLocal);
         il.Emit(OpCodes.Brfalse, isStringPatternLabel);
 
-        // return regexp.Replace(str, replacement)
+        // RegExp pattern: ToJsString the replacement, then call regexp.Replace.
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Stloc, replacementLocal);
+
         il.Emit(OpCodes.Ldloc, regexpLocal);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldloc, replacementLocal);
         il.Emit(OpCodes.Call, _tsRegExpReplaceMethod);
         il.Emit(OpCodes.Ret);
 
         // String pattern fallback
         il.MarkLabel(isStringPatternLabel);
 
-        // ECMA-262 ToString protocol — handles objects with custom toString.
+        // Step 4: ToJsString(searchValue) FIRST.
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, searchLocal);
+
+        // Step 5: ToJsString(replaceValue) AFTER the search has been coerced.
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Stloc, replacementLocal);
 
         // var idx = str.IndexOf(search)
         il.Emit(OpCodes.Ldarg_0);
@@ -989,7 +1003,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, idxLocal);
         il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Substring", [_types.Int32, _types.Int32])!);
 
-        il.Emit(OpCodes.Ldarg_2); // replacement
+        il.Emit(OpCodes.Ldloc, replacementLocal);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, idxLocal);

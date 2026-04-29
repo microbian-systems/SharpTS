@@ -287,21 +287,15 @@ public sealed class StringEmitter : ITypeEmitterStrategy
             emitter.EmitBoxIfNeeded(arguments[0]);
             emitter.EmitExpression(arguments[1]);
             emitter.EmitBoxIfNeeded(arguments[1]);
-            // ECMA-262 ToString protocol — handles objects with custom toString
-            // (a throwing toString on the replacement now propagates instead of
-            // being silently debug-dumped by the legacy `Stringify` path).
-            //
-            // Functional replacement (callable replaceValue per ECMA-262
-            // 22.1.3.18 step 3) is NOT yet wired through — partial impl
-            // attempted broke real-world callers (debug npm formatter relies
-            // on capture-group args). Skip until proper capture-group
-            // forwarding lands.
-            il.Emit(OpCodes.Call, ctx.Runtime!.ToJsString);
+            // Pass both args as-is. The helper does ToJsString in the right
+            // order — search first (ECMA-262 22.1.3.18 step 4), then
+            // replacement (step 5) — so a throwing toString on either arg
+            // propagates with the correct exception identity.
         }
         else
         {
             il.Emit(OpCodes.Ldstr, "");
-            il.Emit(OpCodes.Ldstr, "");
+            il.Emit(OpCodes.Ldnull);
         }
         il.Emit(OpCodes.Call, ctx.Runtime!.StringReplaceRegExp);
     }
