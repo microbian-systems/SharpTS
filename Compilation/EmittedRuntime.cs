@@ -336,6 +336,8 @@ public class EmittedRuntime
     public MethodBuilder NumberPrototypePopulateMethod { get; set; } = null!;
     /// <summary>Generic <c>$Runtime</c> stub used as MethodInfo backing for String.prototype wrappers without dedicated helpers (match/search/toString/valueOf/etc.) — only typeof + isConstructor are ever observed.</summary>
     public MethodBuilder StringPrototypeGenericStub { get; set; } = null!;
+    /// <summary>Strict variant of <see cref="StringPrototypeGenericStub"/> that throws TypeError on null/undefined receivers per ECMA-262 22.1.3.* step 1 (RequireObjectCoercible). Used for borrowed-method calls of <c>String.prototype.match/search/matchAll/etc.</c></summary>
+    public MethodBuilder StringPrototypeStrictStub { get; set; } = null!;
     /// <summary>$Runtime.ObjectProtoToString(this) — ECMA-262 19.1.3.6 toString returns "[object X]" branded by receiver type. Wired into Object.prototype.toString slot for borrowed-method dispatch (`obj.toString = Object.prototype.toString; obj.toString()`).</summary>
     public MethodBuilder ObjectProtoToStringHelper { get; set; } = null!;
     /// <summary>$Runtime.ObjectProtoValueOf(this) — ECMA-262 19.1.3.7. Returns the receiver as-is (primitives stay primitive, objects stay objects). Wired into Object.prototype.valueOf so the materializer's ToPrimitive picks up the inherited method and sees a non-primitive return for plain objects (triggering the toString fallback).</summary>

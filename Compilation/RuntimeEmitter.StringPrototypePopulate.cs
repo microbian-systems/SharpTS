@@ -118,13 +118,21 @@ public partial class RuntimeEmitter
         // and inline dispatch handle direct invocations of these on actual
         // strings; the wrappers here are only observed by Test262
         // `not-a-constructor.js` harness probes.
-        Wire("match",                runtime.StringPrototypeGenericStub,   1);
-        Wire("matchAll",             runtime.StringPrototypeGenericStub,   1);
-        Wire("search",               runtime.StringPrototypeGenericStub,   1);
+        // match/matchAll/search throw TypeError on null/undefined receiver per
+        // ECMA-262 22.1.3.* step 1. Use the strict stub so borrowed-method
+        // patterns (`String.prototype.match.call(null, /./)`) propagate.
+        Wire("match",                runtime.StringPrototypeStrictStub,    1);
+        Wire("matchAll",             runtime.StringPrototypeStrictStub,    1);
+        Wire("search",               runtime.StringPrototypeStrictStub,    1);
         Wire("toString",             runtime.StringPrototypeGenericStub,   0);
         Wire("valueOf",              runtime.StringPrototypeGenericStub,   0);
-        Wire("toLocaleLowerCase",    runtime.StringPrototypeGenericStub,   0);
-        Wire("toLocaleUpperCase",    runtime.StringPrototypeGenericStub,   0);
+        // ECMA-262 22.1.3.21/22 RequireObjectCoercible(this) is the first step.
+        // Wire to the strict StringToLowerCase / StringToUpperCase variants so
+        // borrowed-method calls on null/undefined throw TypeError instead of
+        // returning empty string. We don't actually localize (no Intl in the
+        // standalone DLL), so toLocaleX === toX is acceptable per spec note.
+        Wire("toLocaleLowerCase",    runtime.StringToLowerCase,            0);
+        Wire("toLocaleUpperCase",    runtime.StringToUpperCase,            0);
         Wire("isWellFormed",         runtime.StringPrototypeGenericStub,   0);
         Wire("toWellFormed",         runtime.StringPrototypeGenericStub,   0);
 

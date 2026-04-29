@@ -41,6 +41,13 @@ public partial class RuntimeEmitter
         // those wirings legitimately call with non-string receivers.
         runtime.StringPrototypeGenericStub = EmitStringStringStub(typeBuilder, runtime, "_StringPrototypeStub", "ToString", strictReceiver: false);
 
+        // Strict variant for methods whose first spec step is RequireObjectCoercible
+        // (match/matchAll/search/etc.) — these throw TypeError on null/undefined
+        // receivers per ECMA-262 22.1.3.* step 1. Used for borrowed-method
+        // patterns (`String.prototype.match.call(null, /./)`) where the inline
+        // dispatch path doesn't fire.
+        runtime.StringPrototypeStrictStub = EmitStringStringStub(typeBuilder, runtime, "_StringPrototypeStrictStub", "ToString", strictReceiver: true);
+
         // ECMA-262 19.1.3.6 Object.prototype.toString — returns "[object X]"
         // brand based on receiver type. Wired into the Object.prototype slot
         // for borrowed-method patterns. Mirrors the syntactic
