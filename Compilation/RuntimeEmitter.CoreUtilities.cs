@@ -1926,6 +1926,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Stloc, emptyArgsLocal);
 
+        // Track whether either toString or valueOf was defined+callable but
+        // returned a non-primitive. ECMA-262 7.1.1.1 OrdinaryToPrimitive
+        // requires throwing TypeError in this case (both methods produced
+        // objects). The lenient "[object Object]" fallback is only correct
+        // when neither method exists.
+        var sawNonPrimitiveLocal = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, sawNonPrimitiveLocal);
+
         // ECMA-262 ToPrimitive(O, "string"): try toString, then valueOf.
         void TryInvoke(string name, Label afterLabel)
         {
@@ -1966,7 +1975,9 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, resultLocal);
             il.Emit(OpCodes.Isinst, _types.Boolean);
             il.Emit(OpCodes.Brtrue, resultIsString);
-            // Not primitive → continue to next attempt.
+            // Not primitive — set the flag and continue to next attempt.
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Stloc, sawNonPrimitiveLocal);
             il.Emit(OpCodes.Br, afterLabel);
 
             il.MarkLabel(resultIsString);
@@ -1981,6 +1992,18 @@ public partial class RuntimeEmitter
         var afterValueOf = il.DefineLabel();
         TryInvoke("valueOf", afterValueOf);
         il.MarkLabel(afterValueOf);
+
+        // If at least one of toString/valueOf was defined+callable but returned
+        // a non-primitive, ECMA-262 demands TypeError. Otherwise (neither method
+        // existed), fall back to "[object Object]" — see comment below.
+        var noThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, sawNonPrimitiveLocal);
+        il.Emit(OpCodes.Brfalse, noThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert object to primitive value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(noThrowLabel);
 
         // No usable toString/valueOf on this object — fall back to "[object Object]"
         // per ECMA-262 19.1.3.6 (Object.prototype.toString returns this for plain objects).
