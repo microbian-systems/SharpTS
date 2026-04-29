@@ -56,88 +56,11 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
             return true;
         }
 
-        // Math.sumPrecise(items) — takes an iterable, NOT varargs of numbers.
-        // Per ECMA-262 staged proposal: returns -0 on empty; NaN if any value
-        // is NaN; NaN if both +Infinity and -Infinity present; otherwise sum.
-        // Throws TypeError if any element is not a Number.
-        // Naive implementation — won't match the maximally precise expected
-        // values on the tests with floating-point ordering tricks, but covers
-        // sum-is-NaN, sum-is-infinite, sum-is-minus-zero, throws-on-non-number.
-        if (methodName == "sumPrecise" && arguments.Count == 1)
-        {
-            // Materialize the input iterable into a List<object>.
-            emitter.EmitExpression(arguments[0]);
-            emitter.EmitBoxIfNeeded(arguments[0]);
-            il.Emit(OpCodes.Ldsfld, ctx.Runtime!.SymbolIterator);
-            il.Emit(OpCodes.Ldtoken, ctx.Runtime!.RuntimeType);
-            il.Emit(OpCodes.Call, ctx.Types.TypeGetTypeFromHandle);
-            il.Emit(OpCodes.Call, ctx.Runtime!.IterateToList);
-            var listLocal = il.DeclareLocal(ctx.Types.ListOfObject);
-            il.Emit(OpCodes.Stloc, listLocal);
-
-            var sumLocal = il.DeclareLocal(ctx.Types.Double);
-            // sum = -0.0 (empty input → return -0)
-            il.Emit(OpCodes.Ldc_R8, -0.0);
-            il.Emit(OpCodes.Stloc, sumLocal);
-
-            var countLocal = il.DeclareLocal(ctx.Types.Int32);
-            il.Emit(OpCodes.Ldloc, listLocal);
-            il.Emit(OpCodes.Callvirt, ctx.Types.GetProperty(ctx.Types.ListOfObject, "Count").GetGetMethod()!);
-            il.Emit(OpCodes.Stloc, countLocal);
-
-            var emptyLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldloc, countLocal);
-            il.Emit(OpCodes.Brfalse, emptyLabel);
-
-            // Iterate. For each element, call ToNumber, accumulate.
-            var iLocal = il.DeclareLocal(ctx.Types.Int32);
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Stloc, iLocal);
-            // sum = 0.0 (positive — for non-empty input)
-            il.Emit(OpCodes.Ldc_R8, 0.0);
-            il.Emit(OpCodes.Stloc, sumLocal);
-
-            var loopStart = il.DefineLabel();
-            var loopEnd = il.DefineLabel();
-            il.MarkLabel(loopStart);
-            il.Emit(OpCodes.Ldloc, iLocal);
-            il.Emit(OpCodes.Ldloc, countLocal);
-            il.Emit(OpCodes.Bge, loopEnd);
-            // val = list[i]
-            il.Emit(OpCodes.Ldloc, listLocal);
-            il.Emit(OpCodes.Ldloc, iLocal);
-            il.Emit(OpCodes.Callvirt, ctx.Types.ListOfObject.GetMethod("get_Item", [ctx.Types.Int32])!);
-            // ECMA-262 sumPrecise step 6: throw TypeError if value is not a Number.
-            var valLocal = il.DeclareLocal(ctx.Types.Object);
-            il.Emit(OpCodes.Stloc, valLocal);
-            il.Emit(OpCodes.Ldloc, valLocal);
-            il.Emit(OpCodes.Isinst, ctx.Types.Double);
-            var isDoubleLabel = il.DefineLabel();
-            il.Emit(OpCodes.Brtrue, isDoubleLabel);
-            il.Emit(OpCodes.Ldstr, "Math.sumPrecise: argument must be a number");
-            il.Emit(OpCodes.Newobj, ctx.Runtime!.TSTypeErrorCtor);
-            il.Emit(OpCodes.Call, ctx.Runtime!.CreateException);
-            il.Emit(OpCodes.Throw);
-            il.MarkLabel(isDoubleLabel);
-            // sum += (double)val
-            il.Emit(OpCodes.Ldloc, sumLocal);
-            il.Emit(OpCodes.Ldloc, valLocal);
-            il.Emit(OpCodes.Unbox_Any, ctx.Types.Double);
-            il.Emit(OpCodes.Add);
-            il.Emit(OpCodes.Stloc, sumLocal);
-            // i++
-            il.Emit(OpCodes.Ldloc, iLocal);
-            il.Emit(OpCodes.Ldc_I4_1);
-            il.Emit(OpCodes.Add);
-            il.Emit(OpCodes.Stloc, iLocal);
-            il.Emit(OpCodes.Br, loopStart);
-            il.MarkLabel(loopEnd);
-
-            il.MarkLabel(emptyLabel);
-            il.Emit(OpCodes.Ldloc, sumLocal);
-            il.Emit(OpCodes.Box, ctx.Types.Double);
-            return true;
-        }
+        // Math.sumPrecise: deferred. The test cluster includes a "infinite
+        // iterator with non-Number elements" pattern that requires manual
+        // iteration with per-element TypeError checks rather than full
+        // materialization. The naive materialize-then-sum approach hangs the
+        // test runner. Reverting until lazy iteration support exists.
 
         // Emit all arguments as doubles. Per ECMA-262, Math.* methods coerce
         // each arg via ToNumber — undefined → NaN, null → +0, "abc" → NaN, etc.
@@ -585,5 +508,5 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
             or "asin" or "acos" or "atan" or "atan2" or "sinh" or "cosh" or "tanh"
             or "asinh" or "acosh" or "atanh" or "cbrt" or "log10" or "log2"
             or "log1p" or "expm1" or "fround" or "clz32" or "imul" or "hypot"
-            or "f16round" or "sumPrecise";
+            or "f16round";
 }
