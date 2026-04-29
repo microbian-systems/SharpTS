@@ -204,6 +204,31 @@ public partial class RuntimeEmitter
         EmitProxyInvokeCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), notProxyLabel);
 
         il.MarkLabel(notProxyLabel);
+        // Per ECMA-262 7.2.1 IsCallable: invoking a non-callable value throws
+        // TypeError. Pre-fix returned null silently — `JSON()` (calling the
+        // singleton dict directly) and similar patterns produced null instead
+        // of the spec-required throw. Limit the throw to Dictionary / $Object
+        // shapes (the user-extensible "object" carriers); other unhandled
+        // types fall through to null to preserve legacy compat for shapes
+        // that aren't inspected by test262 (e.g. boxed primitive markers).
+        var fallbackNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        var notDictForThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notDictForThrowLabel);
+        il.Emit(OpCodes.Ldstr, "is not a function");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notDictForThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, fallbackNullLabel);
+        il.Emit(OpCodes.Ldstr, "is not a function");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(fallbackNullLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
