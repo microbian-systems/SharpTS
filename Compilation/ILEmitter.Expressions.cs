@@ -197,10 +197,15 @@ public partial class ILEmitter
             return;
         }
 
-        // Check if it's a top-level function - wrap as TSFunction
+        // Check if it's a top-level function - wrap as TSFunction.
+        // Stage 6r: route through GetOrCreate (MethodInfo-keyed instance cache)
+        // so multiple references to the same function decl produce the SAME
+        // $TSFunction wrapper. Without this, `e.constructor === ErrorClass`
+        // and `instanceof ErrorClass` checks across separately-loaded
+        // references fail with reference inequality even though the
+        // underlying MethodInfo is the same.
         if (_ctx.Functions.TryGetValue(_ctx.ResolveFunctionName(name), out var methodBuilder))
         {
-            IL.Emit(OpCodes.Ldnull); // target (static method)
             IL.Emit(OpCodes.Ldtoken, methodBuilder);
             // Use two-parameter GetMethodFromHandle with declaring type for proper token resolution in persisted assemblies
             if (_ctx.ProgramType != null)
@@ -214,8 +219,9 @@ public partial class ILEmitter
             }
             IL.Emit(OpCodes.Castclass, _ctx.Types.MethodInfo);
 
-            // Use constructor with cached name/length to avoid reflection issues with MethodBuilder tokens
-            // Compute function arity at compile time
+            // Compute function arity at compile time. name/length are used only
+            // on first create (subsequent cache hits return the existing wrapper
+            // whose name/length are already set).
             int arity = 0;
             foreach (var param in methodBuilder.GetParameters())
             {
@@ -226,7 +232,8 @@ public partial class ILEmitter
             }
             IL.Emit(OpCodes.Ldstr, name);  // function name
             IL.Emit(OpCodes.Ldc_I4, arity);  // function length
-            EmitNewobjUnknown(_ctx.Runtime!.TSFunctionCtorWithCache);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.TSFunctionGetOrCreate);
+            SetStackUnknown();
             return;
         }
 

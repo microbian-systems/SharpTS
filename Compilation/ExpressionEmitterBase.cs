@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Compilation.Emitters;
@@ -1493,11 +1494,31 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
         if (Ctx.Functions.TryGetValue(Ctx.ResolveFunctionName(name), out var funcMethod))
         {
-            IL.Emit(OpCodes.Ldnull);
+            // Stage 6r: route through GetOrCreate (MethodInfo-keyed instance cache)
+            // so multiple references to the same function decl produce the SAME
+            // $TSFunction wrapper. Mirrors ILEmitter.Expressions.cs.
             IL.Emit(OpCodes.Ldtoken, funcMethod);
-            IL.Emit(OpCodes.Call, Types.MethodBaseGetMethodFromHandle);
+            if (Ctx.ProgramType != null)
+            {
+                IL.Emit(OpCodes.Ldtoken, Ctx.ProgramType);
+                IL.Emit(OpCodes.Call, Types.GetMethod(Types.MethodBase, "GetMethodFromHandle", Types.RuntimeMethodHandle, Types.RuntimeTypeHandle));
+            }
+            else
+            {
+                IL.Emit(OpCodes.Call, Types.GetMethod(Types.MethodBase, "GetMethodFromHandle", Types.RuntimeMethodHandle));
+            }
             IL.Emit(OpCodes.Castclass, typeof(MethodInfo));
-            IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSFunctionCtor);
+            int arity = 0;
+            foreach (var param in funcMethod.GetParameters())
+            {
+                if (param.IsOptional) continue;
+                if (param.ParameterType == typeof(List<object>)) continue;
+                if (param.Name?.StartsWith("__") == true) continue;
+                arity++;
+            }
+            IL.Emit(OpCodes.Ldstr, name);
+            IL.Emit(OpCodes.Ldc_I4, arity);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.TSFunctionGetOrCreate);
             SetStackUnknown();
             return true;
         }
