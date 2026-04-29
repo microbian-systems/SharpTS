@@ -2416,6 +2416,25 @@ public partial class RuntimeEmitter
         TryToPrim("toString", afterToString);
         il.MarkLabel(afterToString);
 
+        // ECMA-262 7.1.1.1 OrdinaryToPrimitive: if neither valueOf nor toString
+        // returned a primitive (both returned objects, or neither was callable),
+        // throw TypeError. Pre-fix: the value fell through to NaN, silently
+        // masking the spec-required throw.
+        var afterTypeErrorLabel = il.DefineLabel();
+        var stillObjAfterToString = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, stillObjAfterToString);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, afterTypeErrorLabel);
+        il.MarkLabel(stillObjAfterToString);
+        il.Emit(OpCodes.Ldstr, "Cannot convert object to primitive value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(afterTypeErrorLabel);
+
         il.MarkLabel(skipToPrimLabel);
 
         // null => 0.0
