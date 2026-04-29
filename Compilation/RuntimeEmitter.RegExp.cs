@@ -1103,33 +1103,94 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.StringBuilder.GetMethod("Append", [_types.String, _types.Int32, _types.Int32])!);
         il.Emit(OpCodes.Pop);
 
-        // Build args: [matched, group1, group2, ..., index, str]. Skipping
-        // capture-group support for now — pass [matched, index, str] only.
-        // ECMA-262 functional replacements still get the matched string and
-        // position, which covers the dominant pattern.
-        var matchedStrLocal = il.DeclareLocal(_types.String);
+        // ECMA-262 22.1.3.18 functional replacement args:
+        //   [matched, p1, p2, ..., pN, position, string]
+        // where pK is the K-th capture group (or undefined if not matched).
+        // .NET Regex's Match.Groups[0] is the whole match; Groups[1..N] are
+        // captures. Args length = Groups.Count + 2.
+        //
+        // Without capture-group forwarding the npm `debug` formatter (which
+        // does `format.replace(re, function(match, format){...})`) gets `format`
+        // bound to the position number rather than the captured group string.
+        var groupsLocal = il.DeclareLocal(typeof(GroupCollection));
         il.Emit(OpCodes.Ldloc, matchLocal);
-        il.Emit(OpCodes.Callvirt, typeof(Capture).GetProperty("Value")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, matchedStrLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Match).GetProperty("Groups")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, groupsLocal);
+
+        var groupCountLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, groupsLocal);
+        il.Emit(OpCodes.Callvirt, typeof(GroupCollection).GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, groupCountLocal);
 
         var argsArrLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Ldc_I4_3);
+        // new object[groupCount + 2]
+        il.Emit(OpCodes.Ldloc, groupCountLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, argsArrLocal);
+
+        // for (int gi = 0; gi < groupCount; gi++)
+        //   args[gi] = groups[gi].Success ? groups[gi].Value : $Undefined.Instance;
+        var gIdxLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldloc, matchedStrLocal);
+        il.Emit(OpCodes.Stloc, gIdxLocal);
+
+        var groupLoopStart = il.DefineLabel();
+        var groupLoopEnd = il.DefineLabel();
+        il.MarkLabel(groupLoopStart);
+        il.Emit(OpCodes.Ldloc, gIdxLocal);
+        il.Emit(OpCodes.Ldloc, groupCountLocal);
+        il.Emit(OpCodes.Bge, groupLoopEnd);
+
+        // group = groups[gi]
+        var groupLocal = il.DeclareLocal(typeof(Group));
+        il.Emit(OpCodes.Ldloc, groupsLocal);
+        il.Emit(OpCodes.Ldloc, gIdxLocal);
+        il.Emit(OpCodes.Callvirt, typeof(GroupCollection).GetMethod("get_Item", [_types.Int32])!);
+        il.Emit(OpCodes.Stloc, groupLocal);
+
+        // args[gi] = group.Success ? group.Value : $Undefined.Instance
+        il.Emit(OpCodes.Ldloc, argsArrLocal);
+        il.Emit(OpCodes.Ldloc, gIdxLocal);
+        il.Emit(OpCodes.Ldloc, groupLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Group).GetProperty("Success")!.GetGetMethod()!);
+        var groupSuccessLabel = il.DefineLabel();
+        var groupStoreLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, groupSuccessLabel);
+        // !Success: load undefined
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Br, groupStoreLabel);
+        il.MarkLabel(groupSuccessLabel);
+        il.Emit(OpCodes.Ldloc, groupLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Capture).GetProperty("Value")!.GetGetMethod()!);
+        il.MarkLabel(groupStoreLabel);
         il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
+
+        // gi++
+        il.Emit(OpCodes.Ldloc, gIdxLocal);
         il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, gIdxLocal);
+        il.Emit(OpCodes.Br, groupLoopStart);
+
+        il.MarkLabel(groupLoopEnd);
+
+        // args[groupCount] = (double)matchIdx
+        il.Emit(OpCodes.Ldloc, argsArrLocal);
+        il.Emit(OpCodes.Ldloc, groupCountLocal);
         il.Emit(OpCodes.Ldloc, matchIdxLocal);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
+
+        // args[groupCount + 1] = str
+        il.Emit(OpCodes.Ldloc, argsArrLocal);
+        il.Emit(OpCodes.Ldloc, groupCountLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Stloc, argsArrLocal);
 
         // result = $Runtime.InvokeMethodValue(undefined, func, args)
         var resultObjLocal = il.DeclareLocal(_types.Object);
