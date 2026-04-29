@@ -70,6 +70,36 @@ public partial class ILEmitter
             }
         }
 
+        // ECMA-262 non-callable singletons: JSON, Math, Reflect, Atomics
+        // are objects without [[Call]] internal method. Calling them must
+        // throw TypeError. Pattern-match the syntactic Variable callee so
+        // we don't trip on user code that names a local/parameter the
+        // same — only fires when the resolver agrees the name resolves
+        // to the global (we approximate by checking the JSON/Math/etc.
+        // singleton field exists in the runtime and the local table
+        // doesn't claim the identifier).
+        if (c.Callee is Expr.Variable nonCallableVar)
+        {
+            var name = nonCallableVar.Name.Lexeme;
+            bool isNonCallableSingleton = name switch
+            {
+                "JSON" or "Math" or "Reflect" or "Atomics" => true,
+                _ => false
+            };
+            if (isNonCallableSingleton
+                && _ctx.Locals.GetLocal(name) == null
+                && _ctx.Functions.TryGetValue(_ctx.ResolveFunctionName(name), out _) == false)
+            {
+                IL.Emit(OpCodes.Ldstr, name + " is not a function");
+                IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSTypeErrorCtor);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateException);
+                IL.Emit(OpCodes.Throw);
+                IL.Emit(OpCodes.Ldnull);  // unreachable, balance stack
+                SetStackUnknown();
+                return;
+            }
+        }
+
         // External .NET type static methods (e.g., Console.WriteLine() via @DotNetType)
         // This is ILEmitter-only — requires TypeMapper.ExternalTypes + complex type conversion helpers
         if (c.Callee is Expr.Get externalStaticGet &&
