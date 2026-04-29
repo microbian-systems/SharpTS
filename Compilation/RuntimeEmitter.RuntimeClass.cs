@@ -378,7 +378,13 @@ public partial class RuntimeEmitter
         EmitCreateException(typeBuilder, runtime);
         EmitWrapException(typeBuilder, runtime);
         EmitToNumber(typeBuilder, runtime);
-        EmitConvertToNumber(typeBuilder, runtime);
+        // ConvertToNumber: pre-declare here (so `runtime.ConvertToNumber` is
+        // assigned before any later emitter that might reference it via the
+        // MethodBuilder slot), but defer the body emit until after
+        // GetProperty/InvokeMethodValue so the ToPrimitive(value, "number")
+        // chain (valueOf/toString) on Dictionary/$Object args can call those
+        // helpers. The split mirrors DeclareArrayLikeMaterialize's pattern.
+        DeclareConvertToNumber(typeBuilder, runtime);
         EmitJsToInt32(typeBuilder, runtime);
         EmitIsTruthy(typeBuilder, runtime);
         EmitTypeOf(typeBuilder, runtime);
@@ -445,6 +451,10 @@ public partial class RuntimeEmitter
         EmitGetProperty(typeBuilder, runtime);
         // ToJsString depends on GetProperty + InvokeMethodValue + Stringify; emit after those.
         EmitToJsString(typeBuilder, runtime);
+        // ConvertToNumber's body: emit AFTER GetProperty/InvokeMethodValue so
+        // its ToPrimitive(value, "number") on Dictionary/$Object args can call
+        // those helpers.
+        EmitConvertToNumber(typeBuilder, runtime);
         // String.raw lives here so its body can read `template.raw` via
         // GetProperty and ToString-coerce substitutions via ToJsString.
         EmitStringRaw(typeBuilder, runtime);

@@ -2309,7 +2309,14 @@ public partial class RuntimeEmitter
     /// Emits ConvertToNumber — matches JS Number(value) semantics.
     /// Differs from ToNumber in that empty/whitespace strings return 0 (not NaN).
     /// </summary>
-    private void EmitConvertToNumber(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    /// <summary>
+    /// Pre-declares the $Runtime.ConvertToNumber MethodBuilder so its slot is
+    /// assigned before any other emitter binds to it. Body is filled in by
+    /// <see cref="EmitConvertToNumber"/> later, after GetProperty/InvokeMethodValue
+    /// are available (the ToPrimitive(value, "number") chain on Dictionary/$Object
+    /// args calls those helpers).
+    /// </summary>
+    internal void DeclareConvertToNumber(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
             "ConvertToNumber",
@@ -2318,6 +2325,11 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
         runtime.ConvertToNumber = method;
+    }
+
+    private void EmitConvertToNumber(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = (MethodBuilder)runtime.ConvertToNumber;
 
         var il = method.GetILGenerator();
 
@@ -2328,15 +2340,93 @@ public partial class RuntimeEmitter
         var stringLabel = il.DefineLabel();
         var nanLabel = il.DefineLabel();
 
-        // null => 0.0
+        // ECMA-262 7.1.4 ToNumber on object: ToPrimitive(value, "number") which
+        // tries valueOf first, then toString. Without this, Number({valueOf:
+        // () => 1}) returns NaN (object falls through to nan-label).
+        // Apply for Dictionary or $Object only — those hold user-defined
+        // valueOf/toString. Boxed primitives (via $Object marker fields) are
+        // also $Object, which is correct: their valueOf returns the underlying
+        // primitive per ECMA-262 19.x.3.7.
+        var argLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, argLocal);
+
+        var skipToPrimLabel = il.DefineLabel();
+        var doToPrimLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, doToPrimLabel);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, skipToPrimLabel);
+        il.MarkLabel(doToPrimLabel);
+
+        // ToPrimitive: try valueOf, then toString. Mirrors EmitLengthToPrimitive's
+        // logic but writes to argLocal so the existing branches below see the
+        // (possibly replaced) primitive value.
+        var emptyArgsLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, emptyArgsLocal);
+
+        void TryToPrim(string name, Label afterLabel)
+        {
+            var fnLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldloc, argLocal);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Stloc, fnLocal);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Brfalse, afterLabel);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brtrue, afterLabel);
+
+            var resultLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldloc, argLocal);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Ldloc, emptyArgsLocal);
+            il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            // Still object? Fall through to next attempt without committing.
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+            il.Emit(OpCodes.Brtrue, afterLabel);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+            il.Emit(OpCodes.Brtrue, afterLabel);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Stloc, argLocal);
+        }
+
+        var afterValueOf = il.DefineLabel();
+        TryToPrim("valueOf", afterValueOf);
+        il.MarkLabel(afterValueOf);
+
+        var afterToString = il.DefineLabel();
+        var stillObj = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, stillObj);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, afterToString);
+        il.MarkLabel(stillObj);
+        TryToPrim("toString", afterToString);
+        il.MarkLabel(afterToString);
+
+        il.MarkLabel(skipToPrimLabel);
+
+        // null => 0.0
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
         // ECMA-262 21.1.1.1 → 7.1.4: Number(Symbol) throws TypeError. Without
         // this branch the value falls through to the "everything else → NaN"
         // tail, masking the spec-required throw.
         var notSymbolConvLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
         il.Emit(OpCodes.Brfalse, notSymbolConvLabel);
         il.Emit(OpCodes.Ldstr, "Cannot convert a Symbol value to a number");
@@ -2353,22 +2443,22 @@ public partial class RuntimeEmitter
         // when first attempted). Deferred.
 
         // undefined => NaN
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, undefinedLabel);
 
         // double => return as-is
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
         il.Emit(OpCodes.Brtrue, doubleLabel);
 
         // bool => true:1.0, false:0.0
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Isinst, _types.Boolean);
         il.Emit(OpCodes.Brtrue, boolLabel);
 
         // string => trim, empty→0, tryparse, else NaN
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, stringLabel);
 
@@ -2387,13 +2477,13 @@ public partial class RuntimeEmitter
 
         // double case: unbox and return
         il.MarkLabel(doubleLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Unbox_Any, _types.Double);
         il.Emit(OpCodes.Ret);
 
         // bool case: unbox, convert to float
         il.MarkLabel(boolLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Unbox_Any, _types.Boolean);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Ret);
@@ -2402,7 +2492,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(stringLabel);
         var trimmedLocal = il.DeclareLocal(_types.String);
         var resultLocal = il.DeclareLocal(_types.Double);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.String, "Trim"));
         il.Emit(OpCodes.Stloc, trimmedLocal);
