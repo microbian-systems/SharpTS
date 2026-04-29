@@ -4549,7 +4549,7 @@ test/built-ins/String/prototype/replace/S15.5.4.11_A1_T15.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T16.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T17.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T2.js Fail
-test/built-ins/String/prototype/replace/S15.5.4.11_A1_T4.js Fail
+test/built-ins/String/prototype/replace/S15.5.4.11_A1_T4.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T5.js TypeCheckError
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T6.js TypeCheckError
 test/built-ins/String/prototype/replace/S15.5.4.11_A1_T7.js Pass
@@ -4568,10 +4568,10 @@ test/built-ins/String/prototype/replace/S15.5.4.11_A2_T9.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A3_T1.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A3_T2.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A3_T3.js Pass
-test/built-ins/String/prototype/replace/S15.5.4.11_A4_T1.js Fail
-test/built-ins/String/prototype/replace/S15.5.4.11_A4_T2.js Fail
-test/built-ins/String/prototype/replace/S15.5.4.11_A4_T3.js Fail
-test/built-ins/String/prototype/replace/S15.5.4.11_A4_T4.js Fail
+test/built-ins/String/prototype/replace/S15.5.4.11_A4_T1.js Pass
+test/built-ins/String/prototype/replace/S15.5.4.11_A4_T2.js Pass
+test/built-ins/String/prototype/replace/S15.5.4.11_A4_T3.js Pass
+test/built-ins/String/prototype/replace/S15.5.4.11_A4_T4.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A5_T1.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A6.js Pass
 test/built-ins/String/prototype/replace/S15.5.4.11_A7.js Pass
