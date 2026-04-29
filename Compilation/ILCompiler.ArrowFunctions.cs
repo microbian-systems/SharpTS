@@ -644,6 +644,34 @@ public partial class ILCompiler
             case Expr.Spread sp:
                 CollectArrowsFromExpr(sp.Expression);
                 break;
+            case Expr.Comma cm:
+                CollectArrowsFromExpr(cm.Left);
+                CollectArrowsFromExpr(cm.Right);
+                break;
+            case Expr.LogicalAssign la:
+                CollectArrowsFromExpr(la.Value);
+                break;
+            case Expr.LogicalSet lsObj:
+                CollectArrowsFromExpr(lsObj.Object);
+                CollectArrowsFromExpr(lsObj.Value);
+                break;
+            case Expr.LogicalSetIndex lsi:
+                CollectArrowsFromExpr(lsi.Object);
+                CollectArrowsFromExpr(lsi.Index);
+                CollectArrowsFromExpr(lsi.Value);
+                break;
+            case Expr.CallPrivate cp:
+                CollectArrowsFromExpr(cp.Object);
+                foreach (var arg in cp.Arguments)
+                    CollectArrowsFromExpr(arg);
+                break;
+            case Expr.GetPrivate gp:
+                CollectArrowsFromExpr(gp.Object);
+                break;
+            case Expr.SetPrivate sp2:
+                CollectArrowsFromExpr(sp2.Object);
+                CollectArrowsFromExpr(sp2.Value);
+                break;
             case Expr.ClassExpr ce:
                 // Collect the class expression for later definition
                 CollectClassExpression(ce);
