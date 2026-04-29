@@ -3726,7 +3726,7 @@ test/built-ins/Number/S15.7.5_A1_T05.js Pass
 test/built-ins/Number/S15.7.5_A1_T06.js Pass
 test/built-ins/Number/S15.7.5_A1_T07.js Pass
 test/built-ins/Number/S8.12.8_A3.js Pass
-test/built-ins/Number/S8.12.8_A4.js Fail
+test/built-ins/Number/S8.12.8_A4.js Pass
 test/built-ins/Number/S9.1_A1_T1.js TypeCheckError
 test/built-ins/Number/S9.3.1_A1.js Pass
 test/built-ins/Number/S9.3.1_A10.js TypeCheckError
