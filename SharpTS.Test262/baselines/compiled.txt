@@ -3295,7 +3295,7 @@ test/built-ins/JSON/stringify/not-a-constructor.js Pass
 test/built-ins/JSON/stringify/prop-desc.js TypeCheckError
 test/built-ins/JSON/stringify/property-order.js TypeCheckError
 test/built-ins/JSON/stringify/replacer-array-abrupt.js Fail
-test/built-ins/JSON/stringify/replacer-array-duplicates.js Fail
+test/built-ins/JSON/stringify/replacer-array-duplicates.js Pass
 test/built-ins/JSON/stringify/replacer-array-empty.js Pass
 test/built-ins/JSON/stringify/replacer-array-number-object.js Fail
 test/built-ins/JSON/stringify/replacer-array-number.js Pass
@@ -3339,7 +3339,7 @@ test/built-ins/JSON/stringify/value-function.js Pass
 test/built-ins/JSON/stringify/value-number-negative-zero.js Pass
 test/built-ins/JSON/stringify/value-number-non-finite.js Pass
 test/built-ins/JSON/stringify/value-number-object.js Fail
-test/built-ins/JSON/stringify/value-object-abrupt.js Fail
+test/built-ins/JSON/stringify/value-object-abrupt.js Pass
 test/built-ins/JSON/stringify/value-object-circular.js TypeCheckError
 test/built-ins/JSON/stringify/value-object-proxy-revoked.js Fail
 test/built-ins/JSON/stringify/value-object-proxy.js Fail

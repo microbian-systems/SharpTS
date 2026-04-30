@@ -540,9 +540,12 @@ public partial class RuntimeEmitter
         il.MarkLabel(classInstanceLabel);
         var classFieldsLocal = il.DeclareLocal(_types.DictionaryStringObject);
         var noClassFieldsLabel = il.DefineLabel();
+        // Use TSObjectMergeEnumerable to include accessor (getter) properties
+        // alongside data props per ECMA-262 25.5.2.4 EnumerableOwnPropertyNames.
+        // For non-$Object IHasFields receivers, this falls back to the same
+        // Fields getter that the original code used.
         il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
-        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsFieldsGetter);
+        il.Emit(OpCodes.Call, runtime.TSObjectMergeEnumerable);
         il.Emit(OpCodes.Stloc, classFieldsLocal);
         il.Emit(OpCodes.Ldloc, classFieldsLocal);
         il.Emit(OpCodes.Brfalse, noClassFieldsLabel);

@@ -475,14 +475,15 @@ public partial class RuntimeEmitter
         il.MarkLabel(dictLabel);
         EmitStringifyObject(il, method, valueLocal);
 
-        // Class instance - stringify via $IHasFields fields dictionary
+        // Class instance - stringify via $IHasFields fields dictionary.
+        // Use TSObjectMergeEnumerable to also include accessor (getter)
+        // properties for $Object receivers per ECMA-262 EnumerableOwnPropertyNames.
         il.MarkLabel(classInstanceLabel);
         var classFieldsLocal = il.DeclareLocal(_types.DictionaryStringObject);
         var noClassFieldsLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
-        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsFieldsGetter);
+        il.Emit(OpCodes.Call, runtime.TSObjectMergeEnumerable);
         il.Emit(OpCodes.Stloc, classFieldsLocal);
 
         il.Emit(OpCodes.Ldloc, classFieldsLocal);

@@ -221,6 +221,138 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits TSObjectMergeEnumerable(object obj) -> Dictionary&lt;string, object&gt;.
+    /// For \$Object receivers, returns a fresh dict containing every entry from
+    /// _fields PLUS getter-resolved entries from _getters (accessor properties
+    /// invoked via InvokeMethodValue with obj as \`this\`). For non-\$Object
+    /// receivers (including null and \$IHasFields user classes), returns the
+    /// receiver's Fields dict directly. Used by JSON.stringify to honor the
+    /// ECMA-262 25.5.2.4 spec rule that EnumerableOwnPropertyNames covers both
+    /// data and accessor properties.
+    /// </summary>
+    private void EmitTSObjectMergeEnumerable(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "TSObjectMergeEnumerable",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.DictionaryStringObject,
+            [_types.Object]
+        );
+        runtime.TSObjectMergeEnumerable = method;
+
+        var il = method.GetILGenerator();
+        var fallbackLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // If receiver is not $Object, fall back to the IHasFields path.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, fallbackLabel);
+
+        // result = new Dictionary<string, object>()
+        var resultLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // Copy _fields entries.
+        var fieldsLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsFieldsGetter);
+        il.Emit(OpCodes.Stloc, fieldsLocal);
+
+        var noFieldsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Brfalse, noFieldsLabel);
+
+        var fieldsEnumeratorType = _types.MakeGenericType(typeof(Dictionary<,>.Enumerator).GetGenericTypeDefinition(), _types.String, _types.Object);
+        var fieldsEnumLocal = il.DeclareLocal(fieldsEnumeratorType);
+        il.Emit(OpCodes.Ldloc, fieldsLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("GetEnumerator")!);
+        il.Emit(OpCodes.Stloc, fieldsEnumLocal);
+        var fieldsLoopStart = il.DefineLabel();
+        var fieldsLoopEnd = il.DefineLabel();
+        il.MarkLabel(fieldsLoopStart);
+        il.Emit(OpCodes.Ldloca, fieldsEnumLocal);
+        il.Emit(OpCodes.Call, fieldsEnumeratorType.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, fieldsLoopEnd);
+        var fkvLocal = il.DeclareLocal(_types.KeyValuePairStringObject);
+        il.Emit(OpCodes.Ldloca, fieldsEnumLocal);
+        il.Emit(OpCodes.Call, fieldsEnumeratorType.GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, fkvLocal);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloca, fkvLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Key").GetGetMethod()!);
+        il.Emit(OpCodes.Ldloca, fkvLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Value").GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object));
+        il.Emit(OpCodes.Br, fieldsLoopStart);
+        il.MarkLabel(fieldsLoopEnd);
+        il.MarkLabel(noFieldsLabel);
+
+        // Iterate _getters (if any). For each getter, invoke and store result.
+        var gettersLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetGettersDict);
+        il.Emit(OpCodes.Stloc, gettersLocal);
+
+        var noGettersLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, gettersLocal);
+        il.Emit(OpCodes.Brfalse, noGettersLabel);
+
+        var emptyArgsLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, emptyArgsLocal);
+
+        var gettersEnumLocal = il.DeclareLocal(fieldsEnumeratorType);
+        il.Emit(OpCodes.Ldloc, gettersLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("GetEnumerator")!);
+        il.Emit(OpCodes.Stloc, gettersEnumLocal);
+        var gLoopStart = il.DefineLabel();
+        var gLoopEnd = il.DefineLabel();
+        il.MarkLabel(gLoopStart);
+        il.Emit(OpCodes.Ldloca, gettersEnumLocal);
+        il.Emit(OpCodes.Call, fieldsEnumeratorType.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, gLoopEnd);
+        var gkvLocal = il.DeclareLocal(_types.KeyValuePairStringObject);
+        il.Emit(OpCodes.Ldloca, gettersEnumLocal);
+        il.Emit(OpCodes.Call, fieldsEnumeratorType.GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, gkvLocal);
+        // result[key] = InvokeMethodValue(obj, getter, [])
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloca, gkvLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Key").GetGetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, gkvLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Value").GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, emptyArgsLocal);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object));
+        il.Emit(OpCodes.Br, gLoopStart);
+        il.MarkLabel(gLoopEnd);
+        il.MarkLabel(noGettersLabel);
+
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        // Fallback: receiver isn't $Object — return the IHasFields dict directly.
+        il.MarkLabel(fallbackLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
+        var nullReturnLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, nullReturnLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsFieldsGetter);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(nullReturnLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits DefineSymbolAccessor(obj, key, getter, setter) — stores an accessor
     /// descriptor in the object's symbol-dict for computed symbol keys
     /// (e.g. `{ get [Symbol.toPrimitive]() {...} }`). Reuses

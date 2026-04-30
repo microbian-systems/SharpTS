@@ -69,6 +69,9 @@ public partial class RuntimeEmitter
         // Property: PropertyNames (for Object.keys/for-in)
         EmitTSObjectPropertyNames(typeBuilder, runtime);
 
+        // Method: GetGettersDict (exposes _getters for accessor-aware enumeration)
+        EmitTSObjectGetGettersField(typeBuilder, runtime);
+
         // Override: ToString()
         EmitTSObjectToString(typeBuilder, runtime);
 
@@ -627,6 +630,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsObjectFieldsField);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("Remove", [_types.String])!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits a public method that returns the internal _getters dict (or null
+    /// if no accessor properties have been defined). Used by JSON.stringify
+    /// (and other property-enumeration paths) to merge accessor-defined
+    /// properties into the iteration set per ECMA-262 25.5.2.4
+    /// EnumerableOwnPropertyNames.
+    /// </summary>
+    private void EmitTSObjectGetGettersField(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetGettersDict",
+            MethodAttributes.Public,
+            _types.DictionaryStringObject,
+            Type.EmptyTypes
+        );
+        runtime.TSObjectGetGettersDict = method;
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsObjectGettersField);
         il.Emit(OpCodes.Ret);
     }
 

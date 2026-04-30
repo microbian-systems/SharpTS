@@ -497,6 +497,7 @@ public class EmittedRuntime
     public MethodBuilder Random { get; set; } = null!;
     public MethodBuilder MathSumPrecise { get; set; } = null!;
     public MethodBuilder DefineSymbolAccessor { get; set; } = null!;
+    public MethodBuilder TSObjectMergeEnumerable { get; set; } = null!;
     public MethodBuilder GetEnumMemberName { get; set; } = null!;
 
     // Math static-method-as-value adapters. Wrap System.Math methods with
@@ -1029,6 +1030,7 @@ public class EmittedRuntime
     public MethodBuilder TSObjectHasGetter { get; set; } = null!;
     public MethodBuilder TSObjectHasSetter { get; set; } = null!;
     public MethodBuilder TSObjectGetGetter { get; set; } = null!;
+    public MethodBuilder TSObjectGetGettersDict { get; set; } = null!;
     public MethodBuilder TSObjectGetSetter { get; set; } = null!;
 
     // Module registry for dynamic imports
