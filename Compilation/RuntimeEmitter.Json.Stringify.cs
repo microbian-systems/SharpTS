@@ -33,10 +33,13 @@ public partial class RuntimeEmitter
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
         var checkBackslash = il.DefineLabel();
+        var checkBackspace = il.DefineLabel();
+        var checkFormFeed = il.DefineLabel();
         var checkNewline = il.DefineLabel();
         var checkReturn = il.DefineLabel();
         var checkTab = il.DefineLabel();
         var checkControl = il.DefineLabel();
+        var checkSurrogate = il.DefineLabel();
         var appendNormal = il.DefineLabel();
         var nextChar = il.DefineLabel();
 
@@ -80,9 +83,31 @@ public partial class RuntimeEmitter
         il.MarkLabel(checkBackslash);
         il.Emit(OpCodes.Ldloc, cLocal);
         il.Emit(OpCodes.Ldc_I4, (int)'\\');
-        il.Emit(OpCodes.Bne_Un, checkNewline);
+        il.Emit(OpCodes.Bne_Un, checkBackspace);
         il.Emit(OpCodes.Ldloc, sbLocal);
         il.Emit(OpCodes.Ldstr, "\\\\");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, nextChar);
+
+        // if (c == '\b') sb.Append("\\b");  -- ECMA-262 24.5.2.2 QuoteJSONString
+        il.MarkLabel(checkBackspace);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'\b');
+        il.Emit(OpCodes.Bne_Un, checkFormFeed);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, "\\b");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, nextChar);
+
+        // if (c == '\f') sb.Append("\\f");
+        il.MarkLabel(checkFormFeed);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'\f');
+        il.Emit(OpCodes.Bne_Un, checkNewline);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, "\\f");
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
         il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Br, nextChar);
@@ -124,7 +149,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(checkControl);
         il.Emit(OpCodes.Ldloc, cLocal);
         il.Emit(OpCodes.Ldc_I4, 32);
-        il.Emit(OpCodes.Bge, appendNormal);
+        il.Emit(OpCodes.Bge, checkSurrogate);
         // Control character - emit \uXXXX
         il.Emit(OpCodes.Ldloc, sbLocal);
         il.Emit(OpCodes.Ldstr, "\\u");
@@ -136,6 +161,79 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, cLocal);
         il.Emit(OpCodes.Stloc, charAsIntLocal);
         il.Emit(OpCodes.Ldloca, charAsIntLocal);
+        il.Emit(OpCodes.Ldstr, "x4");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "ToString", [_types.String]));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, nextChar);
+
+        // Surrogate handling per ECMA-262 well-formed JSON.stringify (2019).
+        // High surrogate (0xD800-0xDBFF) followed by low surrogate (0xDC00-0xDFFF)
+        // is a valid pair → emit both as-is (they encode a code point > U+FFFF).
+        // Otherwise (lone high, lone low) → escape as \uXXXX.
+        il.MarkLabel(checkSurrogate);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xD800);
+        il.Emit(OpCodes.Blt, appendNormal);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xE000);
+        il.Emit(OpCodes.Bge, appendNormal);
+
+        // c is in [0xD800, 0xE000): a surrogate. Determine high vs low.
+        var lowSurrogateLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xDC00);
+        il.Emit(OpCodes.Bge, lowSurrogateLabel);
+
+        // High surrogate (0xD800-0xDBFF): peek next char. If valid low → emit pair.
+        var loneHighLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, loneHighLabel);
+        var nextCharCheckLocal = il.DeclareLocal(_types.Char);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", [_types.Int32]));
+        il.Emit(OpCodes.Stloc, nextCharCheckLocal);
+        il.Emit(OpCodes.Ldloc, nextCharCheckLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xDC00);
+        il.Emit(OpCodes.Blt, loneHighLabel);
+        il.Emit(OpCodes.Ldloc, nextCharCheckLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xE000);
+        il.Emit(OpCodes.Bge, loneHighLabel);
+        // Valid pair: emit both chars as-is, advance by 2.
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.Char]));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloc, nextCharCheckLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.Char]));
+        il.Emit(OpCodes.Pop);
+        // i += 2 (extra +1 here, the +1 in nextChar advances normally).
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, nextChar);
+
+        // Lone high surrogate (no low after): escape as \uXXXX.
+        il.MarkLabel(loneHighLabel);
+        il.MarkLabel(lowSurrogateLabel);
+        // Both lone-high and lone-low fall here: emit \uXXXX.
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, "\\u");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        var surCharIntLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Stloc, surCharIntLocal);
+        il.Emit(OpCodes.Ldloca, surCharIntLocal);
         il.Emit(OpCodes.Ldstr, "x4");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "ToString", [_types.String]));
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", [_types.String]));
