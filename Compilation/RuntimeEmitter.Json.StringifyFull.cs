@@ -445,6 +445,16 @@ public partial class RuntimeEmitter
         // Check for toJSON() method
         EmitToJsonCheck(il, valueLocal, runtime);
 
+        // toJSON returned $Undefined → C# null result (caller treats as
+        // JSON-undefined). See note in StringifyValue.
+        var afterToJsonUndefLabelFull = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, afterToJsonUndefLabelFull);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(afterToJsonUndefLabelFull);
+
         // ECMA-262 25.5.2.3 step 9: skip callable values (return undefined).
         EmitFunctionSkipCheck(il, valueLocal, runtime);
 

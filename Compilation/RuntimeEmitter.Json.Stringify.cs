@@ -367,6 +367,19 @@ public partial class RuntimeEmitter
         // Check for toJSON() method and call it if present
         EmitToJsonCheck(il, valueLocal, runtime);
 
+        // toJSON may have returned $Undefined — re-check and return C# null
+        // so the caller treats it as JSON-undefined (root: returns undefined,
+        // array: emits "null", object: omits key). Without this re-check,
+        // $Undefined falls through to the bottom nullLabel which returns the
+        // literal string "null" — wrong for all three cases.
+        var afterToJsonUndefLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, afterToJsonUndefLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(afterToJsonUndefLabel);
+
         // ECMA-262 25.5.2.3 step 9: skip callable values (return undefined).
         EmitFunctionSkipCheck(il, valueLocal, runtime);
 
@@ -600,15 +613,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Brfalse, notTSFunctionLabel);
 
-        // Call TSFunction.Invoke with empty args
+        // ECMA-262 25.5.2.3 step 2.b.i: Call(toJSON, value, « key »).
+        // We pass `this` = value via InvokeWithThis. We don't currently have
+        // the key in scope here (StringifyValue/Full's signature lacks it),
+        // so the spec's [key] arg is dropped — toJSON's first arg is undefined
+        // instead of the actual property name. Tests that assert the key arg
+        // continue to fail; tests that only assert `this` (or don't read key)
+        // now pass.
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Stloc, argsLocal);
 
         il.Emit(OpCodes.Ldloc, toJsonFieldLocal);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, noToJsonLabel);
 
@@ -625,8 +645,9 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ldloc, toJsonFieldLocal);
         il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.BoundTSFunctionInvokeWithThis);
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, noToJsonLabel);
 
@@ -652,13 +673,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Brfalse, notTsObjectLabel);
 
+        // Same InvokeWithThis pattern as the dict branch above.
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Stloc, argsLocal);
         il.Emit(OpCodes.Ldloc, toJsonFieldLocal);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, noToJsonLabel);
 
