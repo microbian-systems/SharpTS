@@ -3334,7 +3334,7 @@ test/built-ins/JSON/stringify/value-bigint-replacer.js Pass
 test/built-ins/JSON/stringify/value-bigint-tojson-receiver.js TypeCheckError
 test/built-ins/JSON/stringify/value-bigint-tojson.js TypeCheckError
 test/built-ins/JSON/stringify/value-bigint.js Fail
-test/built-ins/JSON/stringify/value-boolean-object.js Fail
+test/built-ins/JSON/stringify/value-boolean-object.js Pass
 test/built-ins/JSON/stringify/value-function.js Pass
 test/built-ins/JSON/stringify/value-number-negative-zero.js Pass
 test/built-ins/JSON/stringify/value-number-non-finite.js Pass

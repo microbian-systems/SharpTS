@@ -370,6 +370,38 @@ public partial class RuntimeEmitter
         // ECMA-262 25.5.2.3 step 9: skip callable values (return undefined).
         EmitFunctionSkipCheck(il, valueLocal, runtime);
 
+        // Boxed-primitive unwrap (ECMA-262 25.5.2.3 step 4.a-c). $Object and
+        // Dictionary<string,object> instances created via `new Number(x)`,
+        // `new String(x)`, `new Boolean(x)` carry a __primitiveValue field
+        // (Stage 4z19 marker). SerializeJSONProperty must pull out the
+        // primitive — without this, JSON.stringify(new Boolean(true)) returns
+        // the marker dict instead of "true". Check both $Object and Dictionary
+        // since either may be the receiver shape.
+        var notBoxedPrim = il.DefineLabel();
+        var checkBoxedDict = il.DefineLabel();
+        var doBoxedUnwrap = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, doBoxedUnwrap);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, notBoxedPrim);
+        il.MarkLabel(doBoxedUnwrap);
+        var boxedPrimVal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, boxedPrimVal);
+        il.Emit(OpCodes.Ldloc, boxedPrimVal);
+        il.Emit(OpCodes.Brfalse, notBoxedPrim);
+        il.Emit(OpCodes.Ldloc, boxedPrimVal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, notBoxedPrim);
+        // Replace value with the unwrapped primitive and continue.
+        il.Emit(OpCodes.Ldloc, boxedPrimVal);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.MarkLabel(notBoxedPrim);
+
         // if (value is bool)
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Isinst, _types.Boolean);

@@ -429,6 +429,31 @@ public partial class RuntimeEmitter
         // ECMA-262 25.5.2.3 step 9: skip callable values (return undefined).
         EmitFunctionSkipCheck(il, valueLocal, runtime);
 
+        // Boxed-primitive unwrap (ECMA-262 25.5.2.3 step 4.a-c). Mirrors the same
+        // logic in EmitJsonStringifyHelper. See that method for the rationale.
+        var notBoxedPrimFull = il.DefineLabel();
+        var doBoxedUnwrapFull = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, doBoxedUnwrapFull);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, notBoxedPrimFull);
+        il.MarkLabel(doBoxedUnwrapFull);
+        var boxedPrimValFull = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, boxedPrimValFull);
+        il.Emit(OpCodes.Ldloc, boxedPrimValFull);
+        il.Emit(OpCodes.Brfalse, notBoxedPrimFull);
+        il.Emit(OpCodes.Ldloc, boxedPrimValFull);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, notBoxedPrimFull);
+        il.Emit(OpCodes.Ldloc, boxedPrimValFull);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.MarkLabel(notBoxedPrimFull);
+
         // Type checks
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Isinst, _types.Boolean);
