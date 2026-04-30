@@ -164,6 +164,8 @@ public class EmittedRuntime
     public MethodBuilder ArrayFilter { get; set; } = null!;
     public MethodBuilder ArrayForEach { get; set; } = null!;
     public MethodBuilder ArrayPush { get; set; } = null!;
+    public MethodBuilder ArrayPushProto { get; set; } = null!;
+    public MethodBuilder ArrayUnshiftProto { get; set; } = null!;
     public MethodBuilder ArrayFind { get; set; } = null!;
     public MethodBuilder ArrayFindIndex { get; set; } = null!;
     public MethodBuilder ArraySome { get; set; } = null!;

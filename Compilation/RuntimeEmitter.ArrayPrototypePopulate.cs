@@ -139,10 +139,14 @@ public partial class RuntimeEmitter
         Wire("keys",           runtime.ArrayKeys,           0);
         Wire("values",         runtime.ArrayValues,         0);
         Wire("slice",          runtime.ArraySlice,          2);
-        Wire("push",           runtime.ArrayPush,           1);
+        // push/unshift must be variadic — the proto-only wrappers loop over the
+        // params object[] so `Array.prototype.push.apply(arr, items)` spreads.
+        // Inline `arr.push(x)` continues to call the single-element ArrayPush
+        // helper directly via the inline emitter / $BoundArrayMethod paths.
+        Wire("push",           runtime.ArrayPushProto,      1);
         Wire("pop",            runtime.ArrayPop,            0);
         Wire("shift",          runtime.ArrayShift,          0);
-        Wire("unshift",        runtime.ArrayUnshift,        1);
+        Wire("unshift",        runtime.ArrayUnshiftProto,   1);
 
         // ECMA-262 23.1.3.32 Array.prototype.toString — returns the join with
         // default separator. Borrowed-method dispatch (`arr.toString =

@@ -273,6 +273,131 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    // Variadic ArrayPush wired into Array.prototype as a $TSFunction. Inline
+    // emission of `arr.push(x)` calls ArrayPush(list, item) per element, but the
+    // prototype wrapper is invoked via $TSFunction reflection, where a single
+    // `object` second param can only receive one argument. ECMA-262 push is
+    // variadic, and Array.prototype.push.apply(arr, items) MUST spread. Mark
+    // the second param `[ParamArrayAttribute]` so $TSFunction packs trailing args.
+    private void EmitArrayPushProto(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ArrayPushProto",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.ListOfObject, _types.ObjectArray]
+        );
+        var paramArrayCtor = typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes)!;
+        method.DefineParameter(2, System.Reflection.ParameterAttributes.None, "items")
+            .SetCustomAttribute(new CustomAttributeBuilder(paramArrayCtor, []));
+        runtime.ArrayPushProto = method;
+
+        var il = method.GetILGenerator();
+        var frozenLabel = il.DefineLabel();
+
+        EmitArrayFrozenSealedCheck(il, runtime, frozenLabel, checkSealed: true);
+
+        // for (i = 0; i < items.Length; i++) list.Add(items[i]);
+        var idx = il.DeclareLocal(_types.Int32);
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idx);
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, idx);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, idx);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+        il.Emit(OpCodes.Ldloc, idx);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, idx);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(frozenLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+    }
+
+    // Variadic ArrayUnshift wired into Array.prototype. Per ECMA-262 unshift
+    // takes ...items and inserts them at the start preserving order: for items
+    // [a, b, c], result has [a, b, c, ...rest]. We achieve this by inserting
+    // each item at index i (so a→0, b→1, c→2).
+    private void EmitArrayUnshiftProto(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ArrayUnshiftProto",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.ListOfObject, _types.ObjectArray]
+        );
+        var paramArrayCtor = typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes)!;
+        method.DefineParameter(2, System.Reflection.ParameterAttributes.None, "items")
+            .SetCustomAttribute(new CustomAttributeBuilder(paramArrayCtor, []));
+        runtime.ArrayUnshiftProto = method;
+
+        var il = method.GetILGenerator();
+        var frozenLabel = il.DefineLabel();
+
+        EmitArrayFrozenSealedCheck(il, runtime, frozenLabel, checkSealed: true);
+
+        // for (i = 0; i < items.Length; i++) list.Insert(i, items[i]);
+        var idx = il.DeclareLocal(_types.Int32);
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idx);
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, idx);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, idx);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, idx);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Insert", _types.Int32, _types.Object));
+
+        il.Emit(OpCodes.Ldloc, idx);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, idx);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(frozenLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitArraySlice(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(

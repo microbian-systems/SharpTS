@@ -542,12 +542,14 @@ public partial class RuntimeEmitter
         EmitArrayPop(typeBuilder, runtime);
         EmitArrayShift(typeBuilder, runtime);
         EmitArrayUnshift(typeBuilder, runtime);
+        EmitArrayUnshiftProto(typeBuilder, runtime);
         EmitArraySlice(typeBuilder, runtime);
         // Array callback methods must come after InvokeValue and IsTruthy
         EmitArrayMap(typeBuilder, runtime);
         EmitArrayFilter(typeBuilder, runtime);
         EmitArrayForEach(typeBuilder, runtime);
         EmitArrayPush(typeBuilder, runtime);
+        EmitArrayPushProto(typeBuilder, runtime);
         EmitArrayFind(typeBuilder, runtime);
         EmitArrayFindIndex(typeBuilder, runtime);
         EmitArrayFindLast(typeBuilder, runtime);

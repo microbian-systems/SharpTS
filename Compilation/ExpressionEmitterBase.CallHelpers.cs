@@ -1231,7 +1231,7 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Box, typeof(double));
                 break;
             case "slice":
-                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+                // StringSlice(string str, object[] args). argCount derived from args.Length.
                 IL.Emit(OpCodes.Ldc_I4, arguments.Count);
                 IL.Emit(OpCodes.Newarr, typeof(object));
                 for (int i = 0; i < arguments.Count; i++)
