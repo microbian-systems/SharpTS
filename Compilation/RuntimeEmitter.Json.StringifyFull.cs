@@ -216,11 +216,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, rootValueLocal);
 
         // Per ECMA-262 25.5.2.3 SerializeJSONProperty step 2: toJSON runs
-        // BEFORE step 3 (replacer). At the root, this means we must invoke
-        // value.toJSON("") before calling replacer. Without this,
-        // `JSON.stringify({toJSON(){return "x"}}, fn)` calls fn with the
-        // raw object (defaults to "[object Object]") instead of "x".
-        EmitToJsonCheck(il, rootValueLocal, runtime);
+        // BEFORE step 3 (replacer). At the root, key = "" — the synthetic
+        // wrapper is `{ "": value }` per step 12. Pass "" so toJSON sees
+        // the spec-required key arg.
+        EmitToJsonCheck(il, rootValueLocal, runtime, "");
 
         var skipRootReplacerLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, replacerFuncLocal);

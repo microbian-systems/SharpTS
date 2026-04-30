@@ -289,11 +289,32 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
+        // ECMA-262 25.5.2.1 step 12: SerializeJSONProperty("", { "": value }).
+        // toJSON (step 2) runs before recursion. Pre-invoke at the root with
+        // key="" so toJSON's first arg is correctly observed by tests like
+        // value-tojson-arguments.js. The duplicate check inside StringifyValue
+        // is a no-op when the value has already been replaced.
+        var rootValueLocalSimple = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, rootValueLocalSimple);
+        EmitToJsonCheck(il, rootValueLocalSimple, runtime, "");
+
+        // Map $Undefined → JS undefined directly here, since StringifyValue
+        // returns C# null for $Undefined and we'd map back to $Undefined below.
+        // Skip the helper for that case to short-circuit cleanly.
+        var notUndefRootLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, rootValueLocalSimple);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, notUndefRootLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notUndefRootLabel);
+
         // Call our emitted StringifyValue helper. Map null → $Undefined.Instance
         // because StringifyValue returns null for undefined inputs and the
         // spec wants `JSON.stringify(undefined) === undefined`.
         var resultRootLocal = il.DeclareLocal(_types.String);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, rootValueLocalSimple);
         il.Emit(OpCodes.Ldc_I4_0); // indent = 0
         il.Emit(OpCodes.Ldc_I4_0); // depth = 0
         il.Emit(OpCodes.Call, stringifyHelper);
@@ -582,7 +603,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(notSkippedLabel);
     }
 
-    private void EmitToJsonCheck(ILGenerator il, LocalBuilder valueLocal, EmittedRuntime runtime)
+    private void EmitToJsonCheck(ILGenerator il, LocalBuilder valueLocal, EmittedRuntime runtime, string? key = null)
     {
         var noToJsonLabel = il.DefineLabel();
 
@@ -592,6 +613,28 @@ public partial class RuntimeEmitter
         var notTsObjectLabel = il.DefineLabel();
         var toJsonFieldLocal = il.DeclareLocal(_types.Object);
         var argsLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // Build args = [key] if a key is provided, else [].
+        // ECMA-262 25.5.2.3 step 2.b.i: Call(toJSON, value, « key »).
+        void BuildArgs()
+        {
+            if (key != null)
+            {
+                il.Emit(OpCodes.Ldc_I4_1);
+                il.Emit(OpCodes.Newarr, _types.Object);
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Ldstr, key);
+                il.Emit(OpCodes.Stelem_Ref);
+                il.Emit(OpCodes.Stloc, argsLocal);
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Newarr, _types.Object);
+                il.Emit(OpCodes.Stloc, argsLocal);
+            }
+        }
 
         // if (value is Dictionary<string, object?>)
         il.Emit(OpCodes.Ldloc, valueLocal);
@@ -614,15 +657,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, notTSFunctionLabel);
 
         // ECMA-262 25.5.2.3 step 2.b.i: Call(toJSON, value, « key »).
-        // We pass `this` = value via InvokeWithThis. We don't currently have
-        // the key in scope here (StringifyValue/Full's signature lacks it),
-        // so the spec's [key] arg is dropped — toJSON's first arg is undefined
-        // instead of the actual property name. Tests that assert the key arg
-        // continue to fail; tests that only assert `this` (or don't read key)
-        // now pass.
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Stloc, argsLocal);
+        // \`this\` = value via InvokeWithThis; args = [key] when caller
+        // provided one, else [] (when called from inside the recursive
+        // StringifyValueFull where the key is no longer in scope).
+        BuildArgs();
 
         il.Emit(OpCodes.Ldloc, toJsonFieldLocal);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
@@ -639,9 +677,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
         il.Emit(OpCodes.Brfalse, notBoundLabel);
 
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Stloc, argsLocal);
+        BuildArgs();
 
         il.Emit(OpCodes.Ldloc, toJsonFieldLocal);
         il.Emit(OpCodes.Castclass, runtime.BoundTSFunctionType);
@@ -674,9 +710,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, notTsObjectLabel);
 
         // Same InvokeWithThis pattern as the dict branch above.
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Stloc, argsLocal);
+        BuildArgs();
         il.Emit(OpCodes.Ldloc, toJsonFieldLocal);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
         il.Emit(OpCodes.Ldloc, valueLocal);
