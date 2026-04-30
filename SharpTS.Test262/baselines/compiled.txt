@@ -3840,7 +3840,7 @@ test/built-ins/Number/prototype/toExponential/prop-desc.js TypeCheckError
 test/built-ins/Number/prototype/toExponential/range.js Pass
 test/built-ins/Number/prototype/toExponential/return-abrupt-tointeger-fractiondigits-symbol.js Pass
 test/built-ins/Number/prototype/toExponential/return-abrupt-tointeger-fractiondigits.js Pass
-test/built-ins/Number/prototype/toExponential/return-values.js Fail
+test/built-ins/Number/prototype/toExponential/return-values.js Pass
 test/built-ins/Number/prototype/toExponential/this-is-0-fractiondigits-is-0.js Pass
 test/built-ins/Number/prototype/toExponential/this-is-0-fractiondigits-is-not-0.js Pass
 test/built-ins/Number/prototype/toExponential/this-type-not-number-or-number-object.js Pass

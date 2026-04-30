@@ -1590,6 +1590,157 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, valueLocal);
         il.MarkLabel(nonZeroLabel);
 
+        // .NET Double.ToString("eN") rounds with MidpointRounding.ToEven (banker's),
+        // but ECMA-262 21.1.3.2 specifies round-half-away-from-zero for the
+        // mantissa. (25).toExponential(0) must yield "3e+1" (not "2e+1"); likewise
+        // (12345).toExponential(3) must yield "1.235e+4" (not "1.234e+4").
+        // Manually decompose value = mantissa * 10^exp, round the mantissa with
+        // AwayFromZero, handle rollover, and reassemble.
+        //
+        // .NET Math.Round(double, int, MidpointRounding) only supports digits in
+        // [0, 15]. For higher precision (digits > 15), the test expectations track
+        // .NET's underlying double-precision formatter exactly, so fall through to
+        // the legacy "eN" path (which DOES handle up to ~17 digits).
+        var legacyHighPrecisionLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, digitsLocal);
+        il.Emit(OpCodes.Ldc_I4, 15);
+        il.Emit(OpCodes.Bgt, legacyHighPrecisionLabel);
+        var roundedLocal = il.DeclareLocal(_types.Double);
+        var expIntLocal = il.DeclareLocal(_types.Int32);
+        var absLocal = il.DeclareLocal(_types.Double);
+        var signLocal = il.DeclareLocal(_types.Double);
+        var mantissaLocal = il.DeclareLocal(_types.Double);
+
+        // sign = value < 0 ? -1 : 1
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        var notNegSignLabel = il.DefineLabel();
+        var afterSignLabel = il.DefineLabel();
+        il.Emit(OpCodes.Bge, notNegSignLabel);
+        il.Emit(OpCodes.Ldc_R8, -1.0);
+        il.Emit(OpCodes.Stloc, signLocal);
+        il.Emit(OpCodes.Br, afterSignLabel);
+        il.MarkLabel(notNegSignLabel);
+        il.Emit(OpCodes.Ldc_R8, 1.0);
+        il.Emit(OpCodes.Stloc, signLocal);
+        il.MarkLabel(afterSignLabel);
+
+        // abs = Math.Abs(value)
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Abs", _types.Double));
+        il.Emit(OpCodes.Stloc, absLocal);
+
+        // For value == 0, exp = 0 and rounded = 0 (skip log10/divide).
+        var zeroFmtLabel = il.DefineLabel();
+        var skipZeroLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, absLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Bne_Un, skipZeroLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, expIntLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stloc, roundedLocal);
+        il.Emit(OpCodes.Br, zeroFmtLabel);
+        il.MarkLabel(skipZeroLabel);
+
+        // exp = (int)Math.Floor(Math.Log10(abs))
+        il.Emit(OpCodes.Ldloc, absLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Log10", _types.Double));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Floor", _types.Double));
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, expIntLocal);
+
+        // mantissa = abs / Math.Pow(10, exp)
+        il.Emit(OpCodes.Ldloc, absLocal);
+        il.Emit(OpCodes.Ldc_R8, 10.0);
+        il.Emit(OpCodes.Ldloc, expIntLocal);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Pow", _types.Double, _types.Double));
+        il.Emit(OpCodes.Div);
+        il.Emit(OpCodes.Stloc, mantissaLocal);
+
+        // rounded = Math.Round(mantissa, digits, MidpointRounding.AwayFromZero)
+        il.Emit(OpCodes.Ldloc, mantissaLocal);
+        il.Emit(OpCodes.Ldloc, digitsLocal);
+        il.Emit(OpCodes.Ldc_I4_1); // MidpointRounding.AwayFromZero == 1
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Round", _types.Double, _types.Int32, typeof(MidpointRounding)));
+        il.Emit(OpCodes.Stloc, roundedLocal);
+
+        // Rollover: if rounded >= 10, divide by 10 and exp += 1.
+        var noRolloverLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, roundedLocal);
+        il.Emit(OpCodes.Ldc_R8, 10.0);
+        il.Emit(OpCodes.Blt, noRolloverLabel);
+        il.Emit(OpCodes.Ldloc, roundedLocal);
+        il.Emit(OpCodes.Ldc_R8, 10.0);
+        il.Emit(OpCodes.Div);
+        il.Emit(OpCodes.Stloc, roundedLocal);
+        il.Emit(OpCodes.Ldloc, expIntLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, expIntLocal);
+        il.MarkLabel(noRolloverLabel);
+
+        il.MarkLabel(zeroFmtLabel);
+
+        // signedRounded = sign * rounded
+        il.Emit(OpCodes.Ldloc, signLocal);
+        il.Emit(OpCodes.Ldloc, roundedLocal);
+        il.Emit(OpCodes.Mul);
+        il.Emit(OpCodes.Stloc, roundedLocal);
+
+        // result = roundedRounded.ToString("F{digits}", InvariantCulture)
+        //          + "e" + (exp >= 0 ? "+" : "-")
+        //          + Math.Abs(exp).ToString(InvariantCulture)
+        var sbLocal = il.DeclareLocal(_types.StringBuilder);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder));
+        il.Emit(OpCodes.Stloc, sbLocal);
+
+        // mantissa formatted with N fractional digits
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloca, roundedLocal);
+        il.Emit(OpCodes.Ldstr, "F");
+        il.Emit(OpCodes.Ldloc, digitsLocal);
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.Object])!);
+        il.Emit(OpCodes.Call, typeof(CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(IFormatProvider)])!);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // exponent sign
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloc, expIntLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        var negExpLabel = il.DefineLabel();
+        var afterExpSignLabel = il.DefineLabel();
+        il.Emit(OpCodes.Blt, negExpLabel);
+        il.Emit(OpCodes.Ldstr, "e+");
+        il.Emit(OpCodes.Br, afterExpSignLabel);
+        il.MarkLabel(negExpLabel);
+        il.Emit(OpCodes.Ldstr, "e-");
+        il.MarkLabel(afterExpSignLabel);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        // |exp|
+        var absExpLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, expIntLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Abs", _types.Int32));
+        il.Emit(OpCodes.Stloc, absExpLocal);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloca, absExpLocal);
+        il.Emit(OpCodes.Call, typeof(CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "ToString", typeof(IFormatProvider)));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Ret);
+
+        // Legacy path for digits > 15 — falls through to .NET's "eN" formatter.
+        il.MarkLabel(legacyHighPrecisionLabel);
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Ldstr, "e");
         il.Emit(OpCodes.Ldloc, digitsLocal);
