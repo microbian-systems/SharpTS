@@ -540,7 +540,7 @@ public partial class Interpreter
     /// per-method <c>isConstructor</c> flag is the proper fix and is
     /// tracked as a follow-up.
     /// </summary>
-    private static bool IsNonConstructorWrapper(object callable) => callable
+    private static bool IsNonConstructorWrapper(object? callable) => callable
         is ArrayPrototypeMethodWrapper
         or StringPrototypeMethodWrapper
         or NumberPrototypeMethodWrapper
