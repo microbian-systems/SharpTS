@@ -81,6 +81,62 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
         il.Emit(OpCodes.Stloc, propNameLocal);
 
+        // ECMA-262 10.4.2.4 ArraySetLength: validate that ToUint32(newLen) ===
+        // ToNumber(newLen) — i.e. an integer in [0, 2^32). Without this,
+        // \`Object.defineProperty([], 'length', {value: -1})\` silently stores
+        // -1 in the underlying dict instead of throwing RangeError.
+        // Only fires for List<object> receivers (compiled-mode arrays) with
+        // propName == "length" and a value-typed descriptor.
+        var skipArrayLenCheck = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brfalse, skipArrayLenCheck);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, skipArrayLenCheck);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, skipArrayLenCheck);
+        var lenValLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldloca, lenValLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue", _types.String, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, skipArrayLenCheck);
+        // Coerce value via ToNumber — captures NaN, Infinity, non-numeric.
+        var lenNumLocal = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldloc, lenValLocal);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, lenNumLocal);
+        // RangeError if NaN, Infinity, negative, non-integer, or >= 2^32.
+        il.Emit(OpCodes.Ldloc, lenNumLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsNaN", _types.Double));
+        var rangeErrLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, rangeErrLabel);
+        il.Emit(OpCodes.Ldloc, lenNumLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsInfinity", _types.Double));
+        il.Emit(OpCodes.Brtrue, rangeErrLabel);
+        il.Emit(OpCodes.Ldloc, lenNumLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Blt, rangeErrLabel);
+        il.Emit(OpCodes.Ldloc, lenNumLocal);
+        il.Emit(OpCodes.Ldc_R8, 4294967296.0);
+        il.Emit(OpCodes.Bge, rangeErrLabel);
+        // Non-integer: floor(x) != x.
+        il.Emit(OpCodes.Ldloc, lenNumLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Floor", _types.Double));
+        il.Emit(OpCodes.Ldloc, lenNumLocal);
+        il.Emit(OpCodes.Bne_Un, rangeErrLabel);
+        il.Emit(OpCodes.Br, skipArrayLenCheck);
+        il.MarkLabel(rangeErrLabel);
+        il.Emit(OpCodes.Ldstr, "Invalid array length");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(skipArrayLenCheck);
+
         // Check if object is frozen - if so, throw TypeError
         var notFrozenLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
