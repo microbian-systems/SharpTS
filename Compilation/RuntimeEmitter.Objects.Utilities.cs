@@ -220,6 +220,219 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits Math.sumPrecise(iterable) — ECMA-262 21.3.2.31. Iterates the input
+    /// (List&lt;object&gt; receivers only — non-list receivers throw TypeError),
+    /// throws TypeError on non-Number elements (rejects BigInt, Strings, etc.),
+    /// and returns the sum. Special cases:
+    ///   • empty list → -0
+    ///   • +Infinity AND -Infinity present → NaN
+    ///   • any NaN → NaN
+    ///   • all -0 → -0; mix of +0 and -0 → +0
+    /// Naive accumulator (not Shewchuk); precision matches double arithmetic.
+    /// </summary>
+    private void EmitMathSumPrecise(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "MathSumPrecise",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.MathSumPrecise = method;
+
+        var il = method.GetILGenerator();
+
+        // Pre-declare every label so emit order doesn't matter.
+        var hasListLabel = il.DefineLabel();
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var isDoubleLabel = il.DefineLabel();
+        var notNanLabel = il.DefineLabel();
+        var notPosInfLabel = il.DefineLabel();
+        var notNegInfLabel = il.DefineLabel();
+        var notNegZeroLabel = il.DefineLabel();
+        var sumAddLabel = il.DefineLabel();
+        var advanceLabel = il.DefineLabel();
+        var nonEmptyLabel = il.DefineLabel();
+        var notBothInfLabel = il.DefineLabel();
+        var notNanResultLabel = il.DefineLabel();
+        var notPosInfResultLabel = il.DefineLabel();
+        var notNegInfResultLabel = il.DefineLabel();
+        var notAllNegZeroLabel = il.DefineLabel();
+
+        // Step 1: receiver must be List<object>; otherwise TypeError.
+        var listLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Stloc, listLocal);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Brtrue, hasListLabel);
+        il.Emit(OpCodes.Ldstr, "Math.sumPrecise requires an iterable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(hasListLabel);
+
+        var sumLocal = il.DeclareLocal(_types.Double);
+        var sawPosInfLocal = il.DeclareLocal(_types.Boolean);
+        var sawNegInfLocal = il.DeclareLocal(_types.Boolean);
+        var sawNaNLocal = il.DeclareLocal(_types.Boolean);
+        var allNegZeroLocal = il.DeclareLocal(_types.Boolean);
+        var anyElementLocal = il.DeclareLocal(_types.Boolean);
+        var idxLocal = il.DeclareLocal(_types.Int32);
+        var lenLocal = il.DeclareLocal(_types.Int32);
+        var elemLocal = il.DeclareLocal(_types.Object);
+        var dLocal = il.DeclareLocal(_types.Double);
+
+        il.Emit(OpCodes.Ldc_R8, 0.0); il.Emit(OpCodes.Stloc, sumLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, sawPosInfLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, sawNegInfLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, sawNaNLocal);
+        il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Stloc, allNegZeroLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, anyElementLocal);
+
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, idxLocal);
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, elemLocal);
+
+        // Type-check: must be Double-boxed.
+        il.Emit(OpCodes.Ldloc, elemLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, isDoubleLabel);
+        il.Emit(OpCodes.Ldstr, "Math.sumPrecise: every element must be a Number");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(isDoubleLabel);
+
+        il.Emit(OpCodes.Ldloc, elemLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Stloc, dLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, anyElementLocal);
+
+        // NaN check.
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsNaN", _types.Double));
+        il.Emit(OpCodes.Brfalse, notNanLabel);
+        il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Stloc, sawNaNLocal);
+        il.Emit(OpCodes.Br, advanceLabel);
+        il.MarkLabel(notNanLabel);
+
+        // +Inf check.
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsPositiveInfinity", _types.Double));
+        il.Emit(OpCodes.Brfalse, notPosInfLabel);
+        il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Stloc, sawPosInfLocal);
+        il.Emit(OpCodes.Br, advanceLabel);
+        il.MarkLabel(notPosInfLabel);
+
+        // -Inf check.
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsNegativeInfinity", _types.Double));
+        il.Emit(OpCodes.Brfalse, notNegInfLabel);
+        il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Stloc, sawNegInfLocal);
+        il.Emit(OpCodes.Br, advanceLabel);
+        il.MarkLabel(notNegInfLabel);
+
+        // allNegZero tracking: if d != 0 → not all -0.
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Beq, notNegZeroLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, allNegZeroLocal);
+        il.Emit(OpCodes.Br, sumAddLabel);
+        il.MarkLabel(notNegZeroLabel);
+        // d == 0: if d is +0 (not negative) → not all -0.
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsNegative", _types.Double));
+        il.Emit(OpCodes.Brtrue, sumAddLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, allNegZeroLocal);
+
+        il.MarkLabel(sumAddLabel);
+        il.Emit(OpCodes.Ldloc, sumLocal);
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, sumLocal);
+
+        il.MarkLabel(advanceLabel);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+
+        // Empty list → -0.
+        il.Emit(OpCodes.Ldloc, anyElementLocal);
+        il.Emit(OpCodes.Brtrue, nonEmptyLabel);
+        il.Emit(OpCodes.Ldc_R8, -0.0);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(nonEmptyLabel);
+
+        // sawPosInf && sawNegInf → NaN.
+        il.Emit(OpCodes.Ldloc, sawPosInfLocal);
+        il.Emit(OpCodes.Ldloc, sawNegInfLocal);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Brfalse, notBothInfLabel);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBothInfLabel);
+
+        // sawNaN → NaN.
+        il.Emit(OpCodes.Ldloc, sawNaNLocal);
+        il.Emit(OpCodes.Brfalse, notNanResultLabel);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNanResultLabel);
+
+        // sawPosInf → +Inf.
+        il.Emit(OpCodes.Ldloc, sawPosInfLocal);
+        il.Emit(OpCodes.Brfalse, notPosInfResultLabel);
+        il.Emit(OpCodes.Ldc_R8, double.PositiveInfinity);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notPosInfResultLabel);
+
+        // sawNegInf → -Inf.
+        il.Emit(OpCodes.Ldloc, sawNegInfLocal);
+        il.Emit(OpCodes.Brfalse, notNegInfResultLabel);
+        il.Emit(OpCodes.Ldc_R8, double.NegativeInfinity);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNegInfResultLabel);
+
+        // allNegZero → -0.
+        il.Emit(OpCodes.Ldloc, allNegZeroLocal);
+        il.Emit(OpCodes.Brfalse, notAllNegZeroLabel);
+        il.Emit(OpCodes.Ldc_R8, -0.0);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notAllNegZeroLabel);
+
+        // Otherwise: return accumulator.
+        il.Emit(OpCodes.Ldloc, sumLocal);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitGetEnumMemberName(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(

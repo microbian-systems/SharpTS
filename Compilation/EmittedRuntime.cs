@@ -495,6 +495,7 @@ public class EmittedRuntime
 
     // Utility methods
     public MethodBuilder Random { get; set; } = null!;
+    public MethodBuilder MathSumPrecise { get; set; } = null!;
     public MethodBuilder GetEnumMemberName { get; set; } = null!;
 
     // Math static-method-as-value adapters. Wrap System.Math methods with

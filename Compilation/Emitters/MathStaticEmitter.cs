@@ -56,11 +56,17 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
             return true;
         }
 
-        // Math.sumPrecise: deferred. The test cluster includes a "infinite
-        // iterator with non-Number elements" pattern that requires manual
-        // iteration with per-element TypeError checks rather than full
-        // materialization. The naive materialize-then-sum approach hangs the
-        // test runner. Reverting until lazy iteration support exists.
+        // Math.sumPrecise(iterable) — ECMA-262 21.3.2.31. Iterates the input,
+        // throws TypeError on non-Number elements (incl. BigInt), and returns
+        // the precise sum. Unlike other Math.* methods, the arg is an iterable
+        // not a number, so it bypasses the ToNumber-coercion loop below.
+        if (methodName == "sumPrecise" && arguments.Count == 1)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EnsureBoxed();
+            il.Emit(OpCodes.Call, ctx.Runtime!.MathSumPrecise);
+            return true;
+        }
 
         // Emit all arguments as doubles. Per ECMA-262, Math.* methods coerce
         // each arg via ToNumber — undefined → NaN, null → +0, "abc" → NaN, etc.

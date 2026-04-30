@@ -644,6 +644,7 @@ public partial class RuntimeEmitter
         // EmitCreateException and EmitWrapException moved earlier (before Promise methods)
         EmitThrowUndefinedVariable(typeBuilder, runtime);
         EmitRandom(typeBuilder, runtime, randomField);
+        EmitMathSumPrecise(typeBuilder, runtime);
         // Math.* adapters for value-form access (issue #60). Depends on
         // runtime.ToNumber which is emitted before this call.
         EmitMathAdapters(typeBuilder, runtime);

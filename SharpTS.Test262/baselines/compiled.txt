@@ -3649,10 +3649,10 @@ test/built-ins/Math/sumPrecise/length.js TypeCheckError
 test/built-ins/Math/sumPrecise/name.js TypeCheckError
 test/built-ins/Math/sumPrecise/not-a-constructor.js Fail
 test/built-ins/Math/sumPrecise/prop-desc.js TypeCheckError
-test/built-ins/Math/sumPrecise/sum-is-NaN.js RuntimeError
-test/built-ins/Math/sumPrecise/sum-is-infinite.js RuntimeError
-test/built-ins/Math/sumPrecise/sum-is-minus-zero.js RuntimeError
-test/built-ins/Math/sumPrecise/sum.js RuntimeError
+test/built-ins/Math/sumPrecise/sum-is-NaN.js Pass
+test/built-ins/Math/sumPrecise/sum-is-infinite.js Pass
+test/built-ins/Math/sumPrecise/sum-is-minus-zero.js Pass
+test/built-ins/Math/sumPrecise/sum.js Fail
 test/built-ins/Math/sumPrecise/takes-iterable.js TypeCheckError
 test/built-ins/Math/sumPrecise/throws-on-non-number.js Fail
 test/built-ins/Math/tan/S15.8.2.18_A1.js Pass
