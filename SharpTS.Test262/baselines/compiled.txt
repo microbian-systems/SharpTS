@@ -3302,7 +3302,7 @@ test/built-ins/JSON/stringify/replacer-array-number.js Pass
 test/built-ins/JSON/stringify/replacer-array-order.js Pass
 test/built-ins/JSON/stringify/replacer-array-proxy-revoked-realm.js TypeCheckError
 test/built-ins/JSON/stringify/replacer-array-proxy-revoked.js Fail
-test/built-ins/JSON/stringify/replacer-array-proxy.js RuntimeError
+test/built-ins/JSON/stringify/replacer-array-proxy.js Fail
 test/built-ins/JSON/stringify/replacer-array-string-object.js Fail
 test/built-ins/JSON/stringify/replacer-array-undefined.js Pass
 test/built-ins/JSON/stringify/replacer-array-wrong-type.js Fail
@@ -3315,7 +3315,7 @@ test/built-ins/JSON/stringify/replacer-function-result-undefined.js Pass
 test/built-ins/JSON/stringify/replacer-function-result.js HarnessError
 test/built-ins/JSON/stringify/replacer-function-tojson.js Fail
 test/built-ins/JSON/stringify/replacer-function-wrapper.js TypeCheckError
-test/built-ins/JSON/stringify/replacer-wrong-type.js Fail
+test/built-ins/JSON/stringify/replacer-wrong-type.js Pass
 test/built-ins/JSON/stringify/space-number-float.js Pass
 test/built-ins/JSON/stringify/space-number-object.js Fail
 test/built-ins/JSON/stringify/space-number-range.js Pass

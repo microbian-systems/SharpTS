@@ -181,7 +181,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brtrue, replacerIsListLabel);
 
-        // replacer is function - store it (assuming it's $TSFunction compatible)
+        // ECMA-262 25.5.2.1 step 4: a non-callable, non-array replacer is silently
+        // ignored (PropertyList stays empty / replacerFunction stays null).
+        // Only treat as function if it's actually a callable type.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        var replacerIsFnLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, replacerIsFnLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brtrue, replacerIsFnLabel);
+        // Not callable, not array → ignore (replacerFunc stays null).
+        il.Emit(OpCodes.Br, replacerDoneLabel);
+        il.MarkLabel(replacerIsFnLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Stloc, replacerFuncLocal);
         il.Emit(OpCodes.Br, replacerDoneLabel);
