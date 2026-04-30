@@ -4636,7 +4636,7 @@ test/built-ins/String/prototype/replaceAll/searchValue-tostring-regexp.js Runtim
 test/built-ins/String/prototype/replaceAll/this-is-null-throws.js Pass
 test/built-ins/String/prototype/replaceAll/this-is-undefined-throws.js Pass
 test/built-ins/String/prototype/replaceAll/this-tostring-abrupt.js Pass
-test/built-ins/String/prototype/replaceAll/this-tostring.js RuntimeError
+test/built-ins/String/prototype/replaceAll/this-tostring.js Pass
 test/built-ins/String/prototype/search/S15.5.4.12_A1.1_T1.js Pass
 test/built-ins/String/prototype/search/S15.5.4.12_A10.js TypeCheckError
 test/built-ins/String/prototype/search/S15.5.4.12_A11.js Pass
@@ -5169,9 +5169,9 @@ test/built-ins/String/prototype/trimEnd/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-number.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-object-cannot-convert-to-primitive-err.js Fail
 test/built-ins/String/prototype/trimEnd/this-value-object-toprimitive-call-err.js HarnessError
-test/built-ins/String/prototype/trimEnd/this-value-object-toprimitive-meth-err.js Fail
+test/built-ins/String/prototype/trimEnd/this-value-object-toprimitive-meth-err.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-object-toprimitive-meth-priority.js HarnessError
-test/built-ins/String/prototype/trimEnd/this-value-object-toprimitive-returns-object-err.js Fail
+test/built-ins/String/prototype/trimEnd/this-value-object-toprimitive-returns-object-err.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-object-tostring-call-err.js HarnessError
 test/built-ins/String/prototype/trimEnd/this-value-object-tostring-meth-err.js Pass
 test/built-ins/String/prototype/trimEnd/this-value-object-tostring-meth-priority.js HarnessError
@@ -5192,9 +5192,9 @@ test/built-ins/String/prototype/trimStart/this-value-not-obj-coercible.js Pass
 test/built-ins/String/prototype/trimStart/this-value-number.js Pass
 test/built-ins/String/prototype/trimStart/this-value-object-cannot-convert-to-primitive-err.js Fail
 test/built-ins/String/prototype/trimStart/this-value-object-toprimitive-call-err.js HarnessError
-test/built-ins/String/prototype/trimStart/this-value-object-toprimitive-meth-err.js Fail
+test/built-ins/String/prototype/trimStart/this-value-object-toprimitive-meth-err.js Pass
 test/built-ins/String/prototype/trimStart/this-value-object-toprimitive-meth-priority.js HarnessError
-test/built-ins/String/prototype/trimStart/this-value-object-toprimitive-returns-object-err.js Fail
+test/built-ins/String/prototype/trimStart/this-value-object-toprimitive-returns-object-err.js Pass
 test/built-ins/String/prototype/trimStart/this-value-object-tostring-call-err.js HarnessError
 test/built-ins/String/prototype/trimStart/this-value-object-tostring-meth-err.js Pass
 test/built-ins/String/prototype/trimStart/this-value-object-tostring-meth-priority.js HarnessError

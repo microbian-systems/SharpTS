@@ -1945,6 +1945,73 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notBoxedLabel);
 
+        // ECMA-262 7.1.1 ToPrimitive(input, "string"): GetMethod(input, @@toPrimitive)
+        // takes priority over OrdinaryToPrimitive. Look up Symbol.toPrimitive in the
+        // value's symbol-dict (compiled mode stores symbol-keyed properties separately
+        // from string-keyed ones). If found and callable, invoke with hint "string".
+        // Per spec, the result must be primitive — if it's an object, throw TypeError.
+        var afterToPrimSymLabel = il.DefineLabel();
+        var symDictForToPrimLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        var toPrimFnLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Stloc, symDictForToPrimLocal);
+        il.Emit(OpCodes.Ldloc, symDictForToPrimLocal);
+        il.Emit(OpCodes.Brfalse, afterToPrimSymLabel);
+        il.Emit(OpCodes.Ldloc, symDictForToPrimLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolToPrimitive);
+        il.Emit(OpCodes.Ldloca, toPrimFnLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+        il.Emit(OpCodes.Brfalse, afterToPrimSymLabel);
+        il.Emit(OpCodes.Ldloc, toPrimFnLocal);
+        il.Emit(OpCodes.Brfalse, afterToPrimSymLabel);
+        il.Emit(OpCodes.Ldloc, toPrimFnLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, afterToPrimSymLabel);
+
+        // Build args array ["string"] and invoke.
+        var hintArgsStrLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, hintArgsStrLocal);
+        il.Emit(OpCodes.Ldloc, hintArgsStrLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldstr, "string");
+        il.Emit(OpCodes.Stelem_Ref);
+        var toPrimResultLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, toPrimFnLocal);
+        il.Emit(OpCodes.Ldloc, hintArgsStrLocal);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Stloc, toPrimResultLocal);
+
+        // If primitive (null/undefined/string/number/bool) → Stringify and return.
+        var resIsPrimitiveLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, toPrimResultLocal);
+        il.Emit(OpCodes.Brfalse, resIsPrimitiveLabel);
+        il.Emit(OpCodes.Ldloc, toPrimResultLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, resIsPrimitiveLabel);
+        il.Emit(OpCodes.Ldloc, toPrimResultLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, resIsPrimitiveLabel);
+        il.Emit(OpCodes.Ldloc, toPrimResultLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, resIsPrimitiveLabel);
+        il.Emit(OpCodes.Ldloc, toPrimResultLocal);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, resIsPrimitiveLabel);
+        // Object result → TypeError per ECMA-262 7.1.1 step 1.b.iii.
+        il.Emit(OpCodes.Ldstr, "Cannot convert object to primitive value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(resIsPrimitiveLabel);
+        il.Emit(OpCodes.Ldloc, toPrimResultLocal);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(afterToPrimSymLabel);
+
         // emptyArgs = new object[0]
         var emptyArgsLocal = il.DeclareLocal(_types.ObjectArray);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -2093,6 +2160,60 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brfalse, skipToPrimLabelTop);
         il.MarkLabel(doToPrimLabelTop);
+
+        // ECMA-262 7.1.1 ToPrimitive(input, "number"): @@toPrimitive (if defined and
+        // callable) takes priority over OrdinaryToPrimitive. Look up the symbol-keyed
+        // method and invoke with hint "number". Result must be primitive or TypeError.
+        var afterToPrimSymN = il.DefineLabel();
+        var doThrowN = il.DefineLabel();
+        var symDictForToPrimN = il.DeclareLocal(_types.DictionaryObjectObject);
+        var toPrimFnLocalN = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Stloc, symDictForToPrimN);
+        il.Emit(OpCodes.Ldloc, symDictForToPrimN);
+        il.Emit(OpCodes.Brfalse, afterToPrimSymN);
+        il.Emit(OpCodes.Ldloc, symDictForToPrimN);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolToPrimitive);
+        il.Emit(OpCodes.Ldloca, toPrimFnLocalN);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+        il.Emit(OpCodes.Brfalse, afterToPrimSymN);
+        il.Emit(OpCodes.Ldloc, toPrimFnLocalN);
+        il.Emit(OpCodes.Brfalse, afterToPrimSymN);
+        il.Emit(OpCodes.Ldloc, toPrimFnLocalN);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, afterToPrimSymN);
+
+        var hintArgsNumLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, hintArgsNumLocal);
+        il.Emit(OpCodes.Ldloc, hintArgsNumLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldstr, "number");
+        il.Emit(OpCodes.Stelem_Ref);
+        var toPrimResultLocalN = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Ldloc, toPrimFnLocalN);
+        il.Emit(OpCodes.Ldloc, hintArgsNumLocal);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Stloc, toPrimResultLocalN);
+        // Object result → TypeError per ECMA-262 7.1.1 step 1.b.iii.
+        il.Emit(OpCodes.Ldloc, toPrimResultLocalN);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, doThrowN);
+        il.Emit(OpCodes.Ldloc, toPrimResultLocalN);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, doThrowN);
+        il.Emit(OpCodes.Ldloc, toPrimResultLocalN);
+        il.Emit(OpCodes.Stloc, argLocal);
+        il.Emit(OpCodes.Br, afterToPrimSymN);
+        il.MarkLabel(doThrowN);
+        il.Emit(OpCodes.Ldstr, "Cannot convert object to primitive value");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(afterToPrimSymN);
 
         var emptyArgsLocalT = il.DeclareLocal(_types.ObjectArray);
         il.Emit(OpCodes.Ldc_I4_0);

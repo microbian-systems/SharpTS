@@ -450,6 +450,11 @@ public partial class RuntimeEmitter
         // String/Number/Boolean populate shells already defined above
         // (before cctor) so the cctor can call them eagerly.
         EmitGetProperty(typeBuilder, runtime);
+        // GetSymbolDict / IsSymbol must come BEFORE ToJsString/ToNumber so that
+        // the @@toPrimitive lookup branch can call them. Original placement was
+        // after ToNumber (line ~470).
+        EmitGetSymbolDict(typeBuilder, runtime, symbolStorageField);
+        EmitIsSymbol(typeBuilder, runtime);
         // ToJsString depends on GetProperty + InvokeMethodValue + Stringify; emit after those.
         EmitToJsString(typeBuilder, runtime);
         // ToNumber/ConvertToNumber bodies: emit AFTER GetProperty/InvokeMethodValue
@@ -466,9 +471,8 @@ public partial class RuntimeEmitter
         EmitDeletePropertyStrict(typeBuilder, runtime);
         EmitMergeIntoObject(typeBuilder, runtime);
         EmitMergeIntoTSObject(typeBuilder, runtime);
-        // Symbol support helpers - must come before iterator methods which depend on GetSymbolDict
-        EmitGetSymbolDict(typeBuilder, runtime, symbolStorageField);
-        EmitIsSymbol(typeBuilder, runtime);
+        // (Symbol helpers EmitGetSymbolDict + EmitIsSymbol now emitted earlier
+        // — before EmitToJsString — so the @@toPrimitive lookup can use them.)
         // DisposeResource depends on GetSymbolDict and InvokeMethodValue
         EmitDisposeResource(typeBuilder, runtime);
         // HasIn operator depends on IsSymbol and GetSymbolDict
