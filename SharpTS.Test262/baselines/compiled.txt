@@ -3313,7 +3313,7 @@ test/built-ins/JSON/stringify/replacer-function-object-circular.js Pass
 test/built-ins/JSON/stringify/replacer-function-object-deleted-property.js Fail
 test/built-ins/JSON/stringify/replacer-function-result-undefined.js Pass
 test/built-ins/JSON/stringify/replacer-function-result.js HarnessError
-test/built-ins/JSON/stringify/replacer-function-tojson.js Fail
+test/built-ins/JSON/stringify/replacer-function-tojson.js Pass
 test/built-ins/JSON/stringify/replacer-function-wrapper.js TypeCheckError
 test/built-ins/JSON/stringify/replacer-wrong-type.js Pass
 test/built-ins/JSON/stringify/space-number-float.js Pass
