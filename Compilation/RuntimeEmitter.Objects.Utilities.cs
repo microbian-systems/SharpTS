@@ -221,6 +221,93 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits DefineSymbolAccessor(obj, key, getter, setter) — stores an accessor
+    /// descriptor in the object's symbol-dict for computed symbol keys
+    /// (e.g. `{ get [Symbol.toPrimitive]() {...} }`). Reuses
+    /// $CompiledPropertyDescriptor as the storage shape; readers detect the
+    /// descriptor via Isinst and invoke the Getter via InvokeMethodValue.
+    /// String keys fall through to $Object.DefineGetter/DefineSetter.
+    /// </summary>
+    private void EmitDefineSymbolAccessor(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DefineSymbolAccessor",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.Object, _types.Object, _types.Object, _types.Object]
+        );
+        runtime.DefineSymbolAccessor = method;
+
+        var il = method.GetILGenerator();
+        var symKeyLabel = il.DefineLabel();
+        var stringKeyLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // If key is a Symbol → symbol-dict path. Else → $Object accessor path.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
+        il.Emit(OpCodes.Brfalse, stringKeyLabel);
+
+        // Symbol path: build $CompiledPropertyDescriptor and store in symbol-dict.
+        il.MarkLabel(symKeyLabel);
+        var descLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+        il.Emit(OpCodes.Stloc, descLocal);
+        // desc.Getter = arg2
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetSetMethod()!);
+        // desc.Setter = arg3
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetSetMethod()!);
+        // GetSymbolDict(obj)[key] = desc
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item", _types.Object, _types.Object));
+        il.Emit(OpCodes.Br, endLabel);
+
+        // String path: stringify key, route to $Object.DefineGetter/DefineSetter.
+        // Only valid if obj is a $Object.
+        il.MarkLabel(stringKeyLabel);
+        var notTSObjLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjLabel);
+        // keyStr = key.ToString()
+        var keyStrLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
+        il.Emit(OpCodes.Stloc, keyStrLocal);
+        // if (getter != null) obj.DefineGetter(keyStr, getter)
+        var skipGetterLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, skipGetterLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Ldloc, keyStrLocal);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectDefineGetter);
+        il.MarkLabel(skipGetterLabel);
+        // if (setter != null) obj.DefineSetter(keyStr, setter)
+        var skipSetterLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Brfalse, skipSetterLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Ldloc, keyStrLocal);
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectDefineSetter);
+        il.MarkLabel(skipSetterLabel);
+        il.MarkLabel(notTSObjLabel);
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits Math.sumPrecise(iterable) — ECMA-262 21.3.2.31. Iterates the input
     /// (List&lt;object&gt; receivers only — non-list receivers throw TypeError),
     /// throws TypeError on non-Number elements (rejects BigInt, Strings, etc.),

@@ -1969,6 +1969,41 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, afterToPrimSymLabel);
 
+        // Accessor descriptor: $CompiledPropertyDescriptor with a Getter field.
+        // Object literals with `get [Symbol.toPrimitive]() {...}` store the descriptor
+        // here via $Runtime.DefineSymbolAccessor. Invoke the getter to materialize
+        // the actual @@toPrimitive function. If the descriptor's Getter is null, the
+        // accessor is set-only — fall through to OrdinaryToPrimitive (treat as if
+        // @@toPrimitive is undefined).
+        var notDescriptorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, toPrimFnLocal);
+        il.Emit(OpCodes.Isinst, runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Brfalse, notDescriptorLabel);
+        var descGetterLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, toPrimFnLocal);
+        il.Emit(OpCodes.Castclass, runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, descGetterLocal);
+        il.Emit(OpCodes.Ldloc, descGetterLocal);
+        il.Emit(OpCodes.Brfalse, afterToPrimSymLabel);
+        // result = InvokeMethodValue(receiver, getter, [])
+        var emptyArgsForGetterStr = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, emptyArgsForGetterStr);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, descGetterLocal);
+        il.Emit(OpCodes.Ldloc, emptyArgsForGetterStr);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Stloc, toPrimFnLocal);
+        // Re-check that the materialized value is non-null/non-undefined.
+        il.Emit(OpCodes.Ldloc, toPrimFnLocal);
+        il.Emit(OpCodes.Brfalse, afterToPrimSymLabel);
+        il.Emit(OpCodes.Ldloc, toPrimFnLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, afterToPrimSymLabel);
+        il.MarkLabel(notDescriptorLabel);
+
         // Build args array ["string"] and invoke.
         var hintArgsStrLocal = il.DeclareLocal(_types.ObjectArray);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -2183,6 +2218,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, toPrimFnLocalN);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, afterToPrimSymN);
+
+        // Accessor descriptor unwrap (mirrors EmitToJsString — see notes there).
+        var notDescLabelN = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, toPrimFnLocalN);
+        il.Emit(OpCodes.Isinst, runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Brfalse, notDescLabelN);
+        var descGetterLocalN = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, toPrimFnLocalN);
+        il.Emit(OpCodes.Castclass, runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, descGetterLocalN);
+        il.Emit(OpCodes.Ldloc, descGetterLocalN);
+        il.Emit(OpCodes.Brfalse, afterToPrimSymN);
+        var emptyArgsForGetterNum = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, emptyArgsForGetterNum);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Ldloc, descGetterLocalN);
+        il.Emit(OpCodes.Ldloc, emptyArgsForGetterNum);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Stloc, toPrimFnLocalN);
+        il.Emit(OpCodes.Ldloc, toPrimFnLocalN);
+        il.Emit(OpCodes.Brfalse, afterToPrimSymN);
+        il.Emit(OpCodes.Ldloc, toPrimFnLocalN);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, afterToPrimSymN);
+        il.MarkLabel(notDescLabelN);
 
         var hintArgsNumLocal = il.DeclareLocal(_types.ObjectArray);
         il.Emit(OpCodes.Ldc_I4_1);

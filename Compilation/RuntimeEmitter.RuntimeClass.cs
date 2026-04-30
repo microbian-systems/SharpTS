@@ -649,6 +649,7 @@ public partial class RuntimeEmitter
         EmitThrowUndefinedVariable(typeBuilder, runtime);
         EmitRandom(typeBuilder, runtime, randomField);
         EmitMathSumPrecise(typeBuilder, runtime);
+        EmitDefineSymbolAccessor(typeBuilder, runtime);
         // Math.* adapters for value-form access (issue #60). Depends on
         // runtime.ToNumber which is emitted before this call.
         EmitMathAdapters(typeBuilder, runtime);

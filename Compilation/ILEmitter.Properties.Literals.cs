@@ -187,37 +187,83 @@ public partial class ILEmitter
                 continue;
             }
 
-            string propKey = GetPropertyKeyString(prop.Key!);
+            // Computed-key accessors handle their own key emission below;
+            // static-key path needs the resolved string up front.
+            string propKey = prop.Key is Expr.ComputedKey
+                ? "" // unused — accessor branches below dispatch on prop.Key
+                : GetPropertyKeyString(prop.Key!);
 
             switch (prop.Kind)
             {
                 case Expr.ObjectPropertyKind.Getter:
-                    // obj.DefineGetter(name, getterFunction)
-                    IL.Emit(OpCodes.Ldloc, objLocal);
-                    IL.Emit(OpCodes.Ldstr, propKey);
-                    EmitExpression(prop.Value); // Emits the getter function (arrow function)
-                    EmitBoxIfNeeded(prop.Value);
-                    IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSObjectDefineGetter);
+                    if (prop.Key is Expr.ComputedKey gck)
+                    {
+                        // Computed-key getter (Symbol or runtime string).
+                        // $Runtime.DefineSymbolAccessor(obj, key, getter, null).
+                        IL.Emit(OpCodes.Ldloc, objLocal);
+                        EmitExpression(gck.Expression);
+                        EmitBoxIfNeeded(gck.Expression);
+                        EmitExpression(prop.Value);
+                        EmitBoxIfNeeded(prop.Value);
+                        IL.Emit(OpCodes.Ldnull);
+                        IL.Emit(OpCodes.Call, _ctx.Runtime!.DefineSymbolAccessor);
+                    }
+                    else
+                    {
+                        // obj.DefineGetter(name, getterFunction)
+                        IL.Emit(OpCodes.Ldloc, objLocal);
+                        IL.Emit(OpCodes.Ldstr, propKey);
+                        EmitExpression(prop.Value); // Emits the getter function (arrow function)
+                        EmitBoxIfNeeded(prop.Value);
+                        IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSObjectDefineGetter);
+                    }
                     break;
 
                 case Expr.ObjectPropertyKind.Setter:
-                    // obj.DefineSetter(name, setterFunction)
-                    IL.Emit(OpCodes.Ldloc, objLocal);
-                    IL.Emit(OpCodes.Ldstr, propKey);
-                    EmitExpression(prop.Value); // Emits the setter function (arrow function)
-                    EmitBoxIfNeeded(prop.Value);
-                    IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSObjectDefineSetter);
+                    if (prop.Key is Expr.ComputedKey sck)
+                    {
+                        IL.Emit(OpCodes.Ldloc, objLocal);
+                        EmitExpression(sck.Expression);
+                        EmitBoxIfNeeded(sck.Expression);
+                        IL.Emit(OpCodes.Ldnull);
+                        EmitExpression(prop.Value);
+                        EmitBoxIfNeeded(prop.Value);
+                        IL.Emit(OpCodes.Call, _ctx.Runtime!.DefineSymbolAccessor);
+                    }
+                    else
+                    {
+                        // obj.DefineSetter(name, setterFunction)
+                        IL.Emit(OpCodes.Ldloc, objLocal);
+                        IL.Emit(OpCodes.Ldstr, propKey);
+                        EmitExpression(prop.Value); // Emits the setter function (arrow function)
+                        EmitBoxIfNeeded(prop.Value);
+                        IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSObjectDefineSetter);
+                    }
                     break;
 
                 case Expr.ObjectPropertyKind.Method:
                 case Expr.ObjectPropertyKind.Value:
                 default:
-                    // Regular property: obj.SetProperty(name, value)
-                    IL.Emit(OpCodes.Ldloc, objLocal);
-                    IL.Emit(OpCodes.Ldstr, propKey);
-                    EmitExpression(prop.Value);
-                    EmitBoxIfNeeded(prop.Value);
-                    IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSObjectSetProperty);
+                    if (prop.Key is Expr.ComputedKey vck)
+                    {
+                        // Computed-key data property: route through $Runtime.SetIndex
+                        // so symbol keys hit the symbol-dict.
+                        IL.Emit(OpCodes.Ldloc, objLocal);
+                        EmitExpression(vck.Expression);
+                        EmitBoxIfNeeded(vck.Expression);
+                        EmitExpression(prop.Value);
+                        EmitBoxIfNeeded(prop.Value);
+                        IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndex);
+                    }
+                    else
+                    {
+                        // Regular property: obj.SetProperty(name, value)
+                        IL.Emit(OpCodes.Ldloc, objLocal);
+                        IL.Emit(OpCodes.Ldstr, propKey);
+                        EmitExpression(prop.Value);
+                        EmitBoxIfNeeded(prop.Value);
+                        IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSObjectSetProperty);
+                    }
                     break;
             }
         }
