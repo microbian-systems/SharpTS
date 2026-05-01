@@ -388,21 +388,11 @@ public partial class Parser
             List<string>? typeArgs = TryParseTypeArguments();
 
             // Parse arguments. `new X` without parens is valid JS —
-            // equivalent to `new X()`.
+            // equivalent to `new X()`. Spread args (`new X(...iter)`) are allowed.
             List<Expr> arguments = [];
             if (Match(TokenType.LEFT_PAREN))
             {
-                if (!Check(TokenType.RIGHT_PAREN))
-                {
-                    while (true)
-                    {
-                        arguments.Add(Expression());
-                        if (!Match(TokenType.COMMA)) break;
-                        // ES2017 trailing comma: `new X(a, b,)`.
-                        if (Check(TokenType.RIGHT_PAREN)) break;
-                    }
-                }
-                Consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments.");
+                ParseNewArgumentList(arguments);
             }
 
             // Allow operations on new expressions
@@ -595,44 +585,85 @@ public partial class Parser
     }
 
     /// <summary>
-    /// Parses the callee expression for a 'new' expression.
-    /// Handles: identifiers, member access chains, and parenthesized expressions.
-    /// Does NOT handle type arguments or call arguments (those are parsed by caller).
+    /// Parses the callee expression for a 'new' expression — a MemberExpression per
+    /// ECMA-262 §13.3. Accepts any PrimaryExpression (identifier, literal, function/class
+    /// expression, parenthesized expression, this, etc.), followed by a member-access
+    /// chain of `.name` and `[index]` (but NOT call arguments — those bind to the `new`).
+    /// Also handles nested `new` (e.g. `new new X()`).
     /// </summary>
     private Expr ParseNewCallee()
     {
         Expr callee;
 
-        // Check for parenthesized expression: new (condition ? A : B)()
-        if (Match(TokenType.LEFT_PAREN))
+        // Nested `new`: `new new X()` parses as `new (new X())` — the inner `new X()`
+        // is itself a MemberExpression callee.
+        if (Match(TokenType.NEW))
         {
-            callee = Expression();
-            Consume(TokenType.RIGHT_PAREN, "Expect ')' after expression in new callee.");
-            return callee;
-        }
-
-        // `new this(...)` — subclass-creating static method pattern used in
-        // yaml's `YAMLMap.from(...)` etc. Treat `this` as the callee expr.
-        if (Match(TokenType.THIS))
-        {
-            callee = new Expr.This(Previous());
+            Expr innerCallee = ParseNewCallee();
+            List<string>? innerTypeArgs = TryParseTypeArguments();
+            List<Expr> innerArgs = [];
+            if (Match(TokenType.LEFT_PAREN))
+            {
+                ParseNewArgumentList(innerArgs);
+            }
+            callee = new Expr.New(innerCallee, innerTypeArgs, innerArgs);
         }
         else
         {
-            // Otherwise expect an identifier (class name or start of namespace path)
-            Token firstIdent = ConsumeIdentifierName("Expect class name after 'new'.");
-            callee = new Expr.Variable(firstIdent);
+            // Any PrimaryExpression: literals (`new true`, `new 1`), function/class
+            // expressions (`new function() {}(...)`), identifiers, parenthesized exprs,
+            // `this`, array/object literals, etc.
+            callee = Primary();
         }
 
-        // Handle member access chain: Namespace.SubNamespace.ClassName.
+        // Member-access chain (no call args — those bind to the enclosing `new`).
         // Property-name position after `.` accepts any keyword (JS semantics).
-        while (Match(TokenType.DOT))
+        while (true)
         {
-            Token name = ConsumePropertyName("Expect identifier after '.' in new expression.");
-            callee = new Expr.Get(callee, name);
+            if (Match(TokenType.DOT))
+            {
+                Token name = ConsumePropertyName("Expect identifier after '.' in new expression.");
+                callee = new Expr.Get(callee, name);
+            }
+            else if (Match(TokenType.LEFT_BRACKET))
+            {
+                Expr index = Expression();
+                Consume(TokenType.RIGHT_BRACKET, "Expect ']' after index in new expression.");
+                callee = new Expr.GetIndex(callee, index);
+            }
+            else
+            {
+                break;
+            }
         }
 
         return callee;
+    }
+
+    /// <summary>
+    /// Parses the argument list of a `new` expression after the opening `(`.
+    /// Supports spread (`...iter`) and ES2017 trailing comma. Consumes the closing `)`.
+    /// </summary>
+    private void ParseNewArgumentList(List<Expr> arguments)
+    {
+        if (!Check(TokenType.RIGHT_PAREN))
+        {
+            while (true)
+            {
+                if (Match(TokenType.DOT_DOT_DOT))
+                {
+                    arguments.Add(new Expr.Spread(Expression()));
+                }
+                else
+                {
+                    arguments.Add(Expression());
+                }
+                if (!Match(TokenType.COMMA)) break;
+                // ES2017 trailing comma: `new X(a, b,)`.
+                if (Check(TokenType.RIGHT_PAREN)) break;
+            }
+        }
+        Consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments.");
     }
 
     private Expr Primary()
