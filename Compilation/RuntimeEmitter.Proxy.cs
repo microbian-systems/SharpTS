@@ -244,6 +244,70 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits a proxy-aware ownKeys check: if obj is a SharpTSProxy, dispatches
+    /// TrapOwnKeys (List&lt;string&gt;), upcasts to List&lt;object?&gt; via element-by-element
+    /// copy, and returns. The caller's surrounding method must declare its return
+    /// type as List&lt;object?&gt;. Falls through to <paramref name="notProxyLabel"/>
+    /// otherwise. Used by Object.keys / Object.getOwnPropertyNames.
+    /// </summary>
+    internal void EmitProxyOwnKeysCheck(ILGenerator il, Action emitLoadObj, Label notProxyLabel)
+    {
+        var proxyLabel = il.DefineLabel();
+        EmitProxyTypeCheck(il, emitLoadObj, proxyLabel, notProxyLabel);
+
+        il.MarkLabel(proxyLabel);
+
+        // (List<string>)proxy.GetType().GetMethod("TrapOwnKeys").Invoke(proxy, new object[]{ null })
+        var keysListLocal = il.DeclareLocal(_types.ListOfString);
+        emitLoadObj();
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "TrapOwnKeys");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        emitLoadObj();
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        // [0] = null (Interpreter) — already null from Newarr
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Castclass, _types.ListOfString);
+        il.Emit(OpCodes.Stloc, keysListLocal);
+
+        // result = new List<object?>();
+        var resultLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, Type.EmptyTypes));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // for (int i = 0; i < keysList.Count; i++) result.Add(keysList[i]);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, keysListLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfString, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, keysListLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfString, "get_Item", [_types.Int32]));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", [_types.Object]));
+
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits a proxy-aware invoke check: checks if callee is a proxy and calls TrapApply(null, argsList, null).
     /// </summary>
     internal void EmitProxyInvokeCheck(ILGenerator il, Action emitLoadCallee, Action emitLoadArgs, Label notProxyLabel)

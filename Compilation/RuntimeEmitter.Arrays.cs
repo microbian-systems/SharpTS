@@ -281,6 +281,14 @@ public partial class RuntimeEmitter
         var returnEmptyLabel = il.DefineLabel();
         var returnResultLabel = il.DefineLabel();
 
+        // Proxy short-circuit (#92): if obj is SharpTSProxy, dispatch TrapOwnKeys
+        // and return. A revoked proxy throws inside TrapOwnKeys.
+        var notProxyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, notProxyLabel);
+        EmitProxyOwnKeysCheck(il, () => il.Emit(OpCodes.Ldarg_0), notProxyLabel);
+        il.MarkLabel(notProxyLabel);
+
         // if (obj is Dictionary<string, object?> dict)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, dictType);
@@ -457,6 +465,14 @@ public partial class RuntimeEmitter
         // Local for result list
         var namesLocal = il.DeclareLocal(_types.ListOfObject);
         var iLocal = il.DeclareLocal(_types.Int32);
+
+        // Proxy short-circuit (#92): if obj is SharpTSProxy, dispatch TrapOwnKeys
+        // and return. A revoked proxy throws inside TrapOwnKeys.
+        var notProxyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, notProxyLabel);
+        EmitProxyOwnKeysCheck(il, () => il.Emit(OpCodes.Ldarg_0), notProxyLabel);
+        il.MarkLabel(notProxyLabel);
 
         // if (obj is Dictionary<string, object?> dict)
         il.Emit(OpCodes.Ldarg_0);

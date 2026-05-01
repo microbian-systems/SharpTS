@@ -60,4 +60,56 @@ public class JSONProxyTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("threw\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Object_Keys_Proxy_DispatchesOwnKeysTrap(ExecutionMode mode)
+    {
+        var source = """
+            let target: any = { a: 1, b: 2 };
+            let proxy: any = new Proxy(target, {
+                ownKeys: function(t: any): string[] { return ["x", "y"]; }
+            });
+            console.log(Object.keys(proxy).join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("x,y\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Object_GetOwnPropertyNames_Proxy_DispatchesOwnKeysTrap(ExecutionMode mode)
+    {
+        var source = """
+            let target: any = { a: 1 };
+            let proxy: any = new Proxy(target, {
+                ownKeys: function(t: any): string[] { return ["p", "q", "r"]; }
+            });
+            console.log(Object.getOwnPropertyNames(proxy).join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("p,q,r\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Object_Keys_RevokedProxy_Throws(ExecutionMode mode)
+    {
+        var source = """
+            let target: any = { a: 1 };
+            let r: any = Proxy.revocable(target, {});
+            r.revoke();
+            try {
+                Object.keys(r.proxy);
+                console.log("should not reach");
+            } catch (e) {
+                console.log("threw");
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("threw\n", output);
+    }
 }
