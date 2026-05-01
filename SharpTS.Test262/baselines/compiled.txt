@@ -1,7 +1,7 @@
 # Test262 baseline — do not hand-edit. Regenerate with SHARPTS_TEST262_UPDATE_BASELINE=1.
 test/built-ins/Array/15.4.5-1.js Pass
 test/built-ins/Array/15.4.5.1-5-1.js RuntimeError
-test/built-ins/Array/15.4.5.1-5-2.js TypeCheckError
+test/built-ins/Array/15.4.5.1-5-2.js RuntimeError
 test/built-ins/Array/S15.4.1_A1.1_T1.js Pass
 test/built-ins/Array/S15.4.1_A1.1_T2.js Fail
 test/built-ins/Array/S15.4.1_A1.1_T3.js Pass
