@@ -317,6 +317,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, rootValueLocalSimple);
         il.Emit(OpCodes.Ldc_I4_0); // indent = 0
         il.Emit(OpCodes.Ldc_I4_0); // depth = 0
+        il.Emit(OpCodes.Ldstr, ""); // key = "" (root per ECMA-262 25.5.2.1 step 12)
         il.Emit(OpCodes.Call, stringifyHelper);
         il.Emit(OpCodes.Stloc, resultRootLocal);
         il.Emit(OpCodes.Ldloc, resultRootLocal);
@@ -335,7 +336,7 @@ public partial class RuntimeEmitter
             "StringifyValue",
             MethodAttributes.Private | MethodAttributes.Static,
             _types.String,
-            [_types.Object, _types.Int32, _types.Int32] // value, indent, depth
+            [_types.Object, _types.Int32, _types.Int32, _types.String] // value, indent, depth, key
         );
 
         var il = method.GetILGenerator();
@@ -385,8 +386,11 @@ public partial class RuntimeEmitter
         // Check for BigInt - get type name and check
         EmitBigIntCheck(il, valueLocal, runtime);
 
-        // Check for toJSON() method and call it if present
-        EmitToJsonCheck(il, valueLocal, runtime);
+        // Check for toJSON() method and call it if present. ECMA-262 25.5.2.3
+        // step 2.b.i requires toJSON's first arg to be the property key — read
+        // it from arg 3 (the helper's key parameter, threaded by all recursive
+        // callers).
+        EmitToJsonCheck(il, valueLocal, runtime, keyArgIndex: 3);
 
         // toJSON may have returned $Undefined — re-check and return C# null
         // so the caller treats it as JSON-undefined (root: returns undefined,
@@ -603,7 +607,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(notSkippedLabel);
     }
 
-    private void EmitToJsonCheck(ILGenerator il, LocalBuilder valueLocal, EmittedRuntime runtime, string? key = null)
+    private void EmitToJsonCheck(ILGenerator il, LocalBuilder valueLocal, EmittedRuntime runtime, string? key = null, int? keyArgIndex = null)
     {
         var noToJsonLabel = il.DefineLabel();
 
@@ -614,17 +618,27 @@ public partial class RuntimeEmitter
         var toJsonFieldLocal = il.DeclareLocal(_types.Object);
         var argsLocal = il.DeclareLocal(_types.ObjectArray);
 
-        // Build args = [key] if a key is provided, else [].
+        // Build args = [key] when a key source is provided, else [].
         // ECMA-262 25.5.2.3 step 2.b.i: Call(toJSON, value, « key »).
+        // The key may be a compile-time literal (root call sites pass "") or a
+        // runtime string in a method arg slot (recursive paths read the key
+        // from the helper's key parameter).
         void BuildArgs()
         {
-            if (key != null)
+            if (key != null || keyArgIndex.HasValue)
             {
                 il.Emit(OpCodes.Ldc_I4_1);
                 il.Emit(OpCodes.Newarr, _types.Object);
                 il.Emit(OpCodes.Dup);
                 il.Emit(OpCodes.Ldc_I4_0);
-                il.Emit(OpCodes.Ldstr, key);
+                if (keyArgIndex.HasValue)
+                {
+                    il.Emit(OpCodes.Ldarg, keyArgIndex.Value);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldstr, key!);
+                }
                 il.Emit(OpCodes.Stelem_Ref);
                 il.Emit(OpCodes.Stloc, argsLocal);
             }
@@ -846,9 +860,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, appendedLabel);
 
         il.MarkLabel(notHoleLabel);
-        // strResult = StringifyValue(arr[i], indent, depth + 1)
+        // strResult = StringifyValue(arr[i], indent, depth + 1, i.ToString())
         // sb.Append(strResult ?? "null"); — null means the slot's value was
         // undefined; arrays render those as "null" per SerializeJSONArray 8.b.
+        // ECMA-262 25.5.2.4 step 8.a: pass ToString(F(I)) as the key for
+        // the recursive SerializeJSONProperty call so toJSON sees the index.
         var arrElemStrLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldloc, arrLocal);
         il.Emit(OpCodes.Ldloc, iLocal);
@@ -857,6 +873,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldloca, iLocal);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int32, "ToString"));
         il.Emit(OpCodes.Call, stringifyMethod);
         il.Emit(OpCodes.Stloc, arrElemStrLocal);
         var arrElemNonNullLabel = il.DefineLabel();
@@ -940,9 +958,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.DictionaryStringObjectEnumerator.GetProperty("Current")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, currentLocal);
 
-        // strResult = StringifyValue(currentValue, indent, depth + 1)
+        // strResult = StringifyValue(currentValue, indent, depth + 1, currentKey)
         // Compute first; if null, the value was undefined → skip entry per
         // ECMA-262 25.5.2.1 SerializeJSONObject step 7.b.
+        // ECMA-262 25.5.2.5 step 6.a: the recursive key is the property name
+        // so toJSON can branch on it.
         var dictValStrLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldloca, currentLocal);
         il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Value").GetGetMethod()!);
@@ -950,6 +970,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldloca, currentLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Key").GetGetMethod()!);
         il.Emit(OpCodes.Call, stringifyMethod);
         il.Emit(OpCodes.Stloc, dictValStrLocal);
         il.Emit(OpCodes.Ldloc, dictValStrLocal);

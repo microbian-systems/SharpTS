@@ -270,17 +270,19 @@ public partial class RuntimeEmitter
         il.MarkLabel(skipRootReplacerLabel);
 
         // ============ Call helper method ============
-        // return StringifyValueFull(value, replacerFunc, allowedKeys, indentStr, 0)
+        // return StringifyValueFull(value, replacerFunc, allowedKeys, indentStr, 0, "")
         // ECMA-262: a null helper return at root means "JSON.stringify returns
         // undefined" (e.g. `JSON.stringify(undefined)` or replacer returning
         // undefined for the root). Map null → $Undefined.Instance so the JS
-        // surface sees the spec's `undefined`.
+        // surface sees the spec's `undefined`. Root key is "" per
+        // ECMA-262 25.5.2.1 step 12 (synthetic wrapper `{ "": value }`).
         var resultLocalRoot = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldloc, rootValueLocal);     // value (post-replacer)
         il.Emit(OpCodes.Ldloc, replacerFuncLocal);   // replacer
         il.Emit(OpCodes.Ldloc, allowedKeysLocal);    // allowedKeys
         il.Emit(OpCodes.Ldloc, indentStrLocal);      // indentStr
         il.Emit(OpCodes.Ldc_I4_0);                   // depth = 0
+        il.Emit(OpCodes.Ldstr, "");                  // key = ""
         il.Emit(OpCodes.Call, stringifyFullHelper);
         il.Emit(OpCodes.Stloc, resultLocalRoot);
         il.Emit(OpCodes.Ldloc, resultLocalRoot);
@@ -380,7 +382,9 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits the StringifyValueFull helper method for recursive JSON stringification with full options.
-    /// Signature: StringifyValueFull(object? value, object? replacer, HashSet&lt;string&gt;? allowedKeys, string indentStr, int depth) -> string?
+    /// Signature: StringifyValueFull(object? value, object? replacer, HashSet&lt;string&gt;? allowedKeys, string indentStr, int depth, string key) -> string?
+    /// The trailing key is the property name passed to toJSON / replacer per ECMA-262 25.5.2.3
+    /// (array recursion passes ToString(index); object recursion passes the property name).
     /// </summary>
     private MethodBuilder EmitStringifyValueFullHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -388,8 +392,8 @@ public partial class RuntimeEmitter
             "StringifyValueFull",
             MethodAttributes.Private | MethodAttributes.Static,
             _types.String,
-            [_types.Object, _types.Object, _types.ListOfString, _types.String, _types.Int32]
-            // value, replacer, allowedKeys, indentStr, depth
+            [_types.Object, _types.Object, _types.ListOfString, _types.String, _types.Int32, _types.String]
+            // value, replacer, allowedKeys, indentStr, depth, key
         );
 
         var il = method.GetILGenerator();
@@ -441,8 +445,10 @@ public partial class RuntimeEmitter
         // Check for BigInt
         EmitBigIntCheck(il, valueLocal, runtime);
 
-        // Check for toJSON() method
-        EmitToJsonCheck(il, valueLocal, runtime);
+        // Check for toJSON() method. ECMA-262 25.5.2.3 step 2.b.i requires
+        // toJSON's first arg to be the property key — read it from arg 5
+        // (the helper's key parameter, threaded by all recursive callers).
+        EmitToJsonCheck(il, valueLocal, runtime, keyArgIndex: 5);
 
         // toJSON returned $Undefined → C# null result (caller treats as
         // JSON-undefined). See note in StringifyValue.
@@ -683,7 +689,10 @@ public partial class RuntimeEmitter
         // If replacer function exists, call it: elem = InvokeCallback(replacer, i, elem)
         EmitCallReplacerIfNeeded(il, elemLocal, iLocal, arrLocal, runtime);
 
-        // strResult = StringifyValueFull(elem, replacer, allowedKeys, indentStr, depth + 1)
+        // strResult = StringifyValueFull(elem, replacer, allowedKeys, indentStr, depth + 1, i.ToString())
+        // ECMA-262 25.5.2.4 SerializeJSONArray step 8.a — the key passed down
+        // is ToString(F(I)). Int32.ToString() with no args is culture-invariant
+        // for non-negative ints (digit chars only).
         il.Emit(OpCodes.Ldloc, elemLocal);
         il.Emit(OpCodes.Ldarg_1);  // replacer
         il.Emit(OpCodes.Ldarg_2);  // allowedKeys
@@ -691,6 +700,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg, 4); // depth
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldloca, iLocal);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int32, "ToString"));
         il.Emit(OpCodes.Call, stringifyMethod);
         il.Emit(OpCodes.Stloc, strResultLocal);
 
@@ -1086,7 +1097,9 @@ public partial class RuntimeEmitter
         // Call replacer if needed
         EmitCallReplacerWithKey(il, valLocal, keyLocal, dictLocal, runtime);
 
-        // strResult = StringifyValueFull(val, replacer, allowedKeys, indentStr, depth + 1)
+        // strResult = StringifyValueFull(val, replacer, allowedKeys, indentStr, depth + 1, keyLocal)
+        // ECMA-262 25.5.2.5 SerializeJSONObject step 6.a — the recursive key
+        // is the property name (already the right shape).
         il.Emit(OpCodes.Ldloc, valLocal);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_2);
@@ -1094,6 +1107,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg, 4);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Call, stringifyMethod);
         il.Emit(OpCodes.Stloc, strResultLocal);
 

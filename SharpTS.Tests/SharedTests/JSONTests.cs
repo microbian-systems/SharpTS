@@ -349,6 +349,50 @@ public class JSONTests
     }
 
     [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_ToJSON_ReceivesPropertyKey(ExecutionMode mode)
+    {
+        // ECMA-262 25.5.2.3 SerializeJSONProperty step 2.b.i: toJSON is invoked
+        // with the property key as its first argument. Compiler-only baseline
+        // (interpreter has the same gap, tracked separately).
+        var source = """
+            let obj: any = {
+                a: { toJSON: function(k: string): string { return "k=" + k; } },
+                b: [
+                    { toJSON: function(k: string): string { return "i=" + k; } },
+                    { toJSON: function(k: string): string { return "i=" + k; } }
+                ]
+            };
+            console.log(JSON.stringify(obj));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("{\"a\":\"k=a\",\"b\":[\"i=0\",\"i=1\"]}\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_Replacer_ReceivesPropertyKey(ExecutionMode mode)
+    {
+        // ECMA-262 25.5.2.3 step 3.a: replacer is called with (key, value).
+        // The recursive helper must thread the property key through array
+        // index ToString and object key paths.
+        var source = """
+            let obj: any = { x: 1, y: [10, 20] };
+            let keys: string[] = [];
+            let result: string = JSON.stringify(obj, function(k: string, v: any): any {
+                keys.push(k);
+                return v;
+            });
+            console.log(keys.join("|"));
+            console.log(result);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("|x|y|0|1\n{\"x\":1,\"y\":[10,20]}\n", output);
+    }
+
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void JSON_Stringify_BigInt_Throws(ExecutionMode mode)
     {
