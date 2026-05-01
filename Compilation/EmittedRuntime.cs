@@ -342,6 +342,8 @@ public class EmittedRuntime
     public MethodBuilder StringReplaceWithFunction { get; set; } = null!;
     /// <summary>Strict variant of <see cref="StringPrototypeGenericStub"/> that throws TypeError on null/undefined receivers per ECMA-262 22.1.3.* step 1 (RequireObjectCoercible). Used for borrowed-method calls of <c>String.prototype.match/search/matchAll/etc.</c></summary>
     public MethodBuilder StringPrototypeStrictStub { get; set; } = null!;
+    /// <summary>$Runtime.StringProtoToString(this) — ECMA-262 22.1.3.27 String.prototype.toString. thisStringValue extraction: string→as-is; $Object with __primitiveType="String"→__primitiveValue; String.prototype itself→""; else throws TypeError. Reads the marker dict directly to avoid prototype-chain recursion.</summary>
+    public MethodBuilder StringProtoToStringHelper { get; set; } = null!;
     /// <summary>$Runtime.ObjectProtoToString(this) — ECMA-262 19.1.3.6 toString returns "[object X]" branded by receiver type. Wired into Object.prototype.toString slot for borrowed-method dispatch (`obj.toString = Object.prototype.toString; obj.toString()`).</summary>
     public MethodBuilder ObjectProtoToStringHelper { get; set; } = null!;
     /// <summary>$Runtime.ObjectProtoValueOf(this) — ECMA-262 19.1.3.7. Returns the receiver as-is (primitives stay primitive, objects stay objects). Wired into Object.prototype.valueOf so the materializer's ToPrimitive picks up the inherited method and sees a non-primitive return for plain objects (triggering the toString fallback).</summary>
@@ -360,10 +362,18 @@ public class EmittedRuntime
     public MethodBuilder ToObjectMethod { get; set; } = null!;
     /// <summary>$Runtime.IsBoxedPrimitiveOfType(obj, typeTag) — true iff obj is a $Object with matching __primitiveType marker. Used by the instanceof emitter.</summary>
     public MethodBuilder IsBoxedPrimitiveOfTypeMethod { get; set; } = null!;
+    /// <summary>$Runtime.UnwrapStringReceiver(object) -> string — coerces a String-method receiver to its underlying string. Fast-paths actual strings; unwraps Stage-4z19 boxed primitives ($Object with __primitiveType="String") to their __primitiveValue; otherwise falls back to ToJsString. Called by StringEmitter's direct dispatch prologue so `(new String("x")).charAt(...)` works once the new-String wrapper is enabled.</summary>
+    public MethodBuilder UnwrapStringReceiverMethod { get; set; } = null!;
     /// <summary>Object.prototype singleton dict, populated lazily with hasOwnProperty/isPrototypeOf/toString/valueOf wrappers.</summary>
     public FieldBuilder ObjectPrototypeField { get; set; } = null!;
     /// <summary>Idempotent populate for <see cref="ObjectPrototypeField"/>.</summary>
     public MethodBuilder ObjectPrototypePopulateMethod { get; set; } = null!;
+    /// <summary>Error.prototype singleton dict — populated with a $TSFunction wrapping the spec-compliant <see cref="ErrorToStringSpec"/>. Returned by GetProperty's Type-receiver branch when receiver is typeof($Error). Required so <c>Error.prototype.toString.call(non-error)</c> hits the brand-checking helper instead of generic .NET reflection on $Error.</summary>
+    public FieldBuilder ErrorPrototypeField { get; set; } = null!;
+    /// <summary>Idempotent populate for <see cref="ErrorPrototypeField"/>.</summary>
+    public MethodBuilder ErrorPrototypePopulateMethod { get; set; } = null!;
+    /// <summary>$Runtime.ErrorToStringSpec(this) — ECMA-262 20.5.3.4 Error.prototype.toString. Throws TypeError on non-object receiver; otherwise reads name/message via Get and returns the formatted string.</summary>
+    public MethodBuilder ErrorToStringSpec { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;

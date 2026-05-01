@@ -54,6 +54,72 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, setItem);
 
+        // String exotic object: per ECMA-262 §10.4.3, a String wrapper has a
+        // [[Length]] internal slot mirroring the primitive's length, plus
+        // own indexed properties for each character. We materialize them
+        // into the dict so dynamic GetProperty surfaces them naturally —
+        // `(new String("hi")).length === 2` and `s[0] === "h"`. Skipped for
+        // Number/Boolean wrappers (no equivalent slots).
+        var skipStringLayoutLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, typeTagLocal);
+        il.Emit(OpCodes.Ldstr, "String");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, skipStringLayoutLabel);
+        // Only string values get the layout — defensive against caller passing
+        // a non-string for the "String" tag (shouldn't happen in practice).
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, skipStringLayoutLabel);
+
+        var strLocal = il.DeclareLocal(_types.String);
+        var lenLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, strLocal);
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocal);
+
+        // dict["length"] = (double)len
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Callvirt, setItem);
+
+        // for (i = 0; i < len; i++) dict[i.ToString()] = str[i].ToString()
+        var idxLocal = il.DeclareLocal(_types.Int32);
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, loopEnd);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        // key = idx.ToString()
+        il.Emit(OpCodes.Ldloca, idxLocal);
+        il.Emit(OpCodes.Call, _types.Int32.GetMethod("ToString", Type.EmptyTypes)!);
+        // value = str[idx].ToString() (single-char string)
+        var charLocal = il.DeclareLocal(_types.Char);
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
+        il.Emit(OpCodes.Stloc, charLocal);
+        il.Emit(OpCodes.Ldloca, charLocal);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Char, "ToString"));
+        il.Emit(OpCodes.Callvirt, setItem);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.Emit(OpCodes.Br, loopStart);
+        il.MarkLabel(loopEnd);
+
+        il.MarkLabel(skipStringLayoutLabel);
+
         // obj = new $Object(dict)
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Newobj, runtime.TSObjectCtor);
@@ -155,6 +221,64 @@ public partial class RuntimeEmitter
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Boolean,
             [_types.Object, _types.String]);
+    }
+
+    /// <summary>
+    /// Emits <c>$Runtime.UnwrapStringReceiver(object) -&gt; string</c>: coerces
+    /// a String-method receiver to its underlying string. Fast-paths actual
+    /// strings; unwraps Stage-4z19 boxed primitives (<c>$Object</c> with
+    /// <c>__primitiveType="String"</c>) to their <c>__primitiveValue</c>;
+    /// otherwise falls back to <c>ToJsString</c> (which handles bool/double/etc.
+    /// per the JS spec ToString protocol).
+    /// </summary>
+    private void EmitUnwrapStringReceiver(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "UnwrapStringReceiver",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]);
+        runtime.UnwrapStringReceiverMethod = method;
+
+        var il = method.GetILGenerator();
+
+        // string fast path
+        var notStringLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notStringLabel);
+
+        // $Object wrapper unwrap: __primitiveValue (string only)
+        var notWrapperLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notWrapperLabel);
+        var primValLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, primValLocal);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notWrapperLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notWrapperLabel);
+
+        // Fallback: spec ToString. Note ToJsString does NOT throw on
+        // null/undefined (returns "null" / "undefined") — direct call sites
+        // through StringEmitter only fire on receivers the type checker
+        // proved non-nullish, so this matches expectations. Borrowed-method
+        // dispatch flows through CoercePrimitiveArgs.RequireObjectCoercibleThis
+        // which is the spec gate.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>

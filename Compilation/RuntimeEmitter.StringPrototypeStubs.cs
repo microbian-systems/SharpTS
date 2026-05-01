@@ -48,6 +48,11 @@ public partial class RuntimeEmitter
         // dispatch path doesn't fire.
         runtime.StringPrototypeStrictStub = EmitStringStringStub(typeBuilder, runtime, "_StringPrototypeStrictStub", "ToString", strictReceiver: true);
 
+        // ECMA-262 22.1.3.27 String.prototype.toString === valueOf === thisStringValue.
+        // Returns the underlying string for both primitive strings and Stage-4z19
+        // boxed wrappers; throws TypeError on non-string-like receivers (per spec).
+        runtime.StringProtoToStringHelper = EmitStringProtoToStringHelper(typeBuilder, runtime);
+
         // ECMA-262 19.1.3.6 Object.prototype.toString — returns "[object X]"
         // brand based on receiver type. Wired into the Object.prototype slot
         // for borrowed-method patterns. Mirrors the syntactic
@@ -309,6 +314,74 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);
+
+        return method;
+    }
+
+    /// <summary>
+    /// Emits ECMA-262 22.1.3.27 String.prototype.toString (and valueOf — same
+    /// thisStringValue extraction). Reads the wrapper's <c>__primitiveValue</c>
+    /// directly via TSObject's fields dict to avoid recursing through GetProperty
+    /// (which would walk the prototype chain back to this very helper).
+    /// </summary>
+    private MethodBuilder EmitStringProtoToStringHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "StringProtoToString",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]);
+        method.DefineParameter(1, ParameterAttributes.None, "__this");
+
+        var il = method.GetILGenerator();
+
+        // string fast path — return as-is.
+        var notStringLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notStringLabel);
+
+        // String.prototype singleton itself: [[StringData]] is "" per spec.
+        var notStringPrototypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
+        il.Emit(OpCodes.Bne_Un, notStringPrototypeLabel);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notStringPrototypeLabel);
+
+        // $TSObject wrapper — read __primitiveValue from the field dict directly.
+        var notTSObjectLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjectLabel);
+        var primValLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectFieldsGetter);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Ldloca, primValLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue",
+            [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, notTSObjectLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notTSObjectLabel);
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSObjectLabel);
+
+        // Other receivers — TypeError per spec. Borrowed-method calls of the
+        // form `String.prototype.toString.call(42)` rely on this throw.
+        il.Emit(OpCodes.Ldstr, "String.prototype.toString requires that 'this' be a String");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
 
         return method;
     }

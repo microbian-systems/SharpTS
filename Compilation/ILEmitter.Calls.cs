@@ -269,6 +269,48 @@ public partial class ILEmitter
         EmitTag("[object Math]");
         IL.MarkLabel(notMathLabel);
 
+        // Stage-4z19 boxed primitive wrappers ($Object with __primitiveType
+        // marker — `new Number(x)`, `new String(x)`, `new Boolean(x)`).
+        // Brand by the marker so wrappers report "[object Number/String/Boolean]"
+        // instead of falling through to "[object Object]". Read the marker
+        // via the public TSObject getter; tagged dispatch on the string value.
+        var notBoxedTSObjectInlineLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        IL.Emit(OpCodes.Brfalse, notBoxedTSObjectInlineLabel);
+        var inlineBoxedTypeLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        IL.Emit(OpCodes.Callvirt, runtime.TSObjectFieldsGetter);
+        IL.Emit(OpCodes.Ldstr, "__primitiveType");
+        IL.Emit(OpCodes.Ldloca, inlineBoxedTypeLocal);
+        IL.Emit(OpCodes.Callvirt, _ctx.Types.DictionaryStringObject.GetMethod("TryGetValue",
+            [_ctx.Types.String, _ctx.Types.Object.MakeByRefType()])!);
+        IL.Emit(OpCodes.Brfalse, notBoxedTSObjectInlineLabel);
+        // Compare marker against "Number" / "String" / "Boolean" and emit tag.
+        var notInlineNumberMarkerLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, inlineBoxedTypeLocal);
+        IL.Emit(OpCodes.Ldstr, "Number");
+        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Object, "Equals", _ctx.Types.Object, _ctx.Types.Object));
+        IL.Emit(OpCodes.Brfalse, notInlineNumberMarkerLabel);
+        EmitTag("[object Number]");
+        IL.MarkLabel(notInlineNumberMarkerLabel);
+        var notInlineStringMarkerLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, inlineBoxedTypeLocal);
+        IL.Emit(OpCodes.Ldstr, "String");
+        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Object, "Equals", _ctx.Types.Object, _ctx.Types.Object));
+        IL.Emit(OpCodes.Brfalse, notInlineStringMarkerLabel);
+        EmitTag("[object String]");
+        IL.MarkLabel(notInlineStringMarkerLabel);
+        var notInlineBoolMarkerLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, inlineBoxedTypeLocal);
+        IL.Emit(OpCodes.Ldstr, "Boolean");
+        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Object, "Equals", _ctx.Types.Object, _ctx.Types.Object));
+        IL.Emit(OpCodes.Brfalse, notInlineBoolMarkerLabel);
+        EmitTag("[object Boolean]");
+        IL.MarkLabel(notInlineBoolMarkerLabel);
+        IL.MarkLabel(notBoxedTSObjectInlineLabel);
+
         // JSON singleton — reference equality. Per ECMA-262 §25.5,
         // JSON has Symbol.toStringTag = "JSON" so toString returns
         // "[object JSON]". Test262 uses `Array.prototype.reduce.call(JSON, …)`

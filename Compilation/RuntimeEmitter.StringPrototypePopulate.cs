@@ -124,8 +124,11 @@ public partial class RuntimeEmitter
         Wire("match",                runtime.StringPrototypeStrictStub,    1);
         Wire("matchAll",             runtime.StringPrototypeStrictStub,    1);
         Wire("search",               runtime.StringPrototypeStrictStub,    1);
-        Wire("toString",             runtime.StringPrototypeGenericStub,   0);
-        Wire("valueOf",              runtime.StringPrototypeGenericStub,   0);
+        // Issue #91: spec-correct thisStringValue extraction so wrapper
+        // receivers (`new String("x")`) return the underlying primitive
+        // and non-string-like receivers throw TypeError per ECMA-262 22.1.3.27.
+        Wire("toString",             runtime.StringProtoToStringHelper,    0);
+        Wire("valueOf",              runtime.StringProtoToStringHelper,    0);
         // ECMA-262 22.1.3.21/22 RequireObjectCoercible(this) is the first step.
         // Wire to the strict StringToLowerCase / StringToUpperCase variants so
         // borrowed-method calls on null/undefined throw TypeError instead of

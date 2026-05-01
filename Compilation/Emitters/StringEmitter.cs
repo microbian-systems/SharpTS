@@ -17,10 +17,16 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Emit the string object
+        // Emit the receiver. UnwrapStringReceiver handles primitive strings
+        // (fast pass-through) AND Stage-4z19 boxed-primitive wrappers from
+        // `new String(x)` — the type checker treats `s : String` for both
+        // shapes, so this dispatch must accept either. Without the unwrap,
+        // `(new String("hi")).charAt(0)` blew up at the Castclass. Falls back
+        // to ToJsString for non-string non-wrapper receivers (matches
+        // ECMA-262 22.1.3.* "Let S = ? ToString(O)" coercion).
         emitter.EmitExpression(receiver);
         emitter.EmitBoxIfNeeded(receiver);
-        il.Emit(OpCodes.Castclass, ctx.Types.String);
+        il.Emit(OpCodes.Call, ctx.Runtime!.UnwrapStringReceiverMethod);
 
         switch (methodName)
         {
@@ -159,10 +165,11 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Emit the string object
+        // Emit the receiver and unwrap (see TryEmitMethodCall comment for
+        // why Castclass is wrong once `new String` returns a wrapper).
         emitter.EmitExpression(receiver);
         emitter.EmitBoxIfNeeded(receiver);
-        il.Emit(OpCodes.Castclass, ctx.Types.String);
+        il.Emit(OpCodes.Call, ctx.Runtime!.UnwrapStringReceiverMethod);
 
         // Get length and convert to double (TypeScript number)
         il.Emit(OpCodes.Call, ctx.Types.GetProperty(ctx.Types.String, "Length").GetGetMethod()!);

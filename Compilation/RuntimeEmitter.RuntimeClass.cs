@@ -143,6 +143,16 @@ public partial class RuntimeEmitter
             FieldAttributes.Public | FieldAttributes.Static);
         runtime.ObjectPrototypeField = objectPrototypeField;
 
+        // Error.prototype singleton — populated with toString/constructor.
+        // Returned by GetProperty's Type-receiver branch when receiver is
+        // typeof($Error), so `Error.prototype.toString.call(non-error)` hits
+        // the brand-checking helper instead of generic class reflection.
+        var errorPrototypeField = typeBuilder.DefineField(
+            "_errorPrototype",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.ErrorPrototypeField = errorPrototypeField;
+
         // CheckCancellation(): if (_cancelRequested) throw new
         //   OperationCanceledException("Compiled execution cancelled.");
         // Called by loop emitters at each backedge. Method body is emitted
@@ -245,6 +255,7 @@ public partial class RuntimeEmitter
         DefineStringPrototypePopulateShell(typeBuilder, runtime);
         DefineNumberPrototypePopulateShell(typeBuilder, runtime);
         DefineBooleanPrototypePopulateShell(typeBuilder, runtime);
+        DefineErrorPrototypePopulateShell(typeBuilder, runtime);
 
         // Static constructor to initialize Random and symbol storage
         var cctorBuilder = typeBuilder.DefineConstructor(
@@ -282,6 +293,11 @@ public partial class RuntimeEmitter
         // EmitObjectPrototypePopulate-emitted helper on first read.
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         cctorIL.Emit(OpCodes.Stsfld, objectPrototypeField);
+
+        // Error.prototype starts empty; populated by EmitErrorPrototypePopulate
+        // (eagerly invoked from cctor tail below).
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Stsfld, errorPrototypeField);
 
         // Initialize _symbolStorage = new ConditionalWeakTable<object, Dictionary<object, object?>>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(symbolStorageType));
@@ -322,6 +338,7 @@ public partial class RuntimeEmitter
         EmitLinkProto(numberPrototypeField);
         EmitLinkProto(stringPrototypeField);
         EmitLinkProto(arrayPrototypeField);
+        EmitLinkProto(errorPrototypeField);
 
         // Initialize _mapNullSentinel = new object()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.Object));
@@ -347,6 +364,7 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Call, runtime.NumberPrototypePopulateMethod);
         cctorIL.Emit(OpCodes.Call, runtime.BooleanPrototypePopulateMethod);
         cctorIL.Emit(OpCodes.Call, runtime.StringPrototypePopulateMethod);
+        cctorIL.Emit(OpCodes.Call, runtime.ErrorPrototypePopulateMethod);
 
         cctorIL.Emit(OpCodes.Ret);
 
@@ -613,6 +631,7 @@ public partial class RuntimeEmitter
         EmitNewBoxedPrimitive(typeBuilder, runtime);
         EmitToObject(typeBuilder, runtime);
         EmitIsBoxedPrimitiveOfType(typeBuilder, runtime);
+        EmitUnwrapStringReceiver(typeBuilder, runtime);
         // String methods
         EmitStringCharAt(typeBuilder, runtime);
         EmitStringSubstring(typeBuilder, runtime);
@@ -690,6 +709,10 @@ public partial class RuntimeEmitter
         EmitRegExpMethods(typeBuilder, runtime);
         // Error methods
         EmitErrorMethods(typeBuilder, runtime);
+        // Error.prototype populate body — must come AFTER EmitErrorMethods so
+        // the spec-compliant ErrorToStringSpec helper can reference $Error
+        // metadata (TSErrorType, ErrorGetName/ErrorGetMessage already populated).
+        EmitErrorPrototypePopulate(typeBuilder, runtime);
         // Map methods
         EmitMapMethods(typeBuilder, runtime);
         EmitMapGroupBy(typeBuilder, runtime);
