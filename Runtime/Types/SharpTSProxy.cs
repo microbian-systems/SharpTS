@@ -174,6 +174,67 @@ public class SharpTSProxy : ISharpTSCallable
         return ToBoolean(result);
     }
 
+    /// <summary>
+    /// ECMA-262 10.5.11 [[OwnPropertyKeys]] trap. Returns the property names visible
+    /// to enumeration (Object.keys / JSON.stringify / for-in). Falls back to forwarding
+    /// to the target's own string keys when no ownKeys trap is defined. Throws if the
+    /// proxy is revoked. The returned list is the union of the trap's keys and any
+    /// non-configurable own keys on the target (per spec, those must always appear).
+    /// </summary>
+    public List<string> TrapOwnKeys(Interpreter? interp)
+    {
+        var trap = GetTrapCallable("ownKeys");
+        if (trap == null)
+            return ForwardOwnKeys();
+
+        var result = InvokeTrap(trap, interp, [_target]);
+        var keys = new List<string>();
+        switch (result)
+        {
+            case SharpTSArray arr:
+                foreach (var item in arr)
+                    if (item is string s) keys.Add(s);
+                break;
+            case List<object?> list:
+                foreach (var item in list)
+                    if (item is string s) keys.Add(s);
+                break;
+            case IEnumerable<object?> seq:
+                foreach (var item in seq)
+                    if (item is string s) keys.Add(s);
+                break;
+        }
+        return keys;
+    }
+
+    private List<string> ForwardOwnKeys()
+    {
+        var keys = new List<string>();
+        switch (_target)
+        {
+            case SharpTSObject obj:
+                keys.AddRange(obj.Fields.Keys);
+                break;
+            case SharpTSInstance inst:
+                keys.AddRange(inst.GetFieldNames());
+                break;
+            case SharpTSArray arr:
+                for (int i = 0; i < arr.Length; i++)
+                    keys.Add(i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                keys.Add("length");
+                break;
+            case Dictionary<string, object?> dict:
+                keys.AddRange(dict.Keys);
+                break;
+            case List<object?> list:
+                for (int i = 0; i < list.Count; i++)
+                    keys.Add(i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                keys.Add("length");
+                break;
+        }
+        return keys;
+    }
+
     public object? TrapApply(object? thisArg, List<object?> args, Interpreter? interp)
     {
         var trap = GetTrapCallable("apply");

@@ -440,6 +440,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, valueLocal);
         il.MarkLabel(notBoxedPrim);
 
+        // Proxy materialization (#92): if value is SharpTSProxy, dispatch its
+        // [[OwnPropertyKeys]] / [[Get]] traps and substitute a Dictionary so the
+        // existing dict path serializes the proxied view.
+        var notProxyLabelSimple = il.DefineLabel();
+        EmitProxyMaterializeForJson(il, valueLocal, notProxyLabelSimple);
+        il.Emit(OpCodes.Br, dictLabel);
+        il.MarkLabel(notProxyLabelSimple);
+
         // if (value is bool)
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Isinst, _types.Boolean);
