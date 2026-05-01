@@ -617,4 +617,69 @@ public class TypeErrorTests
     }
 
     #endregion
+
+    #region Array index range (ECMA-262)
+
+    // ECMA-262 array indices are integers in [0, 2^32 - 2]. Numeric literals
+    // outside that range (e.g. 4294967295, -1) are regular property
+    // assignments per spec, not array-element writes — so the element-type
+    // check must not fire for them. Regression for issue #77.
+
+    [Fact]
+    public void StringAssignToOutOfRangeUint32Index_OnNumberArray_Allowed()
+    {
+        var source = """
+            var a: number[] = [0, 1, 2];
+            a[4294967295] = "spec-legal";
+            """;
+
+        // Type-checker must not reject; runtime may still reject (separate
+        // sparse-array layer of work).
+        var ex = Record.Exception(() => TestHarness.RunInterpreted(source));
+        Assert.False(
+            ex is not null && ex.Message.Contains("Type Error"),
+            $"unexpected type error: {ex?.Message}");
+    }
+
+    [Fact]
+    public void StringAssignToNegativeIndex_OnNumberArray_Allowed()
+    {
+        var source = """
+            var a: number[] = [0, 1, 2];
+            a[-1] = "not an array element";
+            """;
+
+        var ex = Record.Exception(() => TestHarness.RunInterpreted(source));
+        Assert.False(
+            ex is not null && ex.Message.Contains("Type Error"),
+            $"unexpected type error: {ex?.Message}");
+    }
+
+    [Fact]
+    public void StringAssignToInRangeIndex_OnNumberArray_StillFails()
+    {
+        var source = """
+            var a: number[] = [0, 1, 2];
+            a[5] = "still wrong";
+            """;
+
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
+        Assert.Contains("Type Error", ex.Message);
+        Assert.Contains("array of", ex.Message);
+    }
+
+    [Fact]
+    public void StringAssignToMaxValidIndex_OnNumberArray_StillFails()
+    {
+        var source = """
+            var a: number[] = [0, 1, 2];
+            a[4294967294] = "still wrong";
+            """;
+
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
+        Assert.Contains("Type Error", ex.Message);
+        Assert.Contains("array of", ex.Message);
+    }
+
+    #endregion
 }
