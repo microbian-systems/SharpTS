@@ -298,6 +298,10 @@ public partial class ILEmitter
     private void EmitCalleeExprConstruction(Expr.New n)
     {
         EmitExpression(n.Callee);
+        // Box value-typed callees (e.g. `new true;`, `new 1;`) before storing to an
+        // object slot — without this the JIT crashes with a fatal CLR error on
+        // the upcoming Stloc/Ldloc into `object`.
+        EmitBoxIfNeeded(n.Callee);
         var objTemp = IL.DeclareLocal(_ctx.Types.Object);
         IL.Emit(OpCodes.Stloc, objTemp);
 

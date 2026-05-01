@@ -581,6 +581,92 @@ public class ExpressionParsingTests
         Assert.Equal(2, newExpr.Arguments.Count);
     }
 
+    [Fact]
+    public void New_NoParens_OnIdentifier()
+    {
+        // Issue #78: `new X` without arg list — equivalent to `new X()`.
+        var expr = ParseExpression("new Foo;");
+        var newExpr = Assert.IsType<Expr.New>(expr);
+        var callee = Assert.IsType<Expr.Variable>(newExpr.Callee);
+        Assert.Equal("Foo", callee.Name.Lexeme);
+        Assert.Empty(newExpr.Arguments);
+    }
+
+    [Fact]
+    public void New_LiteralCallee_Boolean()
+    {
+        // Issue #78: `new true` parses; runtime throws TypeError.
+        var expr = ParseExpression("new true;");
+        var newExpr = Assert.IsType<Expr.New>(expr);
+        var lit = Assert.IsType<Expr.Literal>(newExpr.Callee);
+        Assert.Equal(true, lit.Value);
+    }
+
+    [Fact]
+    public void New_LiteralCallee_Number()
+    {
+        var expr = ParseExpression("new 1;");
+        var newExpr = Assert.IsType<Expr.New>(expr);
+        Assert.IsType<Expr.Literal>(newExpr.Callee);
+    }
+
+    [Fact]
+    public void New_LiteralCallee_String()
+    {
+        var expr = ParseExpression("new \"abc\";");
+        var newExpr = Assert.IsType<Expr.New>(expr);
+        Assert.IsType<Expr.Literal>(newExpr.Callee);
+    }
+
+    [Fact]
+    public void New_FunctionExpressionCallee()
+    {
+        // Issue #78: `new function() {}(...)` from spread-err-* test262 bucket.
+        var expr = ParseExpression("new function() {}();");
+        var newExpr = Assert.IsType<Expr.New>(expr);
+        Assert.IsType<Expr.ArrowFunction>(newExpr.Callee);
+        Assert.Empty(newExpr.Arguments);
+    }
+
+    [Fact]
+    public void New_FunctionExpressionCallee_WithArgs()
+    {
+        var expr = ParseExpression("new function(a, b) {}(1, 2);");
+        var newExpr = Assert.IsType<Expr.New>(expr);
+        Assert.IsType<Expr.ArrowFunction>(newExpr.Callee);
+        Assert.Equal(2, newExpr.Arguments.Count);
+    }
+
+    [Fact]
+    public void New_IndexedCallee()
+    {
+        // `new ctors[0]()` — index access in MemberExpression position.
+        var expr = ParseExpression("new ctors[0]();");
+        var newExpr = Assert.IsType<Expr.New>(expr);
+        Assert.IsType<Expr.GetIndex>(newExpr.Callee);
+    }
+
+    [Fact]
+    public void New_SpreadArgument()
+    {
+        // ECMA-262: spread in `new` arg list. Used by spread-err-* test262 bucket.
+        var expr = ParseExpression("new Foo(0, ...args);");
+        var newExpr = Assert.IsType<Expr.New>(expr);
+        Assert.Equal(2, newExpr.Arguments.Count);
+        Assert.IsType<Expr.Spread>(newExpr.Arguments[1]);
+    }
+
+    [Fact]
+    public void New_Nested()
+    {
+        // `new new X()` parses as `new (new X())`.
+        var expr = ParseExpression("new new X();");
+        var outer = Assert.IsType<Expr.New>(expr);
+        var inner = Assert.IsType<Expr.New>(outer.Callee);
+        var calleeVar = Assert.IsType<Expr.Variable>(inner.Callee);
+        Assert.Equal("X", calleeVar.Name.Lexeme);
+    }
+
     #endregion
 
     #region This and Super

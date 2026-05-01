@@ -680,15 +680,15 @@ public partial class TypeChecker
 
             return new TypeInfo.Instance(classType);
         }
-        // Handle function-typed constructors (e.g., imported Agent constructor from http module)
-        if (calleeType is TypeInfo.Function || calleeType is TypeInfo.Any)
-        {
-            foreach (var arg in newExpr.Arguments)
-                CheckExpr(arg);
-            return new TypeInfo.Any();
-        }
-
-        throw new TypeCheckException($" '{qualifiedName}' is not a class.");
+        // Handle function-typed constructors and any other non-class callee.
+        // Per ECMA-262 §13.3, `new MemberExpression` is syntactically valid for any
+        // expression — if the value isn't a constructor, runtime throws TypeError.
+        // Don't block at the type-check phase; let runtime decide. This covers literal
+        // callees (`new true`, `new 1`), function expressions (`new function() {}(...)`),
+        // and any value whose static type isn't a known class.
+        foreach (var arg in newExpr.Arguments)
+            CheckExpr(arg);
+        return new TypeInfo.Any();
     }
 
     /// <summary>
