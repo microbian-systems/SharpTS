@@ -39,7 +39,12 @@ public static class JSONBuiltIns
 
         if (reviver != null)
         {
-            parsed = ApplyReviver(interp, parsed, "", reviver);
+            // ECMA-262 25.5.1.1: synthesize a root holder { "": parsed } and
+            // recurse via InternalizeJSONProperty so the reviver receives the
+            // root through `this` and any in-place mutations the reviver makes
+            // on `this` are visible to the surrounding walk.
+            var root = new SharpTSObject(new Dictionary<string, object?> { [""] = parsed });
+            return InternalizeJSONProperty(interp, root, "", reviver);
         }
 
         return parsed;
@@ -64,35 +69,136 @@ public static class JSONBuiltIns
         };
     }
 
-    private static object? ApplyReviver(Interpreter interp, object? value, object? key, ISharpTSCallable reviver)
+    /// <summary>
+    /// ECMA-262 25.5.1.1.1 InternalizeJSONProperty.
+    /// Walks the holder's named property top-down: child mutation happens
+    /// IN-PLACE on the value via Set / Delete, then the reviver is invoked
+    /// with <c>this</c> = holder. When the value being walked is a Proxy,
+    /// Get / OwnKeys / Set / Delete dispatch to the corresponding traps.
+    /// </summary>
+    private static object? InternalizeJSONProperty(Interpreter interp, object? holder, string key, ISharpTSCallable reviver)
     {
-        // First, recursively transform children (bottom-up)
-        if (value is SharpTSObject obj)
+        var val = HolderGet(holder, key, interp);
+
+        if (val is SharpTSArray arr)
         {
-            Dictionary<string, object?> newFields = [];
-            foreach (var kv in obj.Fields)
+            // ECMA-262 step 2.b: iterate by length, key = ToString(index).
+            long len = arr.LongLength;
+            for (long i = 0; i < len; i++)
             {
-                // ApplyReviver already calls the reviver for each child
-                var result = ApplyReviver(interp, kv.Value, kv.Key, reviver);
-                if (result != null) // undefined removes the property
-                    newFields[kv.Key] = result;
+                var prop = i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var newElement = InternalizeJSONProperty(interp, val, prop, reviver);
+                if (IsUndefinedRevive(newElement))
+                    arr.DeleteAt(i);
+                else
+                    arr[i] = newElement;
             }
-            value = new SharpTSObject(newFields);
         }
-        else if (value is SharpTSArray arr)
+        else if (val is SharpTSProxy proxy)
         {
-            List<object?> newElements = [];
-            for (int i = 0; i < arr.Length; i++)
+            // Snapshot keys before the loop — spec captures
+            // EnumerableOwnProperties before iteration (the trap may
+            // legitimately return varying lists across calls).
+            var keys = proxy.TrapOwnKeys(interp).ToList();
+            foreach (var prop in keys)
             {
-                // ApplyReviver already calls the reviver for each element
-                var result = ApplyReviver(interp, arr[i], (double)i, reviver);
-                newElements.Add(result);
+                var newElement = InternalizeJSONProperty(interp, val, prop, reviver);
+                if (IsUndefinedRevive(newElement))
+                    proxy.TrapDeleteProperty(prop, interp);
+                else
+                    proxy.TrapSet(prop, newElement, interp);
             }
-            value = new SharpTSArray(newElements);
+        }
+        else if (val is SharpTSObject obj)
+        {
+            // Snapshot keys — the reviver can defineProperty on `this`,
+            // adding sibling keys; the spec freezes the iteration list at
+            // the start of step 2.c.
+            var keys = obj.Fields.Keys.ToList();
+            foreach (var prop in keys)
+            {
+                var newElement = InternalizeJSONProperty(interp, val, prop, reviver);
+                if (IsUndefinedRevive(newElement))
+                    obj.DeleteProperty(prop);
+                else
+                    obj.SetProperty(prop, newElement);
+            }
+        }
+        else if (val is SharpTSInstance inst)
+        {
+            var keys = inst.GetFieldNames().ToList();
+            foreach (var prop in keys)
+            {
+                var newElement = InternalizeJSONProperty(interp, val, prop, reviver);
+                var token = new Parsing.Token(Parsing.TokenType.IDENTIFIER, prop, null, 0);
+                if (IsUndefinedRevive(newElement))
+                    inst.DeleteFieldStrict(prop, false);
+                else
+                    inst.Set(token, newElement);
+            }
         }
 
-        // Then call reviver for this node (after children are transformed)
-        return reviver.Call(interp, [key, value]);
+        // Step 3: Call reviver with `this` = holder, args = (key, val).
+        return InvokeReviverWithHolder(interp, reviver, holder, key, val);
+    }
+
+    private static object? HolderGet(object? holder, string key, Interpreter interp)
+    {
+        switch (holder)
+        {
+            case SharpTSProxy proxy:
+                return proxy.TrapGet(key, interp);
+            case SharpTSObject obj:
+                {
+                    var v = obj.GetProperty(key);
+                    return v is SharpTSUndefined ? null : v;
+                }
+            case SharpTSArray arr:
+                if (long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out var idx)
+                    && idx >= 0 && idx < arr.LongLength)
+                {
+                    var v = arr[idx];
+                    return v is SharpTSUndefined ? null : v;
+                }
+                return null;
+            case SharpTSInstance inst:
+                {
+                    var token = new Parsing.Token(Parsing.TokenType.IDENTIFIER, key, null, 0);
+                    var v = inst.Get(token);
+                    return v is SharpTSUndefined ? null : v;
+                }
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// JS undefined removes the property; JS null is preserved. In our
+    /// representation a function with no explicit return yields C# null,
+    /// which we conservatively also treat as "remove" to match the
+    /// pre-existing behavior of this path (callers that explicitly return
+    /// null can return <c>null</c> via <c>ReturnException</c> with
+    /// <c>SharpTSUndefined</c> stripped — out of scope to refine here).
+    /// </summary>
+    private static bool IsUndefinedRevive(object? v) => v is null or SharpTSUndefined;
+
+    private static object? InvokeReviverWithHolder(Interpreter interp, ISharpTSCallable reviver, object? holder, string key, object? val)
+    {
+        // Bind `this` = holder for the reviver call. The interpreter models
+        // both classic <c>function</c> declarations and function expressions
+        // through two related types:
+        //   - SharpTSFunction: <c>function name() {}</c> declarations.
+        //   - SharpTSArrowFunction: arrow functions AND function expressions
+        //     (the latter has <c>HasOwnThis=true</c>, the former false).
+        // True arrow functions capture <c>this</c> lexically and ignore any
+        // bind attempt; we forward to their plain Call. Both other shapes
+        // honor an explicit binding via their respective Bind helpers.
+        if (reviver is SharpTSFunction fn)
+            return fn.BindThis(holder).Call(interp, [key, val]);
+        if (reviver is SharpTSArrowFunction arrow && arrow.HasOwnThis && holder != null)
+            return arrow.Bind(holder).Call(interp, [key, val]);
+        return reviver.Call(interp, [key, val]);
     }
 
     private static object? StringifyJson(Interpreter interp, object? _, List<object?> args)

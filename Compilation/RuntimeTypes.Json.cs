@@ -37,7 +37,11 @@ public static partial class RuntimeTypes
         var parsed = JsonParse(text);
         if (reviver is TSFunction func)
         {
-            return ApplyReviver(parsed, "", func);
+            // ECMA-262 25.5.1.1 — synthesize a root holder { "": parsed }
+            // so the reviver receives the wrapper as `this` for the root call,
+            // matching the emitted IL path in EmitJsonParseWithReviver.
+            var root = new Dictionary<string, object?> { [""] = parsed };
+            return ApplyReviver(root, "", func);
         }
         return parsed;
     }
@@ -60,35 +64,63 @@ public static partial class RuntimeTypes
         };
     }
 
-    private static object? ApplyReviver(object? value, object? key, TSFunction reviver)
+    /// <summary>
+    /// ECMA-262 25.5.1.1.1 InternalizeJSONProperty — used by the reflective C#
+    /// path. The emitted-IL path lives in <c>RuntimeEmitter.Json.ParseReviver.cs</c>;
+    /// kept in sync here so the two routines behave identically when callers
+    /// invoke this directly (e.g. tooling, in-process harness).
+    /// </summary>
+    private static object? ApplyReviver(object? holder, object? key, TSFunction reviver)
     {
-        // First, recursively transform children (bottom-up)
-        if (value is Dictionary<string, object?> dict)
+        var val = HolderGet(holder, key);
+
+        if (val is List<object?> list)
         {
-            Dictionary<string, object?> newDict = [];
-            foreach (var kv in dict)
-            {
-                // ApplyReviver already calls the reviver for each child
-                var result = ApplyReviver(kv.Value, kv.Key, reviver);
-                if (result != null) // undefined removes the property
-                    newDict[kv.Key] = result;
-            }
-            value = newDict;
-        }
-        else if (value is List<object?> list)
-        {
-            List<object?> newList = [];
             for (int i = 0; i < list.Count; i++)
             {
-                // ApplyReviver already calls the reviver for each element
-                var result = ApplyReviver(list[i], (double)i, reviver);
-                newList.Add(result);
+                var prop = i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var newElement = ApplyReviver(val, prop, reviver);
+                list[i] = newElement;
             }
-            value = newList;
+        }
+        else if (val is Dictionary<string, object?> dict)
+        {
+            // Snapshot keys — revivers can mutate `this` in place; the spec
+            // freezes the iteration list before step 2.c.
+            var keys = new List<string>(dict.Keys);
+            foreach (var prop in keys)
+            {
+                var newElement = ApplyReviver(val, prop, reviver);
+                if (newElement is null)
+                    dict.Remove(prop);
+                else
+                    dict[prop] = newElement;
+            }
         }
 
-        // Then call reviver for THIS node (after children are transformed)
-        return reviver.Invoke(key, value);
+        // Step 3: Call reviver. The C# TSFunction.Invoke wrapper does not
+        // expose a `this` channel — the emitted-IL path
+        // (EmitApplyReviverHelper) is the spec-faithful one and uses
+        // <c>$TSFunction.InvokeWithThis</c> to bind <c>this</c> = holder.
+        // This C# helper is reachable only if external tooling calls
+        // <see cref="JsonParseWithReviver"/> directly (no in-process caller
+        // does today); in that fallback path we drop the holder binding,
+        // matching pre-existing behavior.
+        return reviver.Invoke(key, val);
+    }
+
+    private static object? HolderGet(object? holder, object? key)
+    {
+        var keyStr = key?.ToString() ?? "";
+        if (holder is Dictionary<string, object?> dict)
+            return dict.TryGetValue(keyStr, out var v) ? v : null;
+        if (holder is List<object?> list)
+        {
+            if (int.TryParse(keyStr, out var idx) && idx >= 0 && idx < list.Count)
+                return list[idx];
+            return null;
+        }
+        return null;
     }
 
     public static object? JsonStringify(object? value)
