@@ -625,8 +625,18 @@ public partial class ILEmitter
             // tolerate it to avoid a methodArgs rewrite.
         }
 
-        // list = ArrayLikeMaterialize(receiver) — the Dup'd receiver is on the stack
-        IL.Emit(OpCodes.Call, runtime.ArrayLikeMaterialize);
+        // list = ArrayLikeMaterializeForIteration(receiver) for iterator helpers
+        // whose IL has been updated to use LoadArrayLikeElement (issue #90).
+        // For others (concat / slice / indexOf / includes / etc.), keep the
+        // eager ArrayLikeMaterialize — those helpers read list[i] directly and
+        // would see null placeholders under lazy mode. The Dup'd receiver is
+        // on the stack.
+        bool useLazyMaterializer = methodName is "every" or "some" or "filter"
+            or "map" or "forEach" or "find" or "findIndex" or "findLast"
+            or "findLastIndex" or "flatMap" or "reduce" or "reduceRight";
+        IL.Emit(OpCodes.Call, useLazyMaterializer
+            ? runtime.ArrayLikeMaterializeForIteration
+            : runtime.ArrayLikeMaterialize);
 
         // For iterator methods that accept thisArg (callbackfn, thisArg) per
         // ECMA-262, save the previous _currentCallbackThisArg, stash methodArgs[1]

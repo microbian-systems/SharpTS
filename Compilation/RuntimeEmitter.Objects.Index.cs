@@ -434,33 +434,70 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         var valueLocal = il.DeclareLocal(_types.Object);
+        var pdsDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+
+        // Helper: emit the PDS-first lookup.
+        //   1. Check own dict._fields via TryGetValue → fast path for direct entries
+        //      (matches the legacy behavior for plain `obj[k] = v` keys).
+        //   2. Else check PDS for an own descriptor — if present, route through
+        //      GetProperty so a get accessor fires. Without this, indexed reads
+        //      bypassed Object.defineProperty(obj, k, {get: ...}) accessors and
+        //      returned null instead of invoking the getter (companion to the
+        //      SetIndex fix that routes writes through SetProperty for setters).
+        //   3. Else return null — preserves the legacy "no prototype-chain walk"
+        //      behavior for missing keys (changing that is a separate refactor).
+        void EmitDictLookup(Action emitDict, Action emitKey)
+        {
+            var foundFieldsLabel = il.DefineLabel();
+            var checkPdsLabel = il.DefineLabel();
+            var notFoundLabel = il.DefineLabel();
+
+            // dict.TryGetValue(key, out value)
+            emitDict();
+            emitKey();
+            il.Emit(OpCodes.Ldloca, valueLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
+            il.Emit(OpCodes.Brtrue, foundFieldsLabel);
+
+            // PDS check
+            il.MarkLabel(checkPdsLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            emitKey();
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, pdsDescLocal);
+            il.Emit(OpCodes.Ldloc, pdsDescLocal);
+            il.Emit(OpCodes.Brfalse, notFoundLabel);
+            // Descriptor present — fire GetProperty so the accessor's get
+            // function runs and any throw propagates.
+            il.Emit(OpCodes.Ldarg_0);
+            emitKey();
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(notFoundLabel);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(foundFieldsLabel);
+            il.Emit(OpCodes.Ldloc, valueLocal);
+            il.Emit(OpCodes.Ret);
+        }
 
         il.MarkLabel(dictStringKeyLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, _types.String);
-        il.Emit(OpCodes.Ldloca, valueLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
-        var foundLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, foundLabel);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(foundLabel);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Ret);
+        EmitDictLookup(
+            () => { il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Castclass, _types.DictionaryStringObject); },
+            () => { il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Castclass, _types.String); });
 
         il.MarkLabel(dictNumericKeyLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
-        il.Emit(OpCodes.Ldloca, valueLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
+        EmitDictLookup(
+            () => { il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Castclass, _types.DictionaryStringObject); },
+            () => { il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString")); });
+
+        // Defunct labels — replaced by EmitDictLookup. Mark unreachable for IL
+        // verification balance.
+        var foundLabel = il.DefineLabel();
+        il.MarkLabel(foundLabel);
         var foundNumLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, foundNumLabel);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
         il.MarkLabel(foundNumLabel);
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Ret);
@@ -756,6 +793,14 @@ public partial class RuntimeEmitter
         }
 
         il.MarkLabel(dictLabel);
+        // Route through SetProperty so PDS setter accessors fire. Pre-fix,
+        // this branch wrote directly to dict._fields, bypassing any
+        // Object.defineProperty(obj, k, {set: ...}) accessor — `obj[1] = v`
+        // landed in _fields without invoking the setter, and a subsequent
+        // `obj[1]` read would shadow the PDS getter (return _fields' value
+        // instead of firing the get accessor). SetProperty's PDSTryGetSetter
+        // branch invokes the setter; if no PDS setter exists it falls
+        // through to dict.set_Item — same as the previous direct write.
         // Check if index is string
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.String);
@@ -769,20 +814,18 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(dictStringKeyLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(dictNumericKeyLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
     }
 

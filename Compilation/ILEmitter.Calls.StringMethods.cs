@@ -27,18 +27,31 @@ public partial class ILEmitter
         var fallbackLabel = builder.DefineLabel("string_method_fallback");
         var doneLabel = builder.DefineLabel("string_method_done");
 
-        // Check if it's a string
+        // Take the string-fast-path if the receiver is either a CLR string OR
+        // a `new String(...)` wrapper ($Object with __primitiveType="String").
+        // Without the wrapper check, `(new String("ABC")).indexOf("A", 1)`
+        // and similar tests fall through to the dynamic GetProperty +
+        // InvokeMethodValue path, where the bound prototype method silently
+        // ignores the fromIndex argument.
         IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Isinst, _ctx.Types.String);
         builder.Emit_Brtrue(isStringLabel);
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Ldstr, "String");
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.IsBoxedPrimitiveOfTypeMethod);
+        builder.Emit_Brtrue(isStringLabel);
 
-        // Fall through to dynamic dispatch
+        // Fall through to dynamic dispatch (objects with user-defined methods,
+        // null/undefined, etc.).
         builder.Emit_Br(fallbackLabel);
 
-        // String path - call the appropriate string method
+        // String path — unwrap the receiver to its primitive string value.
+        // UnwrapStringReceiver fast-paths CLR strings and walks $Object
+        // wrappers' __primitiveValue. Both cases yield a string for the
+        // string-method emitters below.
         builder.MarkLabel(isStringLabel);
         IL.Emit(OpCodes.Ldloc, objLocal);
-        IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.UnwrapStringReceiverMethod);
 
         switch (methodName)
         {

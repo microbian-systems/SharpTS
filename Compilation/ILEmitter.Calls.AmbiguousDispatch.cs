@@ -23,8 +23,18 @@ public partial class ILEmitter
         var isListLabel = builder.DefineLabel("ambiguous_list");
         var doneLabel = builder.DefineLabel("ambiguous_done");
 
+        // Take the string-fast-path if the receiver is either a CLR string
+        // OR a `new String(...)` wrapper ($Object with __primitiveType="String").
+        // Without the wrapper branch, methods like indexOf/concat fall through
+        // to the dynamic GetProperty + InvokeMethodValue path where the bound
+        // prototype method silently drops arguments like fromIndex (Test262
+        // String/prototype/{indexOf,concat,...} regressions).
         IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Isinst, _ctx.Types.String);
+        builder.Emit_Brtrue(isStringLabel);
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Ldstr, "String");
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.IsBoxedPrimitiveOfTypeMethod);
         builder.Emit_Brtrue(isStringLabel);
 
         // List<object> → list path. Otherwise (Dictionary, $Object, etc.)
@@ -38,10 +48,12 @@ public partial class ILEmitter
         builder.Emit_Brtrue(isListLabel);
         builder.Emit_Br(dynamicDispatchLabel);
 
-        // String path
+        // String path — unwrap the receiver (handles both primitive strings
+        // and $Object wrappers) before dispatching to the string-method
+        // emitter.
         builder.MarkLabel(isStringLabel);
         IL.Emit(OpCodes.Ldloc, objLocal);
-        IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.UnwrapStringReceiverMethod);
 
         switch (methodName)
         {

@@ -66,6 +66,14 @@ public partial class RuntimeEmitter
         var threadStaticCtor = typeof(ThreadStaticAttribute).GetConstructor(Type.EmptyTypes)!;
         currentArrayLikeReceiverField.SetCustomAttribute(new CustomAttributeBuilder(threadStaticCtor, []));
         runtime.CurrentArrayLikeReceiverField = currentArrayLikeReceiverField;
+        // Reuse `_currentArrayLikeReceiver` for the lazy iteration signal too.
+        // Adding a SECOND [ThreadStatic] field to $Runtime triggers a .NET 10
+        // tier-0 QuickJit miscompilation on `arr.map(...).includes(s)` — same
+        // bug already documented in IntlDateTimeFormatTests / commit 696bdbc.
+        // Reusing the existing field is also semantically clean: the dispatch
+        // site already sets it to the original receiver, and LoadArrayLikeElement
+        // can decide eager vs lazy by inspecting the receiver's type.
+        runtime.LazyArrayLikeReceiverField = currentArrayLikeReceiverField;
 
         // Thread-static "callback thisArg" for `arr.forEach(cb, thisArg)` and
         // similar Array prototype methods. Set by ArrayEmitter / $BoundArrayMethod
@@ -408,7 +416,14 @@ public partial class RuntimeEmitter
         EmitIsTruthy(typeBuilder, runtime);
         EmitTypeOf(typeBuilder, runtime);
         EmitAdd(typeBuilder, runtime);
-        EmitEquals(typeBuilder, runtime);
+        // Equals body needs runtime.ToJsString for the ECMA-262 7.2.14
+        // Object-vs-String branch (`new String(s) == s` requires
+        // ToPrimitive(wrapper) → string, then string compare). ToJsString is
+        // emitted later (it depends on GetProperty + InvokeMethodValue which
+        // depend on this same chain). Declare the Equals MethodBuilder shell
+        // here so any caller that references it before EmitEquals runs gets
+        // a non-null token; body fills in after EmitToJsString below.
+        DeclareEquals(typeBuilder, runtime);
         EmitStrictEquals(typeBuilder, runtime);
         // Object methods - must come BEFORE iterator methods since GetProperty, InvokeMethodValue are needed
         EmitCreateObject(typeBuilder, runtime);
@@ -450,6 +465,13 @@ public partial class RuntimeEmitter
         // can reference it for the $BoundArrayMethod receiver-rebind path.
         // The body is filled in later (EmitArrayLikeMaterialize, line 544).
         DeclareArrayLikeMaterialize(typeBuilder, runtime);
+        // Companion lazy-aware materializer + element reader for iterator
+        // helpers (issue #90). Pre-declared so the iterator emitters can
+        // reference them; bodies emitted after EmitGetProperty (which they
+        // call).
+        DeclareArrayLikeMaterializeForIteration(typeBuilder, runtime);
+        DeclareLoadArrayLikeElement(typeBuilder, runtime);
+        DeclareHasArrayLikeProperty(typeBuilder, runtime);
         EmitInvokeValue(typeBuilder, runtime);
         EmitInvokeMethodValue(typeBuilder, runtime);
         EmitGetFieldsProperty(typeBuilder, runtime);
@@ -475,6 +497,9 @@ public partial class RuntimeEmitter
         EmitIsSymbol(typeBuilder, runtime);
         // ToJsString depends on GetProperty + InvokeMethodValue + Stringify; emit after those.
         EmitToJsString(typeBuilder, runtime);
+        // Equals body — must come after ToJsString since the Object-vs-String
+        // branch calls runtime.ToJsString.
+        EmitEquals(typeBuilder, runtime);
         // ToNumber/ConvertToNumber bodies: emit AFTER GetProperty/InvokeMethodValue
         // so their ToPrimitive(value, "number") on Dictionary/$Object args can
         // call those helpers.
@@ -587,6 +612,9 @@ public partial class RuntimeEmitter
         // Stage 3 deferral note). Kept in the runtime class so a future
         // full-prototype-surface implementation can wire it up.
         EmitArrayLikeMaterialize(typeBuilder, runtime);
+        EmitArrayLikeMaterializeForIteration(typeBuilder, runtime);
+        EmitHasArrayLikeProperty(typeBuilder, runtime);
+        EmitLoadArrayLikeElement(typeBuilder, runtime);
         // RequireObjectCoercible(this) — emitted after TSError so it can
         // construct $TypeError directly. Called from $TSFunction.CoercePrimitiveArgs
         // via late-bound reflection.

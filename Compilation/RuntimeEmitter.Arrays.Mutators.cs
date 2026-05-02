@@ -719,6 +719,8 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
+        EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
+
         var resultLocal = il.DeclareLocal(_types.ListOfObject);
         var iLocal = il.DeclareLocal(_types.Int32);
         var callResultLocal = il.DeclareLocal(_types.Object);
@@ -727,6 +729,18 @@ public partial class RuntimeEmitter
         // result = new List<object>()
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.EmptyTypes));
         il.Emit(OpCodes.Stloc, resultLocal);
+
+        // Hoist args[3] allocation once per call; pre-fill args[2] = list
+        // (constant for the helper invocation). Per-iter writes only touch
+        // args[0] (element) and args[1] (boxed index).
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stelem_Ref);
 
         // for (int i = 0; i < list.Count; i++)
         il.Emit(OpCodes.Ldc_I4_0);
@@ -740,44 +754,29 @@ public partial class RuntimeEmitter
         il.MarkLabel(loopStart);
 
         // ECMA-262 23.1.3.12: flatMap skips holes at the SOURCE level (no
-        // callback invocation for a hole source slot).
+        // callback invocation for a hole source slot). Lazy-aware
+        // (issue #90): for array-like receivers (Dict / $Object) the
+        // placeholder list is null at present slots — LoadArrayLikeElement
+        // re-reads them via GetProperty so getter side effects propagate
+        // and structurally-absent slots return $ArrayHole.
         var flatMapContinue = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        EmitElementLoad(il, iLocal, runtime, isLazyLocal);
         il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
         il.Emit(OpCodes.Brtrue, flatMapContinue);
 
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-
-        // Build args array: [list[i], (double)i, list]
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Newarr, _types.Object);
-
-        // args[0] = list[i]
-        il.Emit(OpCodes.Dup);
+        // args[0] = LoadArrayLikeElement(list, i) — lazy-aware
+        il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        EmitElementLoad(il, iLocal, runtime, isLazyLocal);
         il.Emit(OpCodes.Stelem_Ref);
 
         // args[1] = (double)i
-        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Stelem_Ref);
-
-        // args[2] = list
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // Store args array in local
-        il.Emit(OpCodes.Stloc, argsLocal);
 
         // callResult = InvokeValue(callback, args)
         il.Emit(OpCodes.Ldarg_1); // callback - first arg
@@ -1646,6 +1645,8 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
+        EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
+
         var resultLocal = il.DeclareLocal(_types.ListOfObject);
         var iLocal = il.DeclareLocal(_types.Int32);
 
@@ -1673,7 +1674,7 @@ public partial class RuntimeEmitter
         // .toReversed uses Get (which unholes) + CreateDataPropertyOrThrow,
         // producing a DENSE output where source holes become undefined.
         il.Emit(OpCodes.Ldloc, resultLocal);
-        EmitLoadElementUnholed(il, iLocal, runtime);
+        EmitLoadElementUnholed(il, iLocal, runtime, isLazyLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
 
         // i--
@@ -1702,6 +1703,8 @@ public partial class RuntimeEmitter
         runtime.ArrayWith = method;
 
         var il = method.GetILGenerator();
+
+        EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
 
         var lenLocal = il.DeclareLocal(_types.Int32);
         var indexLocal = il.DeclareLocal(_types.Int32);
@@ -1782,7 +1785,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, lenLocal);
             il.Emit(OpCodes.Bge, withEnd);
             il.Emit(OpCodes.Ldloc, resultLocal);
-            EmitLoadElementUnholed(il, withI, runtime);
+            EmitLoadElementUnholed(il, withI, runtime, isLazyLocal);
             il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
             il.Emit(OpCodes.Ldloc, withI);
             il.Emit(OpCodes.Ldc_I4_1);
@@ -1818,6 +1821,8 @@ public partial class RuntimeEmitter
         runtime.ArrayAt = method;
 
         var il = method.GetILGenerator();
+
+        EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
 
         var lenLocal = il.DeclareLocal(_types.Int32);
         var indexLocal = il.DeclareLocal(_types.Int32);
@@ -1876,7 +1881,7 @@ public partial class RuntimeEmitter
 
         // return list[actualIndex] unholed — spec: Get-style read (holes
         // read as undefined at the language boundary).
-        EmitLoadElementUnholed(il, actualIndexLocal, runtime);
+        EmitLoadElementUnholed(il, actualIndexLocal, runtime, isLazyLocal);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1892,6 +1897,8 @@ public partial class RuntimeEmitter
         runtime.ArrayToSpliced = method;
 
         var il = method.GetILGenerator();
+
+        EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
 
         // Local variables
         var lenLocal = il.DeclareLocal(_types.Int32);
@@ -2008,7 +2015,7 @@ public partial class RuntimeEmitter
         // ECMA-262 23.1.3.35 toSpliced: dense output — source holes become
         // undefined in the copy (uses Get + CreateDataPropertyOrThrow).
         il.Emit(OpCodes.Ldloc, resultLocal);
-        EmitLoadElementUnholed(il, iLocal, runtime);
+        EmitLoadElementUnholed(il, iLocal, runtime, isLazyLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
 
         il.Emit(OpCodes.Ldloc, iLocal);
@@ -2072,7 +2079,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(afterLoopStart);
         // toSpliced after-skip region: same unhole rule as the before loop.
         il.Emit(OpCodes.Ldloc, resultLocal);
-        EmitLoadElementUnholed(il, iLocal, runtime);
+        EmitLoadElementUnholed(il, iLocal, runtime, isLazyLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
 
         il.Emit(OpCodes.Ldloc, iLocal);

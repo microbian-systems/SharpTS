@@ -288,6 +288,39 @@ public class EmittedRuntime
     // context is active — direct `arr.forEach(cb)` calls keep passing the List as the 4th arg.
     public FieldBuilder CurrentArrayLikeReceiverField { get; set; } = null!;
 
+    // Aliases <see cref="CurrentArrayLikeReceiverField"/>. Originally a
+    // dedicated [ThreadStatic] field, but adding a second thread-static slot
+    // to $Runtime triggers a .NET 10 tier-0 QuickJit miscompilation (the
+    // same bug behind the existing IntlDateTimeFormatTests Linux skip /
+    // commit 696bdbc). Reusing the existing field works because the
+    // dispatch site already stores the original receiver there, and
+    // LoadArrayLikeElement disambiguates eager vs lazy by inspecting the
+    // receiver's type at load time (Dict / TSObject → lazy, otherwise eager).
+    public FieldBuilder LazyArrayLikeReceiverField { get; set; } = null!;
+
+    // Lazy-aware materializer used by Array.prototype.* iterator helpers.
+    // For receivers whose elements may have descriptor side effects
+    // (TSObject / Dictionary), returns a placeholder List&lt;object&gt; sized
+    // to length so subsequent LoadArrayLikeElement calls re-read each slot
+    // via $Runtime.GetProperty. Eager-receiver branches (List, $Array,
+    // string, $Arguments, ObjectArray) delegate to ArrayLikeMaterialize.
+    public MethodBuilder ArrayLikeMaterializeForIteration { get; set; } = null!;
+
+    // Element reader for iterator helpers. Reads _currentArrayLikeReceiver:
+    // if it's a Dict or $Object (lazy-eligible), returns
+    // $Runtime.GetProperty(receiver, idx.ToString()); otherwise returns
+    // list[idx]. The type check disambiguates lazy iteration from the
+    // existing "callback's array-slot" use of _currentArrayLikeReceiver.
+    public MethodBuilder LoadArrayLikeElement { get; set; } = null!;
+
+    // ECMA-262 7.3.10 HasProperty for Dict + $Object receivers, used by the
+    // iterator-helper element loader to distinguish "absent" from "present
+    // but undefined". Walks own dict._fields, own PDS, then the prototype
+    // chain (PDSGetPrototype). Does not invoke any get accessors —
+    // existence-only check, so set-only accessors and getters that throw
+    // don't fire spuriously. Returns a CLR bool.
+    public MethodBuilder HasArrayLikeProperty { get; set; } = null!;
+
     // Thread-static "callback thisArg" for `arr.forEach(cb, thisArg)` and
     // similar Array prototype methods. ArrayEmitter / $BoundArrayMethod sets
     // it when the user passes a thisArg; EmitCallbackArgsAndInvoke reads it

@@ -3820,15 +3820,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitEquals(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    /// <summary>
+    /// Declares the Equals MethodBuilder shell. Body fills in via
+    /// <see cref="EmitEquals"/>, which must run AFTER EmitToJsString so the
+    /// Object-vs-String spec branch can reference <c>runtime.ToJsString</c>.
+    /// </summary>
+    internal void DeclareEquals(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
+        runtime.Equals = typeBuilder.DefineMethod(
             "Equals",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Boolean,
             [_types.Object, _types.Object]
         );
-        runtime.Equals = method;
+    }
+
+    private void EmitEquals(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = runtime.Equals;
 
         var il = method.GetILGenerator();
         var trueLabel = il.DefineLabel();
@@ -3893,13 +3902,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, falseLabel);
 
         // ECMA-262 7.2.14 IsLooselyEqual: when one side is a Dictionary/$Object
-        // and the other is a primitive (number/string/boolean), coerce the
-        // object via ToNumber (which now invokes ToPrimitive valueOf/toString).
-        // Then compare the resulting doubles. Without this, `Number.prototype
-        // == 0` returns false (Object.Equals on the singleton dict vs 0 is
-        // reference inequality) — but spec wants Number.prototype.valueOf() = 0
-        // → 0 == 0 → true.
-        var afterCoerceLabel = il.DefineLabel();
+        // and the other is a String, Number, or Boolean, the spec calls
+        // ToPrimitive(object) then recursively compares. Two cases for the
+        // primitive type matter:
+        //   - String: compare as strings (ToJsString fires the same ToPrimitive
+        //     valueOf/toString chain ToNumber would, but yields a string —
+        //     `new String("one") == "one"` returns true because
+        //     ToPrimitive(wrapper) is "one", then "one" === "one").
+        //   - Number/Boolean: compare as numbers (ToNumber on both sides;
+        //     ToNumber(boolean)=0/1 per spec; ToNumber on the object does
+        //     ToPrimitive(hint number) then ToNumber).
+        // Without the String split, `wrapper == "non-numeric"` was always
+        // false because ToNumber("non-numeric")=NaN and NaN!==NaN.
 
         // If LEFT is Dict/$Object and RIGHT is double/string/bool → coerce LEFT.
         var notLeftCoercibleLabel = il.DefineLabel();
@@ -3911,26 +3925,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brfalse, notLeftCoercibleLabel);
         il.MarkLabel(leftIsDictLabel);
-        // Right must be primitive (double/bool/string). If so, coerce LEFT to
-        // number and compare numerically.
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        var rightIsDoubleLeftLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, rightIsDoubleLeftLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Boolean);
-        il.Emit(OpCodes.Brtrue, rightIsDoubleLeftLabel);
+        // Right is String → ToJsString(LEFT) and string-compare.
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.String);
+        var leftObjVsStringLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, leftObjVsStringLabel);
+        // Right is double/bool → ToNumber both and Ceq.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        var leftObjVsNumLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, leftObjVsNumLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
         il.Emit(OpCodes.Brfalse, notLeftCoercibleLabel);
-        il.MarkLabel(rightIsDoubleLeftLabel);
-        // ToNumber both sides (right is primitive, ToNumber is no-op-ish; left
-        // gets ToPrimitive then ToNumber).
+        il.MarkLabel(leftObjVsNumLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Br, endLabel);
+        // Object-vs-String: ToJsString(LEFT) and string-compare via op_Equality.
+        il.MarkLabel(leftObjVsStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
         il.Emit(OpCodes.Br, endLabel);
         il.MarkLabel(notLeftCoercibleLabel);
 
@@ -3944,26 +3965,35 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brfalse, notRightCoercibleLabel);
         il.MarkLabel(rightIsDictLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        var leftIsDoubleRightLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, leftIsDoubleRightLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.Boolean);
-        il.Emit(OpCodes.Brtrue, leftIsDoubleRightLabel);
+        // Left is String → ToJsString(RIGHT) and string-compare.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.String);
+        var rightObjVsStringLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, rightObjVsStringLabel);
+        // Left is double/bool → ToNumber both and Ceq.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        var rightObjVsNumLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, rightObjVsNumLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
         il.Emit(OpCodes.Brfalse, notRightCoercibleLabel);
-        il.MarkLabel(leftIsDoubleRightLabel);
+        il.MarkLabel(rightObjVsNumLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Ceq);
         il.Emit(OpCodes.Br, endLabel);
+        // String-vs-Object: ToJsString(RIGHT) and string-compare.
+        il.MarkLabel(rightObjVsStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Br, endLabel);
         il.MarkLabel(notRightCoercibleLabel);
-
-        il.MarkLabel(afterCoerceLabel);
 
         // Neither is nullish - use object.Equals
         il.Emit(OpCodes.Ldarg_0);
