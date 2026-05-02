@@ -210,6 +210,10 @@ public class EmittedRuntime
     public FieldBuilder TSFunctionPrototypeCacheField { get; set; } = null!;
     public FieldBuilder TSFunctionMethodField { get; set; } = null!;
     public MethodBuilder TSFunctionGetMethodInfo { get; set; } = null!;
+    // Exposed for iterator helpers' "skip index box for unary arrows" fast
+    // path — read at runtime to detect callback arity without reflection.
+    public FieldBuilder TSFunctionParamCountField { get; set; } = null!;
+    public FieldBuilder TSFunctionExpectsThisField { get; set; } = null!;
 
     // String methods
     public MethodBuilder StringCharAt { get; set; } = null!;

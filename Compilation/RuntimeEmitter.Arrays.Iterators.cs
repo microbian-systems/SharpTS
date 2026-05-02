@@ -269,7 +269,58 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stelem_Ref);
     }
 
-    private void EmitCallbackArgsAndInvoke(ILGenerator il, LocalBuilder indexLocal, EmittedRuntime runtime, LocalBuilder isLazyLocal, LocalBuilder argsLocal)
+    /// <summary>
+    /// Detects at iterator entry whether the callback is an arrow function
+    /// (compiled $TSFunction without a __this synthetic param) AND has an
+    /// arity of at most 1. When both hold, the index argument boxed for
+    /// args[1] is statically unreachable: arrows can't access JS
+    /// <c>arguments</c>, and the formal index param doesn't exist either.
+    /// Skipping the per-iter <c>(double)i → Box → Stelem_Ref</c> trio saves
+    /// ~24 bytes per iteration. Out-bool defaults false (i.e., always box)
+    /// for any callback that isn't a plain $TSFunction or that DOES have a
+    /// <c>__this</c> param (compiled regular functions can access
+    /// <c>arguments</c>) or has arity >= 2.
+    /// </summary>
+    private void EmitDetectSkipIndexBox(ILGenerator il, EmittedRuntime runtime, out LocalBuilder skipIndexBoxLocal)
+    {
+        skipIndexBoxLocal = il.DeclareLocal(_types.Boolean);
+        // skipIndexBox = false
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, skipIndexBoxLocal);
+
+        var notTSFunctionLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        // var tsFn = callback as $TSFunction;
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        var tsFnLocal = il.DeclareLocal(runtime.TSFunctionType);
+        il.Emit(OpCodes.Stloc, tsFnLocal);
+        il.Emit(OpCodes.Ldloc, tsFnLocal);
+        il.Emit(OpCodes.Brfalse, notTSFunctionLabel);
+
+        // if (tsFn._expectsThis) goto doneLabel — regular function (compiled
+        // bodies that read JS `arguments`); leave skipIndexBox=false to keep
+        // boxing the index for arguments[1] correctness.
+        il.Emit(OpCodes.Ldloc, tsFnLocal);
+        il.Emit(OpCodes.Ldfld, runtime.TSFunctionExpectsThisField);
+        il.Emit(OpCodes.Brtrue, doneLabel);
+
+        // if (tsFn._paramCount > 1) goto doneLabel
+        il.Emit(OpCodes.Ldloc, tsFnLocal);
+        il.Emit(OpCodes.Ldfld, runtime.TSFunctionParamCountField);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Bgt, doneLabel);
+
+        // skipIndexBox = true
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, skipIndexBoxLocal);
+
+        il.MarkLabel(notTSFunctionLabel);
+        il.MarkLabel(doneLabel);
+    }
+
+    private void EmitCallbackArgsAndInvoke(ILGenerator il, LocalBuilder indexLocal, EmittedRuntime runtime, LocalBuilder isLazyLocal, LocalBuilder argsLocal, LocalBuilder skipIndexBoxLocal)
     {
         // args[0] = unholed list[i]
         il.Emit(OpCodes.Ldloc, argsLocal);
@@ -277,13 +328,23 @@ public partial class RuntimeEmitter
         EmitLoadElementUnholed(il, indexLocal, runtime, isLazyLocal);
         il.Emit(OpCodes.Stelem_Ref);
 
-        // args[1] = (double)i
+        // args[1] = (double)i — but skip the box+store entirely when the
+        // callback is a unary arrow (skipIndexBoxLocal=true). The args[1]
+        // slot stays at whatever it was last (or null on first iter), but
+        // the callback can't see it: arity≤1 means no formal `index` param,
+        // and arrows can't access JS `arguments`. AdjustArgs trims args to
+        // paramCount=1 before reflection-Invoke anyway, so the slot's
+        // contents are dropped before reaching the callback's stack frame.
+        var skipBoxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, skipIndexBoxLocal);
+        il.Emit(OpCodes.Brtrue, skipBoxLabel);
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Stelem_Ref);
+        il.MarkLabel(skipBoxLabel);
 
         // InvokeMethodValue(thisArg, callback, args). thisArg comes from the
         // _currentCallbackThisArg thread-static (set by ArrayEmitter when the
@@ -312,6 +373,7 @@ public partial class RuntimeEmitter
         // a stack-resident bool instead of re-reading the thread-static.
         EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
         EmitInitCallbackArgs(il, runtime, out var argsLocal);
+        EmitDetectSkipIndexBox(il, runtime, out var skipIndexBoxLocal);
 
         // var result = new List<object>(list.Count). Map's output length is
         // exactly list.Count (1:1 transform, holes preserved as $ArrayHole),
@@ -344,7 +406,7 @@ public partial class RuntimeEmitter
         // `[1, hole, 3]` yields `[fn(1), hole, fn(3)]`, not `[fn(1), fn(3)]`.
         EmitSkipIfHole(il, indexLocal, holeLabel, runtime, isLazyLocal);
 
-        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal);
 
         // Store the call result
         var callResultLocal = il.DeclareLocal(_types.Object);
@@ -390,6 +452,7 @@ public partial class RuntimeEmitter
 
         EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
         EmitInitCallbackArgs(il, runtime, out var argsLocal);
+        EmitDetectSkipIndexBox(il, runtime, out var skipIndexBoxLocal);
 
         // var result = new List<object>(list.Count). Filter's output is bounded
         // by list.Count; pre-sizing avoids backing-array doublings on the worst
@@ -423,7 +486,7 @@ public partial class RuntimeEmitter
         // not copied into output — filter densifies).
         EmitSkipIfHole(il, indexLocal, skipAdd, runtime, isLazyLocal);
 
-        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal);
 
         // Call IsTruthy
         il.Emit(OpCodes.Call, runtime.IsTruthy);
@@ -469,6 +532,7 @@ public partial class RuntimeEmitter
 
         EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
         EmitInitCallbackArgs(il, runtime, out var argsLocal);
+        EmitDetectSkipIndexBox(il, runtime, out var skipIndexBoxLocal);
 
         // var i = 0
         var indexLocal = il.DeclareLocal(_types.Int32);
@@ -489,7 +553,7 @@ public partial class RuntimeEmitter
         // ECMA-262 23.1.3.15: forEach skips holes.
         EmitSkipIfHole(il, indexLocal, advance, runtime, isLazyLocal);
 
-        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal);
         il.Emit(OpCodes.Pop); // Discard result
 
         il.MarkLabel(advance);
@@ -518,6 +582,7 @@ public partial class RuntimeEmitter
 
         EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
         EmitInitCallbackArgs(il, runtime, out var argsLocal);
+        EmitDetectSkipIndexBox(il, runtime, out var skipIndexBoxLocal);
 
         var indexLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -532,7 +597,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal);
 
         // if (IsTruthy(result)) return list[i] (unholed — spec: find returns
         // `undefined` when the matched slot is a hole, not the sentinel).
@@ -569,6 +634,7 @@ public partial class RuntimeEmitter
 
         EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
         EmitInitCallbackArgs(il, runtime, out var argsLocal);
+        EmitDetectSkipIndexBox(il, runtime, out var skipIndexBoxLocal);
 
         var indexLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -583,7 +649,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal);
         il.Emit(OpCodes.Call, runtime.IsTruthy);
 
         var notFound = il.DefineLabel();
@@ -619,6 +685,7 @@ public partial class RuntimeEmitter
 
         EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
         EmitInitCallbackArgs(il, runtime, out var argsLocal);
+        EmitDetectSkipIndexBox(il, runtime, out var skipIndexBoxLocal);
 
         var indexLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -637,7 +704,7 @@ public partial class RuntimeEmitter
         // ECMA-262 23.1.3.29: some skips holes.
         EmitSkipIfHole(il, indexLocal, advance, runtime, isLazyLocal);
 
-        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal);
         il.Emit(OpCodes.Call, runtime.IsTruthy);
 
         il.Emit(OpCodes.Brfalse, advance);
@@ -673,6 +740,7 @@ public partial class RuntimeEmitter
 
         EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
         EmitInitCallbackArgs(il, runtime, out var argsLocal);
+        EmitDetectSkipIndexBox(il, runtime, out var skipIndexBoxLocal);
 
         var indexLocal = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -692,7 +760,7 @@ public partial class RuntimeEmitter
         // affect "all match" result).
         EmitSkipIfHole(il, indexLocal, continueLoop, runtime, isLazyLocal);
 
-        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal);
         il.Emit(OpCodes.Call, runtime.IsTruthy);
 
         il.Emit(OpCodes.Brtrue, continueLoop);
@@ -727,6 +795,7 @@ public partial class RuntimeEmitter
 
         EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
         EmitInitCallbackArgs(il, runtime, out var argsLocal);
+        EmitDetectSkipIndexBox(il, runtime, out var skipIndexBoxLocal);
 
         // int i = list.Count - 1
         var indexLocal = il.DeclareLocal(_types.Int32);
@@ -745,7 +814,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Blt, loopEnd);
 
-        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal);
 
         // if (IsTruthy(result)) return list[i] (unholed).
         il.Emit(OpCodes.Call, runtime.IsTruthy);
@@ -782,6 +851,7 @@ public partial class RuntimeEmitter
 
         EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
         EmitInitCallbackArgs(il, runtime, out var argsLocal);
+        EmitDetectSkipIndexBox(il, runtime, out var skipIndexBoxLocal);
 
         // int i = list.Count - 1
         var indexLocal = il.DeclareLocal(_types.Int32);
@@ -800,7 +870,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Blt, loopEnd);
 
-        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal);
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal);
         il.Emit(OpCodes.Call, runtime.IsTruthy);
 
         var notFound = il.DefineLabel();

@@ -53,7 +53,10 @@ public partial class RuntimeEmitter
         // helper invocation of the callback paid GetParameters + string-compare
         // through reflection — N=1M Map = 1M reflection lookups. Now: 1 lookup
         // at construction, 1 ldfld per call.
-        var expectsThisField = typeBuilder.DefineField("_expectsThis", _types.Boolean, FieldAttributes.Private);
+        // Exposed Public so iterator helpers in $Runtime can read it directly
+        // for the "unary-arrow fast path" without going through a method call.
+        var expectsThisField = typeBuilder.DefineField("_expectsThis", _types.Boolean, FieldAttributes.Public);
+        runtime.TSFunctionExpectsThisField = expectsThisField;
         // Cached MethodInvoker. .NET 8+'s MethodInvoker.Create() pre-builds
         // the JIT'd dispatch stub for a method, then Invoke(...) calls it
         // directly — measured ~10× faster than MethodInfo.Invoke per call.
@@ -65,7 +68,8 @@ public partial class RuntimeEmitter
         // Invoke paid GetParameters + ParameterType lookups to decide between
         // pad / trim / rest-list / rest-array branches. Computed once at
         // construction, read as field loads thereafter.
-        var paramCountField = typeBuilder.DefineField("_paramCount", _types.Int32, FieldAttributes.Private);
+        var paramCountField = typeBuilder.DefineField("_paramCount", _types.Int32, FieldAttributes.Public);
+        runtime.TSFunctionParamCountField = paramCountField;
         var hasListRestField = typeBuilder.DefineField("_hasListRest", _types.Boolean, FieldAttributes.Private);
         var hasArrayRestField = typeBuilder.DefineField("_hasArrayRest", _types.Boolean, FieldAttributes.Private);
         // Set true at construction iff ConvertArgsForUnionTypes or
