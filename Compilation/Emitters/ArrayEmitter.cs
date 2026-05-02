@@ -704,8 +704,6 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
             if (p.IsRest || p.IsOptional) return false;
             if (p.DefaultValue != null) return false;
         }
-        if (ctx.ClosureAnalyzer == null) return false;
-        if (ctx.ClosureAnalyzer.GetCaptures(af).Count > 0) return false;
         if (!ctx.ArrowMethods.TryGetValue(af, out var staticMethod)) return false;
 
         // Static method's parameter types are guaranteed to be `object` by the
@@ -713,7 +711,9 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         // Return type is the discriminator: type inference may yield `object`
         // (any-typed bodies) or `bool` (predicate bodies like `v => v > 10`).
         // The first uses Func<object, object>; the second uses Func<object, bool>
-        // where the helper variant exists.
+        // where the helper variant exists. Phase B: capturing arrows now go
+        // through emitter.TryEmitArrowAsDelegate, which builds the display
+        // instance + binds the delegate to its Invoke method.
         var ret = staticMethod.ReturnType;
         System.Reflection.Emit.MethodBuilder chosenHelper;
         Type funcType;
@@ -732,12 +732,9 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
             return false;
         }
 
-        var il = ctx.IL;
-        var funcCtor = funcType.GetConstructor([typeof(object), typeof(IntPtr)])!;
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldftn, staticMethod);
-        il.Emit(OpCodes.Newobj, funcCtor);
-        il.Emit(OpCodes.Call, chosenHelper);
+        if (!emitter.TryEmitArrowAsDelegate(af, funcType))
+            return false;
+        ctx.IL.Emit(OpCodes.Call, chosenHelper);
         return true;
     }
 
@@ -764,23 +761,17 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
             if (p.IsRest || p.IsOptional) return false;
             if (p.DefaultValue != null) return false;
         }
-        if (ctx.ClosureAnalyzer == null) return false;
-        if (ctx.ClosureAnalyzer.GetCaptures(af).Count > 0) return false;
         if (!ctx.ArrowMethods.TryGetValue(af, out var staticMethod)) return false;
         if (staticMethod.ReturnType != ctx.Types.Object) return false;
 
-        var il = ctx.IL;
         var func3 = typeof(Func<object, object, object>);
-        var func3Ctor = func3.GetConstructor([typeof(object), typeof(IntPtr)])!;
-
-        // Stack: [list]. Build Func<object, object, object> delegate.
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldftn, staticMethod);
-        il.Emit(OpCodes.Newobj, func3Ctor);
+        // Stack: [list]. Build delegate (capturing or non-capturing).
+        if (!emitter.TryEmitArrowAsDelegate(af, func3))
+            return false;
         // Push initial value (boxed object).
         emitter.EmitExpression(arguments[1]);
         emitter.EmitBoxIfNeeded(arguments[1]);
-        il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduceDirect);
+        ctx.IL.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduceDirect);
         return true;
     }
 

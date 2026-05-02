@@ -77,4 +77,18 @@ public interface IEmitterContext
     /// Emits a default value for the given type (null for reference types, 0 for numbers, etc.).
     /// </summary>
     void EmitDefaultForType(Type type);
+
+    /// <summary>
+    /// Emits IL that constructs a delegate of the given type pointing at the
+    /// arrow's compiled body. For non-capturing arrows: <c>new Func(null, ldftn staticMethod)</c>.
+    /// For capturing arrows: allocate the display class instance, populate
+    /// captured fields, then <c>new Func(displayInstance, ldftn instanceInvoke)</c>.
+    /// On success, leaves the delegate on the stack and returns true. Returns
+    /// false (without emitting any IL) when the emitter doesn't support this
+    /// path (state-machine emitters) or the arrow shape isn't compatible
+    /// (named function expression, async, generator, or other unsupported
+    /// configuration). Callers fall through to the legacy <c>$TSFunction</c>
+    /// path when this returns false.
+    /// </summary>
+    bool TryEmitArrowAsDelegate(Expr.ArrowFunction af, Type delegateType);
 }

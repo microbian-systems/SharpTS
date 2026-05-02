@@ -10,6 +10,48 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class ILEmitter
 {
+    /// <summary>
+    /// Iterator-helper fast path: emit <paramref name="af"/> as a typed
+    /// delegate of <paramref name="delegateType"/> (Func&lt;,&gt; / Func&lt;,,&gt;
+    /// etc.) without going through <c>$TSFunction</c>. Handles both
+    /// non-capturing arrows (<c>ldftn</c> on the static method) and
+    /// capturing arrows (allocate + populate display class, then <c>ldftn</c>
+    /// on the instance Invoke method). Returns false on unsupported shape:
+    /// named function expression with self-ref, async, generator, missing
+    /// arrow method, missing display ctor.
+    /// </summary>
+    protected override bool TryEmitArrowAsDelegate(Expr.ArrowFunction af, Type delegateType)
+    {
+        if (af.IsAsync || af.IsGenerator) return false;
+        // Self-reference (named function expression) needs the wrapper to
+        // be the captured value, not the bare display instance. Skip.
+        if (af.Name != null) return false;
+        if (!_ctx.ArrowMethods.TryGetValue(af, out var method)) return false;
+
+        var delegateCtor = delegateType.GetConstructor([typeof(object), typeof(IntPtr)]);
+        if (delegateCtor == null) return false;
+
+        if (_ctx.DisplayClasses.TryGetValue(af, out var displayClass))
+        {
+            // Capturing path: build display instance, then bind delegate to
+            // instance + Invoke method.
+            if (!EmitCapturingArrowDisplayInstance(af, displayClass))
+                return false;
+            // Stack: [displayInstance]
+            IL.Emit(OpCodes.Ldftn, method);
+            IL.Emit(OpCodes.Newobj, delegateCtor);
+            SetStackUnknown();
+            return true;
+        }
+
+        // Non-capturing path: target = null, ldftn on the static method.
+        IL.Emit(OpCodes.Ldnull);
+        IL.Emit(OpCodes.Ldftn, method);
+        IL.Emit(OpCodes.Newobj, delegateCtor);
+        SetStackUnknown();
+        return true;
+    }
+
     protected override void EmitArrowFunction(Expr.ArrowFunction af)
     {
         // Check if this is an async arrow function with a state machine
@@ -135,17 +177,41 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSFunctionCtor);
     }
 
-    private void EmitCapturingArrowFunction(Expr.ArrowFunction af, MethodBuilder method, TypeBuilder displayClass)
+    /// <summary>
+    /// Emits IL that allocates the display class instance for a capturing
+    /// arrow and populates its fields (special DC chains + ordinary captures).
+    /// On exit, the display-instance reference is the only thing left on the
+    /// stack — caller decides what to do with it next ($TSFunction wrap, or
+    /// for the iterator-helper fast path, an <c>ldftn</c> + Func ctor).
+    ///
+    /// Self-reference handling (named function expressions where the arrow's
+    /// own name is captured into a field) is intentionally NOT done here —
+    /// that field is populated AFTER the wrapping callable is created so it
+    /// can hold the wrapper reference, not the bare display instance. Caller
+    /// is responsible for that follow-up if needed; the iterator-helper fast
+    /// path declines arrows where this matters.
+    /// </summary>
+    /// <returns>true if the display instance was emitted; false on
+    /// unsupported configuration (the only current case is the constructor
+    /// not being tracked, which is internally inconsistent — slow-path caller
+    /// emits Ldnull and bails).</returns>
+    private bool EmitCapturingArrowDisplayInstance(Expr.ArrowFunction af, TypeBuilder displayClass)
     {
-        // Get the pre-tracked constructor (we can't call GetConstructors() on TypeBuilder before CreateType)
         if (!_ctx.DisplayClassConstructors.TryGetValue(af, out var displayCtor))
-        {
-            // Fallback
-            IL.Emit(OpCodes.Ldnull);
-            return;
-        }
+            return false;
 
         IL.Emit(OpCodes.Newobj, displayCtor);
+        EmitDisplayInstanceFieldPopulation(af, displayClass);
+        return true;
+    }
+
+    /// <summary>
+    /// Populates the display-class instance currently on top of the stack
+    /// with all special-field DC chains and ordinary captured variables.
+    /// Stack on entry/exit: <c>[displayInstance]</c>.
+    /// </summary>
+    private void EmitDisplayInstanceFieldPopulation(Expr.ArrowFunction af, TypeBuilder displayClass)
+    {
 
         // Populate $entryPointDC field if this arrow captures top-level variables
         if (_ctx.ArrowEntryPointDCFields?.TryGetValue(af, out var entryPointDCField) == true)
@@ -214,45 +280,21 @@ public partial class ILEmitter
             }
         }
 
-        // Get captured variables for this arrow using the stored field mapping
+        // No captured-variable field map: special DC fields above are the
+        // only state on the instance. Caller's wrapping step still needs to
+        // run; just return with [instance] on the stack.
         if (!_ctx.DisplayClassFields.TryGetValue(af, out var fieldMap))
-        {
-            // No field map found - this arrow might only have $functionDC or $entryPointDC fields
-            // These were already populated above, so just create the TSFunction
-            // Use two-argument GetMethodFromHandle for display class methods
-            IL.Emit(OpCodes.Ldtoken, method);
-            IL.Emit(OpCodes.Ldtoken, displayClass);
-            IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.MethodBase, "GetMethodFromHandle", _ctx.Types.RuntimeMethodHandle, _ctx.Types.RuntimeTypeHandle));
-            IL.Emit(OpCodes.Castclass, _ctx.Types.MethodInfo);
-            IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSFunctionCtor);
             return;
-        }
 
-        // If fieldMap is empty but we have $functionDC or other special fields, that's fine
-        // The special fields were populated above
+        // Self-reference field (named function expression) is left empty
+        // here — it must hold the wrapping callable, not the bare display
+        // instance. The caller (EmitCapturingArrowFunction) populates it
+        // after building the $TSFunction.
+        string? selfRefSkipName = af.Name?.Lexeme;
 
-        // Determine if this is a named function expression with self-reference
-        string? selfRefName = af.Name?.Lexeme;
-        FieldBuilder? selfRefField = null;
-        if (selfRefName != null && fieldMap.TryGetValue(selfRefName, out var srf))
-        {
-            selfRefField = srf;
-        }
-
-        // If we have a self-reference, save the display class instance for later use
-        LocalBuilder? displayClassLocal = null;
-        if (selfRefField != null)
-        {
-            displayClassLocal = IL.DeclareLocal(displayClass);
-            IL.Emit(OpCodes.Dup);
-            IL.Emit(OpCodes.Stloc, displayClassLocal);
-        }
-
-        // Populate captured fields (except self-reference which needs to be set after TSFunction creation)
         foreach (var (capturedVar, field) in fieldMap)
         {
-            // Skip self-reference field - will be populated after TSFunction is created
-            if (selfRefField != null && capturedVar == selfRefName) continue;
+            if (selfRefSkipName != null && capturedVar == selfRefSkipName) continue;
 
             IL.Emit(OpCodes.Dup); // Keep display class on stack
 
@@ -356,34 +398,53 @@ public partial class ILEmitter
 
             IL.Emit(OpCodes.Stfld, field);
         }
+    }
 
-        // Create TSFunction: new TSFunction(displayInstance, method)
-        // Stack has: displayInstance
+    /// <summary>
+    /// Slow-path emission for a capturing arrow: build display instance,
+    /// then wrap as <c>$TSFunction</c> for the legacy callable dispatch.
+    /// Iterator-helper fast paths bypass this and go through
+    /// <see cref="EmitCapturingArrowDisplayInstance"/> directly to build a
+    /// typed delegate instead.
+    /// </summary>
+    private void EmitCapturingArrowFunction(Expr.ArrowFunction af, MethodBuilder method, TypeBuilder displayClass)
+    {
+        if (!EmitCapturingArrowDisplayInstance(af, displayClass))
+        {
+            IL.Emit(OpCodes.Ldnull);
+            return;
+        }
 
-        // Load method info - use two-argument GetMethodFromHandle for display class methods
-        // This is required because the method's parameter types need the declaring type context to resolve
+        // For named function expressions, the self-reference field needs the
+        // wrapping $TSFunction (not the bare display instance), so stash a
+        // ref to the instance for use after the wrap.
+        string? selfRefName = af.Name?.Lexeme;
+        FieldBuilder? selfRefField = null;
+        LocalBuilder? displayClassLocal = null;
+        if (selfRefName != null
+            && _ctx.DisplayClassFields.TryGetValue(af, out var fieldMap)
+            && fieldMap.TryGetValue(selfRefName, out var srf))
+        {
+            selfRefField = srf;
+            displayClassLocal = IL.DeclareLocal(displayClass);
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Stloc, displayClassLocal);
+        }
+
+        // Wrap: new $TSFunction(displayInstance, method)
         IL.Emit(OpCodes.Ldtoken, method);
         IL.Emit(OpCodes.Ldtoken, displayClass);
         IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.MethodBase, "GetMethodFromHandle", _ctx.Types.RuntimeMethodHandle, _ctx.Types.RuntimeTypeHandle));
         IL.Emit(OpCodes.Castclass, _ctx.Types.MethodInfo);
-
-        // Call $TSFunction constructor
         IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSFunctionCtor);
 
-        // For named function expressions, populate the self-reference field with the TSFunction
-        // Stack now has: TSFunction
         if (selfRefField != null && displayClassLocal != null)
         {
-            // Save TSFunction to local
             var tsFuncLocal = IL.DeclareLocal(_ctx.Runtime!.TSFunctionType);
             IL.Emit(OpCodes.Stloc, tsFuncLocal);
-
-            // Load display class, load TSFunction, store in self-reference field
             IL.Emit(OpCodes.Ldloc, displayClassLocal);
             IL.Emit(OpCodes.Ldloc, tsFuncLocal);
             IL.Emit(OpCodes.Stfld, selfRefField);
-
-            // Leave TSFunction on stack for the return value
             IL.Emit(OpCodes.Ldloc, tsFuncLocal);
         }
     }

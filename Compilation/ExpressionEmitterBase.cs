@@ -46,6 +46,17 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     void IEmitterContext.EmitConversionForParameter(Expr expr, Type targetType) => EmitConversionForParameter(expr, targetType);
 
     void IEmitterContext.EmitDefaultForType(Type type) => EmitDefaultForType(type);
+    bool IEmitterContext.TryEmitArrowAsDelegate(Expr.ArrowFunction af, Type delegateType)
+        => TryEmitArrowAsDelegate(af, delegateType);
+
+    /// <summary>
+    /// Default: state-machine emitters and other contexts decline this fast
+    /// path. <see cref="ILEmitter"/> overrides to support it (handles both
+    /// non-capturing static methods and capturing display-class instance
+    /// methods). Callers must be prepared for false and fall back to the
+    /// legacy <c>$TSFunction</c> wrap.
+    /// </summary>
+    protected virtual bool TryEmitArrowAsDelegate(Expr.ArrowFunction af, Type delegateType) => false;
 
     #endregion
 
