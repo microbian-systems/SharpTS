@@ -363,7 +363,12 @@ public partial class TypeChecker
 
             if (objType is TypeInfo.Array arrayType)
             {
-                if (!IsCompatible(arrayType.ElementType, valueType))
+                // ECMA-262 array indices are integers in [0, 2^32 - 2]. Numeric
+                // literals outside that range (e.g. 4294967295, -1) are regular
+                // property assignments, not array-element writes — element-type
+                // compatibility doesn't apply.
+                if (IsArrayIndexInRange(setIndex.Index)
+                    && !IsCompatible(arrayType.ElementType, valueType))
                 {
                     throw new TypeCheckException($" Cannot assign '{valueType}' to array of '{arrayType.ElementType}'.");
                 }
@@ -553,6 +558,9 @@ public partial class TypeChecker
         {
             if (objType is TypeInfo.Array arrayType)
             {
+                // Same out-of-range carve-out as CheckSetIndex above.
+                if (!IsArrayIndexInRange(setIndex.Index))
+                    return valueType;
                 if (IsCompatible(arrayType.ElementType, valueType))
                     return valueType;
                 return null;
@@ -585,6 +593,27 @@ public partial class TypeChecker
             }
         }
 
+        return null;
+    }
+
+    /// <summary>
+    /// Returns true if the index expression is either non-literal (so the
+    /// strict element-type check should still apply) or is a numeric literal
+    /// that falls in the ECMA-262 array-index range [0, 2^32 - 2]. Numeric
+    /// literals outside that range are spec-equivalent to ordinary property
+    /// assignments and do not write into an array element slot.
+    /// </summary>
+    private static bool IsArrayIndexInRange(Expr indexExpr)
+    {
+        if (TryGetNumericLiteral(indexExpr) is not double n) return true;
+        return n >= 0 && n < (double)uint.MaxValue && n == Math.Floor(n);
+    }
+
+    private static double? TryGetNumericLiteral(Expr e)
+    {
+        if (e is Expr.Literal { Value: double d }) return d;
+        if (e is Expr.Unary u && u.Operator.Type == TokenType.MINUS
+            && u.Right is Expr.Literal { Value: double d2 }) return -d2;
         return null;
     }
 }
