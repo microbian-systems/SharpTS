@@ -97,7 +97,7 @@ public partial class TypeChecker
     {
         if (!_inAsyncFunction)
         {
-            throw new TypeCheckException("'await' is only valid inside an async function.");
+            throw new TypeCheckException("'await' is only valid inside an async function.", tsCode: "TS1308");
         }
 
         TypeInfo exprType = CheckExpr(awaitExpr.Expression);
@@ -128,7 +128,7 @@ public partial class TypeChecker
 
         if (!isValidPath)
         {
-            throw new TypeCheckException($" Dynamic import path must be a string, got '{pathType}'.");
+            throw new TypeCheckException($" Dynamic import path must be a string, got '{pathType}'.", tsCode: "TS2345");
         }
 
         // For string literal paths, try to resolve the module and return Promise<Module>
@@ -171,7 +171,7 @@ public partial class TypeChecker
     {
         if (!_inGeneratorFunction)
         {
-            throw new TypeCheckException("'yield' is only valid inside a generator function.");
+            throw new TypeCheckException("'yield' is only valid inside a generator function.", tsCode: "TS1163");
         }
 
         if (yieldExpr.Value != null)
@@ -206,7 +206,7 @@ public partial class TypeChecker
         TypeInfo.String => new TypeInfo.String(),  // String yields characters (as strings)
         TypeInfo.StringLiteral => new TypeInfo.String(),  // String literal also yields characters
         TypeInfo.Any => new TypeInfo.Any(),
-        _ => throw new TypeCheckException($" Type '{type}' is not iterable for yield*.")
+        _ => throw new TypeCheckException($" Type '{type}' is not iterable for yield*.", tsCode: "TS2488")
     };
 
     /// <summary>
@@ -277,7 +277,7 @@ public partial class TypeChecker
         if (IsCompatible(targetType, sourceType) || IsCompatible(sourceType, targetType))
             return targetType;
 
-        throw new TypeCheckException($" Cannot assert type '{sourceType}' to '{targetType}'.");
+        throw new TypeCheckException($" Cannot assert type '{sourceType}' to '{targetType}'.", tsCode: "TS2352");
     }
 
     private TypeInfo CheckSatisfies(Expr.Satisfies sat)
@@ -297,7 +297,7 @@ public partial class TypeChecker
         if (!IsCompatible(constraintType, inferredType))
         {
             throw new TypeCheckException(
-                $"Type '{inferredType}' does not satisfy constraint '{constraintType}'.");
+                $"Type '{inferredType}' does not satisfy constraint '{constraintType}'.", tsCode: "TS2344");
         }
 
         // Key difference from 'as': return the inferred type, not the constraint type
@@ -433,7 +433,7 @@ public partial class TypeChecker
             TypeInfo.Any => new TypeInfo.Any(),
             TypeInfo.Class => new TypeInfo.Any(), // constructors are callable but shouldn't be used as tag
             _ => throw new TypeCheckException(
-                $"Type Error: Tagged template tag must be callable, got '{tagType}'.")
+                $"Type Error: Tagged template tag must be callable, got '{tagType}'.", tsCode: "TS2349")
         };
     }
 
@@ -476,7 +476,7 @@ public partial class TypeChecker
                 }
                 else
                 {
-                    throw new TypeCheckException($" Spread in object literal requires an object, got '{spreadType}'.");
+                    throw new TypeCheckException($" Spread in object literal requires an object, got '{spreadType}'.", tsCode: "TS2698");
                 }
             }
             else if (prop.Kind == Expr.ObjectPropertyKind.Getter)
@@ -558,7 +558,7 @@ public partial class TypeChecker
                             // Union of string/number types - use string index signature
                             stringIndexType = UnifyIndexTypes(stringIndexType, valueType);
                         else
-                            throw new TypeCheckException($" Computed property key must be string, number, or symbol, got '{keyType}'.");
+                            throw new TypeCheckException($" Computed property key must be string, number, or symbol, got '{keyType}'.", tsCode: "TS1170");
                         break;
                 }
             }
@@ -645,7 +645,7 @@ public partial class TypeChecker
             Expr.LiteralKey lk when lk.Literal.Type == TokenType.STRING => (string)lk.Literal.Literal!,
             Expr.LiteralKey lk when lk.Literal.Type == TokenType.NUMBER => lk.Literal.Literal!.ToString()!,
             Expr.ComputedKey => "[computed]", // Computed keys need special handling at runtime
-            _ => throw new TypeCheckException("Invalid property key for accessor.")
+            _ => throw new TypeCheckException("Invalid property key for accessor.", tsCode: "TS1170")
         };
     }
 
@@ -710,7 +710,7 @@ public partial class TypeChecker
                 }
                 else
                 {
-                    throw new TypeCheckException($" Spread expression must be an iterable type (array, iterator, set, map, string, or generator), got '{spreadType}'.");
+                    throw new TypeCheckException($" Spread expression must be an iterable type (array, iterator, set, map, string, or generator), got '{spreadType}'.", tsCode: "TS2488");
                 }
             }
             else
@@ -757,13 +757,13 @@ public partial class TypeChecker
         // Check minimum element count
         if (elemCount < requiredCount)
         {
-            throw new TypeCheckException($" Tuple requires at least {requiredCount} elements, but got {elemCount} for variable '{varName}'.");
+            throw new TypeCheckException($" Tuple requires at least {requiredCount} elements, but got {elemCount} for variable '{varName}'.", tsCode: "TS2741");
         }
 
         // Check maximum element count (only for fixed tuples without spread or rest)
         if (tupleType.RestElementType == null && !tupleType.HasSpread && elemCount > tupleType.Elements.Count)
         {
-            throw new TypeCheckException($" Tuple expects at most {tupleType.Elements.Count} elements, but got {elemCount} for variable '{varName}'.");
+            throw new TypeCheckException($" Tuple expects at most {tupleType.Elements.Count} elements, but got {elemCount} for variable '{varName}'.", tsCode: "TS2322");
         }
 
         // Use variadic tuple logic if the tuple has a spread element
@@ -800,7 +800,7 @@ public partial class TypeChecker
             }
             else
             {
-                throw new TypeCheckException($" Tuple index {i} is out of bounds for variable '{varName}'.");
+                throw new TypeCheckException($" Tuple index {i} is out of bounds for variable '{varName}'.", tsCode: "TS2493");
             }
 
             // Recursively apply contextual typing for nested array literals with tuple types
@@ -813,7 +813,7 @@ public partial class TypeChecker
                 TypeInfo elemType = CheckExpr(element);
                 if (!IsCompatible(expectedType, elemType))
                 {
-                    throw new TypeCheckException($" Element at index {i} has type '{elemType}' but expected '{expectedType}' for variable '{varName}'.");
+                    throw new TypeCheckException($" Element at index {i} has type '{elemType}' but expected '{expectedType}' for variable '{varName}'.", tsCode: "TS2322");
                 }
             }
         }
@@ -841,7 +841,7 @@ public partial class TypeChecker
 
         if (spreadCount < 0)
         {
-            throw new TypeCheckException($" Not enough elements for variadic tuple: expected at least {leadingCount + trailingCount} elements, got {arrayLit.Elements.Count} for variable '{varName}'.");
+            throw new TypeCheckException($" Not enough elements for variadic tuple: expected at least {leadingCount + trailingCount} elements, got {arrayLit.Elements.Count} for variable '{varName}'.", tsCode: "TS2741");
         }
 
         // Check leading elements (before spread)
@@ -859,7 +859,7 @@ public partial class TypeChecker
                 TypeInfo elemType = CheckExpr(element);
                 if (!IsCompatible(expectedType, elemType))
                 {
-                    throw new TypeCheckException($" Element at index {i} has type '{elemType}' but expected '{expectedType}' for variable '{varName}'.");
+                    throw new TypeCheckException($" Element at index {i} has type '{elemType}' but expected '{expectedType}' for variable '{varName}'.", tsCode: "TS2322");
                 }
             }
         }
@@ -881,7 +881,7 @@ public partial class TypeChecker
                 TypeInfo elemType = CheckExpr(element);
                 if (!IsCompatible(spreadInnerType, elemType))
                 {
-                    throw new TypeCheckException($" Element at index {arrIdx} has type '{elemType}' but expected '{spreadInnerType}' for variable '{varName}'.");
+                    throw new TypeCheckException($" Element at index {arrIdx} has type '{elemType}' but expected '{spreadInnerType}' for variable '{varName}'.", tsCode: "TS2322");
                 }
             }
         }
@@ -903,7 +903,7 @@ public partial class TypeChecker
                 TypeInfo elemType = CheckExpr(element);
                 if (!IsCompatible(expectedType, elemType))
                 {
-                    throw new TypeCheckException($" Element at index {arrIdx} has type '{elemType}' but expected '{expectedType}' for variable '{varName}'.");
+                    throw new TypeCheckException($" Element at index {arrIdx} has type '{elemType}' but expected '{expectedType}' for variable '{varName}'.", tsCode: "TS2322");
                 }
             }
         }
@@ -1005,7 +1005,7 @@ public partial class TypeChecker
                     TypeInfo defaultType = CheckExpr(param.DefaultValue);
                     if (!IsCompatible(paramType, defaultType))
                     {
-                        throw new TypeCheckException($" Default value type '{defaultType}' is not assignable to parameter type '{paramType}'.");
+                        throw new TypeCheckException($" Default value type '{defaultType}' is not assignable to parameter type '{paramType}'.", tsCode: "TS2322");
                     }
                 }
                 else if (param.IsOptional)
@@ -1016,7 +1016,7 @@ public partial class TypeChecker
                 {
                     if (seenDefault)
                     {
-                        throw new TypeCheckException($" Required parameter cannot follow optional parameter.");
+                        throw new TypeCheckException($" Required parameter cannot follow optional parameter.", tsCode: "TS1016");
                     }
                     requiredParams++;
                 }
@@ -1118,7 +1118,7 @@ public partial class TypeChecker
 
                     if (!IsCompatible(expectedRetType, exprType))
                     {
-                        throw new TypeCheckException($" Arrow function declared to return '{returnType}' but expression evaluates to '{exprType}'.");
+                        throw new TypeCheckException($" Arrow function declared to return '{returnType}' but expression evaluates to '{exprType}'.", tsCode: "TS2322");
                     }
                 }
             }
@@ -1183,14 +1183,14 @@ public partial class TypeChecker
         var declaredType = GetDeclaredType(assign.Name.Lexeme);
         if (declaredType == null)
         {
-            throw new TypeCheckException($" Undefined variable '{assign.Name.Lexeme}'.");
+            throw new TypeCheckException($" Undefined variable '{assign.Name.Lexeme}'.", tsCode: "TS2304");
         }
 
         TypeInfo valueType = CheckExpr(assign.Value);
 
         if (!IsCompatible(declaredType, valueType))
         {
-            throw new TypeCheckException($" Cannot assign type '{valueType}' to variable '{assign.Name.Lexeme}' of type '{declaredType}'.");
+            throw new TypeCheckException($" Cannot assign type '{valueType}' to variable '{assign.Name.Lexeme}' of type '{declaredType}'.", tsCode: "TS2322");
         }
 
         // Invalidate any narrowings affected by this assignment
@@ -1293,7 +1293,7 @@ public partial class TypeChecker
         var type = _environment.Get(name.Lexeme);
         if (type == null)
         {
-             throw new TypeCheckException($" Undefined variable '{name.Lexeme}'.");
+             throw new TypeCheckException($" Undefined variable '{name.Lexeme}'.", tsCode: "TS2304");
         }
 
         // Check for variable narrowing in the narrowing context
@@ -1352,7 +1352,7 @@ public partial class TypeChecker
                 superclass = new TypeInfo.MutableClass("$AnySuperclass");
             }
             else
-                throw new TypeCheckException("Superclass must be a class");
+                throw new TypeCheckException("Superclass must be a class", tsCode: "TS2507");
         }
 
         // Handle generic type parameters
@@ -1428,9 +1428,9 @@ public partial class TypeChecker
                 if (signatures.Count > 0)
                 {
                     if (implementations.Count == 0)
-                        throw new TypeCheckException($" Overloaded method '{methodName}' has no implementation.");
+                        throw new TypeCheckException($" Overloaded method '{methodName}' has no implementation.", tsCode: "TS2391");
                     if (implementations.Count > 1)
-                        throw new TypeCheckException($" Overloaded method '{methodName}' has multiple implementations.");
+                        throw new TypeCheckException($" Overloaded method '{methodName}' has multiple implementations.", tsCode: "TS2393");
 
                     var implementation = implementations[0];
                     var signatureTypes = signatures.Select(BuildMethodFuncType).ToList();
@@ -1439,7 +1439,7 @@ public partial class TypeChecker
                     foreach (var sig in signatureTypes)
                     {
                         if (implType.MinArity > sig.MinArity)
-                            throw new TypeCheckException($" Implementation of '{methodName}' requires {implType.MinArity} arguments but overload signature requires only {sig.MinArity}.");
+                            throw new TypeCheckException($" Implementation of '{methodName}' requires {implType.MinArity} arguments but overload signature requires only {sig.MinArity}.", tsCode: "TS2394");
                     }
 
                     var overloadedFunc = new TypeInfo.OverloadedFunction(signatureTypes, implType);
@@ -1461,7 +1461,7 @@ public partial class TypeChecker
                 }
                 else if (implementations.Count > 1)
                 {
-                    throw new TypeCheckException($" Multiple implementations of method '{methodName}' without overload signatures.");
+                    throw new TypeCheckException($" Multiple implementations of method '{methodName}' without overload signatures.", tsCode: "TS2393");
                 }
             }
 
@@ -1509,7 +1509,7 @@ public partial class TypeChecker
                 foreach (var propName in mutableClass.Getters.Keys.Intersect(mutableClass.Setters.Keys))
                 {
                     if (!IsCompatible(mutableClass.Getters[propName], mutableClass.Setters[propName]))
-                        throw new TypeCheckException($" Getter and setter for '{propName}' have incompatible types.");
+                        throw new TypeCheckException($" Getter and setter for '{propName}' have incompatible types.", tsCode: "TS2380");
                 }
             }
         }
@@ -1545,7 +1545,7 @@ public partial class TypeChecker
             {
                 TypeInfo? itfTypeInfo = _environment.Get(interfaceToken.Lexeme);
                 if (itfTypeInfo is not TypeInfo.Interface interfaceType)
-                    throw new TypeCheckException($" '{interfaceToken.Lexeme}' is not an interface.");
+                    throw new TypeCheckException($" '{interfaceToken.Lexeme}' is not an interface.", tsCode: "TS2304");
                 ValidateInterfaceImplementation(classTypeForBody, interfaceType, className);
             }
         }
@@ -1584,6 +1584,7 @@ public partial class TypeChecker
                 {
                     TypeInfo.OverloadedFunction of => of.Implementation,
                     TypeInfo.Function f => f,
+                    // SharpTS-only: internal invariant
                     _ => throw new TypeCheckException($" Unexpected method type for '{method.Name.Lexeme}'.")
                 };
 
@@ -1695,7 +1696,7 @@ public partial class TypeChecker
                     : classTypeForBody.FieldTypes[field.Name.Lexeme];
 
                 if (!IsCompatible(fieldDeclaredType, initType))
-                    throw new TypeCheckException($" Cannot assign type '{initType}' to field '{field.Name.Lexeme}' of type '{fieldDeclaredType}'.");
+                    throw new TypeCheckException($" Cannot assign type '{initType}' to field '{field.Name.Lexeme}' of type '{fieldDeclaredType}'.", tsCode: "TS2322");
             }
         }
         finally

@@ -90,7 +90,7 @@ public partial class TypeChecker
         {
             if (typeArgs.Count != 1)
             {
-                throw new TypeCheckException($" Promise requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Promise requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             }
             // Flatten nested Promises: Promise<Promise<T>> -> Promise<T>
             TypeInfo valueType = typeArgs[0];
@@ -104,7 +104,7 @@ public partial class TypeChecker
         {
             if (typeArgs.Count != 1)
             {
-                throw new TypeCheckException($" Generator requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Generator requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             }
             result = new TypeInfo.Generator(typeArgs[0]);
         }
@@ -112,7 +112,7 @@ public partial class TypeChecker
         {
             if (typeArgs.Count != 1)
             {
-                throw new TypeCheckException($" AsyncGenerator requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" AsyncGenerator requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             }
             result = new TypeInfo.AsyncGenerator(typeArgs[0]);
         }
@@ -120,99 +120,99 @@ public partial class TypeChecker
         else if (baseName == "Partial")
         {
             if (typeArgs.Count != 1)
-                throw new TypeCheckException($" Partial<T> requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Partial<T> requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandPartial(typeArgs[0]);
         }
         else if (baseName == "Required")
         {
             if (typeArgs.Count != 1)
-                throw new TypeCheckException($" Required<T> requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Required<T> requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandRequired(typeArgs[0]);
         }
         else if (baseName == "Readonly")
         {
             if (typeArgs.Count != 1)
-                throw new TypeCheckException($" Readonly<T> requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Readonly<T> requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandReadonly(typeArgs[0]);
         }
         else if (baseName == "Record")
         {
             if (typeArgs.Count != 2)
-                throw new TypeCheckException($" Record<K, V> requires exactly 2 type arguments, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Record<K, V> requires exactly 2 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandRecordType(typeArgs[0], typeArgs[1]);
         }
         else if (baseName == "Pick")
         {
             if (typeArgs.Count != 2)
-                throw new TypeCheckException($" Pick<T, K> requires exactly 2 type arguments, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Pick<T, K> requires exactly 2 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandPick(typeArgs[0], typeArgs[1]);
         }
         else if (baseName == "Omit")
         {
             if (typeArgs.Count != 2)
-                throw new TypeCheckException($" Omit<T, K> requires exactly 2 type arguments, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Omit<T, K> requires exactly 2 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandOmit(typeArgs[0], typeArgs[1]);
         }
         // Additional utility types
         else if (baseName == "ReturnType")
         {
             if (typeArgs.Count != 1)
-                throw new TypeCheckException($" ReturnType<T> requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" ReturnType<T> requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandReturnType(typeArgs[0]);
         }
         else if (baseName == "Parameters")
         {
             if (typeArgs.Count != 1)
-                throw new TypeCheckException($" Parameters<T> requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Parameters<T> requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandParameters(typeArgs[0]);
         }
         else if (baseName == "ConstructorParameters")
         {
             if (typeArgs.Count != 1)
-                throw new TypeCheckException($" ConstructorParameters<T> requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" ConstructorParameters<T> requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandConstructorParameters(typeArgs[0]);
         }
         else if (baseName == "InstanceType")
         {
             if (typeArgs.Count != 1)
-                throw new TypeCheckException($" InstanceType<T> requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" InstanceType<T> requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandInstanceType(typeArgs[0]);
         }
         else if (baseName == "ThisType")
         {
             if (typeArgs.Count != 1)
-                throw new TypeCheckException($" ThisType<T> requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" ThisType<T> requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             // ThisType<T> is a marker type - it just wraps T for this-context typing
             result = typeArgs[0];
         }
         else if (baseName == "Awaited")
         {
             if (typeArgs.Count != 1)
-                throw new TypeCheckException($" Awaited<T> requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Awaited<T> requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandAwaited(typeArgs[0]);
         }
         else if (baseName == "NonNullable")
         {
             if (typeArgs.Count != 1)
-                throw new TypeCheckException($" NonNullable<T> requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" NonNullable<T> requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandNonNullable(typeArgs[0]);
         }
         else if (baseName == "Extract")
         {
             if (typeArgs.Count != 2)
-                throw new TypeCheckException($" Extract<T, U> requires exactly 2 type arguments, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Extract<T, U> requires exactly 2 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandExtract(typeArgs[0], typeArgs[1]);
         }
         else if (baseName == "Exclude")
         {
             if (typeArgs.Count != 2)
-                throw new TypeCheckException($" Exclude<T, U> requires exactly 2 type arguments, got {typeArgs.Count}.");
+                throw new TypeCheckException($" Exclude<T, U> requires exactly 2 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
             result = ExpandExclude(typeArgs[0], typeArgs[1]);
         }
         else if (baseName is "Uppercase" or "Lowercase" or "Capitalize" or "Uncapitalize")
         {
             if (typeArgs.Count != 1)
-                throw new TypeCheckException($" {baseName}<T> requires exactly 1 type argument, got {typeArgs.Count}.");
+                throw new TypeCheckException($" {baseName}<T> requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
 
             var operation = baseName switch
             {
@@ -233,7 +233,7 @@ public partial class TypeChecker
                 var (definition, typeParamNames) = genericAlias.Value;
                 if (typeArgs.Count != typeParamNames.Count)
                 {
-                    throw new TypeCheckException($" Type alias '{baseName}' requires {typeParamNames.Count} type argument(s), got {typeArgs.Count}.");
+                    throw new TypeCheckException($" Type alias '{baseName}' requires {typeParamNames.Count} type argument(s), got {typeArgs.Count}.", tsCode: "TS2314");
                 }
 
                 // Lazily compute string representations for type alias expansion
@@ -394,7 +394,7 @@ public partial class TypeChecker
                 var substitutedConstraint = Substitute(tp.Constraint, substitutions);
                 if (!IsCompatible(substitutedConstraint, resolvedTypeArgs[i]))
                 {
-                    throw new TypeCheckException($" Type '{resolvedTypeArgs[i]}' does not satisfy constraint '{substitutedConstraint}' for type parameter '{tp.Name}'.");
+                    throw new TypeCheckException($" Type '{resolvedTypeArgs[i]}' does not satisfy constraint '{substitutedConstraint}' for type parameter '{tp.Name}'.", tsCode: "TS2344");
                 }
             }
         }
@@ -428,7 +428,7 @@ public partial class TypeChecker
                 var substitutedConstraint = Substitute(tp.Constraint, substitutions);
                 if (!IsCompatible(substitutedConstraint, resolvedTypeArgs[i]))
                 {
-                    throw new TypeCheckException($" Type '{resolvedTypeArgs[i]}' does not satisfy constraint '{substitutedConstraint}' for type parameter '{tp.Name}'.");
+                    throw new TypeCheckException($" Type '{resolvedTypeArgs[i]}' does not satisfy constraint '{substitutedConstraint}' for type parameter '{tp.Name}'.", tsCode: "TS2344");
                 }
             }
         }
@@ -461,7 +461,7 @@ public partial class TypeChecker
                 var substitutedConstraint = Substitute(tp.Constraint, substitutions);
                 if (!IsCompatible(substitutedConstraint, resolvedTypeArgs[i]))
                 {
-                    throw new TypeCheckException($" Type '{resolvedTypeArgs[i]}' does not satisfy constraint '{substitutedConstraint}' for type parameter '{tp.Name}'.");
+                    throw new TypeCheckException($" Type '{resolvedTypeArgs[i]}' does not satisfy constraint '{substitutedConstraint}' for type parameter '{tp.Name}'.", tsCode: "TS2344");
                 }
             }
         }
@@ -490,12 +490,12 @@ public partial class TypeChecker
 
         if (typeArgs.Count < requiredCount)
         {
-            throw new TypeCheckException($" Generic '{contextName}' requires at least {requiredCount} type argument(s), got {typeArgs.Count}.");
+            throw new TypeCheckException($" Generic '{contextName}' requires at least {requiredCount} type argument(s), got {typeArgs.Count}.", tsCode: "TS2314");
         }
 
         if (typeArgs.Count > typeParams.Count)
         {
-            throw new TypeCheckException($" Generic '{contextName}' has {typeParams.Count} type parameter(s), but got {typeArgs.Count} type argument(s).");
+            throw new TypeCheckException($" Generic '{contextName}' has {typeParams.Count} type parameter(s), but got {typeArgs.Count} type argument(s).", tsCode: "TS2314");
         }
 
         // Build the resolved list
@@ -518,7 +518,7 @@ public partial class TypeChecker
             else
             {
                 // Should not happen due to requiredCount check, but handle gracefully
-                throw new TypeCheckException($" Missing type argument for type parameter '{typeParams[i].Name}' in generic '{contextName}'.");
+                throw new TypeCheckException($" Missing type argument for type parameter '{typeParams[i].Name}' in generic '{contextName}'.", tsCode: "TS2314");
             }
 
             resolved.Add(argType);

@@ -53,7 +53,7 @@ public partial class TypeChecker
         // Check for label shadowing
         if (_activeLabels.ContainsKey(labelName))
         {
-            throw new TypeCheckException($"Label '{labelName}' already declared in this scope");
+            throw new TypeCheckException($"Label '{labelName}' already declared in this scope", tsCode: "TS2300");
         }
 
         // Determine if this label is on a loop (for continue validation)
@@ -197,7 +197,7 @@ public partial class TypeChecker
 
                     if (!IsCompatible(declaredType, initializerType))
                     {
-                        throw new TypeMismatchException(declaredType, initializerType, stmt.Name.Line);
+                        throw new TypeMismatchException(declaredType, initializerType, stmt.Name.Line, tsCode: "TS2322");
                     }
                 }
                 else
@@ -249,13 +249,13 @@ public partial class TypeChecker
                 v.Name.Lexeme != "Symbol")
             {
                 throw new TypeCheckException(
-                    $"'unique symbol' must be initialized with Symbol() at line {stmt.Name.Line}.");
+                    $"'unique symbol' must be initialized with Symbol() at line {stmt.Name.Line}.", tsCode: "TS1331");
             }
             if (call.Arguments.Count > 0)
             {
                 var argType = CheckExpr(call.Arguments[0]);
                 if (argType is not TypeInfo.String && argType is not TypeInfo.StringLiteral && argType is not TypeInfo.Any)
-                    throw new TypeCheckException($"Symbol() description must be a string.");
+                    throw new TypeCheckException($"Symbol() description must be a string.", tsCode: "TS2345");
             }
             constDeclaredType = new TypeInfo.UniqueSymbol(
                 stmt.Name.Lexeme,
@@ -268,7 +268,7 @@ public partial class TypeChecker
             var initType = CheckExpr(stmt.Initializer);
             if (!IsCompatible(constDeclaredType, initType))
             {
-                throw new TypeMismatchException(constDeclaredType, initType, stmt.Name.Line);
+                throw new TypeMismatchException(constDeclaredType, initType, stmt.Name.Line, tsCode: "TS2322");
             }
         }
         else
@@ -294,7 +294,7 @@ public partial class TypeChecker
     {
         if (_inStaticBlock)
         {
-            throw new TypeCheckException("Return statements are not allowed in static blocks.");
+            throw new TypeCheckException("Return statements are not allowed in static blocks.", tsCode: "TS1108");
         }
 
         // When inferring return type, collect the type instead of validating
@@ -337,7 +337,7 @@ public partial class TypeChecker
                 }
                 else if (!IsCompatible(expectedReturnType, actualReturnType))
                 {
-                    throw new TypeMismatchException(_currentFunctionReturnType, actualReturnType, stmt.Keyword.Line);
+                    throw new TypeMismatchException(_currentFunctionReturnType, actualReturnType, stmt.Keyword.Line, tsCode: "TS2322");
                 }
             }
         }
@@ -607,7 +607,7 @@ public partial class TypeChecker
 
         if (objType is not (TypeInfo.Record or TypeInfo.Instance or TypeInfo.Array or TypeInfo.Any or TypeInfo.Class))
         {
-            throw new TypeCheckException($"'for...in' requires an object, got {objType}");
+            throw new TypeCheckException($"'for...in' requires an object, got {objType}", tsCode: "TS2549");
         }
 
         TypeEnvironment forInEnv = new(_environment);
@@ -727,14 +727,14 @@ public partial class TypeChecker
             string labelName = stmt.Label.Lexeme;
             if (!_activeLabels.ContainsKey(labelName))
             {
-                throw new TypeCheckException($"Label '{labelName}' not found");
+                throw new TypeCheckException($"Label '{labelName}' not found", tsCode: "TS1116");
             }
         }
         else
         {
             if (_loopDepth == 0 && _switchDepth == 0)
             {
-                throw new TypeOperationException("'break' can only be used inside a loop or switch");
+                throw new TypeOperationException("'break' can only be used inside a loop or switch", tsCode: "TS1105");
             }
         }
         return VoidResult.Instance;
@@ -765,18 +765,18 @@ public partial class TypeChecker
             string labelName = stmt.Label.Lexeme;
             if (!_activeLabels.TryGetValue(labelName, out bool isOnLoop))
             {
-                throw new TypeCheckException($"Label '{labelName}' not found");
+                throw new TypeCheckException($"Label '{labelName}' not found", tsCode: "TS1116");
             }
             if (!isOnLoop)
             {
-                throw new TypeOperationException($"Cannot continue to non-loop label '{labelName}'");
+                throw new TypeOperationException($"Cannot continue to non-loop label '{labelName}'", tsCode: "TS1116");
             }
         }
         else
         {
             if (_loopDepth == 0)
             {
-                throw new TypeOperationException("'continue' can only be used inside a loop");
+                throw new TypeOperationException("'continue' can only be used inside a loop", tsCode: "TS1104");
             }
         }
         return VoidResult.Instance;
@@ -792,6 +792,7 @@ public partial class TypeChecker
     {
         if (_currentModule == null)
         {
+            // SharpTS-only: module-mode requirement (continued message)
             throw new TypeCheckException("Import statements require module mode. " +
                                "Use 'dotnet run -- --compile' with multi-file support", stmt.Keyword.Line);
         }
@@ -853,7 +854,7 @@ public partial class TypeChecker
         {
             throw new TypeCheckException(
                 "'await using' is only allowed inside an async function.",
-                usingStmt.Keyword.Line);
+                usingStmt.Keyword.Line, tsCode: "TS1308");
         }
 
         foreach (var binding in usingStmt.Bindings)
@@ -867,7 +868,7 @@ public partial class TypeChecker
                 declaredType = ToTypeInfo(binding.TypeAnnotation);
                 if (!IsCompatible(declaredType, initType))
                 {
-                    throw new TypeMismatchException(declaredType, initType, binding.Name!.Line);
+                    throw new TypeMismatchException(declaredType, initType, binding.Name!.Line, tsCode: "TS2322");
                 }
             }
 
@@ -879,7 +880,7 @@ public partial class TypeChecker
             {
                 throw new TypeCheckException(
                     $"Type '{resourceType}' cannot be used with 'using' - it cannot have a disposal method.",
-                    usingStmt.Keyword.Line);
+                    usingStmt.Keyword.Line, tsCode: "TS2851");
             }
 
             // Define variable (const-like - cannot reassign)
@@ -911,15 +912,18 @@ public partial class TypeChecker
             {
                 if (call.Arguments.Count != 1)
                 {
+                    // SharpTS-only: @Namespace decorator validation
                     throw new TypeCheckException("@Namespace requires exactly one string argument", decorator.AtToken.Line);
                 }
                 if (call.Arguments[0] is not Expr.Literal { Value: string })
                 {
+                    // SharpTS-only: @Namespace decorator validation
                     throw new TypeCheckException("@Namespace argument must be a string literal", decorator.AtToken.Line);
                 }
             }
             else
             {
+                // SharpTS-only: file-level directive validation
                 throw new TypeCheckException("Unknown file-level directive. Only @Namespace is supported", decorator.AtToken.Line);
             }
         }
@@ -990,7 +994,7 @@ public partial class TypeChecker
                 {
                     throw new TypeCheckException(
                         $" A rest element type must be an array type. " +
-                        $"Type parameter '{typeName}' is not constrained to an array type.");
+                        $"Type parameter '{typeName}' is not constrained to an array type.", tsCode: "TS2574");
                 }
             }
             // If not a type parameter (e.g., a concrete type like ...number[]), that's fine

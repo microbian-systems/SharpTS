@@ -405,7 +405,7 @@ public partial class TypeChecker
             {
                 if (thisFuncType.MinArity > sig.MinArity)
                 {
-                    throw new TypeCheckException($" Implementation of '{funcName}' requires {thisFuncType.MinArity} arguments but overload signature requires only {sig.MinArity}.");
+                    throw new TypeCheckException($" Implementation of '{funcName}' requires {thisFuncType.MinArity} arguments but overload signature requires only {sig.MinArity}.", tsCode: "TS2394");
                 }
             }
 
@@ -586,7 +586,7 @@ public partial class TypeChecker
             {
                 if (!DoesBlockDefinitelyReturn(funcStmt.Body))
                 {
-                    throw new TypeCheckException($" Function '{funcStmt.Name.Lexeme}' must return a value of type '{returnType}'.");
+                    throw new TypeCheckException($" Function '{funcStmt.Name.Lexeme}' must return a value of type '{returnType}'.", tsCode: "TS2366");
                 }
             }
         }
@@ -639,7 +639,7 @@ public partial class TypeChecker
             if (!paramExists && paramToCheck != "this")
             {
                 throw new TypeCheckException(
-                    $" Type predicate in function '{funcName}' references parameter '{paramToCheck}' which is not in the function signature.");
+                    $" Type predicate in function '{funcName}' references parameter '{paramToCheck}' which is not in the function signature.", tsCode: "TS2304");
             }
         }
     }

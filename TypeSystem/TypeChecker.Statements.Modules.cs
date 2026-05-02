@@ -31,10 +31,11 @@ public partial class TypeChecker
                 {
                     throw new TypeCheckException(
                         "An export assignment cannot be used in a module with other exported elements.",
-                        exportStmt.Keyword.Line);
+                        exportStmt.Keyword.Line, tsCode: "TS2309");
                 }
                 if (_currentModule.HasExportAssignment)
                 {
+                    // SharpTS-only: no canonical TS code for "multiple export = declarations"
                     throw new TypeCheckException(
                         "A module cannot have multiple 'export =' declarations.",
                         exportStmt.Keyword.Line);
@@ -56,7 +57,7 @@ public partial class TypeChecker
         {
             throw new TypeCheckException(
                 "An export assignment cannot be used in a module with other exported elements.",
-                exportStmt.Keyword.Line);
+                exportStmt.Keyword.Line, tsCode: "TS2309");
         }
 
         if (exportStmt.IsDefaultExport)
@@ -319,7 +320,7 @@ public partial class TypeChecker
                 // Can't merge interface with non-interface type
                 throw new TypeCheckException(
                     $"Cannot augment '{name}': existing type is not an interface",
-                    interfaceStmt.Name.Line);
+                    interfaceStmt.Name.Line, tsCode: "TS2434");
             }
         }
         else

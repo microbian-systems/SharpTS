@@ -49,7 +49,7 @@ public partial class TypeChecker
                 if (++_typeAliasExpansionDepth > MaxTypeAliasExpansionDepth)
                 {
                     throw new TypeCheckException(
-                        $"Type alias '{typeName}' circularly references itself.");
+                        $"Type alias '{typeName}' circularly references itself.", tsCode: "TS2456");
                 }
 
                 var expanded = ToTypeInfo(aliasExpansion);
@@ -58,7 +58,7 @@ public partial class TypeChecker
                 if (IsDirectCircularReference(expanded, typeName))
                 {
                     throw new TypeCheckException(
-                        $"Type alias '{typeName}' circularly references itself.");
+                        $"Type alias '{typeName}' circularly references itself.", tsCode: "TS2456");
                 }
 
                 // Cache the expanded type for future use
@@ -251,7 +251,7 @@ public partial class TypeChecker
         if (typeName == "unique symbol")
         {
             throw new TypeCheckException(
-                "'unique symbol' type is only valid on const declarations initialized with Symbol().");
+                "'unique symbol' type is only valid on const declarations initialized with Symbol().", tsCode: "TS1331");
         }
         if (typeName == "bigint") return new TypeInfo.BigInt();
         if (typeName == "void") return new TypeInfo.Void();
@@ -700,7 +700,7 @@ public partial class TypeChecker
             }
             else if (seenOptional && !seenSpread)
             {
-                throw new TypeCheckException("Required element cannot follow optional element in tuple.");
+                throw new TypeCheckException("Required element cannot follow optional element in tuple.", tsCode: "TS1257");
             }
 
             TupleElementKind kind = isOptional ? TupleElementKind.Optional : TupleElementKind.Required;
@@ -979,6 +979,7 @@ public partial class TypeChecker
         int closeBracket = FindMatchingBracket(inner, openBracket);
 
         if (openBracket < 0 || closeBracket < 0)
+            // SharpTS-only: parser-level mapped type syntax error
             throw new TypeCheckException("Invalid mapped type syntax.");
 
         string bracketContent = inner[(openBracket + 1)..closeBracket];
@@ -987,6 +988,7 @@ public partial class TypeChecker
         // Parse [K in Constraint as RemapType]
         int inIndex = bracketContent.IndexOf(" in ");
         if (inIndex < 0)
+            // SharpTS-only: parser-level mapped type syntax error
             throw new TypeCheckException("Mapped type must contain 'in' keyword.");
 
         string paramName = bracketContent[..inIndex].Trim();
@@ -1027,6 +1029,7 @@ public partial class TypeChecker
 
         // Parse : ValueType
         if (!afterBracket.StartsWith(":"))
+            // SharpTS-only: parser-level mapped type syntax error
             throw new TypeCheckException("Expected ':' after mapped type parameter.");
 
         string valueTypeStr = afterBracket[1..].Trim();
@@ -1256,6 +1259,7 @@ public partial class TypeChecker
 
         // Limit check (TypeScript caps at ~10000)
         if (combinations.Count > 10000)
+            // SharpTS-only: implementation limit (TS uses TS2590 for similar "too complex" cases)
             throw new TypeCheckException("Template literal type produces too many combinations (limit: 10000).");
 
         // Convert to string literal types
@@ -1325,6 +1329,7 @@ public partial class TypeChecker
         var accessors = ParseTypeOfPath(path);
 
         if (accessors.Count == 0)
+            // SharpTS-only: malformed typeof query path
             throw new TypeCheckException($"Invalid typeof expression: '{path}'");
 
         // Look up first identifier in environment
@@ -1332,7 +1337,7 @@ public partial class TypeChecker
         TypeInfo? currentType = _environment.Get(firstName);
 
         if (currentType == null)
-            throw new TypeCheckException($"Cannot find name '{firstName}' for typeof.");
+            throw new TypeCheckException($"Cannot find name '{firstName}' for typeof.", tsCode: "TS2304");
 
         // Resolve what typeof returns for the value
         currentType = ResolveTypeOfValue(currentType);
@@ -1350,7 +1355,7 @@ public partial class TypeChecker
             };
 
             if (currentType == null)
-                throw new TypeCheckException($"Cannot access '{accessor.Name}' on type in typeof.");
+                throw new TypeCheckException($"Cannot access '{accessor.Name}' on type in typeof.", tsCode: "TS2339");
         }
 
         return currentType;

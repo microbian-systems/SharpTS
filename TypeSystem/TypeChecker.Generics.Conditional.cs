@@ -43,6 +43,7 @@ public partial class TypeChecker
         // Check recursion depth
         if (_conditionalTypeDepth >= MaxConditionalTypeDepth)
         {
+            // SharpTS-only: implementation depth limit (TS uses TS2589 "Type instantiation is excessively deep" for similar)
             throw new TypeCheckException(
                 $"Conditional type recursion depth exceeded {MaxConditionalTypeDepth}. " +
                 "This may indicate an infinitely recursive type definition.");

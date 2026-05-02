@@ -491,7 +491,7 @@ public partial class TypeChecker
                     TypeInfo defaultType = CheckExpr(param.DefaultValue);
                     if (!IsCompatible(paramType, defaultType))
                     {
-                        throw new TypeMismatchException($"Default value type is not assignable to parameter type in {contextName}", paramType, defaultType);
+                        throw new TypeMismatchException($"Default value type is not assignable to parameter type in {contextName}", paramType, defaultType, tsCode: "TS2322");
                     }
                 }
             }
@@ -503,7 +503,7 @@ public partial class TypeChecker
             {
                 if (seenDefault)
                 {
-                    throw new TypeCheckException($"Required parameter cannot follow optional parameter in {contextName}");
+                    throw new TypeCheckException($"Required parameter cannot follow optional parameter in {contextName}", tsCode: "TS1016");
                 }
                 requiredParams++;
             }
@@ -1230,7 +1230,7 @@ public partial class TypeChecker
 
                 if (importedModule == null)
                 {
-                    throw new TypeCheckException($"Cannot find module '{import.ModulePath}'", import.Keyword.Line);
+                    throw new TypeCheckException($"Cannot find module '{import.ModulePath}'", import.Keyword.Line, tsCode: "TS2307");
                 }
 
                 // CommonJS modules carry no static type info — treat all imports as `any`.
@@ -1248,7 +1248,7 @@ public partial class TypeChecker
                     {
                         if (importedModule.DefaultExportType == null)
                         {
-                            throw new TypeCheckException($"Module '{import.ModulePath}' has no default export", import.Keyword.Line);
+                            throw new TypeCheckException($"Module '{import.ModulePath}' has no default export", import.Keyword.Line, tsCode: "TS1192");
                         }
                         env.Define(import.DefaultImport.Lexeme, importedModule.DefaultExportType);
                     }
@@ -1287,7 +1287,7 @@ public partial class TypeChecker
 
                         if (!importedModule.ExportedTypes.TryGetValue(importedName, out var type))
                         {
-                            throw new TypeCheckException($"Module '{import.ModulePath}' has no export named '{importedName}'", import.Keyword.Line);
+                            throw new TypeCheckException($"Module '{import.ModulePath}' has no export named '{importedName}'", import.Keyword.Line, tsCode: "TS2305");
                         }
 
                         env.Define(localName, type);
@@ -1310,6 +1310,7 @@ public partial class TypeChecker
             Stmt.Interface i => i.Name.Lexeme,
             Stmt.TypeAlias t => t.Name.Lexeme,
             Stmt.Enum e => e.Name.Lexeme,
+            // SharpTS-only: internal invariant
             _ => throw new TypeCheckException($" Cannot get name of declaration type {decl.GetType().Name}")
         };
     }

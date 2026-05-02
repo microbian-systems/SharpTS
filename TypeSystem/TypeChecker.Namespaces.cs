@@ -220,7 +220,7 @@ public partial class TypeChecker
         if (currentNs == null)
         {
             throw new TypeCheckException(
-                $"Type Error at line {path[0].Line}: Namespace '{path[0].Lexeme}' is not defined.");
+                $"Type Error at line {path[0].Line}: Namespace '{path[0].Lexeme}' is not defined.", tsCode: "TS2503");
         }
 
         // Walk the path until the last element
@@ -234,12 +234,12 @@ public partial class TypeChecker
             else if (memberType == null)
             {
                 throw new TypeCheckException(
-                    $"Type Error at line {path[i].Line}: '{path[i].Lexeme}' does not exist in namespace '{currentNs.Name}'.");
+                    $"Type Error at line {path[i].Line}: '{path[i].Lexeme}' does not exist in namespace '{currentNs.Name}'.", tsCode: "TS2694");
             }
             else
             {
                 throw new TypeCheckException(
-                    $"Type Error at line {path[i].Line}: '{path[i].Lexeme}' is not a namespace.");
+                    $"Type Error at line {path[i].Line}: '{path[i].Lexeme}' is not a namespace.", tsCode: "TS2503");
             }
         }
 
@@ -250,7 +250,7 @@ public partial class TypeChecker
         if (resolvedType == null)
         {
             throw new TypeCheckException(
-                $"Type Error at line {finalMember.Line}: Member '{finalMember.Lexeme}' does not exist in namespace '{currentNs.Name}'.");
+                $"Type Error at line {finalMember.Line}: Member '{finalMember.Lexeme}' does not exist in namespace '{currentNs.Name}'.", tsCode: "TS2694");
         }
 
         // Determine if this is a value alias (has runtime representation)
