@@ -31,6 +31,7 @@ public class ArrayHelpersBenchmarks
     private MethodInfo _tsReduceBound = null!;
     private MethodInfo _tsEveryBound = null!;
     private MethodInfo _tsFindBound = null!;
+    private MethodInfo _tsForOfSum = null!;
 
     private List<object> _arr = null!;
 
@@ -61,6 +62,7 @@ public class ArrayHelpersBenchmarks
         _tsReduceBound = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrReduceBound");
         _tsEveryBound = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrEveryBound");
         _tsFindBound = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrFindBound");
+        _tsForOfSum = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrForOfSum");
 
         // Build the input array as a plain List<object> with boxed doubles —
         // this is exactly the shape compiled `Array<number>` produces.
@@ -113,4 +115,8 @@ public class ArrayHelpersBenchmarks
     [Benchmark]
     [BenchmarkCategory("FindBound")]
     public object? SharpTS_FindBound() => BenchmarkHarness.InvokeCompiled(_tsFindBound, _arr);
+
+    [Benchmark]
+    [BenchmarkCategory("ForOfSum")]
+    public object? SharpTS_ForOfSum() => BenchmarkHarness.InvokeCompiled(_tsForOfSum, _arr);
 }

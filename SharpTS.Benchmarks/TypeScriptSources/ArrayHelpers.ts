@@ -60,3 +60,14 @@ function arrEveryBound(arr: any[]): boolean {
 function arrFindBound(arr: any[]): any {
     return arr.find(cbGt9999) ?? -1;
 }
+
+// Phase C: for-of over arrays. Reads each element via the iterator protocol
+// today (Symbol.iterator probe + GetElement dispatch per iter); fast path
+// should compile to direct Callvirt list[i].
+function arrForOfSum(arr: any[]): any {
+    let s: number = 0;
+    for (const x of arr) {
+        s = s + x;
+    }
+    return s;
+}
