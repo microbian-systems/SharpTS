@@ -61,6 +61,13 @@ public partial class RuntimeEmitter
         // reflection-style invocations); replacing reflection with a cached
         // invoker is the single biggest improvement to callback dispatch.
         var invokerField = typeBuilder.DefineField("_invoker", _types.MethodInvoker, FieldAttributes.Private);
+        // AdjustArgs cache: paramCount + rest-param shape. Pre-cache, every
+        // Invoke paid GetParameters + ParameterType lookups to decide between
+        // pad / trim / rest-list / rest-array branches. Computed once at
+        // construction, read as field loads thereafter.
+        var paramCountField = typeBuilder.DefineField("_paramCount", _types.Int32, FieldAttributes.Private);
+        var hasListRestField = typeBuilder.DefineField("_hasListRest", _types.Boolean, FieldAttributes.Private);
+        var hasArrayRestField = typeBuilder.DefineField("_hasArrayRest", _types.Boolean, FieldAttributes.Private);
 
         // Static cache for "this" fields: ConcurrentDictionary<Type, FieldInfo>
         // used to avoid reflection overhead in BindThis
@@ -182,6 +189,8 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Stfld, cachedNameField);
         // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
         EmitComputeExpectsThis(ctorIL, expectsThisField, methodArgIndex: 2);
+        // this._paramCount, _hasListRest, _hasArrayRest: cached by AdjustArgs.
+        EmitComputeAdjustArgsCache(ctorIL, paramCountField, hasListRestField, hasArrayRestField, methodArgIndex: 2);
         // this._invoker = LookupOrAdd(_invokerCache, method)  [pseudocode]
         EmitLookupOrCreateInvoker(ctorIL, invokerField, invokerCacheField, invokerCacheType, methodArgIndex: 2);
         ctorIL.Emit(OpCodes.Ret);
@@ -217,6 +226,7 @@ public partial class RuntimeEmitter
         ctorCacheIL.Emit(OpCodes.Stfld, cachedLengthField);
         // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
         EmitComputeExpectsThis(ctorCacheIL, expectsThisField, methodArgIndex: 2);
+        EmitComputeAdjustArgsCache(ctorCacheIL, paramCountField, hasListRestField, hasArrayRestField, methodArgIndex: 2);
         // this._invoker = LookupOrAdd(_invokerCache, method)
         EmitLookupOrCreateInvoker(ctorCacheIL, invokerField, invokerCacheField, invokerCacheType, methodArgIndex: 2);
         ctorCacheIL.Emit(OpCodes.Ret);
@@ -298,7 +308,7 @@ public partial class RuntimeEmitter
         gmIL.Emit(OpCodes.Ret);
 
         // Helper method: private static object[] AdjustArgs(MethodInfo method, object[] args)
-        var adjustArgsMethod = EmitTSFunctionAdjustArgsHelper(typeBuilder, runtime);
+        var adjustArgsMethod = EmitTSFunctionAdjustArgsHelper(typeBuilder, runtime, paramCountField, hasListRestField, hasArrayRestField);
 
         // Helper method: private static void ConvertArgsForUnionTypes(MethodInfo method, object[] args)
         var convertArgsMethod = EmitTSFunctionConvertArgsHelper(typeBuilder, runtime);
@@ -382,12 +392,12 @@ public partial class RuntimeEmitter
         invokeIL.MarkLabel(afterArgPrep);
 
         // Adjust args for rest parameters and padding/trimming
-        // adjustedArgs = AdjustArgs(_method, effectiveArgs)
+        // adjustedArgs = this.AdjustArgs(effectiveArgs) — instance call, reads
+        // cached fields instead of GetParameters reflection per invoke.
         var adjustedArgsLocal = invokeIL.DeclareLocal(_types.ObjectArray);
         invokeIL.Emit(OpCodes.Ldarg_0);
-        invokeIL.Emit(OpCodes.Ldfld, methodField);
         invokeIL.Emit(OpCodes.Ldloc, effectiveArgsLocal);
-        invokeIL.Emit(OpCodes.Call, adjustArgsMethod);
+        invokeIL.Emit(OpCodes.Callvirt, adjustArgsMethod);
         invokeIL.Emit(OpCodes.Stloc, adjustedArgsLocal);
 
         // Convert args for union types before invoking
@@ -863,6 +873,70 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits IL inside a constructor to populate <c>_paramCount</c>,
+    /// <c>_hasListRest</c>, <c>_hasArrayRest</c> from the method's parameters.
+    /// AdjustArgs reads these instead of calling GetParameters/ParameterType
+    /// per invocation. Reflection cost is paid once at construction time.
+    /// </summary>
+    private void EmitComputeAdjustArgsCache(ILGenerator il, FieldBuilder paramCountField,
+        FieldBuilder hasListRestField, FieldBuilder hasArrayRestField, int methodArgIndex)
+    {
+        var paramsLocal = il.DeclareLocal(_types.MakeArrayType(_types.ParameterInfo));
+        var paramCountLocal = il.DeclareLocal(_types.Int32);
+        var lastTypeLocal = il.DeclareLocal(_types.Type);
+
+        // var ps = method.GetParameters();
+        il.Emit(OpCodes.Ldarg, methodArgIndex);
+        il.Emit(OpCodes.Callvirt, _types.MethodInfo.GetMethod("GetParameters")!);
+        il.Emit(OpCodes.Stloc, paramsLocal);
+
+        // var paramCount = ps.Length;  this._paramCount = paramCount;
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, paramCountLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, paramCountLocal);
+        il.Emit(OpCodes.Stfld, paramCountField);
+
+        // if (paramCount == 0) goto done — no rest param possible
+        var hasParamsLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, paramCountLocal);
+        il.Emit(OpCodes.Brtrue, hasParamsLabel);
+        // Both bools default to false (zero-init by the runtime).
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(hasParamsLabel);
+        // var lastType = ps[paramCount - 1].ParameterType;
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldloc, paramCountLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("ParameterType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lastTypeLocal);
+
+        // this._hasListRest = (lastType == typeof(List<object>))
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, lastTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.ListOfObject);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Stfld, hasListRestField);
+
+        // this._hasArrayRest = (lastType == typeof(object[]))
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, lastTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.ObjectArray);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Stfld, hasArrayRestField);
+
+        il.MarkLabel(doneLabel);
+    }
+
+    /// <summary>
     /// Emits IL inside a constructor to compute and store the cached
     /// <c>_expectsThis</c> bool field. Logic:
     /// <c>this._expectsThis = (method.GetParameters().Length > 0 &amp;&amp; params[0].Name == "__this")</c>.
@@ -907,39 +981,38 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits a private static helper method on $TSFunction to adjust arguments for rest parameters and padding/trimming.
+    /// Emits an instance helper method <c>$TSFunction.AdjustArgs(object[] args)</c>
+    /// that adjusts argument arrays for rest parameters and padding/trimming
+    /// using cached field reads (<c>_paramCount</c>, <c>_hasListRest</c>,
+    /// <c>_hasArrayRest</c>) instead of per-call <c>MethodInfo.GetParameters</c>
+    /// + <c>ParameterType</c> reflection.
     /// </summary>
-    private MethodBuilder EmitTSFunctionAdjustArgsHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    private MethodBuilder EmitTSFunctionAdjustArgsHelper(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder paramCountField, FieldBuilder hasListRestField, FieldBuilder hasArrayRestField)
     {
-        // private static object[] AdjustArgs(MethodInfo method, object[] args)
+        // private object[] AdjustArgs(object[] args)
+        // Instance method: arg0 = this, arg1 = args. paramCount and rest-shape
+        // are read from cached fields populated at construction time.
         var method = typeBuilder.DefineMethod(
             "AdjustArgs",
-            MethodAttributes.Private | MethodAttributes.Static,
+            MethodAttributes.Private,
             _types.ObjectArray,
-            [_types.MethodInfo, _types.ObjectArray]
+            [_types.ObjectArray]
         );
 
         var il = method.GetILGenerator();
 
         // Local variables
-        var paramsLocal = il.DeclareLocal(_types.MakeArrayType(_types.ParameterInfo));
         var paramCountLocal = il.DeclareLocal(_types.Int32);
         var argsLengthLocal = il.DeclareLocal(_types.Int32);
         var resultLocal = il.DeclareLocal(_types.ObjectArray);
-        var lastParamTypeLocal = il.DeclareLocal(_types.Type);
         var restListLocal = il.DeclareLocal(_types.ListOfObject);
         var indexLocal = il.DeclareLocal(_types.Int32);
         var copyCountLocal = il.DeclareLocal(_types.Int32);
 
-        // params = method.GetParameters()
+        // paramCount = this._paramCount (cached at construction)
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.MethodInfo.GetMethod("GetParameters")!);
-        il.Emit(OpCodes.Stloc, paramsLocal);
-
-        // paramCount = params.Length
-        il.Emit(OpCodes.Ldloc, paramsLocal);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldfld, paramCountField);
         il.Emit(OpCodes.Stloc, paramCountLocal);
 
         // argsLength = args.Length
@@ -950,34 +1023,20 @@ public partial class RuntimeEmitter
 
         // Labels
         var notRestParam = il.DefineLabel();
-        var doReturn = il.DefineLabel();
-        var exactMatch = il.DefineLabel();
         var needsPadding = il.DefineLabel();
         var needsTrimming = il.DefineLabel();
         var restLoopStart = il.DefineLabel();
         var restLoopEnd = il.DefineLabel();
 
-        // Check if paramCount > 0
+        // if (paramCount == 0) goto notRestParam — no rest possible; standard path
         il.Emit(OpCodes.Ldloc, paramCountLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ble, notRestParam);
+        il.Emit(OpCodes.Brfalse, notRestParam);
 
-        // lastParamType = params[paramCount - 1].ParameterType
-        il.Emit(OpCodes.Ldloc, paramsLocal);
-        il.Emit(OpCodes.Ldloc, paramCountLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Sub);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("ParameterType")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, lastParamTypeLocal);
-
-        // Check if lastParamType == typeof(List<object>) (TypeScript rest parameter)
+        // if (!_hasListRest) goto notListRestParam
         var notListRestParam = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, lastParamTypeLocal);
-        il.Emit(OpCodes.Ldtoken, _types.ListOfObject);
-        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
-        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Inequality", [_types.Type, _types.Type])!);
-        il.Emit(OpCodes.Brtrue, notListRestParam);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, hasListRestField);
+        il.Emit(OpCodes.Brfalse, notListRestParam);
 
         // === REST PARAMETER HANDLING (List<object>) ===
         // result = new object[paramCount]
@@ -1053,11 +1112,10 @@ public partial class RuntimeEmitter
         // === REST PARAMETER HANDLING (object[]) ===
         // Handles methods like $EventEmitter.Emit(string, object[]) called via runtime dispatch
         il.MarkLabel(notListRestParam);
-        il.Emit(OpCodes.Ldloc, lastParamTypeLocal);
-        il.Emit(OpCodes.Ldtoken, _types.ObjectArray);
-        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
-        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Inequality", [_types.Type, _types.Type])!);
-        il.Emit(OpCodes.Brtrue, notRestParam);
+        // if (!_hasArrayRest) goto notRestParam
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, hasArrayRestField);
+        il.Emit(OpCodes.Brfalse, notRestParam);
 
         // Collect trailing args into object[] for the last parameter
         // result = new object[paramCount]
