@@ -54,6 +54,13 @@ public partial class RuntimeEmitter
         // through reflection — N=1M Map = 1M reflection lookups. Now: 1 lookup
         // at construction, 1 ldfld per call.
         var expectsThisField = typeBuilder.DefineField("_expectsThis", _types.Boolean, FieldAttributes.Private);
+        // Cached MethodInvoker. .NET 8+'s MethodInvoker.Create() pre-builds
+        // the JIT'd dispatch stub for a method, then Invoke(...) calls it
+        // directly — measured ~10× faster than MethodInfo.Invoke per call.
+        // Invoke() goes through this on every callback dispatch (N=1M = 1M
+        // reflection-style invocations); replacing reflection with a cached
+        // invoker is the single biggest improvement to callback dispatch.
+        var invokerField = typeBuilder.DefineField("_invoker", _types.MethodInvoker, FieldAttributes.Private);
 
         // Static cache for "this" fields: ConcurrentDictionary<Type, FieldInfo>
         // used to avoid reflection overhead in BindThis
@@ -77,6 +84,16 @@ public partial class RuntimeEmitter
         var instanceCacheType = _types.MakeGenericType(_types.ConcurrentDictionaryOpen, _types.MethodInfo, typeBuilder);
         var instanceCacheField = typeBuilder.DefineField("_instanceCache", instanceCacheType, FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly);
         runtime.TSFunctionInstanceCacheField = instanceCacheField;
+
+        // Static MethodInvoker cache keyed by MethodInfo. MethodInvoker.Create()
+        // builds an internal dispatch stub that's amortized only when the
+        // invoker is reused — calling Create per TSFunction allocation paid
+        // ~25-50μs of setup that crushed small-N benchmarks (Map/100 went 6.7→57μs).
+        // Multiple TSFunctions wrapping the same MethodInfo can safely share an
+        // invoker (the invoker is purely an implementation detail of dispatch,
+        // observable identity stays on the TSFunction itself).
+        var invokerCacheType = _types.MakeGenericType(_types.ConcurrentDictionaryOpen, _types.MethodInfo, _types.MethodInvoker);
+        var invokerCacheField = typeBuilder.DefineField("_invokerCache", invokerCacheType, FieldAttributes.Private | FieldAttributes.Static | FieldAttributes.InitOnly);
 
         // Static prototype cache keyed by MethodInfo. Per JS spec every
         // function has a `.prototype` object whose identity persists across
@@ -130,6 +147,9 @@ public partial class RuntimeEmitter
         // are both concrete CLR types, so the constructor resolves directly.
         cctorIL.Emit(OpCodes.Newobj, prototypeCacheType.GetConstructor(Type.EmptyTypes)!);
         cctorIL.Emit(OpCodes.Stsfld, prototypeCacheField);
+        // Invoker cache: ConcurrentDictionary<MethodInfo, MethodInvoker>.
+        cctorIL.Emit(OpCodes.Newobj, invokerCacheType.GetConstructor(Type.EmptyTypes)!);
+        cctorIL.Emit(OpCodes.Stsfld, invokerCacheField);
         cctorIL.Emit(OpCodes.Ret);
 
         // Constructor: public $TSFunction(object target, MethodInfo method)
@@ -162,6 +182,8 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Stfld, cachedNameField);
         // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
         EmitComputeExpectsThis(ctorIL, expectsThisField, methodArgIndex: 2);
+        // this._invoker = LookupOrAdd(_invokerCache, method)  [pseudocode]
+        EmitLookupOrCreateInvoker(ctorIL, invokerField, invokerCacheField, invokerCacheType, methodArgIndex: 2);
         ctorIL.Emit(OpCodes.Ret);
 
         // Alternative constructor with cached name/length: public $TSFunction(object target, MethodInfo method, string name, int length)
@@ -195,6 +217,8 @@ public partial class RuntimeEmitter
         ctorCacheIL.Emit(OpCodes.Stfld, cachedLengthField);
         // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
         EmitComputeExpectsThis(ctorCacheIL, expectsThisField, methodArgIndex: 2);
+        // this._invoker = LookupOrAdd(_invokerCache, method)
+        EmitLookupOrCreateInvoker(ctorCacheIL, invokerField, invokerCacheField, invokerCacheType, methodArgIndex: 2);
         ctorCacheIL.Emit(OpCodes.Ret);
 
         // Static factory: public static $TSFunction GetOrCreate(MethodInfo method, string name, int length).
@@ -391,11 +415,20 @@ public partial class RuntimeEmitter
             invokeIL.Emit(OpCodes.Stsfld, runtime.CurrentArgumentsField);
         }
 
+        // Use cached MethodInvoker for fast dispatch — its Span<object?>
+        // overload skips reflection-Invoke's per-call setup and is ~10×
+        // faster on hot paths. The Span<object?> wraps the existing
+        // adjustedArgs array (no extra allocation).
+        var spanOfObject = typeof(Span<>).MakeGenericType(typeof(object));
+        var spanCtorFromArray = spanOfObject.GetConstructor([typeof(object[])])!;
+        var invokerInvokeSpan = _types.MethodInvoker.GetMethod("Invoke", [_types.Object, spanOfObject])!;
+
         invokeIL.Emit(OpCodes.Ldarg_0);
-        invokeIL.Emit(OpCodes.Ldfld, methodField);
+        invokeIL.Emit(OpCodes.Ldfld, invokerField);
         invokeIL.Emit(OpCodes.Ldloc, invokeTargetLocal);
         invokeIL.Emit(OpCodes.Ldloc, adjustedArgsLocal);
-        invokeIL.Emit(OpCodes.Callvirt, _types.MethodInfo.GetMethod("Invoke", [_types.Object, _types.ObjectArray])!);
+        invokeIL.Emit(OpCodes.Newobj, spanCtorFromArray);
+        invokeIL.Emit(OpCodes.Callvirt, invokerInvokeSpan);
         invokeIL.Emit(OpCodes.Ret);
 
         // InvokeWithThis method: public object InvokeWithThis(object thisArg, object[] args)
@@ -776,6 +809,57 @@ public partial class RuntimeEmitter
         nameProperty.SetGetMethod(nameGetterBuilder);
 
         typeBuilder.CreateType();
+    }
+
+    /// <summary>
+    /// Emits IL inside a constructor to populate <c>this._invoker</c> via the
+    /// static cache: if the cache contains a <see cref="System.Reflection.MethodInvoker"/>
+    /// for this <see cref="System.Reflection.MethodInfo"/>, reuse it; otherwise
+    /// create one and add. Crucially avoids paying <c>MethodInvoker.Create</c>'s
+    /// setup cost (~25-50μs) per TSFunction allocation when the same MethodInfo
+    /// has already been seen.
+    /// </summary>
+    private void EmitLookupOrCreateInvoker(ILGenerator il, FieldBuilder invokerField,
+        FieldBuilder invokerCacheField, Type invokerCacheType, int methodArgIndex)
+    {
+        var existingLocal = il.DeclareLocal(_types.MethodInvoker);
+        var newInvokerLocal = il.DeclareLocal(_types.MethodInvoker);
+
+        // ConcurrentDictionary<MethodInfo, MethodInvoker> — both generic args
+        // are concrete CLR types, so methods resolve directly off the
+        // constructed type (no TypeBuilder.GetMethod wrapping needed; that
+        // path only applies when an arg is itself a TypeBuilder).
+        var tryGetValueM = invokerCacheType.GetMethod("TryGetValue",
+            [_types.MethodInfo, _types.MethodInvoker.MakeByRefType()])!;
+        var getOrAddM = invokerCacheType.GetMethod("GetOrAdd",
+            [_types.MethodInfo, _types.MethodInvoker])!;
+
+        var foundLabel = il.DefineLabel();
+
+        // if (_invokerCache.TryGetValue(method, out existing)) goto found
+        il.Emit(OpCodes.Ldsfld, invokerCacheField);
+        il.Emit(OpCodes.Ldarg, methodArgIndex);
+        il.Emit(OpCodes.Ldloca, existingLocal);
+        il.Emit(OpCodes.Callvirt, tryGetValueM);
+        il.Emit(OpCodes.Brtrue, foundLabel);
+
+        // Not in cache: create + GetOrAdd (handles race; either our or another
+        // thread's invoker wins, both work the same)
+        il.Emit(OpCodes.Ldarg, methodArgIndex);
+        il.Emit(OpCodes.Call, _types.MethodInvoker.GetMethod("Create", [_types.MethodBase])!);
+        il.Emit(OpCodes.Stloc, newInvokerLocal);
+
+        il.Emit(OpCodes.Ldsfld, invokerCacheField);
+        il.Emit(OpCodes.Ldarg, methodArgIndex);
+        il.Emit(OpCodes.Ldloc, newInvokerLocal);
+        il.Emit(OpCodes.Callvirt, getOrAddM);
+        il.Emit(OpCodes.Stloc, existingLocal);
+
+        il.MarkLabel(foundLabel);
+        // this._invoker = existing
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, existingLocal);
+        il.Emit(OpCodes.Stfld, invokerField);
     }
 
     /// <summary>

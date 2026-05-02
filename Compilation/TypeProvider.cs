@@ -135,6 +135,7 @@ public class TypeProvider
 
     public Type MethodBase => Resolve("System.Reflection.MethodBase");
     public Type MethodInfo => Resolve("System.Reflection.MethodInfo");
+    public Type MethodInvoker => Resolve("System.Reflection.MethodInvoker");
     public Type RuntimeMethodHandle => Resolve("System.RuntimeMethodHandle");
     public Type RuntimeTypeHandle => Resolve("System.RuntimeTypeHandle");
 
