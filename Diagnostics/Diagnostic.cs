@@ -18,12 +18,22 @@ namespace SharpTS.Diagnostics;
 /// <param name="Message">The human-readable error message.</param>
 /// <param name="Location">Optional source location for the diagnostic.</param>
 /// <param name="Properties">Optional additional properties for context.</param>
+/// <param name="TsCode">
+/// Optional <c>TSnnnn</c> code aligning this diagnostic with TypeScript's
+/// canonical diagnostic catalog (e.g. <c>"TS2339"</c> for missing property).
+/// Consumed by the TS conformance runner (see SharpTS.TypeScriptConformance)
+/// to match against <c>*.errors.txt</c> baselines. Diagnostics without a
+/// <c>TsCode</c> are excluded from baseline matching rather than forcing a
+/// fail — SharpTS-only diagnostics (e.g. @DotNetType errors) intentionally
+/// leave this null.
+/// </param>
 public record Diagnostic(
     DiagnosticSeverity Severity,
     DiagnosticCode Code,
     string Message,
     SourceLocation? Location = null,
-    IReadOnlyDictionary<string, object>? Properties = null
+    IReadOnlyDictionary<string, object>? Properties = null,
+    string? TsCode = null
 )
 {
     /// <summary>
