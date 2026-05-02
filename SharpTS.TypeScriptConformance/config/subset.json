@@ -1,0 +1,8 @@
+{
+  "folders": [
+    "tests/cases/conformance/types/typeRelationships/assignmentCompatibility"
+  ],
+  "timeoutSeconds": 5,
+  "skipDirectivesFile": "skip-directives.txt",
+  "skipTestsFile": "skip-tests.txt"
+}
