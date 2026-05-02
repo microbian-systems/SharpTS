@@ -18,17 +18,26 @@ public sealed class TypeScriptConformanceRunner
 {
     private readonly string _typescriptRoot;
     private readonly IReadOnlySet<string>? _skipDirectives;
+    private readonly IReadOnlySet<string>? _skipTests;
 
     /// <summary>
     /// Constructs a runner against the vendored TypeScript checkout.
     /// <paramref name="skipDirectives"/> is an optional set of directive names
     /// (lower-cased, e.g. "experimentaldecorators") whose presence in a test's
     /// metadata short-circuits the run as <c>Skipped</c>.
+    /// <paramref name="skipTests"/> is an optional set of test paths (relative
+    /// to the conformance corpus root, forward slashes) that bypass the
+    /// pipeline entirely. Used as an escape hatch for tests that crash the
+    /// runner.
     /// </summary>
-    public TypeScriptConformanceRunner(string typescriptRoot, IReadOnlySet<string>? skipDirectives = null)
+    public TypeScriptConformanceRunner(
+        string typescriptRoot,
+        IReadOnlySet<string>? skipDirectives = null,
+        IReadOnlySet<string>? skipTests = null)
     {
         _typescriptRoot = typescriptRoot;
         _skipDirectives = skipDirectives;
+        _skipTests = skipTests;
     }
 
     /// <summary>
@@ -36,6 +45,19 @@ public sealed class TypeScriptConformanceRunner
     /// </summary>
     public TypeScriptConformanceResult RunOne(string testFilePath)
     {
+        // Explicit skip-by-path — escape hatch for tests that crash the runner
+        // in ways the bucket model can't absorb. Checked first so we don't even
+        // open the file.
+        if (_skipTests is not null)
+        {
+            var rel = Path.GetRelativePath(_typescriptRoot, testFilePath).Replace('\\', '/');
+            if (_skipTests.Contains(rel))
+                return new TypeScriptConformanceResult(
+                    TypeScriptConformanceOutcome.Skipped,
+                    null,
+                    "explicitly-skipped");
+        }
+
         string source;
         try
         {
