@@ -260,6 +260,31 @@ string greeting = person.greet();        // Typed return values
 
 SharpTS is under active development. See [STATUS.md](STATUS.md) for current feature support and roadmap.
 
+## Testing
+
+The standard test suite (xUnit, in `SharpTS.Tests/`) runs via:
+
+```bash
+dotnet test
+```
+
+Two additional **conformance suites** live as standalone projects (not in `SharpTS.sln`, so the standard `dotnet test` doesn't pick them up). They each pin against an external corpus via git submodule:
+
+- **[SharpTS.Test262/](SharpTS.Test262/README.md)** — TC39 ECMA-262 conformance, interpreter + compiled-IL modes.
+- **[SharpTS.TypeScriptConformance/](SharpTS.TypeScriptConformance/README.md)** — TypeScript conformance against the canonical `microsoft/TypeScript` test corpus, type-checker only.
+
+Initialize the submodules and invoke the projects explicitly:
+
+```bash
+git submodule update --init external/test262 external/typescript
+dotnet test SharpTS.Test262/SharpTS.Test262.csproj
+dotnet test SharpTS.TypeScriptConformance/SharpTS.TypeScriptConformance.csproj
+```
+
+Both suites use a committed-baseline + diff harness — runs hard-fail on regression or new-pass against the committed bucket assignments. Update baselines after intentional changes via `SHARPTS_TEST262_UPDATE_BASELINE=1` or `SHARPTS_TSCONFORMANCE_UPDATE_BASELINE=1`.
+
+> **Windows note:** the `microsoft/TypeScript` repo contains paths exceeding Windows' default 260-char `MAX_PATH`. Set `git config --global core.longpaths true` before initializing the `external/typescript` submodule.
+
 ## Contributing
 
 Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details on:
