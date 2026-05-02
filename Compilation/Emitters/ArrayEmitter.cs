@@ -71,6 +71,11 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "map":
             {
+                // Fast path: arr.map(literal-non-capturing-arrow) — direct
+                // delegate dispatch, skipping $TSFunction allocation and the
+                // MethodInvoker boundary. See issue #96 Phase A.
+                if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayMapDirect))
+                    break;
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayMap);
                 var resLocal = il.DeclareLocal(ctx.Types.ListOfObject);
@@ -82,6 +87,8 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "filter":
             {
+                if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayFilterDirect, ctx.Runtime!.ArrayFilterDirectBool))
+                    break;
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFilter);
                 var resLocal = il.DeclareLocal(ctx.Types.ListOfObject);
@@ -93,6 +100,11 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "forEach":
             {
+                if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayForEachDirect))
+                {
+                    il.Emit(OpCodes.Ldnull); // forEach returns undefined; helper is void
+                    break;
+                }
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayForEach);
                 EmitRestoreCallbackThisArg(emitter, saved);
@@ -102,6 +114,8 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "find":
             {
+                if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayFindDirect, ctx.Runtime!.ArrayFindDirectBool))
+                    break;
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFind);
                 var resLocal = il.DeclareLocal(ctx.Types.Object);
@@ -113,6 +127,11 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "findIndex":
             {
+                if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayFindIndexDirect, ctx.Runtime!.ArrayFindIndexDirectBool))
+                {
+                    il.Emit(OpCodes.Box, ctx.Types.Double); // helper returns double
+                    break;
+                }
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFindIndex);
                 var resLocal = il.DeclareLocal(ctx.Types.Double);
@@ -125,6 +144,8 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "some":
             {
+                if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArraySomeDirect, ctx.Runtime!.ArraySomeDirectBool))
+                    break;
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArraySome);
                 var resLocal = il.DeclareLocal(ctx.Types.Object);
@@ -136,6 +157,8 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "every":
             {
+                if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayEveryDirect, ctx.Runtime!.ArrayEveryDirectBool))
+                    break;
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayEvery);
                 var resLocal = il.DeclareLocal(ctx.Types.Object);
@@ -146,6 +169,8 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
             }
 
             case "reduce":
+                if (TryEmitReduceDirectCall(emitter, arguments))
+                    break;
                 EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduce);
                 break;
@@ -627,6 +652,136 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         il.Emit(OpCodes.Stsfld, runtime.CurrentCallbackThisArgField);
 
         return savedLocal;
+    }
+
+    /// <summary>
+    /// Issue #96 Phase A — direct delegate dispatch fast path.
+    /// Detects <c>arr.map(literal-non-capturing-arrow)</c> at the call site
+    /// and emits IL that invokes the arrow's static method through a
+    /// <c>Func&lt;object, object&gt;</c> delegate (<c>ldftn</c> + delegate
+    /// ctor) instead of allocating <c>$TSFunction</c> and dispatching through
+    /// <c>MethodInvoker</c>.
+    ///
+    /// Stack on entry: <c>[List&lt;object&gt;]</c> (the unwrapped receiver).
+    /// On success: emits IL ending with <c>[List&lt;object&gt;]</c> on the
+    /// stack (the helper's return value).
+    /// On failure (returns false): stack unchanged; caller falls through to
+    /// the slow path.
+    ///
+    /// Preconditions enforced here:
+    /// - Exactly one argument (no <c>thisArg</c> — bypassed for arrows
+    ///   anyway, but skipping keeps observable evaluation semantics for the
+    ///   slow path).
+    /// - Argument is <c>Expr.ArrowFunction</c> (literal, not a variable
+    ///   binding).
+    /// - Arity 0 or 1 (Map's callback gets element + index + receiver, but
+    ///   arrows can ignore any of those).
+    /// - Not async, not generator, no <c>__this</c> param.
+    /// - No type annotations on params — <see cref="ParameterTypeResolver"/>
+    ///   falls back to <c>object</c> when annotation is null, guaranteeing
+    ///   the static method's parameter types match <c>Func&lt;object, object&gt;</c>.
+    /// - Static method's <c>ReturnType</c> is exactly <c>object</c> — even
+    ///   without an AST return annotation, type inference from the body
+    ///   (<c>x =&gt; x*2</c> → returnType <c>double</c>) can resolve to a
+    ///   non-object type, which would mismatch <c>Func&lt;object, object&gt;</c>
+    ///   and produce undefined-behavior signature mismatch at delegate
+    ///   construction. Inspecting <see cref="MethodBuilder.ReturnType"/>
+    ///   directly catches this; it's set at <c>DefineMethod</c> time and
+    ///   reliable pre-CreateType.
+    /// - Arrow is non-capturing (per <see cref="ClosureAnalyzer"/>) — implies
+    ///   no <c>arguments</c> reference and no display-class allocation.
+    /// </summary>
+    private static bool TryEmitDirectDelegateCall(IEmitterContext emitter, List<Expr> arguments, System.Reflection.Emit.MethodBuilder helperMethod, System.Reflection.Emit.MethodBuilder? boolHelper = null)
+    {
+        var ctx = emitter.Context;
+        if (arguments.Count != 1) return false;
+        if (arguments[0] is not Expr.ArrowFunction af) return false;
+        if (af.HasOwnThis || af.IsAsync || af.IsGenerator) return false;
+        if (af.Parameters.Count > 1) return false;
+        foreach (var p in af.Parameters)
+        {
+            if (p.Type != null) return false;
+            if (p.IsRest || p.IsOptional) return false;
+            if (p.DefaultValue != null) return false;
+        }
+        if (ctx.ClosureAnalyzer == null) return false;
+        if (ctx.ClosureAnalyzer.GetCaptures(af).Count > 0) return false;
+        if (!ctx.ArrowMethods.TryGetValue(af, out var staticMethod)) return false;
+
+        // Static method's parameter types are guaranteed to be `object` by the
+        // AST-no-annotation check (ParameterTypeResolver falls back to object).
+        // Return type is the discriminator: type inference may yield `object`
+        // (any-typed bodies) or `bool` (predicate bodies like `v => v > 10`).
+        // The first uses Func<object, object>; the second uses Func<object, bool>
+        // where the helper variant exists.
+        var ret = staticMethod.ReturnType;
+        System.Reflection.Emit.MethodBuilder chosenHelper;
+        Type funcType;
+        if (ret == ctx.Types.Object)
+        {
+            chosenHelper = helperMethod;
+            funcType = typeof(Func<object, object>);
+        }
+        else if (ret == ctx.Types.Boolean && boolHelper != null)
+        {
+            chosenHelper = boolHelper;
+            funcType = typeof(Func<object, bool>);
+        }
+        else
+        {
+            return false;
+        }
+
+        var il = ctx.IL;
+        var funcCtor = funcType.GetConstructor([typeof(object), typeof(IntPtr)])!;
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldftn, staticMethod);
+        il.Emit(OpCodes.Newobj, funcCtor);
+        il.Emit(OpCodes.Call, chosenHelper);
+        return true;
+    }
+
+    /// <summary>
+    /// Reduce-specific fast path: the callback is binary
+    /// <c>(acc, element) =&gt; newAcc</c>, requires <c>Func&lt;object, object,
+    /// object&gt;</c>, and initial value must be present (scope-out for the
+    /// no-initial form's kPresent semantics). Stack on entry: <c>[list]</c>.
+    /// On success, the call site has already pushed the receiver; this
+    /// emits the delegate construction, the initial-value, and the call.
+    /// </summary>
+    private static bool TryEmitReduceDirectCall(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        // Reduce direct form requires the 2-arg shape: (callback, initialValue).
+        // No-initial would need scan-for-first-present; punt to the slow path.
+        if (arguments.Count != 2) return false;
+        if (arguments[0] is not Expr.ArrowFunction af) return false;
+        if (af.HasOwnThis || af.IsAsync || af.IsGenerator) return false;
+        if (af.Parameters.Count != 2) return false;
+        foreach (var p in af.Parameters)
+        {
+            if (p.Type != null) return false;
+            if (p.IsRest || p.IsOptional) return false;
+            if (p.DefaultValue != null) return false;
+        }
+        if (ctx.ClosureAnalyzer == null) return false;
+        if (ctx.ClosureAnalyzer.GetCaptures(af).Count > 0) return false;
+        if (!ctx.ArrowMethods.TryGetValue(af, out var staticMethod)) return false;
+        if (staticMethod.ReturnType != ctx.Types.Object) return false;
+
+        var il = ctx.IL;
+        var func3 = typeof(Func<object, object, object>);
+        var func3Ctor = func3.GetConstructor([typeof(object), typeof(IntPtr)])!;
+
+        // Stack: [list]. Build Func<object, object, object> delegate.
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldftn, staticMethod);
+        il.Emit(OpCodes.Newobj, func3Ctor);
+        // Push initial value (boxed object).
+        emitter.EmitExpression(arguments[1]);
+        emitter.EmitBoxIfNeeded(arguments[1]);
+        il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduceDirect);
+        return true;
     }
 
     /// <summary>

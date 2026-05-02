@@ -437,6 +437,758 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Fast-path map helper for non-capturing literal-arrow callbacks. Takes a
+    /// <c>Func&lt;object, object&gt;</c> directly (built at the call site via
+    /// ldftn + Func ctor) instead of the generic <c>object</c> callback that
+    /// ArrayMap dispatches through <c>$TSFunction.InvokeWithThis</c> →
+    /// MethodInvoker. Per-iter cost drops to a single delegate invocation.
+    ///
+    /// Preconditions enforced statically at the call site:
+    /// - Callback is a non-capturing arrow with arity ≤ 1, no <c>arguments</c>,
+    ///   no <c>__this</c> param, not async/generator.
+    /// - Receiver is a real <c>List&lt;object&gt;</c> (no lazy/Dict path).
+    /// - No <c>thisArg</c> argument (arrows ignore it anyway).
+    ///
+    /// Holes preserved as <c>$ArrayHole.Instance</c> per ECMA-262 23.1.3.19.
+    /// </summary>
+    private void EmitArrayMapDirect(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var funcObjectObject = typeof(Func<object, object>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayMapDirect",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.ListOfObject,
+            [_types.ListOfObject, funcObjectObject]
+        );
+        runtime.ArrayMapDirect = method;
+
+        var il = method.GetILGenerator();
+
+        var listCountGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!;
+        var listAdd = _types.GetMethod(_types.ListOfObject, "Add", _types.Object);
+        var funcInvoke = funcObjectObject.GetMethod("Invoke")!;
+
+        // var result = new List<object>(list.Count)
+        var resultLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // var i = 0
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var holeLabel = il.DefineLabel();
+        var addedLabel = il.DefineLabel();
+
+        // for (int i = 0; i < list.Count; i++)
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // var element = list[i]; if (element is $ArrayHole) goto holeLabel;
+        var elementLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, holeLabel);
+
+        // result.Add(cb(element))
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Callvirt, listAdd);
+        il.Emit(OpCodes.Br, addedLabel);
+
+        // result.Add($ArrayHole.Instance)
+        il.MarkLabel(holeLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayHoleInstance);
+        il.Emit(OpCodes.Callvirt, listAdd);
+
+        il.MarkLabel(addedLabel);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Fast-path filter for non-capturing literal-arrow predicates. Same
+    /// structure as <see cref="EmitArrayMapDirect"/> but Add is gated on
+    /// <c>IsTruthy(predicate(element))</c>. Holes skipped per ECMA-262
+    /// 23.1.3.8 (callback not invoked, element not copied — filter densifies).
+    /// </summary>
+    private void EmitArrayFilterDirect(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var funcObjectObject = typeof(Func<object, object>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayFilterDirect",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.ListOfObject,
+            [_types.ListOfObject, funcObjectObject]
+        );
+        runtime.ArrayFilterDirect = method;
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!;
+        var listAdd = _types.GetMethod(_types.ListOfObject, "Add", _types.Object);
+        var funcInvoke = funcObjectObject.GetMethod("Invoke")!;
+
+        var resultLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var skipAdd = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // Load element; skip if hole.
+        var elementLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, skipAdd);
+
+        // if (!IsTruthy(cb(element))) goto skipAdd
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Call, runtime.IsTruthy);
+        il.Emit(OpCodes.Brfalse, skipAdd);
+
+        // result.Add(element)
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, listAdd);
+
+        il.MarkLabel(skipAdd);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Bool-typed-predicate variant of <see cref="EmitArrayFilterDirect"/>.
+    /// Predicate signature is <c>Func&lt;object, bool&gt;</c>; we skip the
+    /// <c>IsTruthy</c> indirection and the predicate's result-box. Engages
+    /// when the type checker infers a typed boolean return (e.g.
+    /// <c>v =&gt; v &gt; 10</c>).
+    /// </summary>
+    private void EmitArrayFilterDirectBool(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var funcObjectBool = typeof(Func<object, bool>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayFilterDirectBool",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.ListOfObject,
+            [_types.ListOfObject, funcObjectBool]
+        );
+        runtime.ArrayFilterDirectBool = method;
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!;
+        var listAdd = _types.GetMethod(_types.ListOfObject, "Add", _types.Object);
+        var funcInvoke = funcObjectBool.GetMethod("Invoke")!;
+
+        var resultLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var skipAdd = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        var elementLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, skipAdd);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Brfalse, skipAdd);
+
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, listAdd);
+
+        il.MarkLabel(skipAdd);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Fast-path forEach. No result list; callback's return value discarded.
+    /// Holes skipped per ECMA-262 23.1.3.10. Helper returns void; the call
+    /// site is responsible for pushing Ldnull to balance the expression
+    /// stack (matches the existing slow path's <c>Ldnull</c>).
+    /// </summary>
+    private void EmitArrayForEachDirect(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var funcObjectObject = typeof(Func<object, object>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayForEachDirect",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.ListOfObject, funcObjectObject]
+        );
+        runtime.ArrayForEachDirect = method;
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!;
+        var funcInvoke = funcObjectObject.GetMethod("Invoke")!;
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var skipCall = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // Load element; skip if hole.
+        var elementLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, skipCall);
+
+        // cb(element); discard return.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(skipCall);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Fast-path find. ECMA-262 23.1.3.10: callback IS invoked on holes (with
+    /// undefined). Returns first element where predicate is truthy, else
+    /// <c>$Undefined.Instance</c>.
+    /// </summary>
+    private void EmitArrayFindDirect(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var funcObjectObject = typeof(Func<object, object>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayFindDirect",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.ListOfObject, funcObjectObject]
+        );
+        runtime.ArrayFindDirect = method;
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!;
+        var funcInvoke = funcObjectObject.GetMethod("Invoke")!;
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var notFound = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // Load element; if hole, substitute $Undefined (find still invokes).
+        var elementLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        var notHole = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notHole);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.MarkLabel(notHole);
+
+        // if (IsTruthy(cb(element))) return element-unholed
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Call, runtime.IsTruthy);
+        il.Emit(OpCodes.Brfalse, notFound);
+        // Return the unholed element (already substituted above)
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notFound);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Bool-typed-predicate variant of <see cref="EmitArrayFindDirect"/>.
+    /// </summary>
+    private void EmitArrayFindDirectBool(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var funcObjectBool = typeof(Func<object, bool>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayFindDirectBool",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.ListOfObject, funcObjectBool]
+        );
+        runtime.ArrayFindDirectBool = method;
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!;
+        var funcInvoke = funcObjectBool.GetMethod("Invoke")!;
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var notFound = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        var elementLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        var notHole = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notHole);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.MarkLabel(notHole);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Brfalse, notFound);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notFound);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Fast-path findIndex. Same shape as findDirect, but returns
+    /// <c>(double)i</c> on match, else <c>-1.0</c>.
+    /// </summary>
+    private void EmitArrayFindIndexDirect(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var funcObjectObject = typeof(Func<object, object>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayFindIndexDirect",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.ListOfObject, funcObjectObject]
+        );
+        runtime.ArrayFindIndexDirect = method;
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!;
+        var funcInvoke = funcObjectObject.GetMethod("Invoke")!;
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var notFound = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        var elementLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        var notHole = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notHole);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.MarkLabel(notHole);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Call, runtime.IsTruthy);
+        il.Emit(OpCodes.Brfalse, notFound);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notFound);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldc_R8, -1.0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Bool-typed-predicate variant of <see cref="EmitArrayFindIndexDirect"/>.
+    /// </summary>
+    private void EmitArrayFindIndexDirectBool(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var funcObjectBool = typeof(Func<object, bool>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayFindIndexDirectBool",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.ListOfObject, funcObjectBool]
+        );
+        runtime.ArrayFindIndexDirectBool = method;
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!;
+        var funcInvoke = funcObjectBool.GetMethod("Invoke")!;
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var notFound = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        var elementLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        var notHole = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notHole);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.MarkLabel(notHole);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Brfalse, notFound);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notFound);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldc_R8, -1.0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Fast-path some. ECMA-262 23.1.3.29: skips holes. Returns boxed-true on
+    /// first truthy result, else boxed-false. Matches slow path's
+    /// <c>_types.Object</c> return convention (caller already expects a boxed
+    /// bool there).
+    /// </summary>
+    private void EmitArraySomeDirect(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        EmitPredicateAllOrAnyDirect(typeBuilder, runtime, name: "ArraySomeDirect",
+            shortCircuitOnTruthy: true, defaultResult: false,
+            assignTo: m => runtime.ArraySomeDirect = m);
+    }
+
+    /// <summary>
+    /// Fast-path every. Same shape as some but inverted: short-circuits on
+    /// first falsy result with boxed-false; returns boxed-true if all match.
+    /// </summary>
+    private void EmitArrayEveryDirect(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        EmitPredicateAllOrAnyDirect(typeBuilder, runtime, name: "ArrayEveryDirect",
+            shortCircuitOnTruthy: false, defaultResult: true,
+            assignTo: m => runtime.ArrayEveryDirect = m);
+    }
+
+    /// <summary>
+    /// Bool-typed-predicate some/every variants. Fast path skips
+    /// <c>IsTruthy</c> and the box around the predicate's bool result.
+    /// </summary>
+    private void EmitArraySomeDirectBool(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        EmitPredicateAllOrAnyDirectBool(typeBuilder, runtime, name: "ArraySomeDirectBool",
+            shortCircuitOnTruthy: true, defaultResult: false,
+            assignTo: m => runtime.ArraySomeDirectBool = m);
+    }
+
+    private void EmitArrayEveryDirectBool(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        EmitPredicateAllOrAnyDirectBool(typeBuilder, runtime, name: "ArrayEveryDirectBool",
+            shortCircuitOnTruthy: false, defaultResult: true,
+            assignTo: m => runtime.ArrayEveryDirectBool = m);
+    }
+
+    private void EmitPredicateAllOrAnyDirectBool(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        string name, bool shortCircuitOnTruthy, bool defaultResult,
+        Action<MethodBuilder> assignTo)
+    {
+        var funcObjectBool = typeof(Func<object, bool>);
+        var method = typeBuilder.DefineMethod(
+            name,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.ListOfObject, funcObjectBool]
+        );
+        assignTo(method);
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!;
+        var funcInvoke = funcObjectBool.GetMethod("Invoke")!;
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var advance = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        var elementLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, advance);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        // Result is already a bool — branch directly without IsTruthy.
+        il.Emit(shortCircuitOnTruthy ? OpCodes.Brfalse : OpCodes.Brtrue, advance);
+        il.Emit(shortCircuitOnTruthy ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(advance);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(defaultResult ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Common emitter for some/every fast paths. Both walk the list, skip
+    /// holes, invoke the predicate, and short-circuit on a boundary condition
+    /// (truthy for some, falsy for every) returning the opposite boolean.
+    /// </summary>
+    private void EmitPredicateAllOrAnyDirect(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        string name, bool shortCircuitOnTruthy, bool defaultResult,
+        Action<MethodBuilder> assignTo)
+    {
+        var funcObjectObject = typeof(Func<object, object>);
+        var method = typeBuilder.DefineMethod(
+            name,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.ListOfObject, funcObjectObject]
+        );
+        assignTo(method);
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!;
+        var funcInvoke = funcObjectObject.GetMethod("Invoke")!;
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var advance = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // skip if hole (some/every both skip holes per spec)
+        var elementLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, advance);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Call, runtime.IsTruthy);
+        // For some: brtrue → return true. For every: brfalse → return false.
+        il.Emit(shortCircuitOnTruthy ? OpCodes.Brfalse : OpCodes.Brtrue, advance);
+        il.Emit(shortCircuitOnTruthy ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(advance);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(defaultResult ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitArrayFilter(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
@@ -891,6 +1643,77 @@ public partial class RuntimeEmitter
         il.MarkLabel(loopEnd);
         // Return -1
         il.Emit(OpCodes.Ldc_R8, -1.0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Fast-path reduce — initial value REQUIRED. The slow path's no-initial
+    /// branch (scan-for-first-present, kPresent tracking, TypeError on empty)
+    /// is intentionally not duplicated here; the call site routes only the
+    /// 2-argument form (`arr.reduce(cb, init)`) to this helper. Holes are
+    /// skipped (callback not invoked, accumulator carries through).
+    /// </summary>
+    private void EmitArrayReduceDirect(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var func3 = typeof(Func<object, object, object>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayReduceDirect",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.ListOfObject, func3, _types.Object]
+        );
+        runtime.ArrayReduceDirect = method;
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!;
+        var funcInvoke = func3.GetMethod("Invoke")!;
+
+        // acc = initial; i = 0
+        var accLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stloc, accLocal);
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var advance = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // skip holes
+        var elementLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, elementLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+        il.Emit(OpCodes.Brtrue, advance);
+
+        // acc = cb(acc, element)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, accLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Stloc, accLocal);
+
+        il.MarkLabel(advance);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, accLocal);
         il.Emit(OpCodes.Ret);
     }
 

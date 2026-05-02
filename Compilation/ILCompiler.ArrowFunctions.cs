@@ -158,9 +158,14 @@ public partial class ILCompiler
             {
                 // Non-capturing and doesn't need function DC: static method on $Program
                 // Use typed return when available - reflection automatically boxes at $TSFunction boundary
+                // Assembly (internal) so iterator-helper fast-path emitters
+                // in $Module_X types can `ldftn` directly into these arrow
+                // bodies on $Program. Synthetic methods (compiler-generated
+                // names like `<>Arrow_N`); access modifier is an internal
+                // detail with no observable JS semantics.
                 var methodBuilder = _programType.DefineMethod(
                     $"<>Arrow_{_closures.ArrowMethodCounter++}",
-                    MethodAttributes.Private | MethodAttributes.Static,
+                    MethodAttributes.Assembly | MethodAttributes.Static,
                     returnType,
                     paramTypes
                 );
