@@ -726,8 +726,13 @@ public partial class RuntimeEmitter
         var callResultLocal = il.DeclareLocal(_types.Object);
         var nestedListLocal = il.DeclareLocal(_types.ListOfObject);
 
-        // result = new List<object>()
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.EmptyTypes));
+        // result = new List<object>(list.Count). FlatMap's output is variable
+        // (depends on inner array sizes), but pre-sizing to source length is a
+        // reasonable lower bound — at minimum 1 element per source slot when
+        // callbacks return scalars. Avoids the first few doublings.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
         il.Emit(OpCodes.Stloc, resultLocal);
 
         // Hoist args[3] allocation once per call; pre-fill args[2] = list

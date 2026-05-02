@@ -313,9 +313,13 @@ public partial class RuntimeEmitter
         EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
         EmitInitCallbackArgs(il, runtime, out var argsLocal);
 
-        // var result = new List<object>()
+        // var result = new List<object>(list.Count). Map's output length is
+        // exactly list.Count (1:1 transform, holes preserved as $ArrayHole),
+        // so pre-size the backing array to skip log(N) doublings.
         var resultLocal = il.DeclareLocal(_types.ListOfObject);
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.EmptyTypes));
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
         il.Emit(OpCodes.Stloc, resultLocal);
 
         // var i = 0
@@ -387,9 +391,16 @@ public partial class RuntimeEmitter
         EmitHoistedLazyCheck(il, runtime, out var isLazyLocal, out _);
         EmitInitCallbackArgs(il, runtime, out var argsLocal);
 
-        // var result = new List<object>()
+        // var result = new List<object>(list.Count). Filter's output is bounded
+        // by list.Count; pre-sizing avoids backing-array doublings on the worst
+        // case (every element kept). Slight over-allocation when filter is
+        // selective, but List<>'s growth amortization is the dominant cost we
+        // want to skip — a single one-shot capacity is cheaper than log(N)
+        // doublings even for sparse outputs.
         var resultLocal = il.DeclareLocal(_types.ListOfObject);
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.EmptyTypes));
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
         il.Emit(OpCodes.Stloc, resultLocal);
 
         // var i = 0

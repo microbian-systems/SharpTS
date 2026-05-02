@@ -47,6 +47,13 @@ public partial class RuntimeEmitter
         // Cached name and length for functions where reflection doesn't work (e.g., MethodBuilder tokens)
         var cachedNameField = typeBuilder.DefineField("_cachedName", _types.String, FieldAttributes.Private);
         var cachedLengthField = typeBuilder.DefineField("_cachedLength", _types.Int32, FieldAttributes.Private);
+        // Cached "first parameter is the synthetic __this slot" flag. Computed
+        // ONCE at ctor time from MethodInfo.GetParameters()[0].Name, then read
+        // from the field on every InvokeWithThis call. Pre-cache: every iter
+        // helper invocation of the callback paid GetParameters + string-compare
+        // through reflection — N=1M Map = 1M reflection lookups. Now: 1 lookup
+        // at construction, 1 ldfld per call.
+        var expectsThisField = typeBuilder.DefineField("_expectsThis", _types.Boolean, FieldAttributes.Private);
 
         // Static cache for "this" fields: ConcurrentDictionary<Type, FieldInfo>
         // used to avoid reflection overhead in BindThis
@@ -153,6 +160,8 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldnull);
         ctorIL.Emit(OpCodes.Stfld, cachedNameField);
+        // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
+        EmitComputeExpectsThis(ctorIL, expectsThisField, methodArgIndex: 2);
         ctorIL.Emit(OpCodes.Ret);
 
         // Alternative constructor with cached name/length: public $TSFunction(object target, MethodInfo method, string name, int length)
@@ -184,6 +193,8 @@ public partial class RuntimeEmitter
         ctorCacheIL.Emit(OpCodes.Ldarg_0);
         ctorCacheIL.Emit(OpCodes.Ldarg, 4);  // 4th argument (0-indexed: 0=this, 1=target, 2=method, 3=name, 4=length)
         ctorCacheIL.Emit(OpCodes.Stfld, cachedLengthField);
+        // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
+        EmitComputeExpectsThis(ctorCacheIL, expectsThisField, methodArgIndex: 2);
         ctorCacheIL.Emit(OpCodes.Ret);
 
         // Static factory: public static $TSFunction GetOrCreate(MethodInfo method, string name, int length).
@@ -400,42 +411,15 @@ public partial class RuntimeEmitter
         var iwt = invokeWithThisBuilder.GetILGenerator();
 
         // Local variables
-        var paramsLocal = iwt.DeclareLocal(_types.MakeArrayType(_types.ParameterInfo));
-        var paramCountLocalIWT = iwt.DeclareLocal(_types.Int32);
         var expectsThisLocal = iwt.DeclareLocal(_types.Boolean);
         var effectiveArgsIWT = iwt.DeclareLocal(_types.ObjectArray);
 
-        // params = _method.GetParameters()
+        // expectsThis = this._expectsThis  (cached at construction time —
+        // pre-cache this was a per-call MethodInfo.GetParameters() + string
+        // compare, ~5-15% of the hot iterator dispatch budget)
         iwt.Emit(OpCodes.Ldarg_0);
-        iwt.Emit(OpCodes.Ldfld, methodField);
-        iwt.Emit(OpCodes.Callvirt, _types.MethodInfo.GetMethod("GetParameters")!);
-        iwt.Emit(OpCodes.Stloc, paramsLocal);
-
-        // paramCount = params.Length
-        iwt.Emit(OpCodes.Ldloc, paramsLocal);
-        iwt.Emit(OpCodes.Ldlen);
-        iwt.Emit(OpCodes.Conv_I4);
-        iwt.Emit(OpCodes.Stloc, paramCountLocalIWT);
-
-        // expectsThis = paramCount > 0 && params[0].Name == "__this"
-        var checkDoneLabel = iwt.DefineLabel();
-
-        iwt.Emit(OpCodes.Ldc_I4_0);
+        iwt.Emit(OpCodes.Ldfld, expectsThisField);
         iwt.Emit(OpCodes.Stloc, expectsThisLocal);
-
-        iwt.Emit(OpCodes.Ldloc, paramCountLocalIWT);
-        iwt.Emit(OpCodes.Ldc_I4_0);
-        iwt.Emit(OpCodes.Ble, checkDoneLabel);
-
-        iwt.Emit(OpCodes.Ldloc, paramsLocal);
-        iwt.Emit(OpCodes.Ldc_I4_0);
-        iwt.Emit(OpCodes.Ldelem_Ref);
-        iwt.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("Name")!.GetGetMethod()!);
-        iwt.Emit(OpCodes.Ldstr, "__this");
-        iwt.Emit(OpCodes.Call, _types.String.GetMethod("op_Equality", [_types.String, _types.String])!);
-        iwt.Emit(OpCodes.Stloc, expectsThisLocal);
-
-        iwt.MarkLabel(checkDoneLabel);
 
         // if (!expectsThis) { route thisArg through the thread-local; call Invoke(args) }
         // The function body has no __this parameter (e.g. `function Fn() { this.x = ... }`),
@@ -792,6 +776,50 @@ public partial class RuntimeEmitter
         nameProperty.SetGetMethod(nameGetterBuilder);
 
         typeBuilder.CreateType();
+    }
+
+    /// <summary>
+    /// Emits IL inside a constructor to compute and store the cached
+    /// <c>_expectsThis</c> bool field. Logic:
+    /// <c>this._expectsThis = (method.GetParameters().Length > 0 &amp;&amp; params[0].Name == "__this")</c>.
+    /// Caller must provide the field and the constructor's argument index of
+    /// the <c>MethodInfo</c> param (typically 2).
+    /// </summary>
+    private void EmitComputeExpectsThis(ILGenerator il, FieldBuilder expectsThisField, int methodArgIndex)
+    {
+        var paramsLocal = il.DeclareLocal(_types.MakeArrayType(_types.ParameterInfo));
+        var falseLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        // params = method.GetParameters()
+        il.Emit(OpCodes.Ldarg, methodArgIndex);
+        il.Emit(OpCodes.Callvirt, _types.MethodInfo.GetMethod("GetParameters")!);
+        il.Emit(OpCodes.Stloc, paramsLocal);
+
+        // [this] for the eventual stfld
+        il.Emit(OpCodes.Ldarg_0);
+
+        // if (params.Length == 0) goto falseLabel
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+
+        // params[0].Name == "__this" — leaves bool on stack
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("Name")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__this");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("op_Equality", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(falseLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+
+        il.MarkLabel(doneLabel);
+        // Stack: [this, bool] → stfld
+        il.Emit(OpCodes.Stfld, expectsThisField);
     }
 
     /// <summary>
