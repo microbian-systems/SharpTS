@@ -111,7 +111,8 @@ public partial class TypeChecker
             string excessList = string.Join(", ", excessKeys.Select(k => $"'{k}'"));
             throw new TypeCheckException(
                 $"Object literal may only specify known properties. " +
-                $"Excess {(excessKeys.Count == 1 ? "property" : "properties")}: {excessList}"
+                $"Excess {(excessKeys.Count == 1 ? "property" : "properties")}: {excessList}",
+                tsCode: "TS2353"
             );
         }
     }

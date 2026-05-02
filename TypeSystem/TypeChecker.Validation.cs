@@ -28,7 +28,7 @@ public partial class TypeChecker
 
             if (actualType == null && !isOptional)
             {
-                throw new TypeCheckException($" Class '{className}' does not implement '{memberName}' from interface '{interfaceType.Name}'.");
+                throw new TypeCheckException($" Class '{className}' does not implement '{memberName}' from interface '{interfaceType.Name}'.", tsCode: "TS2420");
             }
 
             if (actualType != null)
@@ -58,7 +58,7 @@ public partial class TypeChecker
                 }
                 else if (!IsCompatible(expectedType, actualType))
                 {
-                    throw new TypeCheckException($" '{className}.{memberName}' has incompatible type. Expected '{expectedType}', got '{actualType}'.");
+                    throw new TypeCheckException($" '{className}.{memberName}' has incompatible type. Expected '{expectedType}', got '{actualType}'.", tsCode: "TS2416");
                 }
             }
         }
@@ -78,7 +78,7 @@ public partial class TypeChecker
         if (actual.ParamTypes.Count < expected.MinArity)
         {
             throw new TypeCheckException(
-                $" Method '{className}.{methodName}' has {actual.ParamTypes.Count} parameter(s) but interface '{interfaceName}' requires at least {expected.MinArity}.");
+                $" Method '{className}.{methodName}' has {actual.ParamTypes.Count} parameter(s) but interface '{interfaceName}' requires at least {expected.MinArity}.", tsCode: "TS2420");
         }
 
         // Check parameter types at each position (up to what the actual method declares)
@@ -94,7 +94,7 @@ public partial class TypeChecker
             if (!IsCompatible(expectedParamType, actualParamType) && !IsCompatible(actualParamType, expectedParamType))
             {
                 throw new TypeCheckException(
-                    $" Parameter {i + 1} of '{className}.{methodName}' has incompatible type. Interface '{interfaceName}' expects '{expectedParamType}', but got '{actualParamType}'.");
+                    $" Parameter {i + 1} of '{className}.{methodName}' has incompatible type. Interface '{interfaceName}' expects '{expectedParamType}', but got '{actualParamType}'.", tsCode: "TS2420");
             }
         }
 
@@ -102,7 +102,7 @@ public partial class TypeChecker
         if (!IsCompatible(expected.ReturnType, actual.ReturnType))
         {
             throw new TypeCheckException(
-                $" Return type of '{className}.{methodName}' is incompatible. Interface '{interfaceName}' expects '{expected.ReturnType}', but got '{actual.ReturnType}'.");
+                $" Return type of '{className}.{methodName}' is incompatible. Interface '{interfaceName}' expects '{expected.ReturnType}', but got '{actual.ReturnType}'.", tsCode: "TS2420");
         }
     }
 
@@ -184,7 +184,7 @@ public partial class TypeChecker
 
         if (missingMembers.Count > 0)
         {
-            throw new TypeCheckException($" Class '{className}' must implement the following abstract members: {string.Join(", ", missingMembers)}");
+            throw new TypeCheckException($" Class '{className}' must implement the following abstract members: {string.Join(", ", missingMembers)}", tsCode: "TS2515");
         }
     }
 
@@ -269,7 +269,7 @@ public partial class TypeChecker
                 string methodName = method.Name.Lexeme;
                 if (!HasParentMethod(classType.Superclass, methodName))
                 {
-                    throw new TypeCheckException($" Method '{methodName}' is marked as override but does not override any method in a base class.");
+                    throw new TypeCheckException($" Method '{methodName}' is marked as override but does not override any method in a base class.", tsCode: "TS4113");
                 }
             }
         }
@@ -288,14 +288,14 @@ public partial class TypeChecker
                     {
                         if (!HasParentGetter(classType.Superclass, propertyName))
                         {
-                            throw new TypeCheckException($" Getter '{propertyName}' is marked as override but does not override any getter in a base class.");
+                            throw new TypeCheckException($" Getter '{propertyName}' is marked as override but does not override any getter in a base class.", tsCode: "TS4113");
                         }
                     }
                     else
                     {
                         if (!HasParentSetter(classType.Superclass, propertyName))
                         {
-                            throw new TypeCheckException($" Setter '{propertyName}' is marked as override but does not override any setter in a base class.");
+                            throw new TypeCheckException($" Setter '{propertyName}' is marked as override but does not override any setter in a base class.", tsCode: "TS4113");
                         }
                     }
                 }

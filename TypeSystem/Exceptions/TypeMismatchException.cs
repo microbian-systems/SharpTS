@@ -17,15 +17,15 @@ public class TypeMismatchException : TypeCheckException
     /// </summary>
     public TypeInfo Actual { get; init; }
 
-    public TypeMismatchException(TypeInfo expected, TypeInfo actual, int? line = null, int? column = null)
-        : base(DiagnosticCode.TypeMismatch, $"Type '{actual}' is not assignable to type '{expected}'", line, column)
+    public TypeMismatchException(TypeInfo expected, TypeInfo actual, int? line = null, int? column = null, string? tsCode = null)
+        : base(DiagnosticCode.TypeMismatch, $"Type '{actual}' is not assignable to type '{expected}'", line, column, tsCode: tsCode)
     {
         Expected = expected;
         Actual = actual;
     }
 
-    public TypeMismatchException(string customMessage, TypeInfo expected, TypeInfo actual, int? line = null, int? column = null)
-        : base(DiagnosticCode.TypeMismatch, customMessage, line, column)
+    public TypeMismatchException(string customMessage, TypeInfo expected, TypeInfo actual, int? line = null, int? column = null, string? tsCode = null)
+        : base(DiagnosticCode.TypeMismatch, customMessage, line, column, tsCode: tsCode)
     {
         Expected = expected;
         Actual = actual;

@@ -15,7 +15,7 @@ public partial class TypeChecker
 
         if (_decoratorMode == DecoratorMode.None)
         {
-            throw new TypeCheckException("Decorators require --experimentalDecorators or --decorators flag", decorators[0].AtToken.Line);
+            throw new TypeCheckException("Decorators require --experimentalDecorators or --decorators flag", decorators[0].AtToken.Line, tsCode: "TS1219");
         }
 
         foreach (var decorator in decorators)
@@ -74,7 +74,7 @@ public partial class TypeChecker
             // Direct decorator: must be callable
             if (decoratorType is not (TypeInfo.Function or TypeInfo.Any))
             {
-                throw new TypeCheckException($"Decorator must be a function, got '{decoratorType}'", decorator.AtToken.Line);
+                throw new TypeCheckException($"Decorator must be a function, got '{decoratorType}'", decorator.AtToken.Line, tsCode: "TS1241");
             }
         }
 
@@ -118,7 +118,7 @@ public partial class TypeChecker
 
             if (funcType.MinArity > expectedArity)
             {
-                throw new TypeCheckException($"Decorator expects {funcType.MinArity} arguments but {target} decorators receive {expectedArity}", decorator.AtToken.Line);
+                throw new TypeCheckException($"Decorator expects {funcType.MinArity} arguments but {target} decorators receive {expectedArity}", decorator.AtToken.Line, tsCode: "TS1241");
             }
         }
     }
@@ -138,14 +138,14 @@ public partial class TypeChecker
             // Stage 3 decorators always receive exactly 2 arguments: (value, context)
             if (funcType.MinArity > 2)
             {
-                throw new TypeCheckException($"Stage 3 decorator expects at most 2 arguments but requires {funcType.MinArity}", decorator.AtToken.Line);
+                throw new TypeCheckException($"Stage 3 decorator expects at most 2 arguments but requires {funcType.MinArity}", decorator.AtToken.Line, tsCode: "TS1241");
             }
         }
 
         // Note: Parameter decorators are not part of TC39 Stage 3 spec
         if (target == DecoratorTarget.Parameter)
         {
-            throw new TypeCheckException("Parameter decorators are not supported in Stage 3 decorators. Use --experimentalDecorators for legacy parameter decorators", decorator.AtToken.Line);
+            throw new TypeCheckException("Parameter decorators are not supported in Stage 3 decorators. Use --experimentalDecorators for legacy parameter decorators", decorator.AtToken.Line, tsCode: "TS1206");
         }
     }
 }

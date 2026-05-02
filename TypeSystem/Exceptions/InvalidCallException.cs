@@ -12,13 +12,13 @@ public class InvalidCallException : TypeCheckException
     /// </summary>
     public TypeInfo? CalleeType { get; init; }
 
-    public InvalidCallException(string message, int? line = null, int? column = null)
-        : base(DiagnosticCode.InvalidCall, message, line, column)
+    public InvalidCallException(string message, int? line = null, int? column = null, string? tsCode = null)
+        : base(DiagnosticCode.InvalidCall, message, line, column, tsCode: tsCode)
     {
     }
 
-    public InvalidCallException(string message, TypeInfo calleeType, int? line = null, int? column = null)
-        : base(DiagnosticCode.InvalidCall, message, line, column)
+    public InvalidCallException(string message, TypeInfo calleeType, int? line = null, int? column = null, string? tsCode = null)
+        : base(DiagnosticCode.InvalidCall, message, line, column, tsCode: tsCode)
     {
         CalleeType = calleeType;
     }

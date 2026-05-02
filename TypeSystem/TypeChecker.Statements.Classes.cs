@@ -39,7 +39,7 @@ public partial class TypeChecker
                 }
                 else
                 {
-                    throw new TypeCheckException($"Cannot use type arguments with non-generic class '{Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)}'");
+                    throw new TypeCheckException($"Cannot use type arguments with non-generic class '{Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)}'", tsCode: "TS2315");
                 }
             }
             else if (superType is TypeInfo.Instance si && si.ClassType is TypeInfo.Class sic)
@@ -49,7 +49,7 @@ public partial class TypeChecker
             else if (superType is TypeInfo.GenericClass gc)
             {
                 // Generic class without type arguments - error
-                throw new TypeCheckException($"Generic class '{gc.Name}' requires type arguments");
+                throw new TypeCheckException($"Generic class '{gc.Name}' requires type arguments", tsCode: "TS2314");
             }
             else if (superType is TypeInfo.Any)
             {
@@ -62,7 +62,7 @@ public partial class TypeChecker
                 superclass = placeholder;
             }
             else
-                throw new TypeCheckException("Superclass must be a class");
+                throw new TypeCheckException("Superclass must be a class", tsCode: "TS2507");
         }
 
         // Handle generic type parameters
@@ -142,7 +142,7 @@ public partial class TypeChecker
             {
                 if (abstractDecls.Count > 1)
                 {
-                    throw new TypeCheckException($" Cannot have multiple abstract declarations for method '{methodName}'.");
+                    throw new TypeCheckException($" Cannot have multiple abstract declarations for method '{methodName}'.", tsCode: "TS2516");
                 }
                 var abstractMethod = abstractDecls[0];
                 var funcType = BuildMethodFuncType(abstractMethod);
@@ -162,11 +162,11 @@ public partial class TypeChecker
             {
                 if (implementations.Count == 0)
                 {
-                    throw new TypeCheckException($" Overloaded method '{methodName}' has no implementation.");
+                    throw new TypeCheckException($" Overloaded method '{methodName}' has no implementation.", tsCode: "TS2391");
                 }
                 if (implementations.Count > 1)
                 {
-                    throw new TypeCheckException($" Overloaded method '{methodName}' has multiple implementations.");
+                    throw new TypeCheckException($" Overloaded method '{methodName}' has multiple implementations.", tsCode: "TS2393");
                 }
 
                 var implementation = implementations[0];
@@ -178,7 +178,7 @@ public partial class TypeChecker
                 {
                     if (implType.MinArity > sig.MinArity)
                     {
-                        throw new TypeCheckException($" Implementation of '{methodName}' requires {implType.MinArity} arguments but overload signature requires only {sig.MinArity}.");
+                        throw new TypeCheckException($" Implementation of '{methodName}' requires {implType.MinArity} arguments but overload signature requires only {sig.MinArity}.", tsCode: "TS2394");
                     }
                 }
 
@@ -217,7 +217,7 @@ public partial class TypeChecker
             }
             else if (implementations.Count > 1)
             {
-                throw new TypeCheckException($" Multiple implementations of method '{methodName}' without overload signatures.");
+                throw new TypeCheckException($" Multiple implementations of method '{methodName}' without overload signatures.", tsCode: "TS2393");
             }
         }
 
@@ -309,7 +309,7 @@ public partial class TypeChecker
             {
                 if (!IsCompatible(mutableClass.Getters[propName], mutableClass.Setters[propName]))
                 {
-                    throw new TypeCheckException($" Getter and setter for '{propName}' have incompatible types.");
+                    throw new TypeCheckException($" Getter and setter for '{propName}' have incompatible types.", tsCode: "TS2380");
                 }
             }
         }
@@ -357,7 +357,7 @@ public partial class TypeChecker
                 {
                     if (superclass == null)
                     {
-                        throw new TypeCheckException($" Cannot use 'override' for auto-accessor '{propName}' in a class that does not extend another class.");
+                        throw new TypeCheckException($" Cannot use 'override' for auto-accessor '{propName}' in a class that does not extend another class.", tsCode: "TS4112");
                     }
 
                     // Check if parent has a matching getter
@@ -380,7 +380,7 @@ public partial class TypeChecker
 
                     if (!parentHasGetter)
                     {
-                        throw new TypeCheckException($" Auto-accessor '{propName}' uses 'override' but parent class has no accessor with this name.");
+                        throw new TypeCheckException($" Auto-accessor '{propName}' uses 'override' but parent class has no accessor with this name.", tsCode: "TS4113");
                     }
                 }
             }
@@ -433,7 +433,7 @@ public partial class TypeChecker
                     // Generic interface - need to instantiate it
                     if (typeArgs == null || typeArgs.Count == 0)
                     {
-                        throw new TypeCheckException($" Generic interface '{interfaceToken.Lexeme}' requires type arguments.");
+                        throw new TypeCheckException($" Generic interface '{interfaceToken.Lexeme}' requires type arguments.", tsCode: "TS2314");
                     }
 
                     // Resolve type arguments
@@ -461,7 +461,7 @@ public partial class TypeChecker
                 }
                 else
                 {
-                    throw new TypeCheckException($" '{interfaceToken.Lexeme}' is not an interface.");
+                    throw new TypeCheckException($" '{interfaceToken.Lexeme}' is not an interface.", tsCode: "TS2304");
                 }
 
                 ValidateInterfaceImplementation(classTypeForBody, interfaceType, classStmt.Name.Lexeme);
@@ -492,7 +492,7 @@ public partial class TypeChecker
                     : classTypeForBody.StaticProperties[field.Name.Lexeme];
                 if (!IsCompatible(staticFieldDeclaredType, initType))
                 {
-                    throw new TypeCheckException($" Cannot assign type '{initType}' to static property '{field.Name.Lexeme}' of type '{staticFieldDeclaredType}'.");
+                    throw new TypeCheckException($" Cannot assign type '{initType}' to static property '{field.Name.Lexeme}' of type '{staticFieldDeclaredType}'.", tsCode: "TS2322");
                 }
             }
         }
@@ -508,7 +508,7 @@ public partial class TypeChecker
                     TypeInfo declaredType = classTypeForBody.Getters[autoAccessor.Name.Lexeme];
                     if (!IsCompatible(declaredType, initType))
                     {
-                        throw new TypeCheckException($" Cannot assign type '{initType}' to auto-accessor '{autoAccessor.Name.Lexeme}' of type '{declaredType}'.");
+                        throw new TypeCheckException($" Cannot assign type '{initType}' to auto-accessor '{autoAccessor.Name.Lexeme}' of type '{declaredType}'.", tsCode: "TS2322");
                     }
                 }
             }
@@ -617,6 +617,7 @@ public partial class TypeChecker
                 {
                     TypeInfo.OverloadedFunction of => of.Implementation,
                     TypeInfo.Function f => f,
+                    // SharpTS-only: internal invariant
                     _ => throw new TypeCheckException($" Unexpected method type for '{method.Name.Lexeme}'.")
                 };
 

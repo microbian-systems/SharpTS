@@ -17,15 +17,15 @@ public class UndefinedMemberException : TypeCheckException
     /// </summary>
     public TypeInfo Type { get; init; }
 
-    public UndefinedMemberException(string memberName, TypeInfo type, int? line = null, int? column = null)
-        : base(DiagnosticCode.UndefinedMember, $"Property '{memberName}' does not exist on type '{type}'", line, column)
+    public UndefinedMemberException(string memberName, TypeInfo type, int? line = null, int? column = null, string? tsCode = null)
+        : base(DiagnosticCode.UndefinedMember, $"Property '{memberName}' does not exist on type '{type}'", line, column, tsCode: tsCode)
     {
         MemberName = memberName;
         Type = type;
     }
 
-    public UndefinedMemberException(string customMessage, string memberName, TypeInfo type, int? line = null, int? column = null)
-        : base(DiagnosticCode.UndefinedMember, customMessage, line, column)
+    public UndefinedMemberException(string customMessage, string memberName, TypeInfo type, int? line = null, int? column = null, string? tsCode = null)
+        : base(DiagnosticCode.UndefinedMember, customMessage, line, column, tsCode: tsCode)
     {
         MemberName = memberName;
         Type = type;

@@ -51,8 +51,8 @@ public partial class TypeChecker
         if (IsNumber(left) && IsNumber(right)) return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
         if (IsString(left) || IsString(right)) return new TypeInfo.String();
         if ((IsBigInt(left) && IsNumber(right)) || (IsNumber(left) && IsBigInt(right)))
-            throw new TypeCheckException("Cannot mix bigint and number in arithmetic operations. Use explicit BigInt() or Number() conversion.", line > 0 ? line : null);
-        throw new TypeCheckException("Operator '+' cannot be applied to types '" + left + "' and '" + right + "'.", line > 0 ? line : null);
+            throw new TypeCheckException("Cannot mix bigint and number in arithmetic operations. Use explicit BigInt() or Number() conversion.", line > 0 ? line : null, tsCode: "TS2365");
+        throw new TypeCheckException("Operator '+' cannot be applied to types '" + left + "' and '" + right + "'.", line > 0 ? line : null, tsCode: "TS2365");
     }
 
     private TypeInfo CheckArithmeticBinary(TypeInfo left, TypeInfo right, int line = 0)
@@ -66,8 +66,8 @@ public partial class TypeChecker
         if (IsNumber(left) && IsNumber(right))
             return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
         if ((IsBigInt(left) && IsNumber(right)) || (IsNumber(left) && IsBigInt(right)))
-            throw new TypeCheckException("Cannot mix bigint and number in arithmetic operations. Use explicit BigInt() or Number() conversion.", line > 0 ? line : null);
-        throw new TypeCheckException($"Operands must be numbers or bigints of the same type. Got '{left}' and '{right}'.", line > 0 ? line : null);
+            throw new TypeCheckException("Cannot mix bigint and number in arithmetic operations. Use explicit BigInt() or Number() conversion.", line > 0 ? line : null, tsCode: "TS2365");
+        throw new TypeCheckException($"Operands must be numbers or bigints of the same type. Got '{left}' and '{right}'.", line > 0 ? line : null, tsCode: "TS2362");
     }
 
     private TypeInfo CheckComparisonBinary(TypeInfo left, TypeInfo right, int line = 0)
@@ -82,8 +82,8 @@ public partial class TypeChecker
             || (IsString(left) && IsString(right)))
             return new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
         if ((IsBigInt(left) && IsNumber(right)) || (IsNumber(left) && IsBigInt(right)))
-            throw new TypeCheckException("Cannot compare bigint and number directly. Use explicit conversion.", line > 0 ? line : null);
-        throw new TypeCheckException($"Comparison operands must be numbers, bigints, or strings of the same type. Got '{left}' and '{right}'.", line > 0 ? line : null);
+            throw new TypeCheckException("Cannot compare bigint and number directly. Use explicit conversion.", line > 0 ? line : null, tsCode: "TS2365");
+        throw new TypeCheckException($"Comparison operands must be numbers, bigints, or strings of the same type. Got '{left}' and '{right}'.", line > 0 ? line : null, tsCode: "TS2365");
     }
 
     private TypeInfo CheckBitwiseBinary(TypeInfo left, TypeInfo right, int line = 0)
@@ -97,8 +97,8 @@ public partial class TypeChecker
         if (IsNumber(left) && IsNumber(right))
             return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
         if ((IsBigInt(left) && IsNumber(right)) || (IsNumber(left) && IsBigInt(right)))
-            throw new TypeCheckException("Cannot mix bigint and number in bitwise operations.", line > 0 ? line : null);
-        throw new TypeCheckException($"Bitwise operators require numeric operands. Got '{left}' and '{right}'.", line > 0 ? line : null);
+            throw new TypeCheckException("Cannot mix bigint and number in bitwise operations.", line > 0 ? line : null, tsCode: "TS2365");
+        throw new TypeCheckException($"Bitwise operators require numeric operands. Got '{left}' and '{right}'.", line > 0 ? line : null, tsCode: "TS2365");
     }
 
     private TypeInfo CheckUnsignedShiftBinary(TypeInfo left, TypeInfo right, int line = 0)
@@ -108,9 +108,9 @@ public partial class TypeChecker
             return new TypeInfo.Any();
         // Unsigned right shift - NOT SUPPORTED for bigint in TypeScript!
         if (IsBigInt(left) || IsBigInt(right))
-            throw new TypeCheckException("Unsigned right shift (>>>) is not supported for bigint.", line > 0 ? line : null);
+            throw new TypeCheckException("Unsigned right shift (>>>) is not supported for bigint.", line > 0 ? line : null, tsCode: "TS2791");
         if (!IsNumber(left) || !IsNumber(right))
-            throw new TypeCheckException("Bitwise operators require numeric operands.", line > 0 ? line : null);
+            throw new TypeCheckException("Bitwise operators require numeric operands.", line > 0 ? line : null, tsCode: "TS2365");
         return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
     }
 
@@ -348,14 +348,14 @@ public partial class TypeChecker
         {
             if (IsString(varType)) return varType;
             if (!IsNumber(varType) || !IsNumber(valueType))
-                throw new TypeCheckException("Compound assignment requires numeric operands.");
+                throw new TypeCheckException("Compound assignment requires numeric operands.", tsCode: "TS2365");
             return varType;
         }
 
         // All other compound operators require numbers
         if (!IsNumber(varType) || !IsNumber(valueType))
         {
-            throw new TypeCheckException("Compound assignment requires numeric operands.");
+            throw new TypeCheckException("Compound assignment requires numeric operands.", tsCode: "TS2365");
         }
 
         return varType;
@@ -404,12 +404,12 @@ public partial class TypeChecker
         }
 
         if (!IsNumber(indexType))
-            throw new TypeCheckException("Array index must be a number.");
+            throw new TypeCheckException("Array index must be a number.", tsCode: "TS7053");
 
         if (objType is TypeInfo.Array arrayType)
         {
             if (!IsNumber(arrayType.ElementType) || !IsNumber(valueType))
-                throw new TypeCheckException("Compound assignment requires numeric operands.");
+                throw new TypeCheckException("Compound assignment requires numeric operands.", tsCode: "TS2365");
             return arrayType.ElementType;
         }
 
@@ -485,7 +485,7 @@ public partial class TypeChecker
         TypeInfo operandType = CheckExpr(prefix.Operand);
         if (!IsNumber(operandType))
         {
-            throw new TypeCheckException("Increment/decrement operand must be a number.");
+            throw new TypeCheckException("Increment/decrement operand must be a number.", tsCode: "TS2356");
         }
         return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
     }
@@ -495,7 +495,7 @@ public partial class TypeChecker
         TypeInfo operandType = CheckExpr(postfix.Operand);
         if (!IsNumber(operandType))
         {
-            throw new TypeCheckException("Increment/decrement operand must be a number.");
+            throw new TypeCheckException("Increment/decrement operand must be a number.", tsCode: "TS2356");
         }
         return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
     }
@@ -554,7 +554,7 @@ public partial class TypeChecker
         {
             if (IsBigInt(right)) return new TypeInfo.BigInt();
             if (IsNumber(right)) return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
-            throw new TypeCheckException("Unary '-' expects a number or bigint.");
+            throw new TypeCheckException("Unary '-' expects a number or bigint.", tsCode: "TS2362");
         }
         if (unary.Operator.Type == TokenType.BANG)
              return new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
@@ -562,7 +562,7 @@ public partial class TypeChecker
         {
             if (IsBigInt(right)) return new TypeInfo.BigInt();
             if (IsNumber(right)) return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
-            throw new TypeCheckException("Bitwise NOT requires a numeric operand.");
+            throw new TypeCheckException("Bitwise NOT requires a numeric operand.", tsCode: "TS2362");
         }
 
         return right;

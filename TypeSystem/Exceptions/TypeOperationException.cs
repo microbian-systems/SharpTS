@@ -7,8 +7,8 @@ namespace SharpTS.TypeSystem.Exceptions;
 /// </summary>
 public class TypeOperationException : TypeCheckException
 {
-    public TypeOperationException(string message, int? line = null, int? column = null)
-        : base(DiagnosticCode.TypeOperation, message, line, column)
+    public TypeOperationException(string message, int? line = null, int? column = null, string? tsCode = null)
+        : base(DiagnosticCode.TypeOperation, message, line, column, tsCode: tsCode)
     {
     }
 }

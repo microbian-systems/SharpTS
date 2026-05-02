@@ -58,12 +58,12 @@ public partial class TypeChecker
                     }
                     else
                     {
-                        throw new TypeCheckException($" Index type '{indexType}' is not valid for indexing member '{member}' of union type.");
+                        throw new TypeCheckException($" Index type '{indexType}' is not valid for indexing member '{member}' of union type.", tsCode: "TS7053");
                     }
                 }
                 catch (TypeCheckException)
                 {
-                    throw new TypeCheckException($" Index type '{indexType}' is not valid for indexing all members of union type '{union}'.");
+                    throw new TypeCheckException($" Index type '{indexType}' is not valid for indexing all members of union type '{union}'.", tsCode: "TS7053");
                 }
             }
             // Return union of all member types
@@ -111,7 +111,7 @@ public partial class TypeChecker
             }
 
             // Unconstrained type parameter can't be indexed with arbitrary types
-            throw new TypeCheckException($" Cannot index type parameter '{objTp.Name}' with type '{indexType}'.");
+            throw new TypeCheckException($" Cannot index type parameter '{objTp.Name}' with type '{indexType}'.", tsCode: "TS7053");
         }
 
         // Handle TypeParameter index type with keyof constraint
@@ -181,7 +181,7 @@ public partial class TypeChecker
                     if (tupleType.RestElementType != null && i >= tupleType.ElementTypes.Count)
                         return tupleType.RestElementType;
                     if (i < 0 || (tupleType.MaxLength != null && i >= tupleType.MaxLength))
-                        throw new TypeCheckException($" Tuple index {i} is out of bounds.");
+                        throw new TypeCheckException($" Tuple index {i} is out of bounds.", tsCode: "TS2493");
                 }
                 // Dynamic index -> union of all possible types
                 return ComputeTupleElementUnion(tupleType);
@@ -216,11 +216,11 @@ public partial class TypeChecker
                 // Const enums cannot use reverse mapping
                 if (enumType.IsConst)
                 {
-                    throw new TypeCheckException($" A const enum member can only be accessed using its name, not by index. Cannot use reverse mapping on const enum '{enumType.Name}'.");
+                    throw new TypeCheckException($" A const enum member can only be accessed using its name, not by index. Cannot use reverse mapping on const enum '{enumType.Name}'.", tsCode: "TS2476");
                 }
                 if (enumType.Kind == EnumKind.String)
                 {
-                    throw new TypeCheckException($" Reverse mapping is not supported for string enum '{enumType.Name}'.");
+                    throw new TypeCheckException($" Reverse mapping is not supported for string enum '{enumType.Name}'.", tsCode: "TS2476");
                 }
                 return new TypeInfo.String();
             }
@@ -250,7 +250,7 @@ public partial class TypeChecker
                 return new TypeInfo.Any();
         }
 
-        throw new TypeCheckException($" Index type '{indexType}' is not valid for indexing '{objType}'.");
+        throw new TypeCheckException($" Index type '{indexType}' is not valid for indexing '{objType}'.", tsCode: "TS7053");
     }
 
     private TypeInfo CheckSetIndex(Expr.SetIndex setIndex)
@@ -299,7 +299,7 @@ public partial class TypeChecker
                 var memberIndexResult = CheckSetIndexOnType(member, indexType, valueType, setIndex);
                 if (memberIndexResult == null)
                 {
-                    throw new TypeCheckException($" Index type '{indexType}' is not valid for assigning to member '{member}' of union type.");
+                    throw new TypeCheckException($" Index type '{indexType}' is not valid for assigning to member '{member}' of union type.", tsCode: "TS7053");
                 }
             }
             return valueType;
@@ -318,13 +318,13 @@ public partial class TypeChecker
             if (objType is TypeInfo.Interface itf && itf.StringIndexType != null)
             {
                 if (!IsCompatible(itf.StringIndexType, valueType))
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to index signature type '{itf.StringIndexType}'.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to index signature type '{itf.StringIndexType}'.", tsCode: "TS2322");
                 return valueType;
             }
             if (objType is TypeInfo.Record rec && rec.StringIndexType != null)
             {
                 if (!IsCompatible(rec.StringIndexType, valueType))
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to index signature type '{rec.StringIndexType}'.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to index signature type '{rec.StringIndexType}'.", tsCode: "TS2322");
                 return valueType;
             }
 
@@ -346,23 +346,23 @@ public partial class TypeChecker
                     if (i >= 0 && i < tupleType.ElementTypes.Count)
                     {
                         if (!IsCompatible(tupleType.ElementTypes[i], valueType))
-                            throw new TypeCheckException($" Cannot assign '{valueType}' to tuple element of type '{tupleType.ElementTypes[i]}'.");
+                            throw new TypeCheckException($" Cannot assign '{valueType}' to tuple element of type '{tupleType.ElementTypes[i]}'.", tsCode: "TS2322");
                         return valueType;
                     }
                     if (tupleType.RestElementType != null && i >= tupleType.ElementTypes.Count)
                     {
                         if (!IsCompatible(tupleType.RestElementType, valueType))
-                            throw new TypeCheckException($" Cannot assign '{valueType}' to tuple rest element of type '{tupleType.RestElementType}'.");
+                            throw new TypeCheckException($" Cannot assign '{valueType}' to tuple rest element of type '{tupleType.RestElementType}'.", tsCode: "TS2322");
                         return valueType;
                     }
-                    throw new TypeCheckException($" Tuple index {i} is out of bounds.");
+                    throw new TypeCheckException($" Tuple index {i} is out of bounds.", tsCode: "TS2493");
                 }
                 // Dynamic index -> value must be compatible with all possible element types
                 var allTypes = tupleType.ElementTypes.ToList();
                 if (tupleType.RestElementType != null)
                     allTypes.Add(tupleType.RestElementType);
                 if (!allTypes.All(t => IsCompatible(t, valueType)))
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to tuple with mixed element types.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to tuple with mixed element types.", tsCode: "TS2322");
                 return valueType;
             }
 
@@ -375,7 +375,7 @@ public partial class TypeChecker
                 if (IsArrayIndexInRange(setIndex.Index)
                     && !IsCompatible(arrayType.ElementType, valueType))
                 {
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to array of '{arrayType.ElementType}'.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to array of '{arrayType.ElementType}'.", tsCode: "TS2322");
                 }
                 return valueType;
             }
@@ -388,7 +388,7 @@ public partial class TypeChecker
             && objType is TypeInfo.Array arrayWithStringIndex)
         {
             if (!IsCompatible(arrayWithStringIndex.ElementType, valueType))
-                throw new TypeCheckException($" Cannot assign '{valueType}' to array of '{arrayWithStringIndex.ElementType}'.");
+                throw new TypeCheckException($" Cannot assign '{valueType}' to array of '{arrayWithStringIndex.ElementType}'.", tsCode: "TS2322");
             return valueType;
         }
 
@@ -400,7 +400,7 @@ public partial class TypeChecker
                 // TypedArrays accept number values
                 if (!IsNumber(valueType) && valueType is not TypeInfo.Any)
                 {
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to {typedArrayType.ElementType}Array.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to {typedArrayType.ElementType}Array.", tsCode: "TS2322");
                 }
                 return valueType;
             }
@@ -411,7 +411,7 @@ public partial class TypeChecker
                 // Buffer accepts number values
                 if (!IsNumber(valueType) && valueType is not TypeInfo.Any)
                 {
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to Buffer.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to Buffer.", tsCode: "TS2322");
                 }
                 return valueType;
             }
@@ -420,13 +420,13 @@ public partial class TypeChecker
             if (objType is TypeInfo.Interface itf2 && itf2.NumberIndexType != null)
             {
                 if (!IsCompatible(itf2.NumberIndexType, valueType))
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to number index signature type '{itf2.NumberIndexType}'.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to number index signature type '{itf2.NumberIndexType}'.", tsCode: "TS2322");
                 return valueType;
             }
             if (objType is TypeInfo.Record rec2 && rec2.NumberIndexType != null)
             {
                 if (!IsCompatible(rec2.NumberIndexType, valueType))
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to number index signature type '{rec2.NumberIndexType}'.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to number index signature type '{rec2.NumberIndexType}'.", tsCode: "TS2322");
                 return valueType;
             }
 
@@ -453,13 +453,13 @@ public partial class TypeChecker
             if (objType is TypeInfo.Interface itf3 && itf3.SymbolIndexType != null)
             {
                 if (!IsCompatible(itf3.SymbolIndexType, valueType))
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to symbol index signature type '{itf3.SymbolIndexType}'.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to symbol index signature type '{itf3.SymbolIndexType}'.", tsCode: "TS2322");
                 return valueType;
             }
             if (objType is TypeInfo.Record rec3 && rec3.SymbolIndexType != null)
             {
                 if (!IsCompatible(rec3.SymbolIndexType, valueType))
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to symbol index signature type '{rec3.SymbolIndexType}'.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to symbol index signature type '{rec3.SymbolIndexType}'.", tsCode: "TS2322");
                 return valueType;
             }
 
@@ -468,7 +468,7 @@ public partial class TypeChecker
                 return valueType;
         }
 
-        throw new TypeCheckException($" Index type '{indexType}' is not valid for assigning to '{objType}'.");
+        throw new TypeCheckException($" Index type '{indexType}' is not valid for assigning to '{objType}'.", tsCode: "TS7053");
     }
 
     /// <summary>
