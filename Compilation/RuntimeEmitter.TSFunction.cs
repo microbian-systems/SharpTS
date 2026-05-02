@@ -68,6 +68,14 @@ public partial class RuntimeEmitter
         var paramCountField = typeBuilder.DefineField("_paramCount", _types.Int32, FieldAttributes.Private);
         var hasListRestField = typeBuilder.DefineField("_hasListRest", _types.Boolean, FieldAttributes.Private);
         var hasArrayRestField = typeBuilder.DefineField("_hasArrayRest", _types.Boolean, FieldAttributes.Private);
+        // Set true at construction iff ConvertArgsForUnionTypes or
+        // CoercePrimitiveArgs might do something non-trivial — i.e., any param
+        // is a Union_* value type or one of the coerce-target types
+        // (string/double/int/List<object>). For typical arrow callbacks
+        // (`x => x*2` etc.) all params are `object`, so this is false and Invoke
+        // skips both helper calls entirely. Saves 2 reflection-driven loops per
+        // callback dispatch.
+        var needsArgConversionField = typeBuilder.DefineField("_needsArgConversion", _types.Boolean, FieldAttributes.Private);
 
         // Static cache for "this" fields: ConcurrentDictionary<Type, FieldInfo>
         // used to avoid reflection overhead in BindThis
@@ -191,6 +199,7 @@ public partial class RuntimeEmitter
         EmitComputeExpectsThis(ctorIL, expectsThisField, methodArgIndex: 2);
         // this._paramCount, _hasListRest, _hasArrayRest: cached by AdjustArgs.
         EmitComputeAdjustArgsCache(ctorIL, paramCountField, hasListRestField, hasArrayRestField, methodArgIndex: 2);
+        EmitComputeNeedsArgConversion(ctorIL, needsArgConversionField, methodArgIndex: 2);
         // this._invoker = LookupOrAdd(_invokerCache, method)  [pseudocode]
         EmitLookupOrCreateInvoker(ctorIL, invokerField, invokerCacheField, invokerCacheType, methodArgIndex: 2);
         ctorIL.Emit(OpCodes.Ret);
@@ -227,6 +236,7 @@ public partial class RuntimeEmitter
         // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
         EmitComputeExpectsThis(ctorCacheIL, expectsThisField, methodArgIndex: 2);
         EmitComputeAdjustArgsCache(ctorCacheIL, paramCountField, hasListRestField, hasArrayRestField, methodArgIndex: 2);
+        EmitComputeNeedsArgConversion(ctorCacheIL, needsArgConversionField, methodArgIndex: 2);
         // this._invoker = LookupOrAdd(_invokerCache, method)
         EmitLookupOrCreateInvoker(ctorCacheIL, invokerField, invokerCacheField, invokerCacheType, methodArgIndex: 2);
         ctorCacheIL.Emit(OpCodes.Ret);
@@ -400,8 +410,17 @@ public partial class RuntimeEmitter
         invokeIL.Emit(OpCodes.Callvirt, adjustArgsMethod);
         invokeIL.Emit(OpCodes.Stloc, adjustedArgsLocal);
 
+        // Skip both Convert and Coerce helpers when the cached
+        // _needsArgConversion flag says no param needs union or primitive
+        // conversion. For typical arrow callbacks (`x => x*2` etc., all
+        // params typed `object`), this is the case and we save 2
+        // reflection-driven loops per dispatch.
+        var skipArgConversionLabel = invokeIL.DefineLabel();
+        invokeIL.Emit(OpCodes.Ldarg_0);
+        invokeIL.Emit(OpCodes.Ldfld, needsArgConversionField);
+        invokeIL.Emit(OpCodes.Brfalse, skipArgConversionLabel);
+
         // Convert args for union types before invoking
-        // ConvertArgsForUnionTypes(this._method, adjustedArgs)
         invokeIL.Emit(OpCodes.Ldarg_0);
         invokeIL.Emit(OpCodes.Ldfld, methodField);
         invokeIL.Emit(OpCodes.Ldloc, adjustedArgsLocal);
@@ -412,6 +431,8 @@ public partial class RuntimeEmitter
         invokeIL.Emit(OpCodes.Ldfld, methodField);
         invokeIL.Emit(OpCodes.Ldloc, adjustedArgsLocal);
         invokeIL.Emit(OpCodes.Call, coercePrimitivesMethod);
+
+        invokeIL.MarkLabel(skipArgConversionLabel);
 
         // Publish the un-adjusted caller args to the thread-static $Runtime._currentArguments
         // slot so flagged function bodies (those that reference JS `arguments`) can see
@@ -934,6 +955,104 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stfld, hasArrayRestField);
 
         il.MarkLabel(doneLabel);
+    }
+
+    /// <summary>
+    /// Emits IL inside a constructor to compute and store the cached
+    /// <c>_needsArgConversion</c> bool. True iff any param is a
+    /// <c>Union_*</c> value type (handled by <c>ConvertArgsForUnionTypes</c>)
+    /// or one of the coerce-target types (handled by <c>CoercePrimitiveArgs</c>:
+    /// string/double/int32/List&lt;object&gt;). For typical arrow callbacks
+    /// with all-<c>object</c> params, this is false and Invoke skips both
+    /// helpers entirely.
+    /// </summary>
+    private void EmitComputeNeedsArgConversion(ILGenerator il, FieldBuilder needsArgConversionField, int methodArgIndex)
+    {
+        var paramsLocal = il.DeclareLocal(_types.MakeArrayType(_types.ParameterInfo));
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var paramTypeLocal = il.DeclareLocal(_types.Type);
+
+        var loopBody = il.DefineLabel();
+        var loopCond = il.DefineLabel();
+        var setTrueLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+        var notValueType = il.DefineLabel();
+
+        // ps = method.GetParameters()
+        il.Emit(OpCodes.Ldarg, methodArgIndex);
+        il.Emit(OpCodes.Callvirt, _types.MethodInfo.GetMethod("GetParameters")!);
+        il.Emit(OpCodes.Stloc, paramsLocal);
+
+        // i = 0
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopCond);
+
+        il.MarkLabel(loopBody);
+        // pt = ps[i].ParameterType
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("ParameterType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, paramTypeLocal);
+
+        // Check coerce-target types: string, double, int32, List<object>
+        EmitTypeEqAndBranchTrue(il, paramTypeLocal, _types.String, setTrueLabel);
+        EmitTypeEqAndBranchTrue(il, paramTypeLocal, _types.Double, setTrueLabel);
+        EmitTypeEqAndBranchTrue(il, paramTypeLocal, _types.Int32, setTrueLabel);
+        EmitTypeEqAndBranchTrue(il, paramTypeLocal, _types.ListOfObject, setTrueLabel);
+
+        // Check Union_* value type
+        il.Emit(OpCodes.Ldloc, paramTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.Type.GetProperty("IsValueType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, notValueType);
+        il.Emit(OpCodes.Ldloc, paramTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.Type.GetProperty("Name")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "Union_");
+        il.Emit(OpCodes.Callvirt, typeof(string).GetMethod("StartsWith", [typeof(string)])!);
+        il.Emit(OpCodes.Brtrue, setTrueLabel);
+        il.MarkLabel(notValueType);
+
+        // i++
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(loopCond);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Blt, loopBody);
+
+        // No match: _needsArgConversion = false (zero-init default — explicit for clarity)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, needsArgConversionField);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        // Match: _needsArgConversion = true
+        il.MarkLabel(setTrueLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, needsArgConversionField);
+
+        il.MarkLabel(doneLabel);
+    }
+
+    /// <summary>
+    /// Emits IL: <c>if (paramTypeLocal == typeof(targetType)) goto matchLabel;</c>
+    /// Helper to tighten the Union_/coerce-target-type pattern in
+    /// <see cref="EmitComputeNeedsArgConversion"/>.
+    /// </summary>
+    private void EmitTypeEqAndBranchTrue(ILGenerator il, LocalBuilder paramTypeLocal, Type targetType, Label matchLabel)
+    {
+        il.Emit(OpCodes.Ldloc, paramTypeLocal);
+        il.Emit(OpCodes.Ldtoken, targetType);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Brtrue, matchLabel);
     }
 
     /// <summary>
