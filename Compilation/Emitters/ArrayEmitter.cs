@@ -691,11 +691,31 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
     /// - Arrow is non-capturing (per <see cref="ClosureAnalyzer"/>) — implies
     ///   no <c>arguments</c> reference and no display-class allocation.
     /// </summary>
+    /// <summary>
+    /// Resolves the callback expression at an iterator-helper call site to a
+    /// literal <see cref="Expr.ArrowFunction"/> AST node. Accepts both the
+    /// inline form (<c>arr.map(x =&gt; …)</c>) and the const-bound form
+    /// (<c>const sq = x =&gt; …; arr.map(sq)</c>) — for the latter we walk
+    /// to the registered top-level const→arrow map. Returns null if the
+    /// callback isn't statically resolvable to a literal arrow.
+    /// </summary>
+    private static Expr.ArrowFunction? ResolveCallbackArrow(IEmitterContext emitter, Expr callbackArg)
+    {
+        if (callbackArg is Expr.ArrowFunction af) return af;
+        if (callbackArg is Expr.Variable v
+            && emitter.Context.ConstArrowBindings.TryGetValue(v.Name.Lexeme, out var bound))
+        {
+            return bound;
+        }
+        return null;
+    }
+
     private static bool TryEmitDirectDelegateCall(IEmitterContext emitter, List<Expr> arguments, System.Reflection.Emit.MethodBuilder helperMethod, System.Reflection.Emit.MethodBuilder? boolHelper = null)
     {
         var ctx = emitter.Context;
         if (arguments.Count != 1) return false;
-        if (arguments[0] is not Expr.ArrowFunction af) return false;
+        var af = ResolveCallbackArrow(emitter, arguments[0]);
+        if (af is null) return false;
         if (af.HasOwnThis || af.IsAsync || af.IsGenerator) return false;
         if (af.Parameters.Count > 1) return false;
         foreach (var p in af.Parameters)
@@ -752,7 +772,8 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         // Reduce direct form requires the 2-arg shape: (callback, initialValue).
         // No-initial would need scan-for-first-present; punt to the slow path.
         if (arguments.Count != 2) return false;
-        if (arguments[0] is not Expr.ArrowFunction af) return false;
+        var af = ResolveCallbackArrow(emitter, arguments[0]);
+        if (af is null) return false;
         if (af.HasOwnThis || af.IsAsync || af.IsGenerator) return false;
         if (af.Parameters.Count != 2) return false;
         foreach (var p in af.Parameters)

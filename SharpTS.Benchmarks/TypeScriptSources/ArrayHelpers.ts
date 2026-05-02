@@ -30,3 +30,33 @@ function arrEvery(arr: any[]): boolean {
 function arrFind(arr: any[]): any {
     return arr.find(x => x > 9999) ?? -1;
 }
+
+// Phase A.2: variable-bound iterator callbacks. Same body shapes as the
+// inline benchmarks above, but the callback comes through a top-level
+// `const` binding. Validates that `arr.map(myFn)` reaches the same fast
+// path as `arr.map(x => …)` when `myFn` is statically resolvable.
+const cbDouble = (x) => x * 2;
+const cbGtTen = (x) => x > 10;
+const cbAdd = (a, b) => a + b;
+const cbGteZero = (x) => x >= 0;
+const cbGt9999 = (x) => x > 9999;
+
+function arrMapBound(arr: any[]): any[] {
+    return arr.map(cbDouble);
+}
+
+function arrFilterBound(arr: any[]): any[] {
+    return arr.filter(cbGtTen);
+}
+
+function arrReduceBound(arr: any[]): any {
+    return arr.reduce(cbAdd, 0);
+}
+
+function arrEveryBound(arr: any[]): boolean {
+    return arr.every(cbGteZero);
+}
+
+function arrFindBound(arr: any[]): any {
+    return arr.find(cbGt9999) ?? -1;
+}

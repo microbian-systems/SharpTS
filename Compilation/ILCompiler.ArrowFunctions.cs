@@ -56,6 +56,32 @@ public partial class ILCompiler
         {
             CollectArrowsFromStmt(stmt);
         }
+
+        // Top-level only: register `const NAME = (args) => …` (and the
+        // `export const` form) so iterator-helper fast paths can resolve
+        // `Expr.Variable` callbacks like `arr.map(myFn)` to the literal
+        // arrow's AST node and inline through TryEmitArrowAsDelegate.
+        // Nested const bindings would require scope-aware shadowing analysis;
+        // out of scope for this pass.
+        foreach (var stmt in statements)
+        {
+            RegisterTopLevelConstArrowBinding(stmt);
+        }
+    }
+
+    private void RegisterTopLevelConstArrowBinding(Stmt stmt)
+    {
+        switch (stmt)
+        {
+            case Stmt.Const c when c.Initializer is Expr.ArrowFunction af:
+                // Last-write-wins is fine: TS forbids redeclaring a `const`,
+                // so the parser/checker would already have rejected dupes.
+                _closures.ConstArrowBindings[c.Name.Lexeme] = af;
+                break;
+            case Stmt.Export exp when exp.Declaration != null:
+                RegisterTopLevelConstArrowBinding(exp.Declaration);
+                break;
+        }
     }
 
     /// <summary>
@@ -914,6 +940,7 @@ public partial class ILCompiler
         {
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
+            ConstArrowBindings = _closures.ConstArrowBindings,
             DisplayClasses = _closures.DisplayClasses,
             DisplayClassFields = _closures.DisplayClassFields,
             DisplayClassConstructors = _closures.DisplayClassConstructors,

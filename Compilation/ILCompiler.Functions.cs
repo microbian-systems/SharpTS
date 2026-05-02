@@ -225,6 +225,7 @@ public partial class ILCompiler
         {
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
+            ConstArrowBindings = _closures.ConstArrowBindings,
             DisplayClasses = _closures.DisplayClasses,
             DisplayClassFields = _closures.DisplayClassFields,
             DisplayClassConstructors = _closures.DisplayClassConstructors,
@@ -856,6 +857,7 @@ public partial class ILCompiler
         {
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
+            ConstArrowBindings = _closures.ConstArrowBindings,
             DisplayClasses = _closures.DisplayClasses,
             DisplayClassFields = _closures.DisplayClassFields,
             DisplayClassConstructors = _closures.DisplayClassConstructors,
@@ -1084,6 +1086,7 @@ public partial class ILCompiler
         {
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
+            ConstArrowBindings = _closures.ConstArrowBindings,
             DisplayClasses = _closures.DisplayClasses,
             DisplayClassFields = _closures.DisplayClassFields,
             DisplayClassConstructors = _closures.DisplayClassConstructors,

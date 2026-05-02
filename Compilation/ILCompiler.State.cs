@@ -99,6 +99,14 @@ public partial class ILCompiler
     {
         public ClosureAnalyzer Analyzer { get; set; } = null!;
         public Dictionary<Expr.ArrowFunction, MethodBuilder> ArrowMethods { get; } = new(ReferenceEqualityComparer.Instance);
+
+        // Maps `const NAME = (args) => …` (and `export const NAME = …`) at top-
+        // level / module scope to the literal arrow's AST node. Iterator-helper
+        // fast paths consult this when the callback argument is `Expr.Variable`,
+        // letting `arr.map(myFn)` inline through the same delegate construction
+        // as `arr.map((x) => …)`. Module-scope only: nested `const` bindings
+        // would need scope-aware shadowing; punt to v2.
+        public Dictionary<string, Expr.ArrowFunction> ConstArrowBindings { get; } = [];
         public Dictionary<Expr.ArrowFunction, TypeBuilder> DisplayClasses { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<Expr.ArrowFunction, Dictionary<string, FieldBuilder>> DisplayClassFields { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<Expr.ArrowFunction, ConstructorBuilder> DisplayClassConstructors { get; } = new(ReferenceEqualityComparer.Instance);

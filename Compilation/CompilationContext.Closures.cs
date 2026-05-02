@@ -16,6 +16,11 @@ public partial class CompilationContext
     // Arrow function methods (arrow node -> method info)
     public Dictionary<ArrowFunction, MethodBuilder> ArrowMethods { get; set; } = [];
 
+    // Module-scope const → literal-arrow bindings. Iterator-helper fast paths
+    // look up `Expr.Variable` callbacks here so `const sq = x => x*x; arr.map(sq)`
+    // gets the same direct-delegate dispatch as the inline-arrow form.
+    public Dictionary<string, ArrowFunction> ConstArrowBindings { get; set; } = [];
+
     // Display classes for capturing closures (arrow node -> type builder)
     public Dictionary<ArrowFunction, TypeBuilder> DisplayClasses { get; set; } = [];
 

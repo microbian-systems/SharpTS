@@ -26,6 +26,11 @@ public class ArrayHelpersBenchmarks
     private MethodInfo _tsForEach = null!;
     private MethodInfo _tsEvery = null!;
     private MethodInfo _tsFind = null!;
+    private MethodInfo _tsMapBound = null!;
+    private MethodInfo _tsFilterBound = null!;
+    private MethodInfo _tsReduceBound = null!;
+    private MethodInfo _tsEveryBound = null!;
+    private MethodInfo _tsFindBound = null!;
 
     private List<object> _arr = null!;
 
@@ -51,6 +56,11 @@ public class ArrayHelpersBenchmarks
         _tsForEach = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrForEach");
         _tsEvery = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrEvery");
         _tsFind = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrFind");
+        _tsMapBound = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrMapBound");
+        _tsFilterBound = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrFilterBound");
+        _tsReduceBound = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrReduceBound");
+        _tsEveryBound = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrEveryBound");
+        _tsFindBound = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "arrFindBound");
 
         // Build the input array as a plain List<object> with boxed doubles —
         // this is exactly the shape compiled `Array<number>` produces.
@@ -81,4 +91,26 @@ public class ArrayHelpersBenchmarks
     [Benchmark]
     [BenchmarkCategory("Find")]
     public object? SharpTS_Find() => BenchmarkHarness.InvokeCompiled(_tsFind, _arr);
+
+    // Bound-callback variants (Phase A.2 fast path)
+
+    [Benchmark]
+    [BenchmarkCategory("MapBound")]
+    public object? SharpTS_MapBound() => BenchmarkHarness.InvokeCompiled(_tsMapBound, _arr);
+
+    [Benchmark]
+    [BenchmarkCategory("FilterBound")]
+    public object? SharpTS_FilterBound() => BenchmarkHarness.InvokeCompiled(_tsFilterBound, _arr);
+
+    [Benchmark]
+    [BenchmarkCategory("ReduceBound")]
+    public object? SharpTS_ReduceBound() => BenchmarkHarness.InvokeCompiled(_tsReduceBound, _arr);
+
+    [Benchmark]
+    [BenchmarkCategory("EveryBound")]
+    public object? SharpTS_EveryBound() => BenchmarkHarness.InvokeCompiled(_tsEveryBound, _arr);
+
+    [Benchmark]
+    [BenchmarkCategory("FindBound")]
+    public object? SharpTS_FindBound() => BenchmarkHarness.InvokeCompiled(_tsFindBound, _arr);
 }

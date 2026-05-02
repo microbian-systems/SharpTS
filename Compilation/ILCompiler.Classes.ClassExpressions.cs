@@ -441,6 +441,7 @@ public partial class ILCompiler
             FieldsField = fieldsField,
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
+            ConstArrowBindings = _closures.ConstArrowBindings,
             DisplayClasses = _closures.DisplayClasses,
             DisplayClassFields = _closures.DisplayClassFields,
             DisplayClassConstructors = _closures.DisplayClassConstructors,
