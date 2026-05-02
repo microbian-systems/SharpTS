@@ -483,6 +483,31 @@ Compiled mode uses late-bound reflection to the shim (`DotNetDelegateShim` / `Do
 
 ---
 
+## 17. CONFORMANCE TEST SUITES
+
+Two external corpora pin SharpTS against canonical references. Both run as standalone projects (not in `SharpTS.sln`); see each project's README for full details. Pass rates here are subset-relative — neither suite runs the full corpus today.
+
+### TC39 Test262 (ECMA-262 / JavaScript spec)
+
+`SharpTS.Test262/` runs a configurable subset of [test262](https://github.com/tc39/test262) in both interpreter and compiled-IL modes. Diff harness is committed-baseline-vs-current; hard-fails on regression or new-pass. As of 2026-04-20 the suite is at 10,132/10,132 pass on the configured subset (zero skips) — see `feedback_test_perf_changes.md` and the various `project_*_2026_04_*.md` memory entries for context.
+
+### Microsoft TypeScript conformance (TS type-checker spec)
+
+`SharpTS.TypeScriptConformance/` runs a subset of [microsoft/TypeScript's conformance corpus](https://github.com/microsoft/TypeScript/tree/main/tests/cases/conformance) and diffs our type-checker diagnostics against `tsc`'s `*.errors.txt` baselines. Pinned to TS v5.5.4. Pass classification is on `(line, tsCode)` tuples — see [#80](https://github.com/nickna/SharpTS/issues/80) for the tracking epic.
+
+| Subset | Tests | Pass | Fail | ParseError | Skipped |
+|---|---:|---:|---:|---:|---:|
+| `types/typeRelationships/assignmentCompatibility/` | 70 | 4 (5.7%) | 9 (12.9%) | 57 (81.4%) | 0 |
+
+The high `ParseError` rate is dominated by `declare function` (and related ambient declarations) — the parser doesn't fully support that surface yet. Supporting it is the largest single lever to lift conformance pass rate; tracked as follow-up work, not yet scheduled.
+
+`Skipped` includes:
+- **Multi-file tests** (`Skipped:multi-file-deferred`) — cross-file resolution into the runner is follow-up work.
+- **Lib-drift skips** (`Skipped:lib-drift`) — tests where `tsc` expects "method missing" diagnostics our checker doesn't reproduce because we have the surface always-available regardless of `@lib`. Conservative filter (only fires when our diagnostic set is empty AND every expected code is one of `TS2339`/`TS2304`/`TS2551`/`TS7053`). See [#83](https://github.com/nickna/SharpTS/issues/83) for the design and [#99](https://github.com/nickna/SharpTS/issues/99) for the deferred Phase-1.5 work that would eliminate the drift entirely (load `tsc`'s `lib.*.d.ts` files into the type checker).
+- **Directive skips** — tests with directives like `@experimentalDecorators`, `@jsx`, `@isolatedModules` we don't intend to honor in Phase 1.
+
+---
+
 ## Breaking Changes (2026-04-18)
 
 The embedded-stdlib migration removed implicit global bindings for several classes previously created as compile-time fallbacks. User code must now `import` these from the owning module explicitly (matches ESM-strict semantics and Node's own behavior):
