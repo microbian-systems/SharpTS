@@ -52,20 +52,21 @@ public class SharpTSException : Exception
     /// <summary>
     /// Creates an exception with code, message, and optional location.
     /// </summary>
-    public SharpTSException(DiagnosticCode code, string message, SourceLocation? location = null)
-        : this(new Diagnostic(DiagnosticSeverity.Error, code, message, location))
+    public SharpTSException(DiagnosticCode code, string message, SourceLocation? location = null, string? tsCode = null)
+        : this(new Diagnostic(DiagnosticSeverity.Error, code, message, location, TsCode: tsCode))
     {
     }
 
     /// <summary>
     /// Creates an exception with code, message, line, and optional column.
     /// </summary>
-    public SharpTSException(DiagnosticCode code, string message, int? line, int? column = null, string? filePath = null)
+    public SharpTSException(DiagnosticCode code, string message, int? line, int? column = null, string? filePath = null, string? tsCode = null)
         : this(new Diagnostic(
             DiagnosticSeverity.Error,
             code,
             message,
-            line.HasValue ? new SourceLocation(filePath, line.Value, column ?? 1) : null))
+            line.HasValue ? new SourceLocation(filePath, line.Value, column ?? 1) : null,
+            TsCode: tsCode))
     {
     }
 
