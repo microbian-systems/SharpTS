@@ -71,6 +71,12 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.ArrayHole
         EmitArrayHoleClass(moduleBuilder, runtime);
 
+        // Per-thread args[] pool used by method-call dispatch to skip
+        // newarr per `obj.method(a, b)` invocation. Lives on a separate
+        // class because $Runtime can't host more than one [ThreadStatic]
+        // field without tripping a .NET 10 tier-0 QuickJit miscompilation.
+        EmitCallArgsPool(moduleBuilder, runtime);
+
         // Emit $Array class for standalone array support
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSArray
         EmitTSArrayClass(moduleBuilder, runtime);

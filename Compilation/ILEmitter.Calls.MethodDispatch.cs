@@ -159,9 +159,21 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldstr, methodName);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
 
-        // Create args array
-        IL.Emit(OpCodes.Ldc_I4, arguments.Count);
-        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+        // Create args array. For arity > 0, route through the per-thread
+        // $CallArgsPool to skip per-call newarr — the dispatch chain
+        // (InvokeMethodValue → $TSFunction.Invoke → MethodInvoker.Invoke)
+        // reads values out of the array without retaining a reference,
+        // so cross-call reuse on the same thread is sound.
+        if (arguments.Count == 0)
+        {
+            IL.Emit(OpCodes.Ldc_I4_0);
+            IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.CallArgsPoolGet);
+        }
 
         for (int i = 0; i < arguments.Count; i++)
         {

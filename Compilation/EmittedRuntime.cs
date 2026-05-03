@@ -1036,6 +1036,13 @@ public class EmittedRuntime
     // $Array type - emitted for standalone assemblies
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSArray
     public Type TSArrayType { get; set; } = null!;
+
+    /// <summary>
+    /// $CallArgsPool.Get(int arity) — returns a thread-static object[]
+    /// of the given arity (cached for arities 1..4, fresh allocation
+    /// for ≥5). Used at method-call sites to avoid per-call newarr.
+    /// </summary>
+    public MethodBuilder CallArgsPoolGet { get; set; } = null!;
     public ConstructorBuilder TSArrayCtor { get; set; } = null!;
     public MethodBuilder TSArrayElementsGetter { get; set; } = null!;
     public MethodBuilder TSArrayIsFrozenGetter { get; set; } = null!;
