@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
 using SharpTS.TypeSystem;
@@ -16,6 +17,24 @@ public class SharpTSRegExp : ITypeCategorized
 {
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.RegExp;
+
+    /// <summary>
+    /// Compile cache keyed by (pattern, options). A regex literal in TS
+    /// source like <c>/foo/g</c> evaluates to <c>new SharpTSRegExp("foo", "g")</c>
+    /// every time the expression runs — in a tight loop that's per-iter
+    /// <c>new Regex(...)</c> compilation, the dominant cost (~250 MB of
+    /// regex-engine state allocated for N=100K calls in baseline). Sharing
+    /// the compiled .NET <c>Regex</c> across calls collapses that to a
+    /// single compile per (pattern, options) per process.
+    ///
+    /// Why a tuple key works: ECMAScript's regex semantics here are fully
+    /// captured by (source, flags) — no instance-specific state lives on
+    /// the .NET <c>Regex</c> object. Per-instance <c>LastIndex</c> stays
+    /// on <c>SharpTSRegExp</c>, not on <c>_regex</c>, so cache sharing is
+    /// safe. Cache size is bounded by the set of distinct regex literals
+    /// in the program, which is finite.
+    /// </summary>
+    private static readonly ConcurrentDictionary<(string Pattern, RegexOptions Options), Regex> _compileCache = new();
 
     private readonly Regex _regex;
     private readonly string _source;
@@ -99,10 +118,15 @@ public class SharpTSRegExp : ITypeCategorized
 
         try
         {
-            _regex = new Regex(pattern, options);
+            _regex = _compileCache.GetOrAdd((pattern, options),
+                static key => new Regex(key.Pattern, key.Options));
         }
         catch (ArgumentException ex)
         {
+            // .NET wraps the underlying RegexParseException in
+            // ArgumentException; ConcurrentDictionary.GetOrAdd will surface
+            // it as-is on the first failed compile (and won't cache the
+            // failure — subsequent retries can re-attempt).
             throw new Exception($"Invalid regular expression: {ex.Message}");
         }
     }
