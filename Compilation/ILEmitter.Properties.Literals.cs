@@ -101,8 +101,27 @@ public partial class ILEmitter
         }
         else if (!hasSpreads && !hasComputedKeys)
         {
-            // Simple case: no spreads, no computed keys
-            IL.Emit(OpCodes.Newobj, _ctx.Types.GetConstructor(_ctx.Types.DictionaryStringObject));
+            // Simple case: no spreads, no computed keys. Drop the legacy
+            // `Call CreateObject` no-op identity helper. Pre-size the
+            // dictionary only when property count > 3: .NET's
+            // Dictionary<,> default-ctors a capacity-0 instance that
+            // lazily allocates buckets/entries on the first set_Item, then
+            // resizes through prime sequence 3 → 7 → … Pre-sizing wins
+            // when we know we'll exceed capacity 3 (i.e. ≥ 4 props),
+            // saving a resize. For smaller literals the default ctor is
+            // actually cheaper since the lazy entries-array allocation
+            // matches what we'd pre-size to anyway, and the extra IL +
+            // capacity ctor work measurably regresses small-object hot
+            // loops.
+            if (o.Properties.Count > 3)
+            {
+                IL.Emit(OpCodes.Ldc_I4, o.Properties.Count);
+                IL.Emit(OpCodes.Newobj, _ctx.Types.GetConstructor(_ctx.Types.DictionaryStringObject, _ctx.Types.Int32));
+            }
+            else
+            {
+                IL.Emit(OpCodes.Newobj, _ctx.Types.GetConstructor(_ctx.Types.DictionaryStringObject));
+            }
 
             foreach (var prop in o.Properties)
             {
@@ -112,13 +131,22 @@ public partial class ILEmitter
                 EmitBoxIfNeeded(prop.Value);
                 IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.DictionaryStringObject, "set_Item", _ctx.Types.String, _ctx.Types.Object));
             }
-
-            IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateObject);
         }
         else
         {
-            // Complex case: has spreads or computed keys, use Dictionary<string, object?> and SetIndex
-            IL.Emit(OpCodes.Newobj, _ctx.Types.GetConstructor(_ctx.Types.DictionaryStringObject));
+            // Complex case: has spreads or computed keys, use Dictionary<string, object?> and SetIndex.
+            // Pre-size only when Properties.Count > 3 (matches simple-case
+            // heuristic); spreads may add more, but the resize then is
+            // hard to avoid without runtime info.
+            if (o.Properties.Count > 3)
+            {
+                IL.Emit(OpCodes.Ldc_I4, o.Properties.Count);
+                IL.Emit(OpCodes.Newobj, _ctx.Types.GetConstructor(_ctx.Types.DictionaryStringObject, _ctx.Types.Int32));
+            }
+            else
+            {
+                IL.Emit(OpCodes.Newobj, _ctx.Types.GetConstructor(_ctx.Types.DictionaryStringObject));
+            }
 
             foreach (var prop in o.Properties)
             {
