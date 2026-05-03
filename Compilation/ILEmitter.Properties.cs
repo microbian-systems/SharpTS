@@ -265,6 +265,24 @@ public partial class ILEmitter
         if (objType != null && TryEmitBuiltInTypePropertyGet(g, objType))
             return;
 
+        // Phase H fast path: when the receiver's static type is a plain
+        // record (`{ x: T, y: U }`), the runtime value is most often a
+        // bare `Dictionary<string, object>` produced by EmitObjectLiteral.
+        // Bypass GetProperty's isinst chain ($TSNamespace / $Object / Map /
+        // Set / Dict / $Array / List / object[] / ...) with a single
+        // Isinst Dict + direct TryGetValue. Fall through to GetProperty if
+        // the runtime shape doesn't match (function parameters typed as
+        // record, class instances assigned to record-typed variables, etc.).
+        // Skipped when optional chaining is in play — null-check semantics
+        // there are non-trivial and hot-path optionals are rare.
+        if (!g.Optional
+            && objType is TypeInfo.Record
+            && _ctx.Runtime?.UndefinedInstance != null)
+        {
+            EmitTypedRecordPropertyGet(g);
+            return;
+        }
+
         EmitExpression(g.Object);
         EmitBoxIfNeeded(g.Object);
 
@@ -300,6 +318,65 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
         }
+    }
+
+    /// <summary>
+    /// Phase H fast path for <c>obj.x</c> on a record-typed receiver.
+    /// Emits a runtime-guarded <c>Dictionary&lt;string, object&gt;.TryGetValue</c>
+    /// that bypasses the long isinst chain inside <c>$Runtime.GetProperty</c>
+    /// for the common case: object-literal-shaped values produced by
+    /// <c>EmitObjectLiteral</c> are bare dictionaries, and the guard
+    /// succeeds. On miss (function params typed as record, class
+    /// instances downcast to record shape, etc.) we fall through to the
+    /// existing dispatch.
+    /// </summary>
+    private void EmitTypedRecordPropertyGet(Expr.Get g)
+    {
+        EmitExpression(g.Object);
+        EmitBoxIfNeeded(g.Object);
+
+        var receiverLocal = IL.DeclareLocal(_ctx.Types.Object);
+        var dictLocal = IL.DeclareLocal(_ctx.Types.DictionaryStringObject);
+        var outLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, receiverLocal);
+
+        var fallbackLabel = IL.DefineLabel();
+        var endLabel = IL.DefineLabel();
+        var notFoundLabel = IL.DefineLabel();
+
+        // dictLocal = receiver as Dictionary<string, object>
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Isinst, _ctx.Types.DictionaryStringObject);
+        IL.Emit(OpCodes.Stloc, dictLocal);
+        IL.Emit(OpCodes.Ldloc, dictLocal);
+        IL.Emit(OpCodes.Brfalse, fallbackLabel);
+
+        // dict.TryGetValue(name, out value) ? value : $Undefined
+        IL.Emit(OpCodes.Ldloc, dictLocal);
+        IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+        IL.Emit(OpCodes.Ldloca, outLocal);
+        var tryGetValue = _ctx.Types.GetMethod(
+            _ctx.Types.DictionaryStringObject,
+            "TryGetValue",
+            _ctx.Types.String,
+            _ctx.Types.Object.MakeByRefType());
+        IL.Emit(OpCodes.Callvirt, tryGetValue);
+        IL.Emit(OpCodes.Brfalse, notFoundLabel);
+        IL.Emit(OpCodes.Ldloc, outLocal);
+        IL.Emit(OpCodes.Br, endLabel);
+
+        IL.MarkLabel(notFoundLabel);
+        // ECMA-262: missing property reads as undefined.
+        IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
+        IL.Emit(OpCodes.Br, endLabel);
+
+        IL.MarkLabel(fallbackLabel);
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
+
+        IL.MarkLabel(endLabel);
+        SetStackUnknown();
     }
 
     protected override void EmitSet(Expr.Set s)
