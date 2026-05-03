@@ -21,6 +21,7 @@ public class PropertyAccessBenchmarks
     private MethodInfo _tsChain = null!;
     private MethodInfo _tsMethodCall = null!;
     private MethodInfo _tsClassProp = null!;
+    private MethodInfo _tsPropWrite = null!;
 
     [Params(100, 10_000, 1_000_000)]
     public int N { get; set; }
@@ -42,6 +43,7 @@ public class PropertyAccessBenchmarks
         _tsChain = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "chainPropLoop");
         _tsMethodCall = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "methodCallLoop");
         _tsClassProp = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "classPropLoop");
+        _tsPropWrite = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "singlePropWriteLoop");
     }
 
     [Benchmark]
@@ -63,4 +65,9 @@ public class PropertyAccessBenchmarks
     [BenchmarkCategory("ClassPropLoop")]
     public object? SharpTS_ClassPropLoop()
         => BenchmarkHarness.InvokeCompiled(_tsClassProp, (double)N);
+
+    [Benchmark]
+    [BenchmarkCategory("SinglePropWriteLoop")]
+    public object? SharpTS_SinglePropWriteLoop()
+        => BenchmarkHarness.InvokeCompiled(_tsPropWrite, (double)N);
 }

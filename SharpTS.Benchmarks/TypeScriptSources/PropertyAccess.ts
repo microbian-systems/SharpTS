@@ -60,3 +60,15 @@ function classPropLoop(n: number): number {
     }
     return total;
 }
+
+// Property write — `obj.x = v`. Tight loop assigning to the same property
+// each iteration on a single object. Measures dispatch cost of SetProperty.
+// Explicit annotation keeps `x` widened to number rather than literal 0,
+// otherwise the type checker rejects the iteration assignment.
+function singlePropWriteLoop(n: number): number {
+    const obj: { x: number, y: number } = { x: 0, y: 0 };
+    for (let i: number = 0; i < n; i++) {
+        obj.x = i;
+    }
+    return obj.x as number;
+}

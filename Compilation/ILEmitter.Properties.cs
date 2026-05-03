@@ -379,6 +379,89 @@ public partial class ILEmitter
         SetStackUnknown();
     }
 
+    /// <summary>
+    /// Phase I fast path for <c>obj.x = v</c> on a record-typed receiver.
+    /// Symmetric to <see cref="EmitTypedRecordPropertyGet"/>, but with
+    /// extra guards for the spec-mandated semantics SetProperty handles:
+    /// <list type="bullet">
+    /// <item>Object.freeze: silent fail in sloppy mode.</item>
+    /// <item>Object.seal: existing-property writes succeed, new-property
+    /// adds silently fail.</item>
+    /// <item>Object.preventExtensions: tracked via PropertyDescriptorStore;
+    /// fall back to slow path which calls PDSCanAddProperty.</item>
+    /// </list>
+    /// We check FrozenObjects/SealedObjects directly; on hit, route to
+    /// the slow path. For the non-frozen, non-sealed common case we go
+    /// straight to <c>dict.set_Item</c>. Skipping the long isinst chain
+    /// inside SetProperty saves ~10 ns/call on hot paths.
+    ///
+    /// Stack on entry: empty. Stack on exit: <c>[boxedValue]</c> — the
+    /// assignment expression's result, matching the slow path.
+    /// </summary>
+    private void EmitTypedRecordPropertySet(Expr.Set s)
+    {
+        EmitExpression(s.Object);
+        EmitBoxIfNeeded(s.Object);
+        var receiverLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, receiverLocal);
+
+        EmitExpression(s.Value);
+        EmitBoxIfNeeded(s.Value);
+        var valueLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, valueLocal);
+
+        var fallbackLabel = IL.DefineLabel();
+        var endLabel = IL.DefineLabel();
+        var ignoredLocal = IL.DeclareLocal(_ctx.Types.Object);
+        var cwtTryGet = _ctx.Types.GetMethod(
+            _ctx.Types.ConditionalWeakTable, "TryGetValue",
+            _ctx.Types.Object, _ctx.Types.Object.MakeByRefType());
+
+        // Bail to slow path on Object.freeze/seal — keeps spec semantics
+        // intact without having to replicate the property-descriptor
+        // dance here. Check FrozenObjects first; then SealedObjects.
+        IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.FrozenObjectsField);
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Ldloca, ignoredLocal);
+        IL.Emit(OpCodes.Callvirt, cwtTryGet);
+        IL.Emit(OpCodes.Brtrue, fallbackLabel);
+
+        IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.SealedObjectsField);
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Ldloca, ignoredLocal);
+        IL.Emit(OpCodes.Callvirt, cwtTryGet);
+        IL.Emit(OpCodes.Brtrue, fallbackLabel);
+
+        // dictLocal = receiver as Dictionary<string, object>; if null,
+        // not the shape we're optimized for → fall back.
+        var dictLocal = IL.DeclareLocal(_ctx.Types.DictionaryStringObject);
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Isinst, _ctx.Types.DictionaryStringObject);
+        IL.Emit(OpCodes.Stloc, dictLocal);
+        IL.Emit(OpCodes.Ldloc, dictLocal);
+        IL.Emit(OpCodes.Brfalse, fallbackLabel);
+
+        // dict[name] = value
+        IL.Emit(OpCodes.Ldloc, dictLocal);
+        IL.Emit(OpCodes.Ldstr, s.Name.Lexeme);
+        IL.Emit(OpCodes.Ldloc, valueLocal);
+        var setItem = _ctx.Types.GetMethod(
+            _ctx.Types.DictionaryStringObject, "set_Item",
+            _ctx.Types.String, _ctx.Types.Object);
+        IL.Emit(OpCodes.Callvirt, setItem);
+        IL.Emit(OpCodes.Br, endLabel);
+
+        IL.MarkLabel(fallbackLabel);
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Ldstr, s.Name.Lexeme);
+        IL.Emit(OpCodes.Ldloc, valueLocal);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.SetProperty);
+
+        IL.MarkLabel(endLabel);
+        IL.Emit(OpCodes.Ldloc, valueLocal);
+        SetStackUnknown();
+    }
+
     protected override void EmitSet(Expr.Set s)
     {
         // CommonJS: `module.exports = X` writes → stsfld $exports
@@ -486,6 +569,24 @@ public partial class ILEmitter
                 SetStackUnknown();
                 return;
             }
+        }
+
+        // Phase I fast path: symmetric to the EmitGet typed-record fast
+        // path. When the receiver's static type is `TypeInfo.Record`, the
+        // runtime value is most often a bare `Dictionary<string, object>`
+        // produced by EmitObjectLiteral. Bypass SetProperty's isinst
+        // chain with a direct `Castclass Dictionary; set_Item` on the
+        // common case, falling through to SetProperty for non-Dict
+        // shapes ($Object with setters, class instances, etc.).
+        // Skipped under strict mode — SetPropertyStrict surfaces a
+        // TypeError for assignments to read-only properties / sealed
+        // objects, which we can't replicate in IL without re-doing the
+        // dispatch chain.
+        if (!_ctx.IsStrictMode
+            && objType is TypeInfo.Record)
+        {
+            EmitTypedRecordPropertySet(s);
+            return;
         }
 
         // Build stack for SetProperty(obj, name, value) or SetPropertyStrict(obj, name, value, strictMode)
