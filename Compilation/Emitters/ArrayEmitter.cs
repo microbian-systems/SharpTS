@@ -1,4 +1,5 @@
 using System.Reflection.Emit;
+using SharpTS.Compilation.ArrowInlining;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation.Emitters;
@@ -71,6 +72,15 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "map":
             {
+                // Inline fast path: literal non-capturing expression-body
+                // arrow — emit body IL directly into the loop, eliminating
+                // the per-iteration Func<>.Invoke. Issue #96 M2.
+                if (arguments.Count == 1
+                    && ArrowInlinabilityCheck.TryGetEligibleArrow(emitter, arguments[0], expectedParamCount: 1, out var inlinedAfMap))
+                {
+                    InlinedBodyEmitter.EmitInlinedMap(emitter, inlinedAfMap);
+                    break;
+                }
                 // Fast path: arr.map(literal-non-capturing-arrow) — direct
                 // delegate dispatch, skipping $TSFunction allocation and the
                 // MethodInvoker boundary. See issue #96 Phase A.
@@ -87,6 +97,13 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "filter":
             {
+                // Inline fast path. Issue #96 M2.
+                if (arguments.Count == 1
+                    && ArrowInlinabilityCheck.TryGetEligibleArrow(emitter, arguments[0], expectedParamCount: 1, out var inlinedAfFilter))
+                {
+                    InlinedBodyEmitter.EmitInlinedFilter(emitter, inlinedAfFilter);
+                    break;
+                }
                 if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayFilterDirect, ctx.Runtime!.ArrayFilterDirectBool))
                     break;
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
@@ -100,6 +117,17 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "forEach":
             {
+                // Inline fast path: literal non-capturing arrow with an
+                // expression body — emit the body's IL directly into the
+                // loop, eliminating the Func<>.Invoke virtual call that the
+                // Direct path still pays. Issue #96 M1.
+                if (arguments.Count == 1
+                    && ArrowInlinabilityCheck.TryGetEligibleArrow(emitter, arguments[0], expectedParamCount: 1, out var inlinedAf))
+                {
+                    InlinedBodyEmitter.EmitInlinedForEach(emitter, inlinedAf);
+                    il.Emit(OpCodes.Ldnull); // forEach returns undefined; inliner is void
+                    break;
+                }
                 if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayForEachDirect))
                 {
                     il.Emit(OpCodes.Ldnull); // forEach returns undefined; helper is void
@@ -114,6 +142,13 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "find":
             {
+                // Inline fast path. Issue #96 M3.
+                if (arguments.Count == 1
+                    && ArrowInlinabilityCheck.TryGetEligibleArrow(emitter, arguments[0], expectedParamCount: 1, out var inlinedAfFind))
+                {
+                    InlinedBodyEmitter.EmitInlinedShortCircuit(emitter, inlinedAfFind, InlinedBodyEmitter.ShortCircuitKind.Find);
+                    break;
+                }
                 if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayFindDirect, ctx.Runtime!.ArrayFindDirectBool))
                     break;
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
@@ -127,6 +162,14 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "findIndex":
             {
+                // Inline fast path: leaves raw double on stack; box after. Issue #96 M3.
+                if (arguments.Count == 1
+                    && ArrowInlinabilityCheck.TryGetEligibleArrow(emitter, arguments[0], expectedParamCount: 1, out var inlinedAfFindIdx))
+                {
+                    InlinedBodyEmitter.EmitInlinedShortCircuit(emitter, inlinedAfFindIdx, InlinedBodyEmitter.ShortCircuitKind.FindIndex);
+                    il.Emit(OpCodes.Box, ctx.Types.Double);
+                    break;
+                }
                 if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayFindIndexDirect, ctx.Runtime!.ArrayFindIndexDirectBool))
                 {
                     il.Emit(OpCodes.Box, ctx.Types.Double); // helper returns double
@@ -144,6 +187,12 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "some":
             {
+                if (arguments.Count == 1
+                    && ArrowInlinabilityCheck.TryGetEligibleArrow(emitter, arguments[0], expectedParamCount: 1, out var inlinedAfSome))
+                {
+                    InlinedBodyEmitter.EmitInlinedShortCircuit(emitter, inlinedAfSome, InlinedBodyEmitter.ShortCircuitKind.Some);
+                    break;
+                }
                 if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArraySomeDirect, ctx.Runtime!.ArraySomeDirectBool))
                     break;
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
@@ -157,6 +206,12 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "every":
             {
+                if (arguments.Count == 1
+                    && ArrowInlinabilityCheck.TryGetEligibleArrow(emitter, arguments[0], expectedParamCount: 1, out var inlinedAfEvery))
+                {
+                    InlinedBodyEmitter.EmitInlinedShortCircuit(emitter, inlinedAfEvery, InlinedBodyEmitter.ShortCircuitKind.Every);
+                    break;
+                }
                 if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayEveryDirect, ctx.Runtime!.ArrayEveryDirectBool))
                     break;
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
@@ -169,16 +224,39 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
             }
 
             case "reduce":
+            {
+                // Inline fast path: 2-arg form (initial value present) with
+                // a 2-param literal arrow (acc, el). Issue #96 M4. The
+                // no-initial-value form takes the slow path (would need a
+                // first-present-slot scan).
+                if (arguments.Count == 2
+                    && ArrowInlinabilityCheck.TryGetEligibleArrow(emitter, arguments[0], expectedParamCount: 2, out var inlinedAfReduce))
+                {
+                    InlinedBodyEmitter.EmitInlinedReduce(emitter, inlinedAfReduce, arguments[1], reverse: false);
+                    break;
+                }
                 if (TryEmitReduceDirectCall(emitter, arguments))
                     break;
                 EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduce);
                 break;
+            }
 
             case "reduceRight":
+            {
+                // Inline fast path: 2-arg form. Issue #96 M4. No Direct
+                // helper exists for reduceRight today — capturing arrows
+                // and no-initial form take the slow path.
+                if (arguments.Count == 2
+                    && ArrowInlinabilityCheck.TryGetEligibleArrow(emitter, arguments[0], expectedParamCount: 2, out var inlinedAfReduceRight))
+                {
+                    InlinedBodyEmitter.EmitInlinedReduce(emitter, inlinedAfReduceRight, arguments[1], reverse: true);
+                    break;
+                }
                 EmitArgsArray(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduceRight);
                 break;
+            }
 
             case "join":
                 EmitSingleArgOrNull(emitter, arguments);
@@ -248,6 +326,15 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "findLast":
             {
+                // Inline fast path. Issue #96 M3. No Direct helper exists for
+                // findLast yet — capturing/typed arrows still take the slow
+                // path; that's a deferred optimization.
+                if (arguments.Count == 1
+                    && ArrowInlinabilityCheck.TryGetEligibleArrow(emitter, arguments[0], expectedParamCount: 1, out var inlinedAfFindLast))
+                {
+                    InlinedBodyEmitter.EmitInlinedShortCircuit(emitter, inlinedAfFindLast, InlinedBodyEmitter.ShortCircuitKind.FindLast);
+                    break;
+                }
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFindLast);
                 var resLocal = il.DeclareLocal(ctx.Types.Object);
@@ -259,6 +346,13 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "findLastIndex":
             {
+                if (arguments.Count == 1
+                    && ArrowInlinabilityCheck.TryGetEligibleArrow(emitter, arguments[0], expectedParamCount: 1, out var inlinedAfFindLastIdx))
+                {
+                    InlinedBodyEmitter.EmitInlinedShortCircuit(emitter, inlinedAfFindLastIdx, InlinedBodyEmitter.ShortCircuitKind.FindLastIndex);
+                    il.Emit(OpCodes.Box, ctx.Types.Double);
+                    break;
+                }
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFindLastIndex);
                 var resLocal = il.DeclareLocal(ctx.Types.Double);
