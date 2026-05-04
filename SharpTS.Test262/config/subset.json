@@ -11,6 +11,7 @@
     "test/built-ins/Promise",
     "test/built-ins/RegExp",
     "test/built-ins/String",
+    "test/language/expressions/call",
     "test/language/expressions/new"
   ],
   "compiledExcludeFolders": [

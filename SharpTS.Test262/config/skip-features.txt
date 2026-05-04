@@ -30,3 +30,8 @@ decorators
 explicit-resource-management
 iterator-helpers
 async-explicit-resource-management
+
+# Tail-call optimization isn't implemented; tests recurse $MAX_ITERATIONS
+# (large enough to blow the .NET interpreter stack and crash testhost,
+# which can't catch StackOverflowException). Skip via feature tag.
+tail-call-optimization
