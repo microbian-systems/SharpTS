@@ -9,6 +9,7 @@
     "test/built-ins/Number",
     "test/built-ins/Object",
     "test/built-ins/Promise",
+    "test/built-ins/RegExp",
     "test/built-ins/String",
     "test/language/expressions/new"
   ],
