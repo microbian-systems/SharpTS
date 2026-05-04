@@ -3250,7 +3250,7 @@ test/built-ins/JSON/parse/name.js TypeCheckError
 test/built-ins/JSON/parse/not-a-constructor.js Pass
 test/built-ins/JSON/parse/prop-desc.js TypeCheckError
 test/built-ins/JSON/parse/revived-proxy-revoked.js Pass
-test/built-ins/JSON/parse/revived-proxy.js RuntimeError
+test/built-ins/JSON/parse/revived-proxy.js Pass
 test/built-ins/JSON/parse/reviver-array-define-prop-err.js Pass
 test/built-ins/JSON/parse/reviver-array-delete-err.js Pass
 test/built-ins/JSON/parse/reviver-array-get-prop-from-prototype.js RuntimeError
@@ -3269,8 +3269,8 @@ test/built-ins/JSON/parse/reviver-get-name-err.js Pass
 test/built-ins/JSON/parse/reviver-object-define-prop-err.js Pass
 test/built-ins/JSON/parse/reviver-object-delete-err.js Pass
 test/built-ins/JSON/parse/reviver-object-get-prop-from-prototype.js RuntimeError
-test/built-ins/JSON/parse/reviver-object-non-configurable-prop-create.js RuntimeError
-test/built-ins/JSON/parse/reviver-object-non-configurable-prop-delete.js RuntimeError
+test/built-ins/JSON/parse/reviver-object-non-configurable-prop-create.js Pass
+test/built-ins/JSON/parse/reviver-object-non-configurable-prop-delete.js Pass
 test/built-ins/JSON/parse/reviver-object-own-keys-err.js Pass
 test/built-ins/JSON/parse/reviver-wrapper.js TypeCheckError
 test/built-ins/JSON/parse/text-negative-zero.js Pass

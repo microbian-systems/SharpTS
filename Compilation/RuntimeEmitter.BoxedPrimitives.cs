@@ -325,4 +325,58 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
     }
+
+    /// <summary>
+    /// Emits <c>$Runtime.UnwrapIfBoxed(object obj) -&gt; object</c>: returns
+    /// the underlying <c>__primitiveValue</c> when <paramref name="obj"/> is a
+    /// <c>$Object</c> wrapper produced by <c>NewBoxedPrimitive</c> (i.e. has
+    /// both <c>__primitiveType</c> and <c>__primitiveValue</c> fields), else
+    /// returns the value unchanged. Used by abstract equality and string
+    /// concatenation: ECMA-262 §7.2.14 step 11 and §13.10 require ToPrimitive
+    /// on Object operands before comparison/concatenation, and the spec'd
+    /// path lands at the wrapper's <c>__primitiveValue</c> via
+    /// <c>OrdinaryToPrimitive(hint)</c> → <c>valueOf()</c>. This is the cheap
+    /// shortcut the spec endorses for boxed primitives specifically.
+    /// </summary>
+    private void EmitUnwrapIfBoxed(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "UnwrapIfBoxed",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        runtime.UnwrapIfBoxedMethod = method;
+
+        var il = method.GetILGenerator();
+        var passThruLabel = il.DefineLabel();
+
+        // null / undefined / non-$Object → pass through
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, passThruLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, passThruLabel);
+
+        // Must have __primitiveType marker (else it's a plain $Object).
+        var typeMarkerLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Ldstr, "__primitiveType");
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
+        il.Emit(OpCodes.Stloc, typeMarkerLocal);
+        il.Emit(OpCodes.Ldloc, typeMarkerLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, passThruLabel);
+
+        // Read __primitiveValue and return it.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(passThruLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
 }

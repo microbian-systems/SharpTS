@@ -91,7 +91,13 @@ public partial class RuntimeEmitter
         Wire("codePointAt",    runtime.StringCodePointAt,    1);
         Wire("substring",      runtime.StringSubstring,      2);
         Wire("substr",         runtime.StringSubstr,         2);
-        Wire("indexOf",        runtime.StringIndexOf,        1);
+        // indexOf slot uses the from-variant so wrapper / any-typed receivers
+        // routed through the prototype dispatch respect the optional second
+        // argument (`pos`). The single-arg StringIndexOf form drops it
+        // silently. ECMA-262 22.1.3.10 step 5: ToIntegerOrInfinity(undefined) = 0,
+        // which $TSFunction CoercePrimitiveArgs delivers via ToNumber → NaN
+        // and StringIndexOfFrom's NaN-clamps-to-0 path.
+        Wire("indexOf",        runtime.StringIndexOfFrom,    1);
         Wire("lastIndexOf",    runtime.StringLastIndexOf,    1);
         Wire("toUpperCase",    runtime.StringToUpperCase,    0);
         Wire("toLowerCase",    runtime.StringToLowerCase,    0);
@@ -100,7 +106,11 @@ public partial class RuntimeEmitter
         Wire("trimEnd",        runtime.StringTrimEnd,        0);
         Wire("replace",        runtime.StringReplace,        2);
         Wire("replaceAll",     runtime.StringReplaceAll,     2);
-        Wire("split",          runtime.StringSplit,          2);
+        // split slot uses the regex-aware + limit-aware proto helper. The basic
+        // StringSplit (string,string → list, no limit, no regex) is no longer
+        // wired since wrapper / any-typed receivers reach the prototype slot
+        // and need both behaviors that match the inline StringEmitter path.
+        Wire("split",          runtime.StringSplitProto,     2);
         Wire("includes",       runtime.StringIncludes,       1);
         Wire("startsWith",     runtime.StringStartsWith,     1);
         Wire("endsWith",       runtime.StringEndsWith,       1);
@@ -113,17 +123,20 @@ public partial class RuntimeEmitter
         Wire("normalize",      runtime.StringNormalize,      0);
         Wire("localeCompare",  runtime.StringLocaleCompare,  1);
 
-        // Methods without dedicated $Runtime helpers — wired to a generic
-        // stub so typeof + isConstructor probes pass. The pattern matcher
-        // and inline dispatch handle direct invocations of these on actual
-        // strings; the wrappers here are only observed by Test262
-        // `not-a-constructor.js` harness probes.
-        // match/matchAll/search throw TypeError on null/undefined receiver per
-        // ECMA-262 22.1.3.* step 1. Use the strict stub so borrowed-method
-        // patterns (`String.prototype.match.call(null, /./)`) propagate.
-        Wire("match",                runtime.StringPrototypeStrictStub,    1);
-        Wire("matchAll",             runtime.StringPrototypeStrictStub,    1);
-        Wire("search",               runtime.StringPrototypeStrictStub,    1);
+        // match/matchAll/search wired to the regex-aware helpers used by the
+        // inline StringEmitter path. RequireObjectCoercible(this) is enforced
+        // by $TSFunction.CoercePrimitiveArgs for any helper whose first param
+        // is named "__this" with type string — Wire renames param 1 to
+        // "__this" above, so borrowed-method calls of the form
+        // `String.prototype.search.call(null, ...)` still throw TypeError.
+        // Wrapper receivers (`new String("x").search(...)`) are unwrapped
+        // through the same path via ToJsString reading __primitiveValue.
+        // Pre-fix these slots were wired to _StringPrototypeStrictStub which
+        // ignored arguments and returned the receiver string, regressing 45
+        // Test262 tests once `new String(...)` started producing wrappers.
+        Wire("match",                runtime.StringMatchRegExp,            1);
+        Wire("matchAll",             runtime.StringMatchAllRegExp,         1);
+        Wire("search",               runtime.StringSearchRegExp,           1);
         // Issue #91: spec-correct thisStringValue extraction so wrapper
         // receivers (`new String("x")`) return the underlying primitive
         // and non-string-like receivers throw TypeError per ECMA-262 22.1.3.27.

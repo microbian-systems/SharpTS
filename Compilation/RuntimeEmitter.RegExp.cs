@@ -32,6 +32,7 @@ public partial class RuntimeEmitter
         EmitStringReplaceAllRegExp(typeBuilder, runtime);
         EmitStringSearchRegExp(typeBuilder, runtime);
         EmitStringSplitRegExp(typeBuilder, runtime);
+        EmitStringSplitProto(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -1542,6 +1543,90 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, strLoopStartLabel);
 
         il.MarkLabel(strLoopEndLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// String.prototype.split slot helper: <c>(string str, object separator,
+    /// object limit) -&gt; List&lt;object&gt;</c>. Wraps <c>StringSplitRegExp</c>
+    /// with the ECMA-262 22.1.3.21 step 6 limit truncation. Receiver coercion
+    /// (wrapper → primitive) is handled upstream by <c>$TSFunction.CoercePrimitiveArgs</c>
+    /// via the <c>__this</c> param-name convention. Mirrors the inline trim
+    /// logic in <c>StringEmitter.EmitSplit</c> so prototype-slot dispatch (used
+    /// for wrapper / any-typed receivers) matches the typed fast path.
+    /// </summary>
+    private void EmitStringSplitProto(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "StringSplitProto",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.ListOfObject,
+            [_types.String, _types.Object, _types.Object]);
+        runtime.StringSplitProto = method;
+
+        var il = method.GetILGenerator();
+
+        // result = StringSplitRegExp(str, separator)
+        var resultLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.StringSplitRegExp);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // If limit is null or $Undefined, return result as-is.
+        var coerceLimitLabel = il.DefineLabel();
+        var returnResultLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, returnResultLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, returnResultLabel);
+
+        il.MarkLabel(coerceLimitLabel);
+        // limitDouble = ToNumber(limit)
+        var limitDouble = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, limitDouble);
+
+        // if (!IsFinite(limit)) limitInt = int.MaxValue
+        var limitInt = il.DeclareLocal(_types.Int32);
+        var notInfLabel = il.DefineLabel();
+        var clampDoneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, limitDouble);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("IsFinite", [_types.Double])!);
+        il.Emit(OpCodes.Brtrue, notInfLabel);
+        il.Emit(OpCodes.Ldc_I4, int.MaxValue);
+        il.Emit(OpCodes.Stloc, limitInt);
+        il.Emit(OpCodes.Br, clampDoneLabel);
+        il.MarkLabel(notInfLabel);
+        il.Emit(OpCodes.Ldloc, limitDouble);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, limitInt);
+        il.MarkLabel(clampDoneLabel);
+
+        // if (limitInt < 0) limitInt = 0
+        var nonNegLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, limitInt);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bge, nonNegLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, limitInt);
+        il.MarkLabel(nonNegLabel);
+
+        // if (limitInt < result.Count) result = result.GetRange(0, limitInt)
+        il.Emit(OpCodes.Ldloc, limitInt);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, returnResultLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, limitInt);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("GetRange", [_types.Int32, _types.Int32])!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        il.MarkLabel(returnResultLabel);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
     }

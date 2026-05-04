@@ -3778,28 +3778,42 @@ public partial class RuntimeEmitter
         var stringConcatLabel = il.DefineLabel();
         var undefinedNanLabel = il.DefineLabel();
 
-        // if (left is string || right is string) string concat
+        // ECMA-262 §13.10.1 step 1-2: ToPrimitive both operands (default hint)
+        // before the string-vs-numeric branch. UnwrapIfBoxed handles the boxed-
+        // primitive case (`new String("x") + "y"` → "xy" instead of
+        // "[object Object]y"); plain $Object operands pass through unchanged
+        // and continue to the existing Stringify path which calls .ToString().
+        var leftLocal = il.DeclareLocal(_types.Object);
+        var rightLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.UnwrapIfBoxedMethod);
+        il.Emit(OpCodes.Stloc, leftLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.UnwrapIfBoxedMethod);
+        il.Emit(OpCodes.Stloc, rightLocal);
+
+        // if (left is string || right is string) string concat
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, stringConcatLabel);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, stringConcatLabel);
 
         // Either operand $Undefined → NaN (ECMA-262 12.8.3: ToNumber(undefined) = NaN,
         // and any arithmetic with NaN yields NaN). Convert.ToDouble($Undefined) throws
         // because $Undefined isn't IConvertible; short-circuit here.
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, undefinedNanLabel);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, undefinedNanLabel);
 
         // Numeric addition
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
         il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Box, _types.Double);
@@ -3812,9 +3826,9 @@ public partial class RuntimeEmitter
 
         // String concat - use Stringify for JS-compatible conversion (null->"null", bool->"true"/"false")
         il.MarkLabel(stringConcatLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Call, runtime.Stringify);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
         il.Emit(OpCodes.Ret);
@@ -3847,15 +3861,33 @@ public partial class RuntimeEmitter
         var objectEqualsLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
+        // ECMA-262 §7.2.14 step 11/12: when one operand is an Object and the
+        // other a primitive, IsLooselyEqual delegates to ToPrimitive on the
+        // Object then re-runs. For boxed-primitive wrappers the spec'd
+        // OrdinaryToPrimitive lands at __primitiveValue via valueOf, so unwrap
+        // upfront and let the existing primitive-vs-primitive logic do the
+        // rest. Plain $Object operands without a __primitiveType marker pass
+        // through unchanged (UnwrapIfBoxed is a no-op there) and continue to
+        // the existing Dict/$Object-vs-primitive ToNumber path below, which
+        // handles `Number.prototype == 0` and similar.
+        var leftLocal = il.DeclareLocal(_types.Object);
+        var rightLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.UnwrapIfBoxedMethod);
+        il.Emit(OpCodes.Stloc, leftLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.UnwrapIfBoxedMethod);
+        il.Emit(OpCodes.Stloc, rightLocal);
+
         // Local to track if left is nullish
         var leftNullish = il.DeclareLocal(_types.Boolean);
         var rightNullish = il.DeclareLocal(_types.Boolean);
 
         // Check if left is nullish (null or undefined)
         // leftNullish = (left == null || left is SharpTSUndefined)
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Brfalse_S, checkRightNullish); // left is null
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Cgt_Un); // true if left is SharpTSUndefined
@@ -3873,7 +3905,7 @@ public partial class RuntimeEmitter
         // rightNullish = (right == null || right is SharpTSUndefined)
         var rightNotNull = il.DefineLabel();
         var afterRightCheck = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Brtrue_S, rightNotNull);
         // Right is null - mark as nullish
         il.Emit(OpCodes.Ldc_I4_1);
@@ -3881,7 +3913,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br_S, afterRightCheck);
 
         il.MarkLabel(rightNotNull);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Cgt_Un); // true if right is SharpTSUndefined
@@ -3917,39 +3949,39 @@ public partial class RuntimeEmitter
 
         // If LEFT is Dict/$Object and RIGHT is double/string/bool → coerce LEFT.
         var notLeftCoercibleLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         var leftIsDictLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, leftIsDictLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brfalse, notLeftCoercibleLabel);
         il.MarkLabel(leftIsDictLabel);
         // Right is String → ToJsString(LEFT) and string-compare.
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Isinst, _types.String);
         var leftObjVsStringLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, leftObjVsStringLabel);
         // Right is double/bool → ToNumber both and Ceq.
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
         var leftObjVsNumLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, leftObjVsNumLabel);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Isinst, _types.Boolean);
         il.Emit(OpCodes.Brfalse, notLeftCoercibleLabel);
         il.MarkLabel(leftObjVsNumLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Call, runtime.ToNumber);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Ceq);
         il.Emit(OpCodes.Br, endLabel);
         // Object-vs-String: ToJsString(LEFT) and string-compare via op_Equality.
         il.MarkLabel(leftObjVsStringLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Call, runtime.ToJsString);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Call, _types.StringOpEquality);
         il.Emit(OpCodes.Br, endLabel);
@@ -3957,47 +3989,47 @@ public partial class RuntimeEmitter
 
         // Symmetric: RIGHT is Dict/$Object and LEFT is primitive.
         var notRightCoercibleLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         var rightIsDictLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, rightIsDictLabel);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brfalse, notRightCoercibleLabel);
         il.MarkLabel(rightIsDictLabel);
         // Left is String → ToJsString(RIGHT) and string-compare.
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Isinst, _types.String);
         var rightObjVsStringLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, rightObjVsStringLabel);
         // Left is double/bool → ToNumber both and Ceq.
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
         var rightObjVsNumLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, rightObjVsNumLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Isinst, _types.Boolean);
         il.Emit(OpCodes.Brfalse, notRightCoercibleLabel);
         il.MarkLabel(rightObjVsNumLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Call, runtime.ToNumber);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Ceq);
         il.Emit(OpCodes.Br, endLabel);
         // String-vs-Object: ToJsString(RIGHT) and string-compare.
         il.MarkLabel(rightObjVsStringLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, leftLocal);
         il.Emit(OpCodes.Castclass, _types.String);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Call, _types.StringOpEquality);
         il.Emit(OpCodes.Br, endLabel);
         il.MarkLabel(notRightCoercibleLabel);
 
         // Neither is nullish - use object.Equals
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, leftLocal);
+        il.Emit(OpCodes.Ldloc, rightLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
         il.Emit(OpCodes.Br, endLabel);
 

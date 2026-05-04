@@ -334,11 +334,35 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, newElemLocal);
         il.MarkLabel(stripUndefDoneLabel);
 
+        // ECMA-262 25.5.1.1.1 InternalizeJSONProperty step 2.b.iii.3.a:
+        // CreateDataProperty(val, ToString(I), newElement). When the property
+        // already exists on the holder with Configurable: false (as set by a
+        // reviver-side defineProperty on `this`), [[DefineOwnProperty]] must
+        // return false silently and the slot is left untouched. Mirror that
+        // here by consulting PDS; without this guard the direct set_Item
+        // would punch through the non-configurable lock.
+        var doSetLabel = il.DefineLabel();
+        var afterSetLabel = il.DefineLabel();
+        var descLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Ldloc, propLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descLocal);
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Brfalse, doSetLabel);
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, doSetLabel);
+        // Non-configurable: skip set, fall through to the increment.
+        il.Emit(OpCodes.Br, afterSetLabel);
+
+        il.MarkLabel(doSetLabel);
         // list[i] = newElement
         il.Emit(OpCodes.Ldloc, listLocal);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldloc, newElemLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "set_Item", [_types.Int32, _types.Object]));
+        il.MarkLabel(afterSetLabel);
 
         // i++
         il.Emit(OpCodes.Ldloc, iLocal);

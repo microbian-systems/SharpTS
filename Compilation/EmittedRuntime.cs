@@ -412,6 +412,9 @@ public class EmittedRuntime
     public MethodBuilder ToObjectMethod { get; set; } = null!;
     /// <summary>$Runtime.IsBoxedPrimitiveOfType(obj, typeTag) — true iff obj is a $Object with matching __primitiveType marker. Used by the instanceof emitter.</summary>
     public MethodBuilder IsBoxedPrimitiveOfTypeMethod { get; set; } = null!;
+
+    /// <summary>$Runtime.UnwrapIfBoxed(obj) — returns __primitiveValue when obj is a boxed-primitive wrapper, else obj. Used by abstract equality and string concat to ToPrimitive wrapper operands.</summary>
+    public MethodBuilder UnwrapIfBoxedMethod { get; set; } = null!;
     /// <summary>$Runtime.UnwrapStringReceiver(object) -> string — coerces a String-method receiver to its underlying string. Fast-paths actual strings; unwraps Stage-4z19 boxed primitives ($Object with __primitiveType="String") to their __primitiveValue; otherwise falls back to ToJsString. Called by StringEmitter's direct dispatch prologue so `(new String("x")).charAt(...)` works once the new-String wrapper is enabled.</summary>
     public MethodBuilder UnwrapStringReceiverMethod { get; set; } = null!;
     /// <summary>Object.prototype singleton dict, populated lazily with hasOwnProperty/isPrototypeOf/toString/valueOf wrappers.</summary>
@@ -921,6 +924,7 @@ public class EmittedRuntime
     public MethodBuilder StringReplaceAllRegExp { get; set; } = null!;
     public MethodBuilder StringSearchRegExp { get; set; } = null!;
     public MethodBuilder StringSplitRegExp { get; set; } = null!;
+    public MethodBuilder StringSplitProto { get; set; } = null!;
     public MethodBuilder StringMatchAllRegExp { get; set; } = null!;
 
     // RegExp support - emitted $RegExp type for standalone assemblies

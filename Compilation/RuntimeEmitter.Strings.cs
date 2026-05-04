@@ -316,10 +316,46 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.String, "get_Length"));
         il.Emit(OpCodes.Stloc, lenLocal);
 
-        // int idx = (int)fromIndex (NaN → 0 via Convert semantics; we rely on caller coercing)
+        // int idx = IsFinite(fromIndex) ? (int)fromIndex : 0.
+        // ECMA-262 ToIntegerOrInfinity(NaN) = +0; ToIntegerOrInfinity(±Infinity)
+        // is left as ±Infinity but our `int idx` slot can't hold ±Infinity, so
+        // map +Infinity to int.MaxValue (clamped to len below → returns -1)
+        // and -Infinity to 0 (clamped via the `idx < 0` branch below).
+        // Pre-fix this used a bare Conv_I4 of the double, which is undefined
+        // behavior in ECMA-335 for NaN/±Infinity inputs; in practice .NET on
+        // x64 returned 0 for NaN, but is not guaranteed cross-platform.
+        var nanLabel = il.DefineLabel();
+        var idxLoadedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("IsFinite", [_types.Double])!);
+        il.Emit(OpCodes.Brfalse, nanLabel);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Stloc, idxLocal);
+        il.Emit(OpCodes.Br, idxLoadedLabel);
+        il.MarkLabel(nanLabel);
+        // Non-finite: NaN → 0, +Infinity → int.MaxValue, -Infinity → int.MinValue.
+        var posInfLabel = il.DefineLabel();
+        var negInfLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("IsNaN", [_types.Double])!);
+        il.Emit(OpCodes.Brfalse, posInfLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.Emit(OpCodes.Br, idxLoadedLabel);
+        il.MarkLabel(posInfLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Bgt, negInfLabel);
+        // -Infinity → int.MinValue (clamped to 0 by the `idx < 0` branch below).
+        il.Emit(OpCodes.Ldc_I4, int.MinValue);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.Emit(OpCodes.Br, idxLoadedLabel);
+        il.MarkLabel(negInfLabel);
+        // +Infinity → int.MaxValue (clamped past end below → -1).
+        il.Emit(OpCodes.Ldc_I4, int.MaxValue);
+        il.Emit(OpCodes.Stloc, idxLocal);
+        il.MarkLabel(idxLoadedLabel);
 
         // if (idx < 0) idx = 0
         il.Emit(OpCodes.Ldloc, idxLocal);

@@ -378,6 +378,14 @@ public partial class RuntimeEmitter
 
         // Emit all methods - these are now in partial class files
         // Core utilities
+
+        // UnwrapIfBoxed must be emitted before Add/Equals/Stringify so those
+        // helpers can ToPrimitive boxed-primitive wrappers before the type-
+        // based dispatch ($Object → __primitiveValue per ECMA-262 §7.2.14
+        // and §13.10.1). Depends only on TSObjectType + TSObjectGetProperty,
+        // both already populated in EmitTSObjectClass (very early).
+        EmitUnwrapIfBoxed(typeBuilder, runtime);
+
         EmitStringify(typeBuilder, runtime);
         // EmitStringRaw is moved later in this method (after ToJsString/
         // ToNumber/GetProperty are emitted) so the spec-form String.raw can
@@ -673,6 +681,7 @@ public partial class RuntimeEmitter
         EmitToObject(typeBuilder, runtime);
         EmitIsBoxedPrimitiveOfType(typeBuilder, runtime);
         EmitUnwrapStringReceiver(typeBuilder, runtime);
+        // EmitUnwrapIfBoxed moved earlier — see comment above EmitStringify.
         // String methods
         EmitStringCharAt(typeBuilder, runtime);
         EmitStringSubstring(typeBuilder, runtime);
@@ -698,8 +707,16 @@ public partial class RuntimeEmitter
         EmitStringFromCodePoint(typeBuilder, runtime);
         EmitStringNormalize(typeBuilder, runtime);
         EmitStringLocaleCompare(typeBuilder, runtime);
-        // String.prototype dict populate — must come AFTER all the String* helpers
-        // and the stubs (which were emitted earlier).
+        // RegExp methods emitted before String.prototype populate so the
+        // spec-correct match/matchAll/search/split slots can reference the
+        // regex-aware helpers (Stage 1 of issue #91 follow-up). Moved up
+        // from after EmitDateMethods; no downstream consumer needs the old
+        // ordering. Without this, the populate wires those slots to a
+        // null-returning stub that drops args and breaks `new String(...)
+        // .search(...)` (45 Test262 regressions, root-caused 2026-05-01).
+        EmitRegExpMethods(typeBuilder, runtime);
+        // String.prototype dict populate — must come AFTER all the String* helpers,
+        // the stubs (emitted earlier), AND the RegExp methods above.
         EmitStringPrototypePopulate(typeBuilder, runtime);
         // Boolean.prototype populate — uses the StringPrototypeGenericStub
         // for both toString and valueOf (no dedicated Boolean helpers).
@@ -746,8 +763,7 @@ public partial class RuntimeEmitter
         EmitTimerQueueInfrastructure(typeBuilder, runtime);
         // Date methods
         EmitDateMethods(typeBuilder, runtime);
-        // RegExp methods
-        EmitRegExpMethods(typeBuilder, runtime);
+        // RegExp methods moved earlier — emitted before EmitStringPrototypePopulate.
         // Error methods
         EmitErrorMethods(typeBuilder, runtime);
         // Error.prototype populate body — must come AFTER EmitErrorMethods so
