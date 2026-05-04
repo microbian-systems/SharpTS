@@ -247,19 +247,6 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
                 break;
 
             case Stmt.Return r:
-                // Block-body arrow inliner (#96 M5): when an inliner has
-                // installed an InlinedReturnHandler on the context, all
-                // `return v;` statements inside the block body re-route to
-                // the per-helper continuation (e.g. `goto loopAdvance` for
-                // forEach, `result.Add(v); goto loopAdvance` for map).
-                // Without this short-circuit, EmitReturn would emit a real
-                // `Ret` and terminate the OUTER method. The handler is
-                // null for top-level returns; existing semantics preserved.
-                if (Ctx.InlinedReturnHandler is { } handler)
-                {
-                    handler(r.Value);
-                    break;
-                }
                 EmitReturn(r);
                 break;
 
