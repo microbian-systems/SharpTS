@@ -718,11 +718,15 @@ public partial class Interpreter
         (SharpTSBuffer buffer, double bufIdx) => new IndexTarget.Buffer(buffer, (int)bufIdx),
         (SharpTSEnum enumObj, double enumIdx) => new IndexTarget.EnumReverse(enumObj, enumIdx),
         (ConstEnumValues constEnum, _) => new IndexTarget.ConstEnumError(constEnum),
-        (SharpTSObject sharpObj, string strKey) => new IndexTarget.ObjectString(sharpObj, strKey),
-        (SharpTSObject numObj, double numKey) => new IndexTarget.ObjectString(numObj, numKey.ToString()),
+        // Symbol keys keep their identity through the symbol-dict path.
         (SharpTSObject symbolObj, SharpTSSymbol symbol) => new IndexTarget.ObjectSymbol(symbolObj, symbol),
-        (SharpTSInstance instance, string instanceKey) => new IndexTarget.InstanceString(instance, instanceKey),
         (SharpTSInstance symInstance, SharpTSSymbol symKey) => new IndexTarget.InstanceSymbol(symInstance, symKey),
+        // Non-Symbol keys go through ECMA-262 §7.1.19 ToPropertyKey so `obj[-0]`
+        // and `obj["0"]` resolve identically (and undefined/null/bool keys
+        // stringify to "undefined"/"null"/"true"/"false" rather than landing in
+        // the Unsupported bucket).
+        (SharpTSObject sharpObj, _) => new IndexTarget.ObjectString(sharpObj, PropertyKeyConverter.ToPropertyKeyString(index)),
+        (SharpTSInstance instance, _) => new IndexTarget.InstanceString(instance, PropertyKeyConverter.ToPropertyKeyString(index)),
         (SharpTSGlobalThis globalThis, string globalKey) => new IndexTarget.GlobalThis(globalThis, globalKey),
         (SharpTSHeaders headers, string headerKey) => new IndexTarget.HeadersString(headers, headerKey),
         (string str, double strIdx) => new IndexTarget.StringChar(str, (int)strIdx),

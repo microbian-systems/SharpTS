@@ -110,16 +110,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Brtrue, tsFunctionIdxLabel);
 
-        // Class instance: check if index is string or numeric, then use GetFieldsProperty
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brtrue, classInstanceLabel);
-
-        // Class instance with numeric key: convert to string first
-        var classInstanceNumericLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        il.Emit(OpCodes.Brtrue, classInstanceNumericLabel);
+        // Class instance — any non-Symbol key coerces to a property-key string
+        // via Stringify (ECMA-262 §7.1.19). Earlier branches already split out
+        // arrays / typed-arrays / dicts / $Object / $TSFunction; whatever is
+        // left is a class instance whose fields are string-keyed.
+        il.Emit(OpCodes.Br, classInstanceLabel);
 
         // Fallthrough: return null
         il.MarkLabel(nullLabel);
@@ -198,27 +193,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
 
-        // Class instance handler: use GetFieldsProperty(obj, index as string)
+        // Class instance handler: stringify the key (ECMA ToPropertyKey) and
+        // route through GetFieldsProperty(obj, key). Single path handles
+        // strings, numbers (-0 → "0", 1.5 → "1.5"), undefined, null, booleans.
         il.MarkLabel(classInstanceLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
         il.Emit(OpCodes.Ret);
 
-        // Class instance with numeric key: convert to string, then use GetFieldsProperty
-        il.MarkLabel(classInstanceNumericLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-        il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
-        il.Emit(OpCodes.Ret);
-
-        // $Object indexed get: route through $Runtime.GetProperty(obj, index.ToString())
+        // $Object indexed get: route through $Runtime.GetProperty(obj, Stringify(index)).
+        // Stringify handles ECMA ToPropertyKey for primitives — Callvirt-on-null
+        // and "True"/"False"/.NET-locale-specific number forms are no longer
+        // hazards.
         il.MarkLabel(tsObjectIdxLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Call, runtime.GetProperty);
         il.Emit(OpCodes.Ret);
 
@@ -226,7 +218,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(tsFunctionIdxLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Call, runtime.GetProperty);
         il.Emit(OpCodes.Ret);
 
@@ -259,7 +251,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(routeAsNamedGetLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Call, runtime.GetProperty);
         il.Emit(OpCodes.Ret);
 
@@ -421,17 +413,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(dictLabel);
-        // Check if index is string
+        // Check if index is string — fast-path avoids the Stringify call.
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, dictStringKeyLabel);
-        // Check if index is double (numeric key - convert to string)
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        il.Emit(OpCodes.Brtrue, dictNumericKeyLabel);
-        // Otherwise return null (non-string, non-numeric, non-symbol keys not supported)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+        // Anything else: route through ECMA ToPropertyKey (Stringify) — covers
+        // numeric keys, undefined, null, booleans uniformly.
+        il.Emit(OpCodes.Br, dictNumericKeyLabel);
 
         var valueLocal = il.DeclareLocal(_types.Object);
         var pdsDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
@@ -491,7 +479,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(dictNumericKeyLabel);
         EmitDictLookup(
             () => { il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Castclass, _types.DictionaryStringObject); },
-            () => { il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString")); });
+            () => { il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Call, runtime.Stringify); });
 
         // Defunct labels — replaced by EmitDictLookup. Mark unreachable for IL
         // verification balance.
@@ -604,22 +592,22 @@ public partial class RuntimeEmitter
         il.MarkLabel(nullLabel);
         il.Emit(OpCodes.Ret);
 
-        // $Object indexed set handler: SetProperty(obj, index.ToString(), value)
+        // $Object indexed set handler: SetProperty(obj, Stringify(index), value).
+        // Stringify performs ECMA ToPropertyKey for primitives — null→"null",
+        // undefined→"undefined", -0→"0", etc.
         il.MarkLabel(tsObjectIdxSetLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
 
-        // $TSFunction indexed set — coerce key to string and route to SetProperty.
-        // SetProperty's $TSFunction branch stores via PDS so the same key reads
-        // back through GetProperty/GetIndex.
+        // $TSFunction indexed set — coerce key via Stringify and route to SetProperty.
         il.MarkLabel(tsFunctionIdxSetLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
@@ -678,15 +666,14 @@ public partial class RuntimeEmitter
         il.MarkLabel(bufSetDoneLabel);
         il.Emit(OpCodes.Ret);
 
-        // Class instance / unknown handler: use SetFieldsProperty(obj, index.ToString(), value).
-        // ToString lets numeric indexes (`obj[0] = v`) round-trip through PDS for
-        // ECMA built-ins (Date/RegExp/Promise) per SetFieldsProperty's scoped PDS-store
-        // fallback. For other receivers, SetFieldsProperty silently no-ops if no
-        // SetMember method is found — matching the prior fallthrough behavior.
+        // Class instance / unknown handler: SetFieldsProperty(obj, Stringify(index), value).
+        // Stringify covers ECMA ToPropertyKey for primitives so numeric / undefined /
+        // bool indexes round-trip through PDS for built-ins (Date/RegExp/Promise) per
+        // SetFieldsProperty's scoped PDS-store fallback.
         il.MarkLabel(classInstanceLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetFieldsProperty);
         il.Emit(OpCodes.Ret);
@@ -735,7 +722,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(routeAsNamedLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
@@ -801,16 +788,12 @@ public partial class RuntimeEmitter
         // instead of firing the get accessor). SetProperty's PDSTryGetSetter
         // branch invokes the setter; if no PDS setter exists it falls
         // through to dict.set_Item — same as the previous direct write.
-        // Check if index is string
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, dictStringKeyLabel);
-        // Check if index is double (numeric key - convert to string)
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        il.Emit(OpCodes.Brtrue, dictNumericKeyLabel);
-        // Otherwise ignore (non-string, non-numeric, non-symbol keys not supported)
-        il.Emit(OpCodes.Ret);
+        // Anything else: ECMA ToPropertyKey via Stringify (covers numeric,
+        // undefined, null, booleans uniformly).
+        il.Emit(OpCodes.Br, dictNumericKeyLabel);
 
         il.MarkLabel(dictStringKeyLabel);
         il.Emit(OpCodes.Ldarg_0);
@@ -823,7 +806,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(dictNumericKeyLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);

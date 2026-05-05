@@ -436,7 +436,9 @@ public static class ObjectBuiltIns
             }
         }
 
-        var propertyKey = args[1]?.ToString() ?? "";
+        // ECMA-262 §7.1.19: coerce non-Symbol property keys via ToPropertyKey
+        // (undefined → "undefined", null → "null", -0 → "0", booleans lowercase).
+        var propertyKey = PropertyKeyConverter.ToPropertyKeyString(args[1]);
 
         bool success;
         switch (target)
@@ -487,12 +489,22 @@ public static class ObjectBuiltIns
     private static object? GetOwnPropertyDescriptor(Interpreter _, List<object?> args)
     {
         var target = args[0];
-        var propertyKey = args[1]?.ToString() ?? "";
 
         if (target == null)
         {
             throw new Exception("TypeError: Object.getOwnPropertyDescriptor called on null or undefined");
         }
+
+        // Symbol-keyed lookup goes through the symbol-dict path; the spec keeps
+        // symbols distinct from string keys, and SharpTSObject/Instance store
+        // them in a separate map.
+        if (args[1] is SharpTSSymbol symKey)
+        {
+            return GetOwnPropertyDescriptorBySymbol(target, symKey);
+        }
+
+        // ECMA-262 §7.1.19: ToPropertyKey on the name argument.
+        var propertyKey = PropertyKeyConverter.ToPropertyKeyString(args[1]);
 
         SharpTSPropertyDescriptor? descriptor = target switch
         {
@@ -510,6 +522,33 @@ public static class ObjectBuiltIns
 
         // Return as an object
         return descriptor.ToObject();
+    }
+
+    /// <summary>
+    /// Returns a data descriptor reflecting a Symbol-keyed property if one
+    /// exists on the target, or null. Symbol-keyed properties are always
+    /// writable/configurable but not enumerable per <c>SharpTSObject</c>'s
+    /// internal storage.
+    /// </summary>
+    private static object? GetOwnPropertyDescriptorBySymbol(object target, SharpTSSymbol key)
+    {
+        switch (target)
+        {
+            case SharpTSObject obj when obj.HasSymbolProperty(key):
+                return DescriptorObjectFor(obj.GetBySymbol(key));
+            case SharpTSInstance inst when inst.HasSymbolProperty(key):
+                return DescriptorObjectFor(inst.GetBySymbol(key));
+            default:
+                return null;
+        }
+
+        static object? DescriptorObjectFor(object? value) => new SharpTSPropertyDescriptor
+        {
+            Value = value,
+            Writable = true,
+            Enumerable = false,
+            Configurable = true,
+        }.ToObject();
     }
 
     /// <summary>
@@ -736,8 +775,6 @@ public static class ObjectBuiltIns
     /// </summary>
     public static object? RuntimeDefineProperty(object? target, object? propertyKey, object? descriptorArg)
     {
-        var propKey = propertyKey?.ToString() ?? "";
-
         if (target == null)
         {
             throw new Exception("TypeError: Object.defineProperty called on null or undefined");
@@ -750,6 +787,18 @@ public static class ObjectBuiltIns
 
         // Parse descriptor from object - use FromAnyObject to handle both SharpTSObject and compiled $Object
         SharpTSPropertyDescriptor descriptor = SharpTSPropertyDescriptor.FromAnyObject(descriptorArg);
+
+        // ECMA-262 §7.1.19 ToPropertyKey: Symbols pass through to the symbol-dict
+        // path; everything else stringifies.
+        if (propertyKey is SharpTSSymbol symKey)
+        {
+            switch (target)
+            {
+                case SharpTSObject symObj: symObj.SetBySymbol(symKey, descriptor.Value); return target;
+                case SharpTSInstance symInst: symInst.SetBySymbol(symKey, descriptor.Value); return target;
+            }
+        }
+        var propKey = PropertyKeyConverter.ToPropertyKeyString(propertyKey);
 
         bool success;
         switch (target)
@@ -865,12 +914,18 @@ public static class ObjectBuiltIns
     /// </summary>
     public static object? RuntimeGetOwnPropertyDescriptor(object? target, object? propertyKey)
     {
-        var propKey = propertyKey?.ToString() ?? "";
-
         if (target == null)
         {
             throw new Exception("TypeError: Object.getOwnPropertyDescriptor called on null or undefined");
         }
+
+        // ECMA-262 §7.1.19 ToPropertyKey: pass Symbols through to the symbol-dict
+        // path, stringify everything else.
+        if (propertyKey is SharpTSSymbol symKey)
+        {
+            return GetOwnPropertyDescriptorBySymbol(target, symKey);
+        }
+        var propKey = PropertyKeyConverter.ToPropertyKeyString(propertyKey);
 
         // Special handling for Dictionary<string, object?> to preserve $TSFunction getters/setters
         // (which don't implement ISharpTSCallable)

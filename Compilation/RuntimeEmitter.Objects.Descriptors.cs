@@ -76,9 +76,12 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notSymbolLabel);
 
-        // propName = prop.ToString()
+        // propName = $Runtime.Stringify(prop) — ECMA-262 §7.1.19 ToPropertyKey
+        // string path. Avoids the prop.ToString() Callvirt-on-null NRE for
+        // `Object.defineProperty(obj, null, ...)` and produces JS-conformant
+        // strings ("undefined", "null", "true", "false", "0" for -0).
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Stloc, propNameLocal);
 
         // ECMA-262 10.4.2.4 ArraySetLength: validate that ToUint32(newLen) ===
@@ -348,9 +351,10 @@ public partial class RuntimeEmitter
         var hasDescriptorLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
-        // propName = prop.ToString()
+        // propName = $Runtime.Stringify(prop) — ECMA-262 §7.1.19 ToPropertyKey
+        // string path (Symbol case is handled by callers via PDS-symbol routing).
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Stloc, propNameLocal);
 
         // Try to get descriptor from $PropertyDescriptorStore
