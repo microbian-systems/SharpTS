@@ -62,17 +62,54 @@ public class Test262Tests
         var files = EnumerateTestFiles(test262Root, modeFolders);
         _output.WriteLine($"[{mode}] enumerated {files.Count} test files from {modeFolders.Count} folders");
 
-        var runner = new Test262Runner(test262Root, config.Timeout, skipFeatures);
         var current = new SortedDictionary<string, string>(StringComparer.Ordinal);
         var counts = new Dictionary<Test262Outcome, int>();
 
+        // Compile mode uses batched subprocess execution (issue #109): each
+        // batch of ~200 tests runs in its own dotnet subprocess that we discard
+        // when done, so pathological tests can't accumulate memory across the
+        // regen. Interpreted mode stays in-process — the interpreter doesn't
+        // accumulate per-test state and pathological JS allocations get
+        // released by GC between iterations.
+        var workerDll = mode == Test262ExecutionMode.Compiled
+            ? Test262Paths.TryFindWorkerDll()
+            : null;
+
         var started = DateTime.UtcNow;
-        foreach (var (relPath, absPath) in files)
+        if (workerDll is not null)
         {
-            var result = runner.RunOne(absPath, mode);
-            current[relPath] = Test262Baseline.EncodeBucket(result);
-            counts.TryGetValue(result.Outcome, out var c);
-            counts[result.Outcome] = c + 1;
+            var skipFeaturesFile = ResolveSkipFeaturesPath(configDir, config);
+            var batched = new BatchedSubprocessRunner(
+                test262Root, mode, config.Timeout, skipFeaturesFile, workerDll);
+            var byAbs = batched.RunAll(
+                files.Select(f => f.AbsPath).ToList(),
+                progress: (done, total) =>
+                {
+                    if (done % 1000 == 0 || done == total)
+                        _output.WriteLine($"[{mode}] batch progress: {done}/{total}");
+                });
+            foreach (var (relPath, absPath) in files)
+            {
+                if (!byAbs.TryGetValue(absPath, out var bucket))
+                    bucket = "RuntimeError:worker-crashed";
+                current[relPath] = bucket;
+                var outcome = ParseOutcomeFromBucket(bucket);
+                counts.TryGetValue(outcome, out var c);
+                counts[outcome] = c + 1;
+            }
+        }
+        else
+        {
+            if (mode == Test262ExecutionMode.Compiled)
+                _output.WriteLine($"[{mode}] worker DLL not found — falling back to in-process (build SharpTS.Test262.Worker for issue #109 batched mode)");
+            var runner = new Test262Runner(test262Root, config.Timeout, skipFeatures);
+            foreach (var (relPath, absPath) in files)
+            {
+                var result = runner.RunOne(absPath, mode);
+                current[relPath] = Test262Baseline.EncodeBucket(result);
+                counts.TryGetValue(result.Outcome, out var c);
+                counts[result.Outcome] = c + 1;
+            }
         }
         var elapsed = DateTime.UtcNow - started;
 
@@ -115,6 +152,32 @@ public class Test262Tests
     {
         var v = Environment.GetEnvironmentVariable(name);
         return v is "1" or "true" or "TRUE";
+    }
+
+    /// <summary>
+    /// Resolves the absolute path to the skip-features file the worker should
+    /// load. Mirrors <see cref="Test262Config.LoadSkipFeatures"/>'s resolution
+    /// (relative paths are anchored to the config dir).
+    /// </summary>
+    private static string? ResolveSkipFeaturesPath(string configDir, Test262Config config)
+    {
+        if (string.IsNullOrEmpty(config.SkipFeaturesFile)) return null;
+        return Path.IsPathRooted(config.SkipFeaturesFile)
+            ? config.SkipFeaturesFile
+            : Path.Combine(configDir, config.SkipFeaturesFile);
+    }
+
+    /// <summary>
+    /// Recovers the <see cref="Test262Outcome"/> from an encoded bucket string
+    /// like <c>"Pass"</c>, <c>"Skipped:async-done-deferred"</c>, or
+    /// <c>"RuntimeError:worker-crashed"</c>. Used to populate the per-mode
+    /// outcome histogram when results come from the worker subprocess.
+    /// </summary>
+    private static Test262Outcome ParseOutcomeFromBucket(string bucket)
+    {
+        var colon = bucket.IndexOf(':');
+        var name = colon < 0 ? bucket : bucket[..colon];
+        return Enum.TryParse<Test262Outcome>(name, out var outcome) ? outcome : Test262Outcome.RuntimeError;
     }
 
     /// <summary>

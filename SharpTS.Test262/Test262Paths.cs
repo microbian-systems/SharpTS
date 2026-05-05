@@ -46,4 +46,29 @@ public static class Test262Paths
         }
         return null;
     }
+
+    /// <summary>
+    /// Locates the built worker assembly (<c>SharpTS.Test262.Worker.dll</c>) used
+    /// for batched subprocess execution (issue #109). Walks up from the test
+    /// assembly's bin directory looking for the sibling worker project's bin.
+    /// Returns null when the worker hasn't been built — callers fall back to
+    /// in-process execution.
+    /// </summary>
+    public static string? TryFindWorkerDll()
+    {
+        // Test bin is at .../SharpTS.Test262/bin/<config>/<tfm>/.
+        // Worker bin mirrors at .../SharpTS.Test262.Worker/bin/<config>/<tfm>/.
+        var testBin = new DirectoryInfo(AppContext.BaseDirectory);
+        var tfm = testBin.Name;
+        var configuration = testBin.Parent?.Name;
+        var bin = testBin.Parent?.Parent;
+        var projectDir = bin?.Parent;
+        var repoRoot = projectDir?.Parent;
+        if (repoRoot is null || configuration is null) return null;
+
+        var candidate = Path.Combine(
+            repoRoot.FullName, "SharpTS.Test262.Worker", "bin", configuration, tfm,
+            "SharpTS.Test262.Worker.dll");
+        return File.Exists(candidate) ? candidate : null;
+    }
 }
