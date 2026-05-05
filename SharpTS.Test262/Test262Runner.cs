@@ -3,6 +3,9 @@ using System.Runtime.Loader;
 using SharpTS.Compilation;
 using SharpTS.Execution;
 using SharpTS.Parsing;
+using SharpTS.Runtime;
+using SharpTS.Runtime.Exceptions;
+using SharpTS.Runtime.Types;
 using SharpTS.TypeSystem;
 using SharpTS.TypeSystem.Exceptions;
 
@@ -93,9 +96,6 @@ public sealed class Test262Runner
         if (metadata.IsModule)
             return new Test262Result(Test262Outcome.Skipped, null, "module-test-deferred");
 
-        if (metadata.IsAsync)
-            return new Test262Result(Test262Outcome.Skipped, null, "async-done-deferred");
-
         // Feature-gated skip so known-unsupported categories don't pollute
         // Fail/RuntimeError buckets. Only one matching tag is reported; the
         // rest are irrelevant once the first has ruled the test out.
@@ -121,13 +121,13 @@ public sealed class Test262Runner
 
         return mode switch
         {
-            Test262ExecutionMode.Interpreted => RunInterpreted(assembled, harnessLength),
-            Test262ExecutionMode.Compiled => RunCompiled(assembled, harnessLength),
+            Test262ExecutionMode.Interpreted => RunInterpreted(assembled, harnessLength, metadata.IsAsync),
+            Test262ExecutionMode.Compiled => RunCompiled(assembled, harnessLength, metadata.IsAsync),
             _ => throw new ArgumentOutOfRangeException(nameof(mode)),
         };
     }
 
-    private Test262Result RunInterpreted(string source, int harnessLength)
+    private Test262Result RunInterpreted(string source, int harnessLength, bool isAsync)
     {
         // Parse + type-check on the caller's thread — neither honors the VM
         // timeout token so we'd rather not burn a dedicated thread per test
@@ -175,15 +175,27 @@ public sealed class Test262Runner
         Exception? threadException = null;
         using var cts = new CancellationTokenSource();
 
+        // For async-flagged tests, inject a `$DONE` global. The compiled-mode
+        // assembler can't poke runtime globals directly, so this path is
+        // host-side; the compiled path uses a JS shim instead. See issue #79.
+        var doneCallback = isAsync ? new Test262DoneCallback() : null;
+
         var thread = new Thread(() =>
         {
             var sw = new StringWriter();
             using var interpreter = new Interpreter(stdout: sw, stderr: TextWriter.Null);
             interpreter.SetVmTimeoutToken(cts.Token);
+            if (doneCallback is not null)
+                interpreter.RegisterGlobal("$DONE", doneCallback);
             try
             {
+                // Interpret() drives the event loop after running top-level
+                // statements, so a Promise chain ending in `.then($DONE, $DONE)`
+                // resolves to a $DONE call before this returns.
                 interpreter.Interpret(parseResult.Statements, typeMap);
-                result = new Test262Result(Test262Outcome.Pass, null, null);
+                result = doneCallback is not null
+                    ? ClassifyAsyncDone(doneCallback)
+                    : new Test262Result(Test262Outcome.Pass, null, null);
             }
             catch (Exception ex)
             {
@@ -226,7 +238,7 @@ public sealed class Test262Runner
         return result ?? new Test262Result(Test262Outcome.RuntimeError, "runner produced no result", null);
     }
 
-    private Test262Result RunCompiled(string source, int harnessLength)
+    private Test262Result RunCompiled(string source, int harnessLength, bool isAsync)
     {
         // Compile phase may throw parse/type errors before any IL is emitted.
         // Execution phase runs under a timeout because infinite loops in the
@@ -235,6 +247,16 @@ public sealed class Test262Runner
         var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_{assemblyName}");
         Directory.CreateDirectory(tempDir);
         var dllPath = Path.Combine(tempDir, $"{assemblyName}.dll");
+
+        // Compiled mode can't reach into the runtime environment to inject a
+        // host callable, so async-flagged tests get a JS shim that defines
+        // `$DONE` in terms of `console.log` sentinel lines. The runner scans
+        // the captured stdout after Main returns. See issue #79.
+        if (isAsync)
+        {
+            source = CompiledAsyncDoneShim + source;
+            harnessLength += CompiledAsyncDoneShim.Length;
+        }
 
         try
         {
@@ -300,7 +322,7 @@ public sealed class Test262Runner
                 var cancelField = runtimeType?.GetField("_cancelRequested",
                     BindingFlags.Public | BindingFlags.Static);
 
-                return InvokeCompiledMain(mainMethod, harnessLength, cancelField);
+                return InvokeCompiledMain(mainMethod, harnessLength, cancelField, isAsync);
             }
             finally
             {
@@ -340,11 +362,12 @@ public sealed class Test262Runner
         }
     }
 
-    private Test262Result InvokeCompiledMain(MethodInfo mainMethod, int harnessLength, FieldInfo? cancelField)
+    private Test262Result InvokeCompiledMain(MethodInfo mainMethod, int harnessLength, FieldInfo? cancelField, bool isAsync)
     {
         // Serialize Console redirection; multiple compiled tests can run in
         // parallel xUnit cases but must not cross-contaminate stdout.
         Test262Result? result = null;
+        StringWriter? capturedStdout = null;
         var task = Task.Run(() =>
         {
             lock (ConsoleLock)
@@ -352,6 +375,7 @@ public sealed class Test262Runner
                 var originalOut = Console.Out;
                 var originalError = Console.Error;
                 var sw = new StringWriter();
+                capturedStdout = sw;
                 Console.SetOut(sw);
                 Console.SetError(TextWriter.Null);
                 try
@@ -406,6 +430,16 @@ public sealed class Test262Runner
                 return new Test262Result(Test262Outcome.Timeout,
                     $"memory watchdog fired (grew by {(process.WorkingSet64 - baselineMemory) / 1024 / 1024}MB)", null);
             }
+        }
+
+        // Async-flagged tests gate Pass on a `$DONE` sentinel emitted by the
+        // shim (see CompiledAsyncDoneShim). If Main threw synchronously
+        // (Fail/RuntimeError), that bucket already reflects the outcome and
+        // we don't override it.
+        if (isAsync && result is { Outcome: Test262Outcome.Pass } && capturedStdout is not null)
+        {
+            var sentinel = ParseDoneSentinel(capturedStdout.ToString());
+            return sentinel ?? new Test262Result(Test262Outcome.Fail, "async test ended without invoking $DONE", null);
         }
 
         return result ?? new Test262Result(Test262Outcome.RuntimeError, "runner produced no result", null);
@@ -554,5 +588,120 @@ public sealed class Test262Runner
             || m.Contains("Expected a ", StringComparison.Ordinal)
                 && (m.Contains(" to be thrown", StringComparison.Ordinal)
                     || m.Contains(" but got", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Maps the captured state of a <see cref="Test262DoneCallback"/> to the
+    /// final outcome bucket once <see cref="Interpreter.Interpret"/> has
+    /// returned (event loop drained). Mirrors the harness's truthy-error
+    /// convention: any truthy argument is a failure; no call at all is a
+    /// failure too (the test resolved without signalling completion).
+    /// </summary>
+    private static Test262Result ClassifyAsyncDone(Test262DoneCallback done)
+    {
+        if (!done.Called)
+            return new Test262Result(Test262Outcome.Fail, "async test ended without invoking $DONE", null);
+
+        var rv = RuntimeValue.FromBoxed(done.ErrorArg);
+        if (!rv.IsTruthy())
+            return new Test262Result(Test262Outcome.Pass, null, null);
+
+        // Reuse ThrowException's name/message extractor so we get the same
+        // "Test262Error: msg" shape the synchronous classifier sees.
+        var ex = ThrowException.FromResult(done.ErrorArg);
+        var msg = ex.Message;
+        if (msg.StartsWith("Test262Error", StringComparison.Ordinal)
+            || IsTest262HarnessMessage(msg))
+        {
+            const string prefix = "Test262Error: ";
+            var trimmed = msg.StartsWith(prefix, StringComparison.Ordinal)
+                ? msg[prefix.Length..]
+                : msg;
+            return new Test262Result(Test262Outcome.Fail, trimmed, null);
+        }
+        return new Test262Result(Test262Outcome.RuntimeError, msg, null);
+    }
+
+    /// <summary>
+    /// Scans compiled-mode stdout for the <c>$DONE</c> sentinel emitted by
+    /// <see cref="CompiledAsyncDoneShim"/>. Returns null when the test never
+    /// hit <c>$DONE</c> (caller maps that to <see cref="Test262Outcome.Fail"/>).
+    /// </summary>
+    private static Test262Result? ParseDoneSentinel(string stdout)
+    {
+        const string okSentinel = "$$T262DONE_OK$$";
+        const string errSentinelPrefix = "$$T262DONE_ERR$$:";
+        using var reader = new StringReader(stdout);
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (line == okSentinel)
+                return new Test262Result(Test262Outcome.Pass, null, null);
+            if (!line.StartsWith(errSentinelPrefix, StringComparison.Ordinal)) continue;
+
+            // Format: $$T262DONE_ERR$$:<name>:<message>
+            // Message can itself contain ':' so split only on the first one.
+            var rest = line[errSentinelPrefix.Length..];
+            int colon = rest.IndexOf(':');
+            string name = colon < 0 ? "" : rest[..colon];
+            string message = colon < 0 ? rest : rest[(colon + 1)..];
+            if (name == "Test262Error" || IsTest262HarnessMessage(message))
+                return new Test262Result(Test262Outcome.Fail, message, null);
+            return new Test262Result(
+                Test262Outcome.RuntimeError,
+                string.IsNullOrEmpty(name) ? message : $"{name}: {message}",
+                null);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// JS shim prepended to async-flagged tests in compiled mode. Defines
+    /// <c>$DONE</c> in terms of <c>console.log</c> sentinel lines that the
+    /// runner scans after Main returns. The first call wins (matches the
+    /// harness convention; subsequent calls are no-ops). See issue #79.
+    /// </summary>
+    private const string CompiledAsyncDoneShim = @"
+var $$T262_done_called = false;
+function $DONE(err) {
+  if ($$T262_done_called) return;
+  $$T262_done_called = true;
+  if (arguments.length === 0 || err === undefined || err === null || err === false || err === 0 || err === '') {
+    console.log('$$T262DONE_OK$$');
+    return;
+  }
+  var n = '';
+  var m = String(err);
+  if (typeof err === 'object') {
+    if (err.name) n = String(err.name);
+    if (err.message) m = String(err.message);
+  }
+  console.log('$$T262DONE_ERR$$:' + n + ':' + m);
+}
+";
+
+    /// <summary>
+    /// Host-side <c>$DONE</c> callable for interpreted mode. Captures the first
+    /// argument the test passes (or none) and exposes that to the runner. The
+    /// callback ignores subsequent invocations so a misbehaving test that fires
+    /// twice doesn't mask an earlier success or failure.
+    /// </summary>
+    private sealed class Test262DoneCallback : ISharpTSCallable, ITypeCategorized
+    {
+        public TypeCategory RuntimeCategory => TypeCategory.Function;
+        public bool Called { get; private set; }
+        public object? ErrorArg { get; private set; }
+
+        public int Arity() => 1;
+
+        public object? Call(Interpreter interpreter, List<object?> arguments)
+        {
+            if (Called) return null;
+            Called = true;
+            ErrorArg = arguments.Count > 0 ? arguments[0] : null;
+            return null;
+        }
+
+        public override string ToString() => "function $DONE() { [native code] }";
     }
 }

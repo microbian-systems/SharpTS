@@ -348,6 +348,14 @@ public partial class Interpreter : IDisposable
     internal void SetEnvironment(RuntimeEnvironment env) => _environment = env;
 
     /// <summary>
+    /// Registers a host-provided value as a global binding. Must be called
+    /// before <see cref="Interpret"/> so the binding is visible at the
+    /// outermost scope. Used by Test262 to inject the <c>$DONE</c>
+    /// async-completion callback into <c>flags: [async]</c> tests.
+    /// </summary>
+    public void RegisterGlobal(string name, object? value) => _environment.Define(name, value);
+
+    /// <summary>
     /// When set, yield expressions call this delegate instead of throwing YieldException.
     /// Used by the coroutine-based generator to suspend the worker thread at yield points
     /// without unwinding the call stack.

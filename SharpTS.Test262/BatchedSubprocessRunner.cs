@@ -15,12 +15,35 @@ public sealed class BatchedSubprocessRunner
     /// Number of tests per worker subprocess. Smaller batches = more startup
     /// overhead but tighter memory ceiling AND smaller blast radius if a
     /// pathological test crashes the worker (the rest of its batch is bucketed
-    /// as <c>RuntimeError:worker-crashed</c>). 50 keeps crash collateral to a
+    /// as <c>RuntimeError:worker-crashed</c>). 25 keeps crash collateral to a
     /// few dozen tests at a time; bigger sizes amortize startup but a single
-    /// runaway can lose 200+ results. Process-spawn at 50 is ~150 batches ×
-    /// ~500ms ≈ 75 s of overhead — acceptable for a 30-minute regen.
+    /// runaway can lose 50+ results. Process-spawn at 25 is ~520 batches ×
+    /// ~500ms ≈ 4 min of overhead — acceptable for a long regen.
+    ///
+    /// Sized down from 50 to 25 in #79 because async tests with stuck event
+    /// loops accumulate orphan tasks inside a worker, dragging the *rest* of
+    /// the batch's tests through degraded scheduling. Faster worker turnover
+    /// lets the OS reclaim those orphans more often.
     /// </summary>
-    public int BatchSize { get; init; } = 50;
+    public int BatchSize { get; init; } = 25;
+
+    /// <summary>
+    /// Maximum wall-clock time a single batch is allowed to run before the
+    /// parent gives up on the worker and bucket-fills the unfinished tests
+    /// as <c>RuntimeError:worker-stalled</c>. Without this, an async test
+    /// whose orphan event-loop thread keeps the worker's stdout pipe open
+    /// would hang the parent's <see cref="StreamReader.ReadLine"/> indefinitely.
+    /// </summary>
+    public TimeSpan BatchWallClockBudget { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Maximum gap between worker stdout lines before the parent considers
+    /// the worker stalled. Per-test timeout is enforced inside the worker;
+    /// this is the outer fallback for the case where the worker itself has
+    /// wedged (deadlocked on a runtime mutex, GC-thrashing, etc.) and isn't
+    /// emitting results.
+    /// </summary>
+    public TimeSpan IdleStdoutBudget { get; init; } = TimeSpan.FromSeconds(60);
 
     public string Test262Root { get; }
     public string Mode { get; }
@@ -130,26 +153,74 @@ public sealed class BatchedSubprocessRunner
             }
         });
 
+        // Read stdout on a background thread so the main thread can enforce
+        // wall-clock and idle-stdout budgets. ReadLine() is blocking with no
+        // timeout argument, so the only way to bound it is to abandon the
+        // reader and kill the process.
         var results = new List<(string, string)>();
-        string? line;
-        while ((line = proc.StandardOutput.ReadLine()) != null)
+        var resultsLock = new object();
+        var lastLineAt = DateTime.UtcNow;
+        var doneSeen = false;
+        var readerTask = Task.Run(() =>
         {
-            if (line.StartsWith("{\"_done\":")) break;
-            var parsed = ParseResultLine(line);
-            if (parsed.HasValue) results.Add(parsed.Value);
+            try
+            {
+                string? line;
+                while ((line = proc.StandardOutput.ReadLine()) != null)
+                {
+                    lastLineAt = DateTime.UtcNow;
+                    if (line.StartsWith("{\"_done\":"))
+                    {
+                        doneSeen = true;
+                        break;
+                    }
+                    var parsed = ParseResultLine(line);
+                    if (parsed.HasValue)
+                    {
+                        lock (resultsLock) results.Add(parsed.Value);
+                    }
+                }
+            }
+            catch
+            {
+                // Stream closed or worker killed mid-read — RunAll will
+                // bucket-fill missing tests as worker-crashed.
+            }
+        });
+
+        var batchDeadline = DateTime.UtcNow + BatchWallClockBudget;
+        bool stalled = false;
+        while (!readerTask.IsCompleted)
+        {
+            if (readerTask.Wait(500)) break;
+            var now = DateTime.UtcNow;
+            if (now > batchDeadline)
+            {
+                stalled = true;
+                break;
+            }
+            if (now - lastLineAt > IdleStdoutBudget)
+            {
+                stalled = true;
+                break;
+            }
         }
 
-        // Best-effort wait for clean exit so the kernel reaps the process and
-        // the worker's address space is fully released before we start the
-        // next batch. 2-second cap so a wedged worker doesn't wedge the regen.
+        if (stalled || !doneSeen)
+        {
+            // Force-kill so the next batch starts clean. The reader's blocked
+            // ReadLine() unblocks once the pipe closes.
+            try { proc.Kill(entireProcessTree: true); } catch { }
+        }
         try { proc.WaitForExit(2000); } catch { }
         if (!proc.HasExited)
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
         }
+        readerTask.Wait(TimeSpan.FromSeconds(2));
         stdinTask.Wait(TimeSpan.FromSeconds(1));
 
-        return results;
+        lock (resultsLock) return results.ToList();
     }
 
     /// <summary>
