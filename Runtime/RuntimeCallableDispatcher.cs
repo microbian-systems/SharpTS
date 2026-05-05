@@ -118,4 +118,18 @@ public static class RuntimeCallableDispatcher
         if (value is Delegate) return true;
         return value.GetType().Name is "$TSFunction" or "$BoundTSFunction";
     }
+
+    /// <summary>
+    /// Clears the per-Type method-info caches. Required when collectible
+    /// AssemblyLoadContexts unload, since cached <see cref="MethodInfo"/>
+    /// values strongly back-reference their declaring <see cref="Type"/>
+    /// (the cache key), pinning emitted <c>$TSFunction</c>/<c>$BoundTSFunction</c>
+    /// types — and through them, their entire assembly — indefinitely.
+    /// See issue #109.
+    /// </summary>
+    public static void ClearCaches()
+    {
+        _invokeWithThisCache.Clear();
+        _invokeCache.Clear();
+    }
 }

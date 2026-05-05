@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.Loader;
 using SharpTS.Compilation;
 using SharpTS.Execution;
 using SharpTS.Parsing;
@@ -17,11 +18,10 @@ public enum Test262ExecutionMode
 /// <summary>
 /// Runs a single Test262 file end-to-end and classifies the outcome.
 ///
-/// Assembly.LoadFrom is used for compiled mode — subprocess-per-test has
-/// ~500ms–1s startup overhead that is prohibitive at spec-suite scale.
-/// Trade-off: loaded assemblies are not unloadable in the default AppDomain.
-/// Acceptable for the spike; revisit with AssemblyLoadContext if the process
-/// footprint becomes painful.
+/// Each compiled test loads into its own collectible <see cref="AssemblyLoadContext"/>
+/// and unloads after the test runs. Without that, dynamic assemblies accumulate in
+/// the default ALC and the testhost OOMs at scale (was 28 GB on 8.7k-test runs
+/// before the switch). See issue #109.
 /// </summary>
 public sealed class Test262Runner
 {
@@ -32,7 +32,21 @@ public sealed class Test262Runner
     // haven't explicitly guarded (Array.prototype methods, large string
     // concat, etc.). Chosen to be well above any legitimate test's working
     // set but well below the point where the OS kills the host.
+    //
+    // Note: this only catches tests whose allocations grow incrementally —
+    // single-statement pathological allocators (e.g., `new Array(2**29)`)
+    // complete in microseconds, well below the 100ms polling interval, and
+    // bypass this entirely. Those need the per-test-isolation work tracked
+    // in issue #109 to bound their impact.
     private const long MemoryLimitBytes = 2L * 1024 * 1024 * 1024;
+
+    // How often to force a full GC pass to let unloaded ALCs actually free
+    // their memory. Collectible ALCs need GC cycles after Unload() to
+    // release; doing it after every test would be wasteful, doing it never
+    // means we'd see staircase growth between forced collections. 50 is
+    // small enough to keep the staircase low and large enough to amortize
+    // the GC cost.
+    private const int GcEveryNTests = 50;
 
     // Serializes Console.Out/Error redirection across parallel test cases.
     private static readonly object ConsoleLock = new();
@@ -41,6 +55,9 @@ public sealed class Test262Runner
     private readonly Test262HarnessAssembler _assembler;
     private readonly TimeSpan _timeout;
     private readonly HashSet<string> _skipFeatures;
+
+    // Counts compiled tests since the last forced GC. See GcEveryNTests.
+    private int _compiledTestsSinceGc;
 
     public Test262Runner(string test262Root, TimeSpan? timeout = null, HashSet<string>? skipFeatures = null)
     {
@@ -266,25 +283,60 @@ public sealed class Test262Runner
                 return new Test262Result(Test262Outcome.HarnessError, $"IL compile failed: {ex.Message}", null);
             }
 
-            var assembly = Assembly.LoadFrom(dllPath);
-            var programType = assembly.GetType("$Program");
-            var mainMethod = programType?.GetMethod("Main", BindingFlags.Public | BindingFlags.Static);
-            if (mainMethod is null)
-                return new Test262Result(Test262Outcome.HarnessError, "$Program.Main not found in compiled assembly", null);
+            // Load into a collectible ALC so the test's dynamic assembly can be
+            // released after the test runs (see issue #109). All references to
+            // the assembly's reflected members must die before Unload + GC for
+            // memory to actually free.
+            var alc = new AssemblyLoadContext($"test262_{assemblyName}", isCollectible: true);
+            try
+            {
+                var assembly = alc.LoadFromAssemblyPath(dllPath);
+                var programType = assembly.GetType("$Program");
+                var mainMethod = programType?.GetMethod("Main", BindingFlags.Public | BindingFlags.Static);
+                if (mainMethod is null)
+                    return new Test262Result(Test262Outcome.HarnessError, "$Program.Main not found in compiled assembly", null);
 
-            // Resolve the per-assembly $Runtime._cancelRequested field up-front
-            // so InvokeCompiledMain can flip it on timeout. Each test compiles
-            // its own assembly with its own $Runtime type — this keeps the
-            // cancellation flag scoped to the running test. See issue #74.
-            var runtimeType = assembly.GetType("$Runtime");
-            var cancelField = runtimeType?.GetField("_cancelRequested",
-                BindingFlags.Public | BindingFlags.Static);
+                var runtimeType = assembly.GetType("$Runtime");
+                var cancelField = runtimeType?.GetField("_cancelRequested",
+                    BindingFlags.Public | BindingFlags.Static);
 
-            return InvokeCompiledMain(mainMethod, harnessLength, cancelField);
+                return InvokeCompiledMain(mainMethod, harnessLength, cancelField);
+            }
+            finally
+            {
+                alc.Unload();
+                MaybeRunPeriodicGc();
+            }
         }
         finally
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    /// <summary>
+    /// Forces a GC pass every <see cref="GcEveryNTests"/> compiled tests so unloaded
+    /// ALCs actually release their memory. Per .NET docs, collectible ALCs enter
+    /// "unloading" state on <c>Unload()</c> but only release after the GC sees no
+    /// references — which requires explicit <c>GC.Collect</c> + finalizer drain.
+    /// </summary>
+    private void MaybeRunPeriodicGc()
+    {
+        _compiledTestsSinceGc++;
+        if (_compiledTestsSinceGc >= GcEveryNTests)
+        {
+            _compiledTestsSinceGc = 0;
+            // Drop runtime caches that pin emitted Types by acting as strong
+            // back-references through their MethodInfo/FieldInfo values.
+            // Without these clears, every emitted $TSFunction / $BoundTSFunction
+            // / user-class type is pinned indefinitely, and through them the
+            // entire dynamic assembly. See issue #109.
+            RuntimeTypes.ClearReflectionCaches();
+            SharpTS.Runtime.RuntimeCallableDispatcher.ClearCaches();
+            // Two cycles: first to mark, second to clean up references freed by finalizers.
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
         }
     }
 

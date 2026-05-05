@@ -6,6 +6,13 @@ namespace SharpTS.Compilation;
 
 public static partial class RuntimeTypes
 {
+    /// <summary>
+    /// Clears the internal reflection caches. Public surface so Test262 (and
+    /// any external collectible-ALC consumer) can release pinned types after
+    /// unloading. See <see cref="ReflectionCache.Clear"/> for details.
+    /// </summary>
+    public static void ClearReflectionCaches() => ReflectionCache.Clear();
+
     internal static class ReflectionCache
     {
         // Wrapper to allow caching "null" results (member not found) in ConcurrentDictionary/CWT
@@ -98,6 +105,29 @@ public static partial class RuntimeTypes
         public static MethodInvoker GetInvoker(MethodBase method)
         {
             return _invokerCache.GetValue(method, m => MethodInvoker.Create(m));
+        }
+
+        /// <summary>
+        /// Clears all cached reflection entries. Required after unloading
+        /// collectible AssemblyLoadContexts: the cache values (MethodInfo,
+        /// FieldInfo, etc.) hold strong back-references to their declaring
+        /// Type, which defeats <see cref="ConditionalWeakTable{TKey, TValue}"/>'s
+        /// weak-key semantics and pins test-emitted types indefinitely.
+        ///
+        /// Tradeoff: built-in SharpTS types lose their cache entries too and
+        /// re-populate on next access. That cost is negligible compared to
+        /// the unbounded memory growth this avoids during Test262 regen.
+        /// See issue #109.
+        /// </summary>
+        public static void Clear()
+        {
+            _getterCache.Clear();
+            _setterCache.Clear();
+            _methodCache.Clear();
+            _fieldCache.Clear();
+            _constructorCache.Clear();
+            _backingFieldsCache.Clear();
+            _invokerCache.Clear();
         }
     }
 }
