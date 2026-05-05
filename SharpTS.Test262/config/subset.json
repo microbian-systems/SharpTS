@@ -12,7 +12,8 @@
     "test/built-ins/RegExp",
     "test/built-ins/String",
     "test/language/expressions/call",
-    "test/language/expressions/new"
+    "test/language/expressions/new",
+    "test/language/expressions/property-accessors"
   ],
   "compiledExcludeFolders": [
     "test/built-ins/Object",
