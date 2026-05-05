@@ -399,6 +399,14 @@ public partial class TypeChecker
     private string? _filePath = null;
 
     /// <summary>
+    /// Best-guess line of the statement currently being checked. Used as a fallback
+    /// when a thrown TypeCheckException doesn't carry its own line info, so that
+    /// `// @ts-ignore` and `// @ts-expect-error` directives can match diagnostics
+    /// to the right line.
+    /// </summary>
+    private int? _currentStatementLine = null;
+
+    /// <summary>
     /// Sets the file path for source location reporting.
     /// </summary>
     public TypeChecker WithFilePath(string? filePath)
@@ -679,6 +687,7 @@ public partial class TypeChecker
             if (_diagnostics.HitErrorLimit)
                 return new TypeCheckDiagnosticResult(_typeMap, _diagnostics.Diagnostics, HitErrorLimit: true);
 
+            _currentStatementLine = TryGetStmtLine(statement);
             try
             {
                 CheckStmt(statement);
@@ -693,9 +702,10 @@ public partial class TypeChecker
             }
             catch (Exception ex)
             {
-                RecordTypeError(ex.Message);
+                RecordTypeError(ex.Message, _currentStatementLine);
             }
         }
+        _currentStatementLine = null;
 
         return new TypeCheckDiagnosticResult(_typeMap, _diagnostics.Diagnostics);
     }
@@ -728,8 +738,12 @@ public partial class TypeChecker
             _ => DiagnosticCode.TypeError
         };
 
-        SourceLocation? location = ex.Line.HasValue
-            ? new SourceLocation(_filePath, ex.Line.Value, ex.Column ?? 1)
+        // Fall back to the current statement's line when the exception didn't carry one.
+        // Lets `// @ts-ignore` / `@ts-expect-error` line directives target diagnostics
+        // whose throw-sites don't (yet) plumb token-level line info.
+        int? line = ex.Line ?? _currentStatementLine;
+        SourceLocation? location = line.HasValue
+            ? new SourceLocation(_filePath, line.Value, ex.Column ?? 1)
             : null;
 
         if (IsLenientModule())
@@ -1330,4 +1344,40 @@ public partial class TypeChecker
             _ => new TypeInfo.Any()
         };
     }
+
+    /// <summary>
+    /// Best-effort extraction of a 1-based line number from a statement, by digging into
+    /// the first identifier/operator token. Returns null when the statement has no token
+    /// directly addressable. Used to attribute diagnostics to a line for pragma matching
+    /// when the throw site didn't include line info itself.
+    /// </summary>
+    private static int? TryGetStmtLine(Stmt stmt) => stmt switch
+    {
+        Stmt.Expression e => TryGetExprLine(e.Expr),
+        Stmt.Var v => v.Name.Line,
+        Stmt.Const c => c.Name.Line,
+        Stmt.Function f => f.Name.Line,
+        Stmt.Class c => c.Name.Line,
+        Stmt.Interface i => i.Name.Line,
+        Stmt.Return r => r.Value is not null ? TryGetExprLine(r.Value) : null,
+        Stmt.If i => TryGetExprLine(i.Condition),
+        Stmt.While w => TryGetExprLine(w.Condition),
+        _ => null,
+    };
+
+    private static int? TryGetExprLine(Expr expr) => expr switch
+    {
+        Expr.Variable v => v.Name.Line,
+        Expr.Set s => s.Name.Line,
+        Expr.Get g => g.Name.Line,
+        Expr.Assign a => a.Name.Line,
+        Expr.Binary b => b.Operator.Line,
+        Expr.Logical l => l.Operator.Line,
+        Expr.Unary u => u.Operator.Line,
+        Expr.CompoundAssign ca => ca.Name.Line,
+        Expr.CompoundSet cs => cs.Name.Line,
+        Expr.Call c => TryGetExprLine(c.Callee),
+        Expr.New n => TryGetExprLine(n.Callee),
+        _ => null,
+    };
 }

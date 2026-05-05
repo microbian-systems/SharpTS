@@ -78,7 +78,7 @@ switch (command)
         break;
 
     case ParsedCommand.Script script:
-        RunFile(script.ScriptPath, script.Options.DecoratorMode, script.Options.EmitDecoratorMetadata, script.ScriptArgs);
+        RunFile(script.ScriptPath, script.Options.DecoratorMode, script.Options.EmitDecoratorMetadata, script.ScriptArgs, script.Options.CheckJs);
         break;
 
     case ParsedCommand.Compile compile:
@@ -130,7 +130,7 @@ static void RunLspBridge(string? projectFile, List<string> references, string? s
     }
 }
 
-static void RunFile(string path, DecoratorMode decoratorMode, bool emitDecoratorMetadata, string[]? scriptArgs = null)
+static void RunFile(string path, DecoratorMode decoratorMode, bool emitDecoratorMetadata, string[]? scriptArgs = null, bool checkJs = false)
 {
     string absolutePath = Path.GetFullPath(path);
     string source = File.ReadAllText(absolutePath);
@@ -155,7 +155,7 @@ static void RunFile(string path, DecoratorMode decoratorMode, bool emitDecorator
     }
     else
     {
-        Run(source, decoratorMode, emitDecoratorMetadata);
+        Run(source, decoratorMode, emitDecoratorMetadata, filePath: absolutePath, checkJs: checkJs);
     }
 }
 
@@ -223,7 +223,7 @@ static async Task RunPromptAsync(DecoratorMode decoratorMode)
     await repl.RunAsync();
 }
 
-static void Run(string source, DecoratorMode decoratorMode, bool emitDecoratorMetadata = false, Interpreter? interpreter = null)
+static void Run(string source, DecoratorMode decoratorMode, bool emitDecoratorMetadata = false, Interpreter? interpreter = null, string? filePath = null, bool checkJs = false)
 {
     interpreter ??= new Interpreter();
     interpreter.SetDecoratorMode(decoratorMode);
@@ -245,18 +245,27 @@ static void Run(string source, DecoratorMode decoratorMode, bool emitDecoratorMe
 
     try
     {
-        // Static Analysis Phase
-        TypeChecker checker = new();
-        checker.SetDecoratorMode(decoratorMode);
-        var typeResult = checker.CheckWithRecovery(parseResult.Statements);
-
-        if (!typeResult.IsSuccess)
+        // Static Analysis Phase — skipped for .js files unless --check-js or
+        // // @ts-check opts in (matches tsc's checkJs:false default).
+        TypeMap? typeMap = null;
+        if (TypeCheckPolicy.ShouldTypeCheck(filePath, lexer.Pragmas, checkJsDefault: checkJs))
         {
-            foreach (var diagnostic in typeResult.Diagnostics)
-                Console.WriteLine($"Error: {diagnostic}");
-            if (typeResult.HitErrorLimit)
-                Console.WriteLine("Too many errors, stopping.");
-            Environment.Exit(1);
+            TypeChecker checker = new();
+            checker.SetDecoratorMode(decoratorMode);
+            var typeResult = checker.CheckWithRecovery(parseResult.Statements);
+
+            // Apply // @ts-ignore / @ts-expect-error line directives.
+            var filteredDiagnostics = TypeCheckPolicy.ApplyLineDirectives(typeResult.Diagnostics, lexer.Pragmas);
+            bool hasErrors = filteredDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
+            if (hasErrors)
+            {
+                foreach (var diagnostic in filteredDiagnostics)
+                    Console.WriteLine($"Error: {diagnostic}");
+                if (typeResult.HitErrorLimit)
+                    Console.WriteLine("Too many errors, stopping.");
+                Environment.Exit(1);
+            }
+            typeMap = typeResult.TypeMap;
         }
 
         // Variable Resolution Phase (enables O(1) lookups)
@@ -264,7 +273,7 @@ static void Run(string source, DecoratorMode decoratorMode, bool emitDecoratorMe
         resolver.Resolve(parseResult.Statements);
 
         // Interpretation Phase
-        interpreter.Interpret(parseResult.Statements, typeResult.TypeMap);
+        interpreter.Interpret(parseResult.Statements, typeMap);
     }
     catch (SharpTSException ex)
     {
@@ -376,7 +385,7 @@ static void CompileFile(string inputPath, string outputPath, bool preserveConstE
         }
         else
         {
-            CompileSingleFile(statements, outputPath, preserveConstEnums, useReferenceAssemblies, sdkPath, verifyIL, decoratorMode, outputOptions, metadata, references, target, bundlerMode);
+            CompileSingleFile(statements, outputPath, preserveConstEnums, useReferenceAssemblies, sdkPath, verifyIL, decoratorMode, outputOptions, metadata, references, target, bundlerMode, absolutePath, lexer.Pragmas);
         }
 
         // Package if requested
@@ -508,25 +517,34 @@ static void CompileModuleFile(string absolutePath, string outputPath, bool prese
     }
 }
 
-static void CompileSingleFile(List<Stmt> statements, string outputPath, bool preserveConstEnums, bool useReferenceAssemblies, string? sdkPath, bool verifyIL, DecoratorMode decoratorMode, OutputOptions outputOptions, AssemblyMetadata? metadata, IReadOnlyList<string> references, OutputTarget target, BundlerMode bundlerMode)
+static void CompileSingleFile(List<Stmt> statements, string outputPath, bool preserveConstEnums, bool useReferenceAssemblies, string? sdkPath, bool verifyIL, DecoratorMode decoratorMode, OutputOptions outputOptions, AssemblyMetadata? metadata, IReadOnlyList<string> references, OutputTarget target, BundlerMode bundlerMode, string? sourcePath = null, TypeScriptPragmas? pragmas = null)
 {
     // Set up diagnostic reporter
     var reporter = new DiagnosticReporter { MsBuildFormat = outputOptions.MsBuildErrors, QuietMode = outputOptions.QuietMode };
 
-    // Static Analysis Phase
-    TypeChecker checker = new TypeChecker().WithFilePath(outputPath);
-    checker.SetDecoratorMode(decoratorMode);
-    var typeResult = checker.CheckWithRecovery(statements);
-
-    if (!typeResult.IsSuccess)
+    // Static Analysis Phase — skipped for .js files unless `// @ts-check` opts in.
+    // Compiler still needs a TypeMap; an empty one falls back to dynamic dispatch.
+    TypeMap typeMap = new();
+    var effectivePragmas = pragmas ?? TypeScriptPragmas.Empty;
+    if (TypeCheckPolicy.ShouldTypeCheck(sourcePath, effectivePragmas, checkJsDefault: false))
     {
-        reporter.ReportAll(typeResult.Diagnostics);
-        if (typeResult.HitErrorLimit)
-            Console.WriteLine("Too many errors, stopping.");
-        Environment.Exit(1);
-    }
+        TypeChecker checker = new TypeChecker().WithFilePath(outputPath);
+        checker.SetDecoratorMode(decoratorMode);
+        var typeResult = checker.CheckWithRecovery(statements);
 
-    TypeMap typeMap = typeResult.TypeMap;
+        // Apply // @ts-ignore / @ts-expect-error line directives.
+        var filteredDiagnostics = TypeCheckPolicy.ApplyLineDirectives(typeResult.Diagnostics, effectivePragmas);
+        bool hasErrors = filteredDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
+        if (hasErrors)
+        {
+            reporter.ReportAll(filteredDiagnostics);
+            if (typeResult.HitErrorLimit)
+                Console.WriteLine("Too many errors, stopping.");
+            Environment.Exit(1);
+        }
+
+        typeMap = typeResult.TypeMap;
+    }
 
     // Dead Code Analysis Phase
     DeadCodeAnalyzer deadCodeAnalyzer = new(typeMap);

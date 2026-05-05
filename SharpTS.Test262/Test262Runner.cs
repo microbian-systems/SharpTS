@@ -116,9 +116,10 @@ public sealed class Test262Runner
         // timeout token so we'd rather not burn a dedicated thread per test
         // on work that doesn't need cancellation.
         SharpTS.Diagnostics.ParseDiagnosticResult parseResult;
+        Lexer lexer;
         try
         {
-            var lexer = new Lexer(source);
+            lexer = new Lexer(source);
             var tokens = lexer.ScanTokens();
             var parser = new Parser(tokens);
             parseResult = parser.Parse();
@@ -132,15 +133,20 @@ public sealed class Test262Runner
         if (!parseResult.IsSuccess)
             return new Test262Result(Test262Outcome.ParseError, parseResult.Diagnostics.First().ToString(), null);
 
-        TypeMap typeMap;
-        try
+        // Test262 sources are .js — match tsc's default and skip type-checking
+        // unless `// @ts-check` opts a specific test in.
+        TypeMap typeMap = new();
+        if (TypeCheckPolicy.ShouldTypeCheck(filePath: ".js", lexer.Pragmas, checkJsDefault: false))
         {
-            var checker = new TypeChecker();
-            typeMap = checker.Check(parseResult.Statements);
-        }
-        catch (TypeCheckException ex)
-        {
-            return new Test262Result(Test262Outcome.TypeCheckError, ex.Message, null);
+            try
+            {
+                var checker = new TypeChecker();
+                typeMap = checker.Check(parseResult.Statements);
+            }
+            catch (TypeCheckException ex)
+            {
+                return new Test262Result(Test262Outcome.TypeCheckError, ex.Message, null);
+            }
         }
 
         // Execute on a dedicated thread and signal the interpreter's VM
@@ -216,9 +222,10 @@ public sealed class Test262Runner
         try
         {
             SharpTS.Diagnostics.ParseDiagnosticResult parseResult;
+            Lexer lexer;
             try
             {
-                var lexer = new Lexer(source);
+                lexer = new Lexer(source);
                 var tokens = lexer.ScanTokens();
                 var parser = new Parser(tokens);
                 parseResult = parser.Parse();
@@ -230,19 +237,23 @@ public sealed class Test262Runner
             if (!parseResult.IsSuccess)
                 return new Test262Result(Test262Outcome.ParseError, parseResult.Diagnostics.First().ToString(), null);
 
-            TypeMap typeMap;
-            DeadCodeInfo deadCodeInfo;
-            try
+            // Test262 sources are .js — match tsc's default and skip type-checking
+            // unless `// @ts-check` opts a specific test in.
+            TypeMap typeMap = new();
+            if (TypeCheckPolicy.ShouldTypeCheck(filePath: ".js", lexer.Pragmas, checkJsDefault: false))
             {
-                var checker = new TypeChecker();
-                typeMap = checker.Check(parseResult.Statements);
-                var deadCodeAnalyzer = new DeadCodeAnalyzer(typeMap);
-                deadCodeInfo = deadCodeAnalyzer.Analyze(parseResult.Statements);
+                try
+                {
+                    var checker = new TypeChecker();
+                    typeMap = checker.Check(parseResult.Statements);
+                }
+                catch (TypeCheckException ex)
+                {
+                    return new Test262Result(Test262Outcome.TypeCheckError, ex.Message, null);
+                }
             }
-            catch (TypeCheckException ex)
-            {
-                return new Test262Result(Test262Outcome.TypeCheckError, ex.Message, null);
-            }
+            var deadCodeAnalyzer = new DeadCodeAnalyzer(typeMap);
+            var deadCodeInfo = deadCodeAnalyzer.Analyze(parseResult.Statements);
 
             try
             {

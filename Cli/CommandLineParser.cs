@@ -24,9 +24,11 @@ namespace SharpTS.Cli;
 /// </summary>
 /// <param name="DecoratorMode">Decorator parsing mode (None, Legacy, Stage3). Defaults to Stage3.</param>
 /// <param name="EmitDecoratorMetadata">Whether to emit design-time type metadata</param>
+/// <param name="CheckJs">When true, type-check `.js`/`.cjs`/`.mjs`/`.jsx` files like `.ts`. Mirrors tsc's `checkJs` tsconfig option. Defaults to false (matches tsc).</param>
 public record GlobalOptions(
     DecoratorMode DecoratorMode = DecoratorMode.Stage3,
-    bool EmitDecoratorMetadata = false
+    bool EmitDecoratorMetadata = false,
+    bool CheckJs = false
 );
 
 /// <summary>
@@ -216,6 +218,7 @@ public class CommandLineParser
     {
         var decoratorMode = DecoratorMode.Stage3;  // Stage3 decorators enabled by default
         var emitDecoratorMetadata = false;
+        var checkJs = false;  // Match tsc default: don't type-check .js files unless asked
         List<string> remaining = [];
         List<string> scriptArgs = [];
 
@@ -246,13 +249,17 @@ public class CommandLineParser
                 case "--emitDecoratorMetadata":
                     emitDecoratorMetadata = true;
                     break;
+                case "--check-js":
+                case "--checkJs":
+                    checkJs = true;
+                    break;
                 default:
                     remaining.Add(arg);
                     break;
             }
         }
 
-        return (new GlobalOptions(decoratorMode, emitDecoratorMetadata), remaining.ToArray(), scriptArgs.ToArray());
+        return (new GlobalOptions(decoratorMode, emitDecoratorMetadata, checkJs), remaining.ToArray(), scriptArgs.ToArray());
     }
 
     private ParsedCommand ParseCompileCommand(string[] args, GlobalOptions globalOptions)

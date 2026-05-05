@@ -38,11 +38,25 @@ public class Lexer(string source)
     // Track when we've emitted a code token (directives only valid before code)
     private bool _hasEmittedCodeToken = false;
 
+    // TypeScript pragma directives (// @ts-check / @ts-nocheck / @ts-ignore / @ts-expect-error)
+    private bool _hasTsCheck;
+    private bool _hasTsNoCheck;
+    private readonly HashSet<int> _tsIgnoreLines = [];
+    private readonly HashSet<int> _tsExpectErrorLines = [];
+
     /// <summary>
     /// Triple-slash directives parsed from the source file.
     /// Only populated for directives that appear before any code.
     /// </summary>
     public IReadOnlyList<TripleSlashDirective> TripleSlashDirectives => _tripleSlashDirectives;
+
+    /// <summary>
+    /// TypeScript pragma directives discovered in `//` comments.
+    /// File-level pragmas (`@ts-check`, `@ts-nocheck`) are only honored before the first code token.
+    /// Line-level pragmas (`@ts-ignore`, `@ts-expect-error`) record the comment's line number.
+    /// </summary>
+    public TypeScriptPragmas Pragmas =>
+        new(_hasTsCheck, _hasTsNoCheck, _tsIgnoreLines, _tsExpectErrorLines);
 
     private static readonly Dictionary<string, TokenType> Keywords = new()
     {
@@ -301,8 +315,14 @@ public class Lexer(string source)
                         }
                         // Not a valid directive syntax, continue as regular comment
                     }
-                    // Line comment - skip to end of line
+                    // Line comment - capture text and skip to end of line.
+                    // Scan it for TypeScript pragmas (@ts-check, @ts-nocheck,
+                    // @ts-ignore, @ts-expect-error) so the type checker can
+                    // honor tsc-style directives.
+                    int commentStart = _current;
+                    int commentLine = _line;
                     while (Peek() != '\n' && !IsAtEnd()) Advance();
+                    ScanForTsPragma(commentStart, _current, commentLine);
                 }
                 else if (Match('*'))
                 {
@@ -1257,5 +1277,52 @@ public class Lexer(string source)
             // Everything else (operators, keywords, opening brackets) expects an expression
             _ => false
         };
+    }
+
+    /// <summary>
+    /// Scans a `//` comment body for TypeScript pragma directives. Recognized:
+    /// <c>// @ts-check</c>, <c>// @ts-nocheck</c>, <c>// @ts-ignore</c>, <c>// @ts-expect-error</c>.
+    /// File-level pragmas (check/nocheck) are only honored before the first emitted code token,
+    /// matching tsc's documented semantics. Tolerates leading whitespace inside the comment.
+    /// </summary>
+    private void ScanForTsPragma(int bodyStart, int bodyEndExclusive, int commentLine)
+    {
+        // Skip leading whitespace inside the comment body.
+        int i = bodyStart;
+        while (i < bodyEndExclusive && (_source[i] == ' ' || _source[i] == '\t'))
+            i++;
+        if (i >= bodyEndExclusive || _source[i] != '@')
+            return;
+        i++; // consume @
+
+        // Match the pragma name. We accept the directive when followed by EOL or whitespace.
+        if (MatchesPragma(i, bodyEndExclusive, "ts-check"))
+        {
+            if (!_hasEmittedCodeToken) _hasTsCheck = true;
+        }
+        else if (MatchesPragma(i, bodyEndExclusive, "ts-nocheck"))
+        {
+            if (!_hasEmittedCodeToken) _hasTsNoCheck = true;
+        }
+        else if (MatchesPragma(i, bodyEndExclusive, "ts-ignore"))
+        {
+            _tsIgnoreLines.Add(commentLine);
+        }
+        else if (MatchesPragma(i, bodyEndExclusive, "ts-expect-error"))
+        {
+            _tsExpectErrorLines.Add(commentLine);
+        }
+    }
+
+    private bool MatchesPragma(int start, int endExclusive, string name)
+    {
+        if (start + name.Length > endExclusive) return false;
+        for (int k = 0; k < name.Length; k++)
+            if (_source[start + k] != name[k]) return false;
+        // Directive must end at EOL or whitespace — `@ts-check-ignore` shouldn't match `ts-check`.
+        int after = start + name.Length;
+        if (after >= endExclusive) return true;
+        char c = _source[after];
+        return c == ' ' || c == '\t' || c == '\r';
     }
 }
