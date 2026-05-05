@@ -1,5 +1,5 @@
 {
-  "__comment__": "Committed Test262 subset. Rollout cadence tracked on issue #69. Compile-mode cooperative cancellation landed via #74 — loop backedges + event-loop drain call $Runtime.CheckCancellation so infinite loops unwind on timeout. Two folders held out of compile mode (compiledExcludeFolders): Promise (regen runs excessively long; per-test IL compile/load overhead dominates) and Object (compile-mode regen ran testhost to 28GB RAM before manual kill — Object is the largest folder by far at 3,411 tests, and per-test dynamic assembly accumulation OOMs the runner). Both need profiling / per-test isolation before joining compile mode.",
+  "__comment__": "Committed Test262 subset. Rollout cadence tracked on issue #69. Compile-mode runs through subprocess-per-batch worker (issue #109): each batch of 50 tests runs in its own dotnet subprocess so pathological allocations can OOM the worker without taking down the regen. compiledExcludeFolders is empty now that the architecture handles previously-pathological folders.",
   "folders": [
     "test/built-ins/Array",
     "test/built-ins/Boolean",
@@ -15,10 +15,7 @@
     "test/language/expressions/new",
     "test/language/expressions/property-accessors"
   ],
-  "compiledExcludeFolders": [
-    "test/built-ins/Object",
-    "test/built-ins/Promise"
-  ],
+  "compiledExcludeFolders": [],
   "timeoutSeconds": 5,
   "skipFeaturesFile": "skip-features.txt"
 }
