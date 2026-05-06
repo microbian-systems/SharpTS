@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 
 namespace SharpTS.Test262;
@@ -45,6 +46,26 @@ public sealed class BatchedSubprocessRunner
     /// </summary>
     public TimeSpan IdleStdoutBudget { get; init; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// Number of worker subprocesses to run concurrently. Each worker pulls
+    /// from a shared batch queue; with N workers we get N× CPU utilization
+    /// because each subprocess is single-threaded (compile + JIT + invoke
+    /// is sequential per test). Capped to keep memory under control: each
+    /// worker consumes ~100 MB resident, so N=4 ≈ 400 MB peak across the
+    /// pool. The env var <c>SHARPTS_TEST262_WORKERS</c> overrides; <c>=1</c>
+    /// gives the deterministic single-worker behavior helpful for bisecting
+    /// flaky tests. Default is half the logical CPUs (clamped to [1, 8]).
+    /// </summary>
+    public int WorkerCount { get; init; } = ResolveDefaultWorkerCount();
+
+    private static int ResolveDefaultWorkerCount()
+    {
+        var env = Environment.GetEnvironmentVariable("SHARPTS_TEST262_WORKERS");
+        if (!string.IsNullOrEmpty(env) && int.TryParse(env, out var n) && n > 0)
+            return Math.Clamp(n, 1, 16);
+        return Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
+    }
+
     public string Test262Root { get; }
     public string Mode { get; }
     public TimeSpan TestTimeout { get; }
@@ -72,34 +93,70 @@ public sealed class BatchedSubprocessRunner
     /// subprocess crashed mid-batch) are bucketed as
     /// <c>RuntimeError:worker-crashed</c>.
     /// </summary>
+    /// <remarks>
+    /// Parallel execution: <see cref="WorkerCount"/> threads each pull batches
+    /// from a shared queue and spawn their own worker subprocess per batch.
+    /// Each worker is fully isolated (separate process, separate ALCs), so the
+    /// per-batch watchdog and crash-recovery semantics from the sequential
+    /// path apply unchanged inside <see cref="RunBatch"/>. Result aggregation
+    /// is keyed by path, not order, so the produced baseline is identical
+    /// regardless of worker count — set <c>SHARPTS_TEST262_WORKERS=1</c> to
+    /// force deterministic execution if you need to bisect a flake.
+    /// </remarks>
     public IReadOnlyDictionary<string, string> RunAll(
         IReadOnlyList<string> absolutePaths,
         Action<int, int>? progress = null)
     {
-        var results = new Dictionary<string, string>(StringComparer.Ordinal);
         int total = absolutePaths.Count;
-        int completed = 0;
+        if (total == 0) return new Dictionary<string, string>(StringComparer.Ordinal);
 
+        // Build the batch queue up-front. Enqueueing in path order keeps each
+        // batch's tests adjacent on disk so OS read-ahead helps; ordering
+        // across workers doesn't matter for correctness.
+        var batchQueue = new ConcurrentQueue<List<string>>();
         for (int batchStart = 0; batchStart < total; batchStart += BatchSize)
         {
             int batchEnd = Math.Min(batchStart + BatchSize, total);
             var batch = new List<string>(batchEnd - batchStart);
             for (int i = batchStart; i < batchEnd; i++) batch.Add(absolutePaths[i]);
-
-            var batchResults = RunBatch(batch);
-            foreach (var (path, bucket) in batchResults)
-                results[path] = bucket;
-
-            // Anything in the batch the worker didn't emit → crashed mid-run.
-            foreach (var path in batch)
-            {
-                if (!results.ContainsKey(path))
-                    results[path] = "RuntimeError:worker-crashed";
-            }
-
-            completed = batchEnd;
-            progress?.Invoke(completed, total);
+            batchQueue.Enqueue(batch);
         }
+
+        var results = new Dictionary<string, string>(StringComparer.Ordinal);
+        var resultsLock = new object();
+        int completed = 0;
+        int workerCount = Math.Min(WorkerCount, batchQueue.Count);
+
+        var workers = new Thread[workerCount];
+        for (int i = 0; i < workerCount; i++)
+        {
+            workers[i] = new Thread(() =>
+            {
+                while (batchQueue.TryDequeue(out var batch))
+                {
+                    var batchResults = RunBatch(batch);
+                    lock (resultsLock)
+                    {
+                        foreach (var (path, bucket) in batchResults)
+                            results[path] = bucket;
+                        // Anything in the batch the worker didn't emit → crashed mid-run.
+                        foreach (var path in batch)
+                        {
+                            if (!results.ContainsKey(path))
+                                results[path] = "RuntimeError:worker-crashed";
+                        }
+                        completed += batch.Count;
+                        // Progress callback runs inside the lock so an xUnit
+                        // ITestOutputHelper isn't called concurrently from N
+                        // threads — testhost serializes its own writes but the
+                        // count argument would race without this.
+                        progress?.Invoke(completed, total);
+                    }
+                }
+            }) { IsBackground = true, Name = $"Test262Worker-{i}" };
+            workers[i].Start();
+        }
+        foreach (var t in workers) t.Join();
 
         return results;
     }
