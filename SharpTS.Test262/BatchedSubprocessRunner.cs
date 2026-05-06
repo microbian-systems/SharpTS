@@ -53,10 +53,12 @@ public sealed class BatchedSubprocessRunner
     /// declares it stalled and kills it. The worker has its own per-test 5-s
     /// timeout via <c>$Runtime._cancelRequested</c>; this is the outer fallback
     /// for tests where in-worker cancellation never fires (pure-CPU loops, GC
-    /// stalls, deadlocks). Generous enough to absorb a slow JIT warm-up after
-    /// startup but tight enough that a wedged worker doesn't hold up the regen.
+    /// stalls, deadlocks). 5 minutes is generous: it accommodates worst-case
+    /// runs of consecutive timeout-bound tests (a folder like
+    /// <c>Array/from</c> averages ~4 s/test under contention, and a 60-s
+    /// budget falsely killed workers there during the #103 regen).
     /// </summary>
-    public TimeSpan IdleResultBudget { get; init; } = TimeSpan.FromSeconds(60);
+    public TimeSpan IdleResultBudget { get; init; } = TimeSpan.FromMinutes(5);
 
     private static int ResolveDefaultWorkerCount()
     {
@@ -105,11 +107,27 @@ public sealed class BatchedSubprocessRunner
         var resultsLock = new object();
         int completed = 0;
 
+        // Real results always win over pseudo-results from crash recovery.
+        // A path can be speculatively marked `worker-crashed` by HandleCompletion
+        // and then later actually run by another worker; without this prefer-
+        // real logic we'd keep the bogus crash bucket and drop the real Pass/Fail.
+        static bool IsPseudoResult(string bucket)
+            => bucket.StartsWith("RuntimeError:worker-", StringComparison.Ordinal);
+
         void OnResult(string path, string bucket)
         {
             lock (resultsLock)
             {
-                if (results.ContainsKey(path)) return; // late-arriving duplicate
+                if (results.TryGetValue(path, out var existing))
+                {
+                    bool existingPseudo = IsPseudoResult(existing);
+                    bool incomingPseudo = IsPseudoResult(bucket);
+                    if (existingPseudo && !incomingPseudo)
+                    {
+                        results[path] = bucket; // upgrade from crash bucket to real result
+                    }
+                    return; // otherwise keep the first result
+                }
                 results[path] = bucket;
                 completed++;
                 progress?.Invoke(completed, total);
@@ -130,6 +148,21 @@ public sealed class BatchedSubprocessRunner
         finally
         {
             foreach (var w in workers) w?.Dispose();
+        }
+
+        // Recovery sweep: if any worker's HandleCompletion requeued paths during
+        // its shutdown window AFTER the other workers had already exited, those
+        // paths sit in the queue with no one to pick them up. Spawn a single
+        // recovery worker to drain. Bounded loop: each iteration must reduce
+        // queue size, otherwise we break to avoid spinning on a wedged path.
+        int safetyBudget = 4;
+        while (workQueue.TryPeek(out _) && safetyBudget-- > 0)
+        {
+            int sizeBefore = workQueue.Count;
+            using var recovery = new PersistentWorker(BuildWorkerArgs(), workQueue, OnResult, IdleResultBudget, -1);
+            recovery.Start();
+            recovery.WaitForCompletion();
+            if (workQueue.Count >= sizeBefore) break; // not making progress
         }
 
         // Final pass: bucket-fill anything no worker emitted (queue drained
