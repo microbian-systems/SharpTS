@@ -84,7 +84,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notTSObject);
 
-        // Dictionary<string,object>
+        // Dictionary<string,object> — own property is either a direct key in
+        // the backing dict (\"foo\" = 1 syntax) OR a PDS-stored descriptor
+        // (Object.defineProperty path, which doesn't write to _fields). Both
+        // count as \"own\" per ECMA-262 §7.3.13. Pre-fix the PDS branch was
+        // missing, so non-enumerable defineProperty results returned false
+        // here even though they were truly own — that's the residual #103
+        // tail (~3500 Fail entries that read like `assert(obj.hasOwnProperty(...))`
+        // after a defineProperty with no enumerable: true).
         var notDict = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
@@ -93,7 +100,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldloc, nameLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        // Fall through to PDS check on dict-keyed property descriptors.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Br, falseLabel);
         il.MarkLabel(notDict);
 
         // String — numeric index in [0,len) or "length"
