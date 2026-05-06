@@ -195,6 +195,15 @@ public sealed class BatchedSubprocessRunner
         private readonly CancellationTokenSource _shutdownCts = new();
         private bool _killedByWatchdog;
 
+        // Set by the reader when the worker emits its _done sentinel. Tells
+        // HandleCompletion that the worker exited cleanly (drained the queue
+        // and acknowledged) — anything still in inFlight is a result we
+        // raced past during shutdown, NOT a crash. Without this flag the
+        // pipe-buffered paths the writer pre-fed but the reader hadn't yet
+        // dequeued (typical: ~50 paths) all got falsely bucketed as
+        // worker-crashed during the cleanup of every clean-exiting worker.
+        private bool _doneSeen;
+
         public PersistentWorker(string[] args, ConcurrentQueue<string> queue,
             Action<string, string> onResult, TimeSpan idleBudget, int id)
         {
@@ -244,17 +253,38 @@ public sealed class BatchedSubprocessRunner
         }
 
         // Writer thread: pulls paths from the shared queue and writes each to
-        // the worker's stdin. When the queue empties, closes stdin so the
-        // worker's `while (Console.In.ReadLine() != null)` loop exits cleanly,
-        // which lets the reader observe EOF and finish.
+        // the worker's stdin. Two phases:
+        //
+        //   1. Drain the shared queue, pushing each path into inFlight and
+        //      stdin. The worker reads, runs, emits result. The reader pops
+        //      from inFlight as results come in. Steady-state inFlight depth
+        //      is bounded by the OS pipe buffer (~50 paths on Windows).
+        //
+        //   2. Once the shared queue is empty, wait for inFlight to drain
+        //      AND keep checking the queue for paths that other workers
+        //      requeued from crash recovery. Only close stdin when the
+        //      queue is persistently empty AND inFlight is empty.
+        //
+        // Without phase 2, closing stdin while pipe-buffered paths were still
+        // in flight would let the worker exit before the reader received their
+        // results — HandleCompletion would then false-bucket those paths as
+        // worker-crashed despite the worker having processed them cleanly.
         private void WriteLoop()
         {
             try
             {
-                while (_queue.TryDequeue(out var path))
+                while (true)
                 {
-                    lock (_inFlightLock) _inFlight.Enqueue(path);
-                    _proc.StandardInput.WriteLine(path);
+                    if (_queue.TryDequeue(out var path))
+                    {
+                        lock (_inFlightLock) _inFlight.Enqueue(path);
+                        _proc.StandardInput.WriteLine(path);
+                        continue;
+                    }
+                    int inFlightCount;
+                    lock (_inFlightLock) inFlightCount = _inFlight.Count;
+                    if (inFlightCount == 0) break;
+                    Thread.Sleep(20);
                 }
                 _proc.StandardInput.Close();
             }
@@ -276,7 +306,10 @@ public sealed class BatchedSubprocessRunner
                 {
                     Interlocked.Exchange(ref _lastResultTicks, DateTime.UtcNow.Ticks);
                     if (line.StartsWith("{\"_done\":"))
-                        continue; // legacy sentinel emitted at worker exit; ignore
+                    {
+                        _doneSeen = true;
+                        continue;
+                    }
                     var parsed = ParseResultLine(line);
                     if (!parsed.HasValue) continue;
                     var (path, bucket) = parsed.Value;
@@ -319,12 +352,21 @@ public sealed class BatchedSubprocessRunner
             }
         }
 
-        // Recovery on worker exit / crash. If the worker exited with a single
-        // path in-flight, that path was almost certainly the cause — bucket it
-        // as worker-crashed (or worker-stalled if the watchdog fired) so a
-        // pathological test doesn't ping-pong forever between workers. Any
-        // additional in-flight paths the worker received but hadn't started
-        // yet go back to the shared queue for a surviving worker.
+        // Recovery on worker exit / crash. Three cases:
+        //
+        // 1. Worker emitted _done before EOF (clean exit) — _doneSeen is true.
+        //    Anything still in inFlight is a writer/reader race during shutdown
+        //    (writer pushed the path to inFlight, but the reader hadn't yet
+        //    received the corresponding result line when the worker exited).
+        //    Push them back to the queue so a surviving worker reprocesses.
+        //
+        // 2. Worker died without emitting _done AND watchdog fired — assume
+        //    the head test was the trigger and bucket it as worker-stalled
+        //    so it can't ping-pong between workers forever. Requeue the rest.
+        //
+        // 3. Worker died without emitting _done AND watchdog didn't fire —
+        //    spontaneous crash (segfault, OOM, etc). Same head-blame policy
+        //    as case 2 but with the worker-crashed label.
         private void HandleCompletion()
         {
             List<string> inFlight;
@@ -335,8 +377,17 @@ public sealed class BatchedSubprocessRunner
             }
             if (inFlight.Count == 0) return;
 
-            // Pessimistic: assume the head was the test that killed us.
-            // Requeue the rest.
+            if (_doneSeen)
+            {
+                // Clean exit — these paths weren't actually crashed; the writer
+                // had pushed them into inFlight and the reader was racing to
+                // catch up when the worker emitted _done and exited. Re-queue
+                // for surviving workers.
+                foreach (var path in inFlight) _queue.Enqueue(path);
+                return;
+            }
+
+            // Pessimistic: head was the test that killed us. Requeue the rest.
             var head = inFlight[0];
             var bucket = _killedByWatchdog
                 ? "RuntimeError:worker-stalled"
