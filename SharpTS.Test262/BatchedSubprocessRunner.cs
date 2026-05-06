@@ -4,59 +4,59 @@ using System.Diagnostics;
 namespace SharpTS.Test262;
 
 /// <summary>
-/// Drives a sequence of batched subprocess invocations of
-/// SharpTS.Test262.Worker, aggregating results and recovering from worker
-/// crashes (which is the whole point — pathological tests in a batch can
-/// OOM the worker process; the parent simply spawns the next batch).
-/// See issue #109.
+/// Drives a pool of persistent <c>SharpTS.Test262.Worker</c> subprocesses, each
+/// fed test paths from a shared work queue and emitting JSON-line results back
+/// over stdout. The parent aggregates results into a single dictionary keyed
+/// by absolute path.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Persistent workers (vs. per-batch kill+respawn from issue #109's earlier
+/// design) keep JIT and ALC state warm across the whole regen — `dotnet`
+/// process startup is paid <see cref="WorkerCount"/> times total instead of
+/// once per batch. The previous batched orchestrator hit a ~1.3× speedup
+/// ceiling at N=4 because per-batch subprocess spawn + JIT warmup ate most
+/// of the parallel gains; persistent workers break that ceiling.
+/// </para>
+/// <para>
+/// Crash recovery: each worker tracks the paths it has been given but hasn't
+/// emitted a result for ("in-flight"). On worker death (reader sees EOF) those
+/// paths are pushed back onto the shared queue so a surviving worker picks
+/// them up. If the worker dies mid-test (one path in-flight), that single path
+/// is bucketed as <c>RuntimeError:worker-crashed</c> instead of being requeued
+/// — otherwise a pathological test could ping-pong between workers forever.
+/// </para>
+/// <para>
+/// Idle watchdog: a parent thread monitors each worker's last-result timestamp.
+/// If a worker hasn't emitted a result in <see cref="IdleResultBudget"/>, the
+/// parent presumes the in-worker per-test timeout failed (e.g., pure-CPU loop
+/// that never reaches a cancellation check), kills the worker, and lets the
+/// remaining pool drain the queue.
+/// </para>
+/// </remarks>
 public sealed class BatchedSubprocessRunner
 {
     /// <summary>
-    /// Number of tests per worker subprocess. Smaller batches = more startup
-    /// overhead but tighter memory ceiling AND smaller blast radius if a
-    /// pathological test crashes the worker (the rest of its batch is bucketed
-    /// as <c>RuntimeError:worker-crashed</c>). 25 keeps crash collateral to a
-    /// few dozen tests at a time; bigger sizes amortize startup but a single
-    /// runaway can lose 50+ results. Process-spawn at 25 is ~520 batches ×
-    /// ~500ms ≈ 4 min of overhead — acceptable for a long regen.
-    ///
-    /// Sized down from 50 to 25 in #79 because async tests with stuck event
-    /// loops accumulate orphan tasks inside a worker, dragging the *rest* of
-    /// the batch's tests through degraded scheduling. Faster worker turnover
-    /// lets the OS reclaim those orphans more often.
-    /// </summary>
-    public int BatchSize { get; init; } = 25;
-
-    /// <summary>
-    /// Maximum wall-clock time a single batch is allowed to run before the
-    /// parent gives up on the worker and bucket-fills the unfinished tests
-    /// as <c>RuntimeError:worker-stalled</c>. Without this, an async test
-    /// whose orphan event-loop thread keeps the worker's stdout pipe open
-    /// would hang the parent's <see cref="StreamReader.ReadLine"/> indefinitely.
-    /// </summary>
-    public TimeSpan BatchWallClockBudget { get; init; } = TimeSpan.FromMinutes(5);
-
-    /// <summary>
-    /// Maximum gap between worker stdout lines before the parent considers
-    /// the worker stalled. Per-test timeout is enforced inside the worker;
-    /// this is the outer fallback for the case where the worker itself has
-    /// wedged (deadlocked on a runtime mutex, GC-thrashing, etc.) and isn't
-    /// emitting results.
-    /// </summary>
-    public TimeSpan IdleStdoutBudget { get; init; } = TimeSpan.FromSeconds(60);
-
-    /// <summary>
     /// Number of worker subprocesses to run concurrently. Each worker pulls
-    /// from a shared batch queue; with N workers we get N× CPU utilization
-    /// because each subprocess is single-threaded (compile + JIT + invoke
-    /// is sequential per test). Capped to keep memory under control: each
-    /// worker consumes ~100 MB resident, so N=4 ≈ 400 MB peak across the
-    /// pool. The env var <c>SHARPTS_TEST262_WORKERS</c> overrides; <c>=1</c>
-    /// gives the deterministic single-worker behavior helpful for bisecting
-    /// flaky tests. Default is half the logical CPUs (clamped to [1, 8]).
+    /// from a shared queue; with N persistent workers, total compile + JIT
+    /// throughput scales close to linearly with N until disk/JIT contention
+    /// flattens the curve. Capped to keep memory under control: each worker
+    /// is ~100 MB resident, so N=4 ≈ 400 MB peak. Env var
+    /// <c>SHARPTS_TEST262_WORKERS</c> overrides; <c>=1</c> reproduces the old
+    /// single-worker semantics for bisecting flakes. Default is half the
+    /// logical CPUs (clamped to [1, 8]).
     /// </summary>
     public int WorkerCount { get; init; } = ResolveDefaultWorkerCount();
+
+    /// <summary>
+    /// Maximum gap between result lines from a single worker before the parent
+    /// declares it stalled and kills it. The worker has its own per-test 5-s
+    /// timeout via <c>$Runtime._cancelRequested</c>; this is the outer fallback
+    /// for tests where in-worker cancellation never fires (pure-CPU loops, GC
+    /// stalls, deadlocks). Generous enough to absorb a slow JIT warm-up after
+    /// startup but tight enough that a wedged worker doesn't hold up the regen.
+    /// </summary>
+    public TimeSpan IdleResultBudget { get; init; } = TimeSpan.FromSeconds(60);
 
     private static int ResolveDefaultWorkerCount()
     {
@@ -87,22 +87,11 @@ public sealed class BatchedSubprocessRunner
     }
 
     /// <summary>
-    /// Runs every test in <paramref name="absolutePaths"/> through one or more
-    /// worker subprocesses. Returns a dictionary keyed by absolute path to
-    /// encoded bucket. Tests that the worker fails to emit (because the
-    /// subprocess crashed mid-batch) are bucketed as
-    /// <c>RuntimeError:worker-crashed</c>.
+    /// Runs every test in <paramref name="absolutePaths"/> through the worker
+    /// pool. Returns a dictionary keyed by absolute path to encoded bucket.
+    /// Tests for which no worker emits a result (worker died, watchdog killed,
+    /// pool drained early) are bucketed as <c>RuntimeError:worker-crashed</c>.
     /// </summary>
-    /// <remarks>
-    /// Parallel execution: <see cref="WorkerCount"/> threads each pull batches
-    /// from a shared queue and spawn their own worker subprocess per batch.
-    /// Each worker is fully isolated (separate process, separate ALCs), so the
-    /// per-batch watchdog and crash-recovery semantics from the sequential
-    /// path apply unchanged inside <see cref="RunBatch"/>. Result aggregation
-    /// is keyed by path, not order, so the produced baseline is identical
-    /// regardless of worker count — set <c>SHARPTS_TEST262_WORKERS=1</c> to
-    /// force deterministic execution if you need to bisect a flake.
-    /// </remarks>
     public IReadOnlyDictionary<string, string> RunAll(
         IReadOnlyList<string> absolutePaths,
         Action<int, int>? progress = null)
@@ -110,65 +99,57 @@ public sealed class BatchedSubprocessRunner
         int total = absolutePaths.Count;
         if (total == 0) return new Dictionary<string, string>(StringComparer.Ordinal);
 
-        // Build the batch queue up-front. Enqueueing in path order keeps each
-        // batch's tests adjacent on disk so OS read-ahead helps; ordering
-        // across workers doesn't matter for correctness.
-        var batchQueue = new ConcurrentQueue<List<string>>();
-        for (int batchStart = 0; batchStart < total; batchStart += BatchSize)
-        {
-            int batchEnd = Math.Min(batchStart + BatchSize, total);
-            var batch = new List<string>(batchEnd - batchStart);
-            for (int i = batchStart; i < batchEnd; i++) batch.Add(absolutePaths[i]);
-            batchQueue.Enqueue(batch);
-        }
+        var workQueue = new ConcurrentQueue<string>(absolutePaths);
 
         var results = new Dictionary<string, string>(StringComparer.Ordinal);
         var resultsLock = new object();
         int completed = 0;
-        int workerCount = Math.Min(WorkerCount, batchQueue.Count);
 
-        var workers = new Thread[workerCount];
-        for (int i = 0; i < workerCount; i++)
+        void OnResult(string path, string bucket)
         {
-            workers[i] = new Thread(() =>
+            lock (resultsLock)
             {
-                while (batchQueue.TryDequeue(out var batch))
-                {
-                    var batchResults = RunBatch(batch);
-                    lock (resultsLock)
-                    {
-                        foreach (var (path, bucket) in batchResults)
-                            results[path] = bucket;
-                        // Anything in the batch the worker didn't emit → crashed mid-run.
-                        foreach (var path in batch)
-                        {
-                            if (!results.ContainsKey(path))
-                                results[path] = "RuntimeError:worker-crashed";
-                        }
-                        completed += batch.Count;
-                        // Progress callback runs inside the lock so an xUnit
-                        // ITestOutputHelper isn't called concurrently from N
-                        // threads — testhost serializes its own writes but the
-                        // count argument would race without this.
-                        progress?.Invoke(completed, total);
-                    }
-                }
-            }) { IsBackground = true, Name = $"Test262Worker-{i}" };
-            workers[i].Start();
+                if (results.ContainsKey(path)) return; // late-arriving duplicate
+                results[path] = bucket;
+                completed++;
+                progress?.Invoke(completed, total);
+            }
         }
-        foreach (var t in workers) t.Join();
+
+        int workerCount = Math.Min(WorkerCount, total);
+        var workers = new PersistentWorker[workerCount];
+        try
+        {
+            for (int i = 0; i < workerCount; i++)
+            {
+                workers[i] = new PersistentWorker(BuildWorkerArgs(), workQueue, OnResult, IdleResultBudget, i);
+                workers[i].Start();
+            }
+            foreach (var w in workers) w.WaitForCompletion();
+        }
+        finally
+        {
+            foreach (var w in workers) w?.Dispose();
+        }
+
+        // Final pass: bucket-fill anything no worker emitted (queue drained
+        // because all workers crashed before reaching it, or watchdogs killed
+        // the last live worker mid-stride).
+        lock (resultsLock)
+        {
+            foreach (var path in absolutePaths)
+            {
+                if (!results.ContainsKey(path))
+                    results[path] = "RuntimeError:worker-crashed";
+            }
+        }
 
         return results;
     }
 
-    /// <summary>
-    /// Spawns one worker subprocess and feeds it a batch via stdin. Reads
-    /// JSON-lines results from stdout. Returns whatever was emitted; the
-    /// caller bucket-fills the rest as crashes.
-    /// </summary>
-    private IReadOnlyList<(string Path, string Bucket)> RunBatch(IReadOnlyList<string> paths)
+    private string[] BuildWorkerArgs()
     {
-        var argList = new List<string>
+        var args = new List<string>
         {
             WorkerExecutable,
             "--test262-root", Test262Root,
@@ -177,107 +158,193 @@ public sealed class BatchedSubprocessRunner
         };
         if (!string.IsNullOrEmpty(SkipFeaturesFile))
         {
-            argList.Add("--skip-features-file");
-            argList.Add(SkipFeaturesFile);
+            args.Add("--skip-features-file");
+            args.Add(SkipFeaturesFile);
+        }
+        return args.ToArray();
+    }
+
+    /// <summary>
+    /// One persistent worker subprocess plus its writer/reader threads. Owns
+    /// the lifetime of the underlying <see cref="Process"/> and tears it down
+    /// on dispose. The writer pulls paths from the shared queue; the reader
+    /// emits results back via the supplied callback.
+    /// </summary>
+    private sealed class PersistentWorker : IDisposable
+    {
+        private readonly Process _proc;
+        private readonly ConcurrentQueue<string> _queue;
+        private readonly Action<string, string> _onResult;
+        private readonly TimeSpan _idleBudget;
+        private readonly int _id;
+
+        // In-flight queue: paths sent to this worker for which we haven't yet
+        // seen a result. Used to (a) detect orphans on worker death, (b) push
+        // them back to the shared queue (or bucket them as crashed if a single
+        // path keeps wedging successive workers).
+        private readonly Queue<string> _inFlight = new();
+        private readonly object _inFlightLock = new();
+
+        // Updated by the reader on each line. Watchdog reads it. volatile so
+        // the watchdog thread sees the latest value without a fence.
+        private long _lastResultTicks = DateTime.UtcNow.Ticks;
+
+        private Task? _writerTask;
+        private Task? _readerTask;
+        private Task? _watchdogTask;
+        private readonly CancellationTokenSource _shutdownCts = new();
+        private bool _killedByWatchdog;
+
+        public PersistentWorker(string[] args, ConcurrentQueue<string> queue,
+            Action<string, string> onResult, TimeSpan idleBudget, int id)
+        {
+            _queue = queue;
+            _onResult = onResult;
+            _idleBudget = idleBudget;
+            _id = id;
+
+            var psi = new ProcessStartInfo("dotnet")
+            {
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            foreach (var arg in args) psi.ArgumentList.Add(arg);
+            _proc = Process.Start(psi)
+                ?? throw new InvalidOperationException("failed to start Test262 worker");
         }
 
-        var psi = new ProcessStartInfo("dotnet")
+        public void Start()
         {
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (var arg in argList) psi.ArgumentList.Add(arg);
+            _writerTask = Task.Run(WriteLoop);
+            _readerTask = Task.Run(ReadLoop);
+            _watchdogTask = Task.Run(WatchdogLoop);
+        }
 
-        using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException("failed to start Test262 worker");
+        public void WaitForCompletion()
+        {
+            try { _writerTask?.Wait(); } catch { }
+            try { _readerTask?.Wait(); } catch { }
+            _shutdownCts.Cancel();
+            try { _watchdogTask?.Wait(TimeSpan.FromSeconds(2)); } catch { }
+            try { _proc.WaitForExit(2000); } catch { }
+        }
 
-        // Feed stdin on a background thread; otherwise a tiny worker buffer
-        // can deadlock against the parent reading stdout. Stdout reading
-        // happens on the main thread.
-        var stdinTask = Task.Run(() =>
+        public void Dispose()
+        {
+            try { _shutdownCts.Cancel(); } catch { }
+            try
+            {
+                if (!_proc.HasExited) _proc.Kill(entireProcessTree: true);
+            }
+            catch { }
+            _proc.Dispose();
+            _shutdownCts.Dispose();
+        }
+
+        // Writer thread: pulls paths from the shared queue and writes each to
+        // the worker's stdin. When the queue empties, closes stdin so the
+        // worker's `while (Console.In.ReadLine() != null)` loop exits cleanly,
+        // which lets the reader observe EOF and finish.
+        private void WriteLoop()
         {
             try
             {
-                foreach (var path in paths)
-                    proc.StandardInput.WriteLine(path);
-                proc.StandardInput.Close();
+                while (_queue.TryDequeue(out var path))
+                {
+                    lock (_inFlightLock) _inFlight.Enqueue(path);
+                    _proc.StandardInput.WriteLine(path);
+                }
+                _proc.StandardInput.Close();
             }
             catch
             {
-                // Worker may have crashed; ignore — we'll see EOF on stdout.
+                // Worker died (broken pipe). Reader will detect EOF and the
+                // crash-handling path on completion will requeue inFlight.
             }
-        });
+        }
 
-        // Read stdout on a background thread so the main thread can enforce
-        // wall-clock and idle-stdout budgets. ReadLine() is blocking with no
-        // timeout argument, so the only way to bound it is to abandon the
-        // reader and kill the process.
-        var results = new List<(string, string)>();
-        var resultsLock = new object();
-        var lastLineAt = DateTime.UtcNow;
-        var doneSeen = false;
-        var readerTask = Task.Run(() =>
+        // Reader thread: parses JSON-line results, emits via callback, dequeues
+        // in-flight. Runs until EOF (worker exited normally or crashed).
+        private void ReadLoop()
         {
             try
             {
                 string? line;
-                while ((line = proc.StandardOutput.ReadLine()) != null)
+                while ((line = _proc.StandardOutput.ReadLine()) != null)
                 {
-                    lastLineAt = DateTime.UtcNow;
+                    Interlocked.Exchange(ref _lastResultTicks, DateTime.UtcNow.Ticks);
                     if (line.StartsWith("{\"_done\":"))
-                    {
-                        doneSeen = true;
-                        break;
-                    }
+                        continue; // legacy sentinel emitted at worker exit; ignore
                     var parsed = ParseResultLine(line);
-                    if (parsed.HasValue)
+                    if (!parsed.HasValue) continue;
+                    var (path, bucket) = parsed.Value;
+                    _onResult(path, bucket);
+                    lock (_inFlightLock)
                     {
-                        lock (resultsLock) results.Add(parsed.Value);
+                        if (_inFlight.Count > 0) _inFlight.Dequeue();
                     }
                 }
             }
             catch
             {
-                // Stream closed or worker killed mid-read — RunAll will
-                // bucket-fill missing tests as worker-crashed.
+                // Pipe broke / killed. Crash handling below.
             }
-        });
 
-        var batchDeadline = DateTime.UtcNow + BatchWallClockBudget;
-        bool stalled = false;
-        while (!readerTask.IsCompleted)
+            // Worker has exited (or its stdout closed). Recover any unfinished
+            // paths.
+            HandleCompletion();
+        }
+
+        // Watchdog thread: kills the worker if no result has arrived within
+        // _idleBudget. The kill triggers reader EOF, which routes through
+        // HandleCompletion to recover in-flight paths.
+        private void WatchdogLoop()
         {
-            if (readerTask.Wait(500)) break;
-            var now = DateTime.UtcNow;
-            if (now > batchDeadline)
+            var token = _shutdownCts.Token;
+            while (!token.IsCancellationRequested)
             {
-                stalled = true;
-                break;
+                try { Task.Delay(1000, token).Wait(token); }
+                catch { return; }
+                if (_proc.HasExited) return;
+                var lastTicks = Interlocked.Read(ref _lastResultTicks);
+                var idle = DateTime.UtcNow.Ticks - lastTicks;
+                if (idle > _idleBudget.Ticks)
+                {
+                    _killedByWatchdog = true;
+                    try { _proc.Kill(entireProcessTree: true); } catch { }
+                    return;
+                }
             }
-            if (now - lastLineAt > IdleStdoutBudget)
+        }
+
+        // Recovery on worker exit / crash. If the worker exited with a single
+        // path in-flight, that path was almost certainly the cause — bucket it
+        // as worker-crashed (or worker-stalled if the watchdog fired) so a
+        // pathological test doesn't ping-pong forever between workers. Any
+        // additional in-flight paths the worker received but hadn't started
+        // yet go back to the shared queue for a surviving worker.
+        private void HandleCompletion()
+        {
+            List<string> inFlight;
+            lock (_inFlightLock)
             {
-                stalled = true;
-                break;
+                inFlight = new List<string>(_inFlight);
+                _inFlight.Clear();
             }
-        }
+            if (inFlight.Count == 0) return;
 
-        if (stalled || !doneSeen)
-        {
-            // Force-kill so the next batch starts clean. The reader's blocked
-            // ReadLine() unblocks once the pipe closes.
-            try { proc.Kill(entireProcessTree: true); } catch { }
+            // Pessimistic: assume the head was the test that killed us.
+            // Requeue the rest.
+            var head = inFlight[0];
+            var bucket = _killedByWatchdog
+                ? "RuntimeError:worker-stalled"
+                : "RuntimeError:worker-crashed";
+            _onResult(head, bucket);
+            for (int i = 1; i < inFlight.Count; i++)
+                _queue.Enqueue(inFlight[i]);
         }
-        try { proc.WaitForExit(2000); } catch { }
-        if (!proc.HasExited)
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-        }
-        readerTask.Wait(TimeSpan.FromSeconds(2));
-        stdinTask.Wait(TimeSpan.FromSeconds(1));
-
-        lock (resultsLock) return results.ToList();
     }
 
     /// <summary>

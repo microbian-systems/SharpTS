@@ -244,9 +244,6 @@ public sealed class Test262Runner
         // Execution phase runs under a timeout because infinite loops in the
         // emitted program would hang the test assembly.
         var assemblyName = $"test262_{Guid.NewGuid():N}";
-        var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_{assemblyName}");
-        Directory.CreateDirectory(tempDir);
-        var dllPath = Path.Combine(tempDir, $"{assemblyName}.dll");
 
         // Compiled mode can't reach into the runtime environment to inject a
         // host callable, so async-flagged tests get a JS shim that defines
@@ -258,81 +255,81 @@ public sealed class Test262Runner
             harnessLength += CompiledAsyncDoneShim.Length;
         }
 
+        SharpTS.Diagnostics.ParseDiagnosticResult parseResult;
+        Lexer lexer;
         try
         {
-            SharpTS.Diagnostics.ParseDiagnosticResult parseResult;
-            Lexer lexer;
+            lexer = new Lexer(source);
+            var tokens = lexer.ScanTokens();
+            var parser = new Parser(tokens);
+            parseResult = parser.Parse();
+        }
+        catch (Exception ex)
+        {
+            return new Test262Result(Test262Outcome.ParseError, ex.Message, null);
+        }
+        if (!parseResult.IsSuccess)
+            return new Test262Result(Test262Outcome.ParseError, parseResult.Diagnostics.First().ToString(), null);
+
+        // Test262 sources are .js — match tsc's default and skip type-checking
+        // unless `// @ts-check` opts a specific test in.
+        TypeMap typeMap = new();
+        if (TypeCheckPolicy.ShouldTypeCheck(filePath: ".js", lexer.Pragmas, checkJsDefault: false))
+        {
             try
             {
-                lexer = new Lexer(source);
-                var tokens = lexer.ScanTokens();
-                var parser = new Parser(tokens);
-                parseResult = parser.Parse();
+                var checker = new TypeChecker();
+                typeMap = checker.Check(parseResult.Statements);
             }
-            catch (Exception ex)
+            catch (TypeCheckException ex)
             {
-                return new Test262Result(Test262Outcome.ParseError, ex.Message, null);
+                return new Test262Result(Test262Outcome.TypeCheckError, ex.Message, null);
             }
-            if (!parseResult.IsSuccess)
-                return new Test262Result(Test262Outcome.ParseError, parseResult.Diagnostics.First().ToString(), null);
+        }
+        var deadCodeAnalyzer = new DeadCodeAnalyzer(typeMap);
+        var deadCodeInfo = deadCodeAnalyzer.Analyze(parseResult.Statements);
 
-            // Test262 sources are .js — match tsc's default and skip type-checking
-            // unless `// @ts-check` opts a specific test in.
-            TypeMap typeMap = new();
-            if (TypeCheckPolicy.ShouldTypeCheck(filePath: ".js", lexer.Pragmas, checkJsDefault: false))
-            {
-                try
-                {
-                    var checker = new TypeChecker();
-                    typeMap = checker.Check(parseResult.Statements);
-                }
-                catch (TypeCheckException ex)
-                {
-                    return new Test262Result(Test262Outcome.TypeCheckError, ex.Message, null);
-                }
-            }
-            var deadCodeAnalyzer = new DeadCodeAnalyzer(typeMap);
-            var deadCodeInfo = deadCodeAnalyzer.Analyze(parseResult.Statements);
+        // Compile to bytes — no temp dir, no DLL on disk. ALC loads from
+        // an in-memory stream below. On contended file systems (Windows +
+        // Defender scanning every freshly written DLL) the disk roundtrip
+        // adds 50–100 ms per test, so eliminating it ~halves per-test
+        // latency for the Test262 hot path.
+        byte[] assemblyBytes;
+        try
+        {
+            var compiler = new ILCompiler(assemblyName);
+            compiler.Compile(parseResult.Statements, typeMap, deadCodeInfo);
+            assemblyBytes = compiler.SaveToBytes();
+        }
+        catch (Exception ex)
+        {
+            return new Test262Result(Test262Outcome.HarnessError, $"IL compile failed: {ex.Message}", null);
+        }
 
-            try
-            {
-                var compiler = new ILCompiler(assemblyName);
-                compiler.Compile(parseResult.Statements, typeMap, deadCodeInfo);
-                compiler.Save(dllPath);
-            }
-            catch (Exception ex)
-            {
-                return new Test262Result(Test262Outcome.HarnessError, $"IL compile failed: {ex.Message}", null);
-            }
+        // Load into a collectible ALC so the test's dynamic assembly can be
+        // released after the test runs (see issue #109). All references to
+        // the assembly's reflected members must die before Unload + GC for
+        // memory to actually free.
+        var alc = new AssemblyLoadContext($"test262_{assemblyName}", isCollectible: true);
+        try
+        {
+            using var assemblyStream = new MemoryStream(assemblyBytes);
+            var assembly = alc.LoadFromStream(assemblyStream);
+            var programType = assembly.GetType("$Program");
+            var mainMethod = programType?.GetMethod("Main", BindingFlags.Public | BindingFlags.Static);
+            if (mainMethod is null)
+                return new Test262Result(Test262Outcome.HarnessError, "$Program.Main not found in compiled assembly", null);
 
-            // Load into a collectible ALC so the test's dynamic assembly can be
-            // released after the test runs (see issue #109). All references to
-            // the assembly's reflected members must die before Unload + GC for
-            // memory to actually free.
-            var alc = new AssemblyLoadContext($"test262_{assemblyName}", isCollectible: true);
-            try
-            {
-                var assembly = alc.LoadFromAssemblyPath(dllPath);
-                var programType = assembly.GetType("$Program");
-                var mainMethod = programType?.GetMethod("Main", BindingFlags.Public | BindingFlags.Static);
-                if (mainMethod is null)
-                    return new Test262Result(Test262Outcome.HarnessError, "$Program.Main not found in compiled assembly", null);
+            var runtimeType = assembly.GetType("$Runtime");
+            var cancelField = runtimeType?.GetField("_cancelRequested",
+                BindingFlags.Public | BindingFlags.Static);
 
-                var runtimeType = assembly.GetType("$Runtime");
-                var cancelField = runtimeType?.GetField("_cancelRequested",
-                    BindingFlags.Public | BindingFlags.Static);
-
-                return InvokeCompiledMain(mainMethod, harnessLength, cancelField, isAsync);
-            }
-            finally
-            {
-                alc.Unload();
-                MaybeRunPeriodicGc();
-            }
+            return InvokeCompiledMain(mainMethod, harnessLength, cancelField, isAsync);
         }
         finally
         {
-            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+            alc.Unload();
+            MaybeRunPeriodicGc();
         }
     }
 

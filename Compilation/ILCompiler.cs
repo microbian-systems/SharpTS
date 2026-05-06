@@ -1107,21 +1107,24 @@ public partial class ILCompiler
 
     #endregion
 
-    public void Save(string outputPath)
+    /// <summary>
+    /// Materializes the compiled assembly as PE bytes — the form ALC's
+    /// LoadFromStream consumes directly without any disk roundtrip. Used by
+    /// the Test262 runner which loads thousands of compiled assemblies per
+    /// minute; eliminating the temp-file write halves end-to-end per-test
+    /// latency on contended file systems (Windows + Defender scanning every
+    /// freshly written DLL is the killer case).
+    /// </summary>
+    public byte[] SaveToBytes()
     {
-
-        // Generate metadata for the assembly
         MetadataBuilder metadataBuilder = _assemblyBuilder.GenerateMetadata(
             out BlobBuilder ilStream,
             out BlobBuilder fieldData);
 
-        // Choose PE header based on output target
-        // DLLs can still have entry points (runnable with `dotnet <dll>`)
         PEHeaderBuilder peHeader = _outputTarget == OutputTarget.Exe
             ? PEHeaderBuilder.CreateExecutableHeader()
             : PEHeaderBuilder.CreateLibraryHeader();
 
-        // Set entry point if available (both DLL and EXE can have entry points)
         var entryPointHandle = _entryPoint != null
             ? MetadataTokens.MethodDefinitionHandle(_entryPoint.MetadataToken)
             : default;
@@ -1136,7 +1139,6 @@ public partial class ILCompiler
         BlobBuilder peBlob = new();
         peBuilder.Serialize(peBlob);
 
-        // Write to a temp memory stream first so we can inspect and optionally rewrite.
         using var tempStream = new MemoryStream();
         peBlob.WriteContentTo(tempStream);
         tempStream.Position = 0;
@@ -1144,30 +1146,27 @@ public partial class ILCompiler
         var hasSharpTsReference = HasAssemblyReference(tempStream, "SharpTS");
         tempStream.Position = 0;
 
-        // Post-process when requested (--ref-asm) or when standalone output leaked
-        // a SharpTS assembly reference.
         if (_useReferenceAssemblies || hasSharpTsReference)
         {
-            // Get the SDK reference assembly path (use explicit path if provided)
             var refAssemblyPath = _sdkPath ?? SdkResolver.FindReferenceAssembliesPath()
                 ?? throw new CompileException(
                     "Could not find SDK reference assemblies for post-processing. " +
                     "Ensure the .NET SDK is installed.");
 
-            // Rewrite assembly references
             using var rewriter = new AssemblyReferenceRewriter(tempStream, refAssemblyPath);
             rewriter.Rewrite();
 
-            // Write the rewritten assembly to the output file
-            using var outputStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
-            rewriter.Save(outputStream);
+            using var outMem = new MemoryStream();
+            rewriter.Save(outMem);
+            return outMem.ToArray();
         }
-        else
-        {
-            // Write directly to file
-            using var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
-            tempStream.WriteTo(fileStream);
-        }
+        return tempStream.ToArray();
+    }
+
+    public void Save(string outputPath)
+    {
+        var bytes = SaveToBytes();
+        File.WriteAllBytes(outputPath, bytes);
     }
 
     private static bool HasAssemblyReference(Stream assemblyStream, string assemblyName)

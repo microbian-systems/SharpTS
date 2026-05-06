@@ -50,6 +50,60 @@ public class SmokeTest
     }
 
     /// <summary>
+    /// Diagnostic only — runs a fixed ~500-test subset through
+    /// <see cref="BatchedSubprocessRunner"/> with worker counts 1, 2, 4, 8 and
+    /// reports wall-clock per run. Lets us see whether perf scales linearly
+    /// with worker count, plateaus, or degrades — the prior 4-worker compile
+    /// regen only got 1.32× over serial, suggesting either disk/JIT
+    /// contention, straggler batches, or orchestrator overhead.
+    /// </summary>
+    [Fact]
+    public void Diagnostic_ParallelScaling()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var workerDll = Test262Paths.TryFindWorkerDll();
+        if (workerDll is null)
+        {
+            _output.WriteLine("worker DLL not found — build SharpTS.Test262.Worker first");
+            return;
+        }
+
+        // Math folder: ~1949 tests, mostly fast (no async timeouts), good signal
+        // for compile + JIT + load throughput. Take 500 to keep total runtime
+        // manageable across four passes.
+        var testDir = Path.Combine(Test262Paths.TestDir(root), "built-ins", "Math");
+        var paths = Directory.EnumerateFiles(testDir, "*.js", SearchOption.AllDirectories)
+            .Where(f => !f.EndsWith("_FIXTURE.js"))
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .Take(500)
+            .ToList();
+        _output.WriteLine($"profiling subset: {paths.Count} tests");
+
+        // Warm up: spawn one worker to JIT the worker assembly + load the
+        // Test262 harness on disk. Without this, run #1 pays cold-start cost
+        // that runs #2-4 don't.
+        var warmup = new BatchedSubprocessRunner(
+            root, Test262ExecutionMode.Compiled, TimeSpan.FromSeconds(5), null, workerDll)
+        { WorkerCount = 1 };
+        warmup.RunAll(paths.Take(25).ToList());
+
+        foreach (var n in new[] { 1, 2, 4, 8 })
+        {
+            var runner = new BatchedSubprocessRunner(
+                root, Test262ExecutionMode.Compiled, TimeSpan.FromSeconds(5), null, workerDll)
+            { WorkerCount = n };
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var results = runner.RunAll(paths);
+            sw.Stop();
+
+            var msPerTest = sw.Elapsed.TotalMilliseconds / paths.Count;
+            _output.WriteLine($"N={n}: {sw.Elapsed.TotalSeconds:F1}s total, {msPerTest:F1} ms/test, {results.Count} results");
+        }
+    }
+
+    /// <summary>
     /// Diagnostic only — measures per-test latency for compiled vs interpreted
     /// modes on a trivial Math test, instrumenting the major phases (parse,
     /// type-check, IL emit, save, ALC load, invoke). Lets us pinpoint where
