@@ -76,12 +76,14 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notSymbolLabel);
 
-        // propName = $Runtime.Stringify(prop) — ECMA-262 §7.1.19 ToPropertyKey
-        // string path. Avoids the prop.ToString() Callvirt-on-null NRE for
-        // `Object.defineProperty(obj, null, ...)` and produces JS-conformant
-        // strings ("undefined", "null", "true", "false", "0" for -0).
+        // propName = $Runtime.ToJsString(prop) — ECMA-262 §7.1.19 ToPropertyKey
+        // string path via the spec-shaped ToString. Avoids the prop.ToString()
+        // Callvirt-on-null NRE for `Object.defineProperty(obj, null, ...)`,
+        // and unlike runtime.Stringify (which produces debug "[1, 2]" form for
+        // arrays) honors `Array.prototype.toString` join semantics so
+        // `defineProperty(obj, [1], ...)` lands at key "1" (matches V8/SM).
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, propNameLocal);
 
         // ECMA-262 10.4.2.4 ArraySetLength: validate that ToUint32(newLen) ===
@@ -351,10 +353,13 @@ public partial class RuntimeEmitter
         var hasDescriptorLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
-        // propName = $Runtime.Stringify(prop) — ECMA-262 §7.1.19 ToPropertyKey
-        // string path (Symbol case is handled by callers via PDS-symbol routing).
+        // propName = $Runtime.ToJsString(prop) — spec ECMA-262 ToString. Honors
+        // Array.prototype.toString (so `gOPD(obj, [1])` looks up "1", not "[1]"),
+        // and avoids the prop.ToString() NRE for null. Symbol input throws
+        // TypeError per spec — matches existing behavior since GOPD doesn't
+        // currently consult the symbol-dict in compiled mode anyway.
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, propNameLocal);
 
         // Try to get descriptor from $PropertyDescriptorStore

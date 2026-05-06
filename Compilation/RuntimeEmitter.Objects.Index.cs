@@ -199,7 +199,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(classInstanceLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
         il.Emit(OpCodes.Ret);
 
@@ -210,7 +210,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(tsObjectIdxLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Call, runtime.GetProperty);
         il.Emit(OpCodes.Ret);
 
@@ -218,7 +218,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(tsFunctionIdxLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Call, runtime.GetProperty);
         il.Emit(OpCodes.Ret);
 
@@ -251,7 +251,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(routeAsNamedGetLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Call, runtime.GetProperty);
         il.Emit(OpCodes.Ret);
 
@@ -479,7 +479,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(dictNumericKeyLabel);
         EmitDictLookup(
             () => { il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Castclass, _types.DictionaryStringObject); },
-            () => { il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Call, runtime.Stringify); });
+            () => { il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Call, runtime.ToJsString); });
 
         // Defunct labels — replaced by EmitDictLookup. Mark unreachable for IL
         // verification balance.
@@ -598,7 +598,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(tsObjectIdxSetLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
@@ -607,7 +607,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(tsFunctionIdxSetLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
@@ -673,7 +673,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(classInstanceLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetFieldsProperty);
         il.Emit(OpCodes.Ret);
@@ -722,7 +722,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(routeAsNamedLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
@@ -806,7 +806,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(dictNumericKeyLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
