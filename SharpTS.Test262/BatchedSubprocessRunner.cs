@@ -203,6 +203,45 @@ public sealed class BatchedSubprocessRunner
     /// on dispose. The writer pulls paths from the shared queue; the reader
     /// emits results back via the supplied callback.
     /// </summary>
+    /// <summary>
+    /// File-based diagnostic logger for parallel-regen flake hunting. Set
+    /// <c>SHARPTS_TEST262_TRACE=1</c> to enable; otherwise the logger is a
+    /// no-op. Each worker writes to its own file so threads don't interleave
+    /// (stdout is captured/buffered by xUnit testhost, making it useless here).
+    /// </summary>
+    private sealed class WorkerTrace
+    {
+        private readonly StreamWriter? _writer;
+        private readonly object _lock = new();
+        public WorkerTrace(string? path)
+        {
+            if (path is null) { _writer = null; return; }
+            _writer = new StreamWriter(path, append: true) { AutoFlush = true };
+        }
+        public void Log(string format, params object[] args)
+        {
+            if (_writer is null) return;
+            var line = $"{DateTime.UtcNow:HH:mm:ss.fff} {string.Format(format, args)}";
+            lock (_lock) _writer.WriteLine(line);
+        }
+        public void Close()
+        {
+            if (_writer is null) return;
+            lock (_lock) _writer.Dispose();
+        }
+    }
+
+    private static readonly string? TraceDir = ResolveTraceDir();
+    private static string? ResolveTraceDir()
+    {
+        var env = Environment.GetEnvironmentVariable("SHARPTS_TEST262_TRACE");
+        if (string.IsNullOrEmpty(env) || env == "0") return null;
+        var dir = Path.Combine(Path.GetTempPath(), $"sharpts_trace_{DateTime.UtcNow:yyyyMMdd_HHmmss}");
+        Directory.CreateDirectory(dir);
+        Console.WriteLine($"[trace] writing to {dir}");
+        return dir;
+    }
+
     private sealed class PersistentWorker : IDisposable
     {
         private readonly Process _proc;
@@ -210,6 +249,9 @@ public sealed class BatchedSubprocessRunner
         private readonly Action<string, string> _onResult;
         private readonly TimeSpan _idleBudget;
         private readonly int _id;
+        private readonly WorkerTrace _trace;
+        private int _writtenCount;
+        private int _readCount;
 
         // In-flight queue: paths sent to this worker for which we haven't yet
         // seen a result. Used to (a) detect orphans on worker death, (b) push
@@ -244,6 +286,9 @@ public sealed class BatchedSubprocessRunner
             _onResult = onResult;
             _idleBudget = idleBudget;
             _id = id;
+            _trace = new WorkerTrace(TraceDir is null
+                ? null
+                : Path.Combine(TraceDir, $"worker_{id:D2}.log"));
 
             var psi = new ProcessStartInfo("dotnet")
             {
@@ -253,8 +298,14 @@ public sealed class BatchedSubprocessRunner
                 RedirectStandardError = true,
             };
             foreach (var arg in args) psi.ArgumentList.Add(arg);
+            // Hand the worker a per-worker trace path via env var so the
+            // subprocess can also log into our trace dir.
+            if (TraceDir is not null)
+                psi.Environment["SHARPTS_TEST262_WORKER_TRACE"] =
+                    Path.Combine(TraceDir, $"worker_{id:D2}_subprocess.log");
             _proc = Process.Start(psi)
                 ?? throw new InvalidOperationException("failed to start Test262 worker");
+            _trace.Log("spawned PID={0}", _proc.Id);
         }
 
         public void Start()
@@ -278,11 +329,16 @@ public sealed class BatchedSubprocessRunner
             try { _shutdownCts.Cancel(); } catch { }
             try
             {
-                if (!_proc.HasExited) _proc.Kill(entireProcessTree: true);
+                if (!_proc.HasExited)
+                {
+                    _trace.Log("DISPOSE killing live worker PID={0}", _proc.Id);
+                    _proc.Kill(entireProcessTree: true);
+                }
             }
             catch { }
             _proc.Dispose();
             _shutdownCts.Dispose();
+            _trace.Close();
         }
 
         // Writer thread: pulls paths from the shared queue and writes each to
@@ -311,7 +367,33 @@ public sealed class BatchedSubprocessRunner
                     if (_queue.TryDequeue(out var path))
                     {
                         lock (_inFlightLock) _inFlight.Enqueue(path);
-                        _proc.StandardInput.WriteLine(path);
+                        try
+                        {
+                            _proc.StandardInput.WriteLine(path);
+                        }
+                        catch (Exception ex)
+                        {
+                            // WriteLine failed (broken pipe). The path was added
+                            // to inFlight but never reached the worker's stdin —
+                            // pull it back out and put it on the shared queue
+                            // so a surviving worker handles it.
+                            lock (_inFlightLock)
+                            {
+                                if (_inFlight.Count > 0 && ReferenceEquals(_inFlight.Last(), path))
+                                {
+                                    var copy = new Queue<string>();
+                                    foreach (var p in _inFlight) if (!ReferenceEquals(p, path)) copy.Enqueue(p);
+                                    _inFlight.Clear();
+                                    foreach (var p in copy) _inFlight.Enqueue(p);
+                                    _queue.Enqueue(path);
+                                    _trace.Log("WRITE-FAIL path={0} exc={1}; requeued", Path.GetFileName(path), ex.GetType().Name);
+                                }
+                            }
+                            throw;
+                        }
+                        Interlocked.Increment(ref _writtenCount);
+                        if (_writtenCount % 100 == 0)
+                            _trace.Log("written={0} inFlight={1} queueRemaining={2}", _writtenCount, _inFlight.Count, _queue.Count);
                         continue;
                     }
                     int inFlightCount;
@@ -319,10 +401,12 @@ public sealed class BatchedSubprocessRunner
                     if (inFlightCount == 0) break;
                     Thread.Sleep(20);
                 }
+                _trace.Log("WRITER closing stdin (wrote {0}, inFlight={1})", _writtenCount, _inFlight.Count);
                 _proc.StandardInput.Close();
             }
-            catch
+            catch (Exception ex)
             {
+                _trace.Log("WRITER exit by exception: {0}", ex.Message);
                 // Worker died (broken pipe). Reader will detect EOF and the
                 // crash-handling path on completion will requeue inFlight.
             }
@@ -341,21 +425,40 @@ public sealed class BatchedSubprocessRunner
                     if (line.StartsWith("{\"_done\":"))
                     {
                         _doneSeen = true;
+                        _trace.Log("READER saw _done (read={0}, inFlight={1})", _readCount, _inFlight.Count);
                         continue;
                     }
                     var parsed = ParseResultLine(line);
-                    if (!parsed.HasValue) continue;
+                    if (!parsed.HasValue)
+                    {
+                        _trace.Log("READER unparsed line: {0}", line.Length > 100 ? line[..100] + "…" : line);
+                        continue;
+                    }
                     var (path, bucket) = parsed.Value;
                     _onResult(path, bucket);
                     lock (_inFlightLock)
                     {
-                        if (_inFlight.Count > 0) _inFlight.Dequeue();
+                        if (_inFlight.Count > 0)
+                        {
+                            var head = _inFlight.Peek();
+                            if (!ReferenceEquals(head, path) && head != path)
+                                _trace.Log("READER mismatch! result={0} head={1}", Path.GetFileName(path), Path.GetFileName(head));
+                            _inFlight.Dequeue();
+                        }
+                        else
+                        {
+                            _trace.Log("READER inFlight empty when result {0} arrived (over-dequeue?)", Path.GetFileName(path));
+                        }
                     }
+                    Interlocked.Increment(ref _readCount);
+                    if (_readCount % 100 == 0)
+                        _trace.Log("read={0} inFlight={1}", _readCount, _inFlight.Count);
                 }
+                _trace.Log("READER hit EOF (read={0}, inFlight={1}, doneSeen={2})", _readCount, _inFlight.Count, _doneSeen);
             }
-            catch
+            catch (Exception ex)
             {
-                // Pipe broke / killed. Crash handling below.
+                _trace.Log("READER exit by exception: {0}", ex.Message);
             }
 
             // Worker has exited (or its stdout closed). Recover any unfinished
@@ -379,6 +482,9 @@ public sealed class BatchedSubprocessRunner
                 if (idle > _idleBudget.Ticks)
                 {
                     _killedByWatchdog = true;
+                    _trace.Log("WATCHDOG fire (idle={0}s budget={1}s, written={2} read={3} inFlight={4})",
+                        TimeSpan.FromTicks(idle).TotalSeconds, _idleBudget.TotalSeconds,
+                        _writtenCount, _readCount, _inFlight.Count);
                     try { _proc.Kill(entireProcessTree: true); } catch { }
                     return;
                 }
@@ -416,6 +522,9 @@ public sealed class BatchedSubprocessRunner
                 // had pushed them into inFlight and the reader was racing to
                 // catch up when the worker emitted _done and exited. Re-queue
                 // for surviving workers.
+                _trace.Log("HandleCompletion CLEAN-EXIT requeueing {0} unfinished paths (first 3: {1})",
+                    inFlight.Count,
+                    string.Join(",", inFlight.Take(3).Select(Path.GetFileName)));
                 foreach (var path in inFlight) _queue.Enqueue(path);
                 return;
             }
@@ -425,6 +534,9 @@ public sealed class BatchedSubprocessRunner
             var bucket = _killedByWatchdog
                 ? "RuntimeError:worker-stalled"
                 : "RuntimeError:worker-crashed";
+            _trace.Log("HandleCompletion CRASH (watchdog={0}) head={1} as {2}, requeue={3} (sample: {4})",
+                _killedByWatchdog, Path.GetFileName(head), bucket, inFlight.Count - 1,
+                inFlight.Count > 1 ? string.Join(",", inFlight.Skip(1).Take(3).Select(Path.GetFileName)) : "(none)");
             _onResult(head, bucket);
             for (int i = 1; i < inFlight.Count; i++)
                 _queue.Enqueue(inFlight[i]);

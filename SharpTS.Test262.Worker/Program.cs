@@ -54,9 +54,39 @@ if (string.IsNullOrEmpty(test262Root))
 var skipFeatures = LoadSkipFeatures(skipFeaturesFile);
 var runner = new Test262Runner(test262Root, TimeSpan.FromSeconds(timeoutSeconds), skipFeatures);
 
-// Configure stdout for line-buffered output so the parent observes results
-// in real time and can detect a hung worker by stalled output.
-Console.Out.Flush();
+// CRITICAL: capture the original stdout NOW, before any test runs. The runner's
+// compiled-mode test execution does Console.SetOut(stringWriter) to capture
+// per-test JS console output, then Console.SetOut(original) to restore. On
+// Timeout tests the cancel-and-wait grace period ends after 1s but the
+// orphan Task that holds the redirected Out can keep running — meaning the
+// worker's `Console.Out.WriteLine(JsonLine(...))` for the result of the
+// timed-out test would land in the orphan's StringWriter, not the parent's
+// pipe. Subsequent JSON-line results would also leak until the orphan
+// finally calls SetOut(originalOut) — losing entire batches of results
+// silently and desyncing the parent's inFlight queue.
+//
+// Capturing the original TextWriter once and writing all worker output via
+// that reference makes the JSON-line emit independent of process-wide
+// Console.Out state.
+var workerStdout = Console.Out;
+
+// Optional file-based diagnostic trace for parallel-regen flake hunting.
+// Set SHARPTS_TEST262_WORKER_TRACE=<path> from the parent (orchestrator does
+// this when SHARPTS_TEST262_TRACE is enabled) to log every test the worker
+// processes plus periodic memory snapshots.
+StreamWriter? trace = null;
+{
+    var p = Environment.GetEnvironmentVariable("SHARPTS_TEST262_WORKER_TRACE");
+    if (!string.IsNullOrEmpty(p))
+        trace = new StreamWriter(p, append: true) { AutoFlush = true };
+}
+void TraceLog(string format, params object[] args)
+{
+    trace?.WriteLine($"{DateTime.UtcNow:HH:mm:ss.fff} {string.Format(format, args)}");
+}
+TraceLog("startup pid={0} mode={1} timeout={2}s", Environment.ProcessId, mode, timeoutSeconds);
+
+workerStdout.Flush();
 
 int count = 0;
 string? path;
@@ -65,18 +95,34 @@ while ((path = Console.In.ReadLine()) != null)
     path = path.Trim();
     if (path.Length == 0) continue;
 
+    var swTest = System.Diagnostics.Stopwatch.StartNew();
     var result = runner.RunOne(path, mode);
+    swTest.Stop();
     var bucket = result.SkipReason is null
         ? result.Outcome.ToString()
         : $"{result.Outcome}:{result.SkipReason}";
 
-    Console.Out.WriteLine(JsonLine(path, bucket));
-    Console.Out.Flush();
+    workerStdout.WriteLine(JsonLine(path, bucket));
+    workerStdout.Flush();
     count++;
+    if (trace is not null)
+    {
+        TraceLog("test #{0} {1}ms {2} :: {3}", count, swTest.ElapsedMilliseconds, bucket, Path.GetFileName(path));
+        if (count % 100 == 0)
+        {
+            using var proc = System.Diagnostics.Process.GetCurrentProcess();
+            TraceLog("MEM at #{0}: working={1}MB private={2}MB",
+                count,
+                proc.WorkingSet64 / 1_048_576,
+                proc.PrivateMemorySize64 / 1_048_576);
+        }
+    }
 }
 
-Console.Out.WriteLine($"{{\"_done\":true,\"count\":{count}}}");
-Console.Out.Flush();
+TraceLog("EOF after {0} tests; emitting _done", count);
+workerStdout.WriteLine($"{{\"_done\":true,\"count\":{count}}}");
+workerStdout.Flush();
+trace?.Dispose();
 return 0;
 
 static HashSet<string> LoadSkipFeatures(string? path)
