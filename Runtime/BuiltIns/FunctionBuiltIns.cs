@@ -22,7 +22,14 @@ public static class FunctionBuiltIns
             "bind" => _bind.Bind(receiver),
             "call" => _call.Bind(receiver),
             "apply" => _apply.Bind(receiver),
-            "length" => (double)receiver.Arity(),
+            // BuiltInMethod carries an explicit ECMA-262 spec length distinct
+            // from MinArity (variadic methods like Array.prototype.slice have
+            // MinArity 0 but spec length 2). Other callables fall back to
+            // their Arity() — typically the parameter count of a user-defined
+            // function, which already matches the spec.
+            "length" => receiver is BuiltInMethod bim
+                ? (double)bim.SpecLength
+                : (double)receiver.Arity(),
             "name" => GetFunctionName(receiver),
             _ => null
         };

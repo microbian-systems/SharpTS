@@ -26,6 +26,14 @@ public class BuiltInMethod : ISharpTSCallable, ISharpTSCallableV2
     private object? _receiver;
     private RuntimeValue _receiverV2;
     private readonly bool _hasV2Receiver;
+    // Spec-defined Function.prototype.length value visible to user code as
+    // `f.length`. Distinct from MinArity / MaxArity (used internally for arg
+    // padding/trimming): per ECMA-262, variadic methods like Array.prototype.push
+    // have spec length 1 even though their MinArity is 0 in our registration.
+    // -1 = unset (caller didn't specify a spec length); resolvers fall back to
+    // MinArity for compatibility with the many call sites that already report
+    // the correct value via MinArity.
+    private int _specLength = -1;
 
     // Cache for bound methods - uses weak references to avoid memory leaks
     // Key: receiver object, Value: bound method instance
@@ -188,11 +196,32 @@ public class BuiltInMethod : ISharpTSCallable, ISharpTSCallableV2
     public int Arity() => _minArity;
 
     /// <summary>
+    /// ECMA-262 Function.prototype.length value. When unset (-1), falls back
+    /// to <see cref="MinArity"/> — matches most methods, where the minimum
+    /// argument count equals the spec length. Variadic methods that need an
+    /// explicit value (push, slice, splice, …) set it via
+    /// <see cref="WithSpecLength"/> at registration time.
+    /// </summary>
+    public int SpecLength => _specLength >= 0 ? _specLength : _minArity;
+
+    /// <summary>
+    /// Returns this same instance with the JS-spec length set. Mutates in
+    /// place — safe because BuiltInMethod is set up once at static-init time.
+    /// </summary>
+    public BuiltInMethod WithSpecLength(int specLength)
+    {
+        _specLength = specLength;
+        return this;
+    }
+
+    /// <summary>
     /// Binds the method to a receiver using RuntimeValue.
     /// </summary>
     public BuiltInMethod BindV2(RuntimeValue receiver)
     {
-        return new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, receiver);
+        var bound = new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, receiver);
+        bound._specLength = _specLength;
+        return bound;
     }
 
     public BuiltInMethod Bind(object? receiver)
@@ -200,14 +229,18 @@ public class BuiltInMethod : ISharpTSCallable, ISharpTSCallableV2
         // Null receivers don't need caching
         if (receiver == null)
         {
-            return new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, (object?)null);
+            var unboundCopy = new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, (object?)null);
+            unboundCopy._specLength = _specLength;
+            return unboundCopy;
         }
 
         // Value types (like double for numbers) can't be cached in ConditionalWeakTable
         // because they're boxed each time, creating new object instances
         if (receiver.GetType().IsValueType)
         {
-            return new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, receiver);
+            var valBound = new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, receiver);
+            valBound._specLength = _specLength;
+            return valBound;
         }
 
         // Initialize cache lazily
@@ -221,6 +254,7 @@ public class BuiltInMethod : ISharpTSCallable, ISharpTSCallableV2
 
         // Create new bound method and cache it
         var bound = new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, receiver);
+        bound._specLength = _specLength;
         _boundMethodCache.AddOrUpdate(receiver, bound);
         return bound;
     }

@@ -90,7 +90,7 @@ internal sealed class StringPrototypeMethodWrapper : ISharpTSCallable
         _hasReceiver = true;
     }
 
-    public int Arity() => _inner.MinArity;
+    public int Arity() => _inner.SpecLength;
 
     public StringPrototypeMethodWrapper Bind(object? receiver)
         => new(_name, _inner, receiver);
@@ -233,7 +233,7 @@ internal sealed class NumberPrototypeMethodWrapper : ISharpTSCallable
         _hasReceiver = true;
     }
 
-    public int Arity() => _inner.MinArity;
+    public int Arity() => _inner.SpecLength;
 
     public NumberPrototypeMethodWrapper Bind(object? receiver)
         => new(_name, _inner, receiver);

@@ -114,6 +114,26 @@ public sealed class BuiltInTypeBuilder<TReceiver>
     }
 
     /// <summary>
+    /// Registers a V2 variadic method with an explicit ECMA-262 spec length
+    /// (the value visible as <c>fn.length</c>). Use when minArity differs
+    /// from the spec length — e.g. <c>Array.prototype.slice</c> registered
+    /// with <c>(0, 2, 2, …)</c>: minArity 0 (slice() is legal), maxArity 2,
+    /// spec length 2.
+    /// </summary>
+    public BuiltInTypeBuilder<TReceiver> MethodV2(
+        string name,
+        int minArity,
+        int maxArity,
+        int specLength,
+        Func<Interpreter, TReceiver, ReadOnlySpan<RuntimeValue>, RuntimeValue> implementation)
+    {
+        _methods[name] = BuiltInMethod.CreateV2(name, minArity, maxArity,
+            (interp, receiver, args) => implementation(interp, (TReceiver)receiver.ToObject()!, args))
+            .WithSpecLength(specLength);
+        return this;
+    }
+
+    /// <summary>
     /// Builds the member lookup for fast O(1) access.
     /// </summary>
     public BuiltInTypeMemberLookup<TReceiver> Build()

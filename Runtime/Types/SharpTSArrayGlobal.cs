@@ -129,7 +129,7 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
         _hasReceiver = true;
     }
 
-    public int Arity() => _inner.MinArity;
+    public int Arity() => _inner.SpecLength;
 
     public ArrayPrototypeMethodWrapper Bind(object? receiver)
         => new(_name, _inner, receiver);
