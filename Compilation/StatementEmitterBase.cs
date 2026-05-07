@@ -347,6 +347,19 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     }
 
     /// <summary>
+    /// Emits <c>call $Runtime.CheckCancellation()</c> at a loop backedge so
+    /// compiled IL inside async/generator state machines (which inherit these
+    /// base loop emitters) honors the runner's cooperative cancellation flag.
+    /// See issue #74 — without this, a `while(true){}` inside an async function
+    /// hangs the test thread past the runner's timeout.
+    /// </summary>
+    protected void EmitCancellationCheck()
+    {
+        if (Ctx.Runtime?.CheckCancellationMethod != null)
+            IL.Emit(OpCodes.Call, Ctx.Runtime.CheckCancellationMethod);
+    }
+
+    /// <summary>
     /// Emits a while loop.
     /// </summary>
     protected virtual void EmitWhile(Stmt.While w)
@@ -358,6 +371,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         EnterLoop(endLabel, continueLabel);
 
         IL.MarkLabel(startLabel);
+        EmitCancellationCheck();
         EmitConditionCheck(w.Condition);
         IL.Emit(OpCodes.Brfalse, endLabel);
 
@@ -382,6 +396,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         EnterLoop(endLabel, continueLabel);
 
         IL.MarkLabel(startLabel);
+        EmitCancellationCheck();
         EmitStatement(dw.Body);
 
         IL.MarkLabel(continueLabel);
@@ -413,6 +428,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         EnterLoop(endLabel, continueLabel);
 
         IL.MarkLabel(startLabel);
+        EmitCancellationCheck();
 
         // Check condition (if present)
         if (f.Condition != null)
@@ -472,6 +488,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         var loopVarLocal = DeclareLoopVariable(f.Variable.Lexeme);
 
         IL.MarkLabel(startLabel);
+        EmitCancellationCheck();
 
         // Check MoveNext
         IL.Emit(OpCodes.Ldloc, enumLocal);
@@ -523,6 +540,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         var loopVarLocal = DeclareLoopVariable(f.Variable.Lexeme);
 
         IL.MarkLabel(startLabel);
+        EmitCancellationCheck();
 
         // Check index < keys.Count
         IL.Emit(OpCodes.Ldloc, indexLocal);

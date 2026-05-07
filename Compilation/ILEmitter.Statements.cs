@@ -350,18 +350,9 @@ public partial class ILEmitter
         builder.MarkLabel(endLabel);
     }
 
-    /// <summary>
-    /// Emits a `call $Runtime.CheckCancellation()` — one IL instruction that
-    /// polls the cooperative cancellation flag. Called at each loop backedge
-    /// so compiled hang tests (infinite loops, never-settling promise chains)
-    /// unwind within one iteration after the Test262 runner flips the flag.
-    /// See issue #74.
-    /// </summary>
-    private void EmitCancellationCheck()
-    {
-        if (_ctx.Runtime?.CheckCancellationMethod != null)
-            IL.Emit(OpCodes.Call, _ctx.Runtime.CheckCancellationMethod);
-    }
+    // EmitCancellationCheck is inherited from StatementEmitterBase so async/
+    // generator state machines also poll the cancellation flag at loop heads
+    // (their inherited base loop emitters call it). See issue #74.
 
     protected override void EmitWhile(Stmt.While w)
     {
