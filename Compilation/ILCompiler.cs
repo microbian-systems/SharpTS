@@ -83,6 +83,17 @@ public partial class ILCompiler
     // Strict mode setting (from "use strict" directive)
     private bool _isStrictMode;
 
+    // Runtime feature gating result. Populated by Compile via RuntimeFeatureDetector
+    // unless a caller (CompileModules, tests) has set it explicitly first.
+    private RuntimeFeatureSet? _features;
+
+    /// <summary>
+    /// Pre-set the runtime feature flags before <see cref="Compile"/> runs. If unset,
+    /// <see cref="Compile"/> derives them from the AST via <see cref="RuntimeFeatureDetector"/>.
+    /// Tests / benchmarks use this to reuse a detected set across multiple compile invocations.
+    /// </summary>
+    public void SetRuntimeFeatures(RuntimeFeatureSet features) => _features = features;
+
     private UnionTypeGenerator? _unionGenerator;
 
     // Shared context for definition phase (module name resolution)
@@ -342,6 +353,12 @@ public partial class ILCompiler
         // Check for "use strict" directive at file level
         _isStrictMode = CheckForUseStrict(statements);
 
+        // Walk the AST to determine which runtime feature categories the program
+        // actually needs, so Phase 1 can skip emitting unused helper types.
+        // The override `_runtimeFeatures` (set by callers that have already detected,
+        // e.g. CompileModules over multiple files) wins.
+        _features ??= new RuntimeFeatureDetector().Detect(statements);
+
         Phase0_ExtractNamespace(statements);
         Phase1_EmitRuntimeTypes();
         Phase2_AnalyzeClosures(statements);
@@ -398,7 +415,7 @@ public partial class ILCompiler
     /// </summary>
     private void Phase1_EmitRuntimeTypes()
     {
-        _runtime = new RuntimeEmitter(_types).EmitAll(_moduleBuilder);
+        _runtime = new RuntimeEmitter(_types).EmitAll(_moduleBuilder, _features ?? RuntimeFeatureSet.EmitEverything());
         _typeMapper.SetRuntime(_runtime);
     }
 
@@ -815,6 +832,14 @@ public partial class ILCompiler
         _modules.Resolver = resolver;
 
         var allStatements = modules.SelectMany(m => m.Statements).ToList();
+
+        // Detect features across the union of all modules' statements (any module
+        // pulling in `crypto` makes the runtime emit crypto types).
+        if (_features is null)
+        {
+            var detector = new RuntimeFeatureDetector();
+            _features = detector.Detect(allStatements);
+        }
 
         ModulePhase0_ExtractNamespaces(modules);
         Phase1_EmitRuntimeTypes();

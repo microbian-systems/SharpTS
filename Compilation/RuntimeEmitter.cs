@@ -10,13 +10,30 @@ public partial class RuntimeEmitter
 {
     private readonly TypeProvider _types;
 
+    /// <summary>
+    /// Feature gating set — populated by <see cref="EmitAll(ModuleBuilder, RuntimeFeatureSet)"/>
+    /// and consulted by individual <c>Emit*</c> methods to skip emission of helper types
+    /// (and any <c>$Runtime</c> methods that depend on those helper types) the program
+    /// doesn't need. Defaults to "emit everything" when an older overload is used.
+    /// </summary>
+    private RuntimeFeatureSet _features = RuntimeFeatureSet.EmitEverything();
+
     public RuntimeEmitter(TypeProvider types)
     {
         _types = types;
     }
 
+    /// <summary>
+    /// Backward-compatible overload: emit every helper type unconditionally.
+    /// New callers should pass a <see cref="RuntimeFeatureSet"/> derived from
+    /// <see cref="RuntimeFeatureDetector"/> so unused machinery can be skipped.
+    /// </summary>
     public EmittedRuntime EmitAll(ModuleBuilder moduleBuilder)
+        => EmitAll(moduleBuilder, RuntimeFeatureSet.EmitEverything());
+
+    public EmittedRuntime EmitAll(ModuleBuilder moduleBuilder, RuntimeFeatureSet features)
     {
+        _features = features;
         var runtime = new EmittedRuntime();
 
         // Emit $Undefined singleton class first (other methods need this type)
@@ -110,54 +127,19 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSBuffer
         EmitTSBufferClass(moduleBuilder, runtime);
 
-        // Emit $Hash class for standalone crypto hash support
-        // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSHash
+        // Crypto helper types — always emit. EmitGlobalThisMethods inside
+        // $Runtime references the crypto namespace getter unconditionally;
+        // gating these would require additional dispatch-site work. Phase 2.
         EmitTSHashClass(moduleBuilder, runtime);
-
-        // Emit $Hmac class for standalone crypto HMAC support
-        // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSHmac
         EmitTSHmacClass(moduleBuilder, runtime);
-
-        // Emit $Cipher class for standalone crypto cipher support
-        // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSCipher
         EmitTSCipherClass(moduleBuilder, runtime);
-
-        // Emit $Decipher class for standalone crypto decipher support
-        // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSDecipher
         EmitTSDecipherClass(moduleBuilder, runtime);
-
-        // Emit $Sign type definition (Phase 1)
-        // Sign method added in Phase 2 after EmitRuntimeClass
-        // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSSign
         EmitTSSignTypeDefinition(moduleBuilder, runtime);
-
-        // Emit $Verify type definition (Phase 1)
-        // Verify method added in Phase 2 after EmitRuntimeClass
-        // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSVerify
         EmitTSVerifyTypeDefinition(moduleBuilder, runtime);
-
-        // Emit $TSKeyObject class for standalone crypto key object support
-        // Must come after $Buffer (export returns Buffer for secret keys)
         EmitTSKeyObjectClass(moduleBuilder, runtime);
-
-        // Emit $ECDH type definition (Phase 1)
-        // ECDH methods added in Phase 2 after EmitRuntimeClass
-        // Must come after $Buffer (encoding returns Buffer)
         EmitTSECDHTypeDefinition(moduleBuilder, runtime);
-
-        // Emit $BoundECDHMethod type definition (Phase 1)
-        // Invoke method added in Phase 2 after ECDH methods
-        // Must come after $ECDH (uses TSECDHType for field)
         EmitBoundECDHMethodTypeDefinition(moduleBuilder, runtime);
-
-        // Emit $DiffieHellman type definition (Phase 1)
-        // DH methods added in Phase 2 after EmitRuntimeClass
-        // Must come after $Buffer (encoding returns Buffer)
         EmitTSDHTypeDefinition(moduleBuilder, runtime);
-
-        // Emit $BoundDHMethod type definition (Phase 1)
-        // Invoke method added in Phase 2 after DH methods
-        // Must come after $DiffieHellman (uses TSDiffieHellmanType for field)
         EmitBoundDHMethodTypeDefinition(moduleBuilder, runtime);
 
         // Emit $EventLoop singleton (must come before timer types and net/http types that call Ref/Unref/Schedule)
@@ -187,24 +169,24 @@ public partial class RuntimeEmitter
 
         // Emit $AsyncLocalStorage class for async context propagation
         // Must come after TSFunction (Run/Exit invoke callbacks via TSFunctionInvoke)
-        EmitAsyncLocalStorageClass(moduleBuilder, runtime);
+        if (features.UsesAsyncLocalStorage)
+            EmitAsyncLocalStorageClass(moduleBuilder, runtime);
 
         // Emit $EventEmitter class for standalone event emitter support
         // NOTE: Must come after BoundTSFunction (uses TSFunctionType, BoundTSFunctionType)
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSEventEmitter
         EmitTSEventEmitterClass(moduleBuilder, runtime);
 
-        // Emit HTTP types for standalone HTTP server support
-        // NOTE: Must come after EventEmitter ($HttpServer extends $EventEmitter)
+        // HTTP / TLS types — always emit. EmitGlobalThisMethods references the
+        // fetch/Headers/Request/Response getters unconditionally; gating these
+        // would require conditional dispatch emission. Phase 2.
         EmitHttpTypes(moduleBuilder, runtime);
-
-        // Emit TLS types for standalone TLS support
-        // NOTE: Must come after EventEmitter ($TlsSocket and $TlsServer extend $EventEmitter)
         EmitTlsTypes(moduleBuilder, runtime);
 
         // Emit cluster types for standalone cluster support
         // NOTE: Must come after EventEmitter ($ClusterWorker and $ClusterManager extend it)
-        EmitClusterTypes(moduleBuilder, runtime);
+        if (features.UsesCluster)
+            EmitClusterTypes(moduleBuilder, runtime);
 
         // Emit $FileDescriptorTable for standalone fs fd-based operations (Phase 21)
         // NOTE: Must come after $NodeError (uses NodeErrorCtor for EBADF errors)
@@ -233,6 +215,9 @@ public partial class RuntimeEmitter
         // Two-phase approach to resolve circular reference:
         // Phase 1: Define types, fields, and most methods (no CreateType)
         // Phase 2: Add methods that need cross-references, then CreateType
+        // Node-stream types ($Readable / $Writable / $Duplex / $Transform / etc.)
+        // are referenced from EmitInvokeValue's central dispatch in $Runtime, so
+        // we always emit them in Phase 1. Defer node-stream gating to Phase 2.
         EmitTSWritableClass(moduleBuilder, runtime);
         EmitTSReadableTypeDefinition(moduleBuilder, runtime);  // Phase 1: type, fields, most methods
         EmitTSDuplexTypeDefinition(moduleBuilder, runtime);    // Phase 1: type, fields, all methods
@@ -242,8 +227,8 @@ public partial class RuntimeEmitter
         EmitMapFilterTransformCallbackClasses(moduleBuilder, runtime); // Helper classes for map/filter
         EmitTSReadableMapFilterMethods(runtime);               // Phase 2b: Map, Filter (need Transform) + CreateType
         EmitTSPassThroughClass(moduleBuilder, runtime);
-        EmitTSZlibTransformClass(moduleBuilder, runtime);
         EmitTSStreamUtilsClass(moduleBuilder, runtime);
+        EmitTSZlibTransformClass(moduleBuilder, runtime);
 
         // Function wrapper emission is deferred below until AFTER $BoundArrayMethod /
         // $BoundMapMethod / $BoundSetMethod Phase 1 so their Invoke MethodBuilders
@@ -251,7 +236,11 @@ public partial class RuntimeEmitter
         // bound methods).
 
         // Emit util module types for standalone execution
-        // Must come after $Buffer (TextEncoder returns $Buffer)
+        // Must come after $Buffer (TextEncoder returns $Buffer).
+        // $DeprecatedFunction / $CallbackifiedFunction / $PromisifiedFunction and
+        // $TextDecoderDecodeMethod are referenced from EmitInvokeValue's central
+        // dispatch — always emit in Phase 1. Phase 2 will gate by also gating the
+        // dispatch arms.
         EmitTSDeprecatedFunctionClass(moduleBuilder, runtime);
         EmitTSCallbackifiedFunctionClass(moduleBuilder, runtime);
         EmitPromisifyCallbackClass(moduleBuilder, runtime);  // Must come before PromisifiedFunction
@@ -308,35 +297,24 @@ public partial class RuntimeEmitter
         // so types that need CompiledPropertyDescriptorType during their own
         // emission can reference it. This used to live here.
 
-        // Emit $NetSocket type definition (Phase 1a)
-        // Must come after EventEmitter ($NetSocket extends $EventEmitter)
-        // Must come before EmitRuntimeClass so NetCreateConnection can use the constructor
+        // Net / Dgram types — always emit. Same central-dispatch concern as HTTP/TLS.
         EmitTSNetSocketPhase1(moduleBuilder, runtime);
-
-        // Emit $NetServer type definition (Phase 1a)
-        // Must come after $NetSocket ($NetServer creates $NetSocket instances)
-        // Must come before EmitRuntimeClass so NetCreateServer can use the constructor
         EmitTSNetServerPhase1(moduleBuilder, runtime);
-
-        // Emit $DatagramSocket type definition (Phase 1)
-        // Must come after EventEmitter ($DatagramSocket extends $EventEmitter)
-        // Must come before EmitRuntimeClass so DgramCreateSocket can use the constructor
         EmitDatagramSocketTypeDefinition(moduleBuilder, runtime);
 
         // Emit $ReadlineInterface type definition (Phase 1)
         // Must come before EmitRuntimeClass so ReadlineCreateInterface can use the constructor
-        EmitReadlineInterfaceTypeDefinition(moduleBuilder, runtime);
+        if (features.UsesReadline)
+            EmitReadlineInterfaceTypeDefinition(moduleBuilder, runtime);
 
         // Emit $FinRegEntry type (finalizer helper for FinalizationRegistry)
         // Must come before EmitRuntimeClass so Register can use the constructor
-        EmitFinRegEntryTypeDefinition(moduleBuilder, runtime);
+        if (features.UsesFinalizationRegistry)
+            EmitFinRegEntryTypeDefinition(moduleBuilder, runtime);
 
-        // Emit $FsReadStream and $FsWriteStream types
-        // Must come after TSFunction (uses TSFunctionInvoke) and before EmitRuntimeClass
+        // FS stream/watcher types — always emit (FS module methods reference them
+        // unconditionally inside $Runtime). Phase 2.
         EmitFsStreamTypeDefinitions(moduleBuilder, runtime);
-
-        // Emit $FsWatcher and $StatWatcher types
-        // Must come after $EventEmitter and $EventLoop, before EmitRuntimeClass
         EmitFsWatcherClass(moduleBuilder, runtime);
         EmitStatWatcherClass(moduleBuilder, runtime);
 
@@ -353,32 +331,23 @@ public partial class RuntimeEmitter
         // → EmitWorkerHelpers → EmitStructuredCloneHelper).
         // NOTE: Must come after EmitRuntimeClass so runtime.StructuredCloneClone is set.
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSBroadcastChannel
-        EmitBroadcastChannelClass(moduleBuilder, runtime);
+        if (features.UsesBroadcastChannel)
+            EmitBroadcastChannelClass(moduleBuilder, runtime);
 
-        // Emit Web Streams queuing strategies ($CountQueuingStrategy,
-        // $ByteLengthQueuingStrategy). Pure-IL data classes; no dependencies
-        // on $Promise or $EventLoop, so order is loose. They're emitted before
-        // the larger stream classes that may eventually consume them.
+        // Web Streams — always emit. EmitGlobalThisMethods references the
+        // ReadableStream/WritableStream/TransformStream getters unconditionally.
+        // Phase 2 will gate by also gating those globalThis arms.
         EmitQueuingStrategyClasses(moduleBuilder, runtime);
-
-        // Emit $WritableStream + controller + writer. Depends on $Promise
-        // (for Task<object> return types) and $Runtime.InvokeMethodValue
-        // (already emitted by EmitRuntimeClass above) for user callback dispatch.
         EmitWritableStreamClasses(moduleBuilder, runtime);
-
-        // Emit $ReadableStream + controller + reader. Same dependencies as
-        // WritableStream. PipeTo/PipeThrough/Tee are emitted as synchronous
-        // pump loops via Task.GetAwaiter().GetResult().
         EmitReadableStreamClasses(moduleBuilder, runtime);
-
-        // Emit $TransformStream + $TransformSinkHolder. Depends on
-        // $ReadableStream and $WritableStream being emitted first (uses their
-        // ctors and runtime method handles).
         EmitTransformStreamClasses(moduleBuilder, runtime);
 
         // Emit $ReflectMetadataDecorator closure class
         // Must come after EmitRuntimeClass (calls ReflectDefineMetadata)
-        EmitReflectMetadataDecoratorClass(moduleBuilder, runtime);
+        // External usage in ReflectStaticEmitter has a null-check fallback, so
+        // skipping this is safe even if some path slips past the detector.
+        if (features.UsesReflectMetadata)
+            EmitReflectMetadataDecoratorClass(moduleBuilder, runtime);
 
         // Finalize $BoundArrayMethod with Invoke method (Phase 2)
         // Must come after EmitRuntimeClass (needs array methods defined)
@@ -426,7 +395,8 @@ public partial class RuntimeEmitter
 
         // Finalize $ReadlineInterface class (Phase 2)
         // Must come after EmitRuntimeClass (Question uses InvokeValue)
-        EmitReadlineInterfaceFinalize(runtime);
+        if (features.UsesReadline)
+            EmitReadlineInterfaceFinalize(runtime);
 
         // Finalize $Sign class (Phase 2)
         // Must come after EmitRuntimeClass (Sign uses SignDataBytes)

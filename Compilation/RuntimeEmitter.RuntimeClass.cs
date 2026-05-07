@@ -866,7 +866,8 @@ public partial class RuntimeEmitter
         EmitWorkerHelpers(typeBuilder, runtime);
 
         // Cluster module support
-        EmitClusterHelpers(typeBuilder, runtime);
+        if (_features.UsesCluster)
+            EmitClusterHelpers(typeBuilder, runtime);
 
         // Vm module support
         EmitVmMethods(typeBuilder, runtime);

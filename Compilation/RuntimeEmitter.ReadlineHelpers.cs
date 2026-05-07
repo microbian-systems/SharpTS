@@ -369,6 +369,10 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitReadlineMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Skip when no readline import / createInterface call: the helpers reference
+        // $ReadlineInterface, which we also gate on the same flag.
+        if (!_features.UsesReadline) return;
+
         EmitReadlineQuestionSync(typeBuilder, runtime);
         EmitReadlineCreateInterface(typeBuilder, runtime);
     }

@@ -118,6 +118,10 @@ public partial class RuntimeEmitter
 
     private void EmitFinalizationRegistryMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Skip when the program doesn't construct a FinalizationRegistry — the
+        // Register/Unregister methods reference $FinRegEntry, which we also gate.
+        if (!_features.UsesFinalizationRegistry) return;
+
         // Note: _finRegPokeTable field is defined in EmitRuntimeClass before the static constructor
         EmitCreateFinalizationRegistry(typeBuilder, runtime);
         EmitFinalizationRegistryRegister(typeBuilder, runtime);
