@@ -118,11 +118,13 @@ public class NpmFixture : IDisposable
 }
 
 /// <summary>
-/// xUnit collection that runs npm-dependent tests serially (DisableParallelization)
-/// so the npm init/install in <see cref="NpmFixture"/> doesn't compete with the
-/// rest of the test suite for CPU during fixture setup.
+/// xUnit collection that shares the <see cref="NpmFixture"/> across the npm-dependent
+/// test class so <c>npm init</c>/<c>npm install</c> only runs once. Parallelization
+/// is left at xUnit's default (collections run in parallel against each other) —
+/// the fixture catches setup failures and degrades to skip rather than blocking
+/// other tests.
 /// </summary>
-[CollectionDefinition("Npm", DisableParallelization = true)]
+[CollectionDefinition("Npm")]
 public class NpmCollection : ICollectionFixture<NpmFixture> { }
 
 /// <summary>

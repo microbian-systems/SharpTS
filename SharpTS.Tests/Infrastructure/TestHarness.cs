@@ -21,8 +21,9 @@ public static class TestHarness
     /// </summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
     /// <summary>
-    /// Lock to prevent concurrent Console.Out/Error manipulation across parallel tests.
-    /// Any test that redirects Console.Out or Console.Error should acquire this lock.
+    /// Legacy lock for tests that still call <see cref="Console.SetOut"/> directly
+    /// (e.g., LSP bridge tests, diagnostic reporter tests). New compiled-mode runners
+    /// use <see cref="AsyncLocalConsoleRedirector"/> instead, which doesn't need a lock.
     /// </summary>
     internal static readonly object ConsoleLock = new();
 
@@ -243,6 +244,112 @@ public static class TestHarness
     /// <exception cref="TimeoutException">Thrown if execution exceeds the timeout (likely an infinite loop bug)</exception>
     public static string RunCompiled(string source, DecoratorMode decoratorMode, TimeSpan timeout, string[]? scriptArgs = null, bool includeTestsAssembly = false, bool copySharpTsRuntime = true)
     {
+        // The default fast path is in-process Assembly.LoadFrom — it skips the ~4s
+        // dotnet-startup-plus-SharpTS-JIT cost per test by reusing the testhost's
+        // already-warmed runtime. Two cases still need a real subprocess:
+        //   1. scriptArgs != null — `process.argv` in compiled mode reads
+        //      Environment.GetCommandLineArgs() directly (see RuntimeEmitter.ProcessHelpers),
+        //      which would surface the testhost's argv in-process, not the test's.
+        //   2. copySharpTsRuntime == false — RunCompiledStandalone simulates a
+        //      shipped DLL with no SharpTS.dll alongside; that only repros via spawn.
+        if (scriptArgs is not null || !copySharpTsRuntime)
+            return RunCompiledViaSubprocess(source, decoratorMode, timeout, scriptArgs, includeTestsAssembly, copySharpTsRuntime);
+
+        return RunCompiledInProcess(source, decoratorMode, timeout);
+    }
+
+    /// <summary>
+    /// In-process compile + load + invoke. Skips the ~4s subprocess startup by reusing
+    /// the testhost's already-warm SharpTS.dll. Uses a unique GUID-suffixed assembly
+    /// name so concurrent <see cref="Assembly.Load(byte[])"/> calls don't collide on
+    /// simple-name identity (see feedback_test_perf_changes.md). Output is captured
+    /// per logical-execution-context via <see cref="AsyncLocalConsoleRedirector"/>, so
+    /// parallel tests don't fight over <see cref="Console.Out"/>.
+    /// </summary>
+    private static string RunCompiledInProcess(string source, DecoratorMode decoratorMode, TimeSpan timeout)
+    {
+        var assemblyName = $"test_{Guid.NewGuid():N}";
+
+        var lexer = new Lexer(source);
+        var tokens = lexer.ScanTokens();
+        var parser = new Parser(tokens, decoratorMode);
+        var statements = parser.ParseOrThrow();
+
+        var checker = new TypeChecker();
+        checker.SetDecoratorMode(decoratorMode);
+        var typeMap = checker.Check(statements);
+
+        var deadCodeAnalyzer = new DeadCodeAnalyzer(typeMap);
+        var deadCodeInfo = deadCodeAnalyzer.Analyze(statements);
+
+        var compiler = new ILCompiler(assemblyName);
+        compiler.SetDecoratorMode(decoratorMode);
+        compiler.Compile(statements, typeMap, deadCodeInfo);
+
+        // Skip the disk roundtrip — load the assembly straight from the in-memory PE bytes.
+        var bytes = compiler.SaveToBytes();
+        var assembly = Assembly.Load(bytes);
+        var programType = assembly.GetType("$Program")
+            ?? throw new InvalidOperationException("Compiled assembly has no $Program type");
+        var mainMethod = programType.GetMethod("Main", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("$Program has no public static Main method");
+
+        // Run on a worker so we can enforce a timeout. AsyncLocal flows into Task.Run,
+        // so the redirector's capture buffer follows the test through the task boundary.
+        var task = Task.Run(() =>
+        {
+            using var capture = AsyncLocalConsoleRedirector.Capture();
+            try
+            {
+                mainMethod.Invoke(null, null);
+            }
+            catch (TargetInvocationException tie) when (tie.InnerException is not null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            }
+            return capture.GetOutput().Replace("\r\n", "\n");
+        });
+
+        try
+        {
+            if (task.Wait(timeout))
+                return task.Result;
+
+            // Cooperatively cancel: the compiled $Runtime polls _cancelRequested at every
+            // loop backedge (issue #74). Tripping it lets a runaway loop unwind itself
+            // without orphan-threading the testhost. Best-effort wait for the unwind so
+            // the worker thread doesn't stay pinned, but always surface a TimeoutException
+            // to callers — that's the contract the subprocess path established and tests
+            // assert against.
+            try
+            {
+                var cancelField = assembly.GetType("$Runtime")?.GetField("_cancelRequested",
+                    BindingFlags.Public | BindingFlags.Static);
+                cancelField?.SetValue(null, true);
+            }
+            catch { /* best-effort */ }
+
+            try { task.Wait(TimeSpan.FromSeconds(2)); } catch { /* ignore — we're throwing TimeoutException anyway */ }
+
+            throw new TimeoutException(
+                $"Compiled program execution exceeded {timeout.TotalSeconds}s timeout. " +
+                "This likely indicates an infinite loop bug (e.g., Promise double-wrapping in async iterators).");
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.Count == 1)
+        {
+            // Unwrap so Assert.Throws<SpecificException> still works.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
+            throw; // unreachable
+        }
+    }
+
+    /// <summary>
+    /// Subprocess fallback for the cases the in-process path can't serve: tests passing
+    /// <c>scriptArgs</c> (need a real <c>Environment.GetCommandLineArgs()</c>) and
+    /// standalone-DLL tests that explicitly omit SharpTS.dll from the output dir.
+    /// </summary>
+    private static string RunCompiledViaSubprocess(string source, DecoratorMode decoratorMode, TimeSpan timeout, string[]? scriptArgs, bool includeTestsAssembly, bool copySharpTsRuntime)
+    {
         var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempDir);
 
@@ -428,30 +535,13 @@ public static class TestHarness
         // Load assembly in-process for reflection
         var assembly = Assembly.LoadFrom(dllPath);
 
-        // Execute Main and capture output
-        lock (ConsoleLock)
-        {
-            var sw = new StringWriter();
-            var originalOut = Console.Out;
-            var originalError = Console.Error;
-            Console.SetOut(sw);
-            // Redirect stderr to suppress console.error/warn/assert output during tests
-            Console.SetError(TextWriter.Null);
+        // Capture output via AsyncLocal so concurrent tests don't fight over Console.Out.
+        using var capture = AsyncLocalConsoleRedirector.Capture();
+        var programType = assembly.GetType("$Program");
+        var mainMethod = programType?.GetMethod("Main", BindingFlags.Public | BindingFlags.Static);
+        mainMethod?.Invoke(null, null);
 
-            try
-            {
-                var programType = assembly.GetType("$Program");
-                var mainMethod = programType?.GetMethod("Main", BindingFlags.Public | BindingFlags.Static);
-                mainMethod?.Invoke(null, null);
-
-                return (assembly, sw.ToString().Replace("\r\n", "\n"));
-            }
-            finally
-            {
-                Console.SetOut(originalOut);
-                Console.SetError(originalError);
-            }
-        }
+        return (assembly, capture.GetOutput().Replace("\r\n", "\n"));
     }
 
     /// <summary>

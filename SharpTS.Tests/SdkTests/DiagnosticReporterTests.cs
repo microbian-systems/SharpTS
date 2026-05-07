@@ -223,41 +223,25 @@ public class DiagnosticReporterTests
 
     private static string CaptureStdOut(Action action)
     {
-        // Use shared console lock to prevent race conditions with parallel tests
-        lock (Infrastructure.TestHarness.ConsoleLock)
+        // AsyncLocal-scoped capture: each parallel test sees its own stdout buffer
+        // without globally mutating Console.Out (which would clobber concurrent
+        // compiled-mode tests writing through the proxy writer).
+        using var sw = new StringWriter();
+        using (Infrastructure.AsyncLocalConsoleRedirector.WithOut(sw))
         {
-            var originalOut = Console.Out;
-            try
-            {
-                using var sw = new StringWriter();
-                Console.SetOut(sw);
-                action();
-                return sw.ToString();
-            }
-            finally
-            {
-                Console.SetOut(originalOut);
-            }
+            action();
         }
+        return sw.ToString();
     }
 
     private static string CaptureStdErr(Action action)
     {
-        // Use shared console lock to prevent race conditions with parallel tests
-        lock (Infrastructure.TestHarness.ConsoleLock)
+        // AsyncLocal-scoped capture: same rationale as CaptureStdOut.
+        using var sw = new StringWriter();
+        using (Infrastructure.AsyncLocalConsoleRedirector.WithErr(sw))
         {
-            var originalErr = Console.Error;
-            try
-            {
-                using var sw = new StringWriter();
-                Console.SetError(sw);
-                action();
-                return sw.ToString();
-            }
-            finally
-            {
-                Console.SetError(originalErr);
-            }
+            action();
         }
+        return sw.ToString();
     }
 }

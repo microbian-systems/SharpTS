@@ -98,40 +98,27 @@ public static class LspBridgeTestHelper
     }
 
     /// <summary>
-    /// Runs the LspBridge with the given input lines and captures output.
+    /// Runs the LspBridge with the given input lines and captures output. Uses the
+    /// AsyncLocal-scoped console redirection so concurrent compiled-mode tests don't
+    /// have their <c>Console.Write</c> calls hijacked into this test's buffer.
     /// </summary>
     public static (string stdout, string stderr) RunBridgeWithInput(
         SharpTS.LspBridge.LspBridge bridge,
         IEnumerable<string> inputLines)
     {
-        lock (ConsoleLock)
+        var input = string.Join(Environment.NewLine, inputLines);
+        using var inputReader = new StringReader(input);
+        using var outputWriter = new StringWriter();
+        using var errorWriter = new StringWriter();
+
+        using (Infrastructure.AsyncLocalConsoleRedirector.WithIn(inputReader))
+        using (Infrastructure.AsyncLocalConsoleRedirector.WithOut(outputWriter))
+        using (Infrastructure.AsyncLocalConsoleRedirector.WithErr(errorWriter))
         {
-            var originalIn = Console.In;
-            var originalOut = Console.Out;
-            var originalErr = Console.Error;
-
-            try
-            {
-                var input = string.Join(Environment.NewLine, inputLines);
-                using var inputReader = new StringReader(input);
-                using var outputWriter = new StringWriter();
-                using var errorWriter = new StringWriter();
-
-                Console.SetIn(inputReader);
-                Console.SetOut(outputWriter);
-                Console.SetError(errorWriter);
-
-                bridge.Run();
-
-                return (outputWriter.ToString(), errorWriter.ToString());
-            }
-            finally
-            {
-                Console.SetIn(originalIn);
-                Console.SetOut(originalOut);
-                Console.SetError(originalErr);
-            }
+            bridge.Run();
         }
+
+        return (outputWriter.ToString(), errorWriter.ToString());
     }
 
     /// <summary>
