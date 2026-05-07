@@ -45,6 +45,7 @@ public sealed class RuntimeFeatureSet
     public bool UsesFinalizationRegistry { get; set; } = true;
     public bool UsesReflectMetadata { get; set; } = true;   // Reflect.metadata / Reflect.defineMetadata
     public bool UsesCjsRequire { get; set; } = true;        // require() / module.exports
+    public bool UsesJSON { get; set; } = true;              // JSON.parse / JSON.stringify
 
     // ── Typed arrays ──────────────────────────────────────────────────────
     /// <summary>

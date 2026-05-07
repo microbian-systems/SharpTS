@@ -738,11 +738,14 @@ public partial class RuntimeEmitter
         EmitInvokeTaggedTemplate(typeBuilder, runtime);
         EmitInvokeTaggedTemplateWithThis(typeBuilder, runtime);
         EmitObjectRest(typeBuilder, runtime);
-        // JSON methods
-        EmitJsonParse(typeBuilder, runtime);
-        EmitJsonParseWithReviver(typeBuilder, runtime);
-        EmitJsonStringify(typeBuilder, runtime);
-        EmitJsonStringifyFull(typeBuilder, runtime);
+        // JSON methods — gated on UsesJSON (also implied by UsesHttp).
+        if (_features.UsesJSON)
+        {
+            EmitJsonParse(typeBuilder, runtime);
+            EmitJsonParseWithReviver(typeBuilder, runtime);
+            EmitJsonStringify(typeBuilder, runtime);
+            EmitJsonStringifyFull(typeBuilder, runtime);
+        }
         // BigInt methods
         EmitCreateBigInt(typeBuilder, runtime);
         EmitBigIntArithmetic(typeBuilder, runtime);

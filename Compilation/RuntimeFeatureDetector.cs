@@ -54,6 +54,7 @@ public sealed class RuntimeFeatureDetector
             UsesFinalizationRegistry = false,
             UsesReflectMetadata = false,
             UsesCjsRequire = false,
+            UsesJSON = false,
             TypedArrays = RuntimeFeatureSet.TypedArrayKinds.None,
         };
     }
@@ -76,6 +77,9 @@ public sealed class RuntimeFeatureDetector
         {
             // $HttpServer extends $NetServer, so HTTP types must come with net.
             _set.UsesNet = true;
+            // $Runtime's HTTP module methods call JsonParse/JsonStringify for
+            // request/response body handling.
+            _set.UsesJSON = true;
         }
         if (_set.UsesTls)
         {
@@ -249,6 +253,12 @@ public sealed class RuntimeFeatureDetector
             case "exports":
                 _set.UsesCjsRequire = true; break;
 
+            // Bare JSON identifier — covers `globalThis.JSON`, `const j = JSON`,
+            // and the more common `JSON.parse(...)` (which also passes through
+            // HandleMemberAccess). Conservative — flag on any reference.
+            case "JSON":
+                _set.UsesJSON = true; break;
+
             // globalThis / global escape hatch
             case "globalThis":
             case "global":
@@ -279,6 +289,13 @@ public sealed class RuntimeFeatureDetector
         if (objectName == "Reflect" && (memberName == "metadata" || memberName == "defineMetadata" || memberName == "getMetadata"))
         {
             _set.UsesReflectMetadata = true;
+        }
+        // JSON.parse / JSON.stringify — accept both lowercase / capitalized forms
+        // and uppercase identifier `JSON` (the standard one). Conservative: any
+        // member access on `JSON` flips the flag.
+        if (objectName == "JSON")
+        {
+            _set.UsesJSON = true;
         }
     }
 

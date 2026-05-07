@@ -346,27 +346,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Br, continueLabel);
 
-        // %j - JSON
+        // %j - JSON. The whole "consume an arg + JsonStringify it" branch needs
+        // runtime.JsonStringify, which only exists when UsesJSON is true. When
+        // gated off, fall through to the literal-append branch (`%j` stays as
+        // text in the output) so util.format works without JSON support.
         il.MarkLabel(specifierJLabel);
-        il.Emit(OpCodes.Ldloc, argIndexLocal);
-        il.Emit(OpCodes.Ldloc, argsLengthLocal);
         var noArgJLabel = il.DefineLabel();
-        il.Emit(OpCodes.Bge, noArgJLabel);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, argIndexLocal);
-        il.Emit(OpCodes.Ldelem_Ref);
-        // Call JsonStringify which returns object? (always a string for valid input)
-        il.Emit(OpCodes.Call, runtime.JsonStringify);
-        // Convert result to string (it's already a string, but cast to be safe)
-        il.Emit(OpCodes.Castclass, _types.String);
-        il.Emit(OpCodes.Callvirt, _types.StringBuilderAppendString);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ldloc, argIndexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, argIndexLocal);
-        il.Emit(OpCodes.Br, continueLabel);
+        if (_features.UsesJSON)
+        {
+            il.Emit(OpCodes.Ldloc, argIndexLocal);
+            il.Emit(OpCodes.Ldloc, argsLengthLocal);
+            il.Emit(OpCodes.Bge, noArgJLabel);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, argIndexLocal);
+            il.Emit(OpCodes.Ldelem_Ref);
+            // Call JsonStringify which returns object? (always a string for valid input)
+            il.Emit(OpCodes.Call, runtime.JsonStringify);
+            // Convert result to string (it's already a string, but cast to be safe)
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Callvirt, _types.StringBuilderAppendString);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ldloc, argIndexLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, argIndexLocal);
+            il.Emit(OpCodes.Br, continueLabel);
+        }
         il.MarkLabel(noArgJLabel);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldstr, "%j");
