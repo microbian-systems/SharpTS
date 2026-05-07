@@ -329,26 +329,33 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
 /// </summary>
 public sealed class SharpTSArrayUnboundMethod : ISharpTSCallable
 {
-    public static readonly SharpTSArrayUnboundMethod Push = new("push", PushImpl);
-    public static readonly SharpTSArrayUnboundMethod Pop = new("pop", PopImpl);
-    public static readonly SharpTSArrayUnboundMethod Shift = new("shift", ShiftImpl);
-    public static readonly SharpTSArrayUnboundMethod Unshift = new("unshift", UnshiftImpl);
-    public static readonly SharpTSArrayUnboundMethod Slice = new("slice", SliceImpl);
-    public static readonly SharpTSArrayUnboundMethod Concat = new("concat", ConcatImpl);
-    public static readonly SharpTSArrayUnboundMethod IndexOf = new("indexOf", IndexOfImpl);
+    // ECMA-262 spec lengths (the "length" property visible to user code, NOT
+    // the C# function's parameter count). Variadic methods like push/concat/
+    // unshift have spec length 1; pop/shift/reverse are 0; slice is 2. These
+    // appear on `Array.prototype.X.length` and are probed by Test262's
+    // `function-property-length` cluster (#105).
+    public static readonly SharpTSArrayUnboundMethod Push = new("push", PushImpl, jsLength: 1);
+    public static readonly SharpTSArrayUnboundMethod Pop = new("pop", PopImpl, jsLength: 0);
+    public static readonly SharpTSArrayUnboundMethod Shift = new("shift", ShiftImpl, jsLength: 0);
+    public static readonly SharpTSArrayUnboundMethod Unshift = new("unshift", UnshiftImpl, jsLength: 1);
+    public static readonly SharpTSArrayUnboundMethod Slice = new("slice", SliceImpl, jsLength: 2);
+    public static readonly SharpTSArrayUnboundMethod Concat = new("concat", ConcatImpl, jsLength: 1);
+    public static readonly SharpTSArrayUnboundMethod IndexOf = new("indexOf", IndexOfImpl, jsLength: 1);
 
     private readonly string _name;
     private readonly Func<SharpTSArray, List<object?>, object?> _impl;
     private readonly object? _boundThis;
+    private readonly int _jsLength;
 
-    private SharpTSArrayUnboundMethod(string name, Func<SharpTSArray, List<object?>, object?> impl, object? boundThis = null)
+    private SharpTSArrayUnboundMethod(string name, Func<SharpTSArray, List<object?>, object?> impl, int jsLength, object? boundThis = null)
     {
         _name = name;
         _impl = impl;
+        _jsLength = jsLength;
         _boundThis = boundThis;
     }
 
-    public int Arity() => 0;
+    public int Arity() => _jsLength;
 
     public object? Call(Interp interpreter, List<object?> arguments)
     {
@@ -374,7 +381,7 @@ public sealed class SharpTSArrayUnboundMethod : ISharpTSCallable
     /// Produces a bound variant — used by <c>Function.prototype.apply/call</c>
     /// to pre-attach <c>thisArg</c> before invocation.
     /// </summary>
-    public SharpTSArrayUnboundMethod BindTo(object? thisArg) => new(_name, _impl, thisArg);
+    public SharpTSArrayUnboundMethod BindTo(object? thisArg) => new(_name, _impl, _jsLength, thisArg);
 
     public override string ToString() => $"function {_name}() {{ [native code] }}";
 
