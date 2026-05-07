@@ -11,7 +11,8 @@ namespace SharpTS.Tests.IntegrationTests;
 public class NpmFixture : IDisposable
 {
     public string PackageDir { get; }
-    public bool NpmAvailable { get; }
+    public bool NpmAvailable { get; private set; }
+    public string? SkipReason { get; private set; }
 
     /// <summary>Pinned package versions for reproducibility.</summary>
     private static readonly (string Name, string Version)[] Packages =
@@ -30,25 +31,39 @@ public class NpmFixture : IDisposable
         PackageDir = Path.Combine(Path.GetTempPath(), "sharpts_npm_smoke");
         NpmAvailable = IsNpmOnPath();
 
-        if (!NpmAvailable) return;
+        if (!NpmAvailable)
+        {
+            SkipReason = "npm is not available on PATH";
+            return;
+        }
 
         // Reuse existing install if the marker file exists (avoids repeated downloads).
         var marker = Path.Combine(PackageDir, ".sharpts_npm_installed");
         if (File.Exists(marker)) return;
 
-        Directory.CreateDirectory(PackageDir);
+        try
+        {
+            Directory.CreateDirectory(PackageDir);
 
-        // Initialize package.json so npm install works.
-        RunProcess("npm", "init -y", PackageDir);
+            // Initialize package.json so npm install works.
+            RunProcess("npm", "init -y", PackageDir, timeoutMs: 120_000);
 
-        // Install all packages in one shot.
-        var specs = string.Join(" ", Packages.Select(p => $"{p.Name}@{p.Version}"));
-        var result = RunProcess("npm", $"install --save {specs}", PackageDir, timeoutMs: 120_000);
-        if (result.ExitCode != 0)
-            throw new InvalidOperationException(
-                $"npm install failed (exit {result.ExitCode}):\n{result.StdErr}");
+            // Install all packages in one shot.
+            var specs = string.Join(" ", Packages.Select(p => $"{p.Name}@{p.Version}"));
+            var result = RunProcess("npm", $"install --save {specs}", PackageDir, timeoutMs: 240_000);
+            if (result.ExitCode != 0)
+                throw new InvalidOperationException(
+                    $"npm install failed (exit {result.ExitCode}):\n{result.StdErr}");
 
-        File.WriteAllText(marker, DateTime.UtcNow.ToString("O"));
+            File.WriteAllText(marker, DateTime.UtcNow.ToString("O"));
+        }
+        catch (Exception ex)
+        {
+            // Degrade to skip rather than cascade-failing every test in the class.
+            // Matches the documented contract: "tests skip gracefully otherwise".
+            NpmAvailable = false;
+            SkipReason = $"npm setup failed: {ex.GetType().Name}: {ex.Message}";
+        }
     }
 
     public void Dispose()
@@ -61,7 +76,7 @@ public class NpmFixture : IDisposable
     {
         try
         {
-            var result = RunProcess("npm", "--version", Path.GetTempPath(), timeoutMs: 10_000);
+            var result = RunProcess("npm", "--version", Path.GetTempPath(), timeoutMs: 30_000);
             return result.ExitCode == 0;
         }
         catch { return false; }
@@ -103,12 +118,21 @@ public class NpmFixture : IDisposable
 }
 
 /// <summary>
+/// xUnit collection that runs npm-dependent tests serially (DisableParallelization)
+/// so the npm init/install in <see cref="NpmFixture"/> doesn't compete with the
+/// rest of the test suite for CPU during fixture setup.
+/// </summary>
+[CollectionDefinition("Npm", DisableParallelization = true)]
+public class NpmCollection : ICollectionFixture<NpmFixture> { }
+
+/// <summary>
 /// Smoke tests that validate SharpTS against real npm packages.
 /// Requires npm on PATH; tests skip gracefully otherwise.
 /// Filter: dotnet test --filter "Category=npm"
 /// </summary>
 [Trait("Category", "npm")]
-public class RealPackageSmokeTests : IClassFixture<NpmFixture>
+[Collection("Npm")]
+public class RealPackageSmokeTests
 {
     private readonly NpmFixture _npm;
     private readonly ITestOutputHelper _output;
@@ -121,7 +145,7 @@ public class RealPackageSmokeTests : IClassFixture<NpmFixture>
 
     private void SkipIfNoNpm()
     {
-        Skip.If(!_npm.NpmAvailable, "npm is not available on PATH");
+        Skip.If(!_npm.NpmAvailable, _npm.SkipReason ?? "npm is not available");
     }
 
     private CliTestHelper.CliResult RunInterpreter(string scriptPath)
