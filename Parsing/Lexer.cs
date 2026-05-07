@@ -987,7 +987,7 @@ public class Lexer(string source)
 
         Advance(); // Consume closing /
 
-        // Scan flags (g, i, m, s, u, y)
+        // Scan flags (g, i, m, s, u, y, d, v)
         var flags = new System.Text.StringBuilder();
         while (!IsAtEnd() && IsRegexFlag(Peek()))
         {
@@ -997,7 +997,13 @@ public class Lexer(string source)
         AddToken(TokenType.REGEX, new RegexLiteralValue(pattern.ToString(), flags.ToString()));
     }
 
-    private static bool IsRegexFlag(char c) => c is 'g' or 'i' or 'm' or 's' or 'u' or 'y';
+    // ECMA-262 22.2.5.2 Properties of RegExp instances — accept all eight
+    // currently-defined flag characters at lex time. d (hasIndices, ES2022)
+    // and v (unicodeSets, ES2024) join the original six. Runtime semantics
+    // for v are partial — flag is accepted and threaded through, character-
+    // class extensions aren't implemented — but rejecting it at parse time
+    // blocked the entire CharacterClassEscapes generated test cluster.
+    private static bool IsRegexFlag(char c) => c is 'g' or 'i' or 'm' or 's' or 'u' or 'y' or 'd' or 'v';
 
     private static bool IsHexDigit(char c) => char.IsAsciiHexDigit(c);
 

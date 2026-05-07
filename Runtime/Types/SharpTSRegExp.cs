@@ -142,6 +142,12 @@ public class SharpTSRegExp : ITypeCategorized
         if (flags.Contains('m')) sb.Append('m');
         if (flags.Contains('s')) sb.Append('s');
         if (flags.Contains('d')) sb.Append('d');
+        // v (Unicode-Sets, ES2024) is preserved through normalization so
+        // `re.flags` round-trips and test262 generated CharacterClassEscapes
+        // tests don't ParseError. Full v-mode character-class extensions
+        // aren't yet implemented; runtime behavior under v matches plain
+        // mode for now.
+        if (flags.Contains('v')) sb.Append('v');
         return sb.ToString();
     }
 
