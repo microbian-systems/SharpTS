@@ -26,6 +26,16 @@ public static class WellKnownSymbolTypes
         new("Symbol.dispose", "typeof Symbol.dispose");
     public static readonly TypeInfo.UniqueSymbol AsyncDispose =
         new("Symbol.asyncDispose", "typeof Symbol.asyncDispose");
+    public static readonly TypeInfo.UniqueSymbol Match =
+        new("Symbol.match", "typeof Symbol.match");
+    public static readonly TypeInfo.UniqueSymbol MatchAll =
+        new("Symbol.matchAll", "typeof Symbol.matchAll");
+    public static readonly TypeInfo.UniqueSymbol Replace =
+        new("Symbol.replace", "typeof Symbol.replace");
+    public static readonly TypeInfo.UniqueSymbol Search =
+        new("Symbol.search", "typeof Symbol.search");
+    public static readonly TypeInfo.UniqueSymbol Split =
+        new("Symbol.split", "typeof Symbol.split");
 
     /// <summary>
     /// Tries to get a well-known symbol type by its property name.
@@ -44,6 +54,11 @@ public static class WellKnownSymbolTypes
         "unscopables" => Unscopables,
         "dispose" => Dispose,
         "asyncDispose" => AsyncDispose,
+        "match" => Match,
+        "matchAll" => MatchAll,
+        "replace" => Replace,
+        "search" => Search,
+        "split" => Split,
         _ => null
     };
 }

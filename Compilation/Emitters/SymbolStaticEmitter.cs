@@ -110,6 +110,21 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
             case "asyncDispose":
                 il.Emit(OpCodes.Ldsfld, ctx.Runtime!.SymbolAsyncDispose);
                 return true;
+            case "match":
+                il.Emit(OpCodes.Ldsfld, ctx.Runtime!.SymbolMatch);
+                return true;
+            case "matchAll":
+                il.Emit(OpCodes.Ldsfld, ctx.Runtime!.SymbolMatchAll);
+                return true;
+            case "replace":
+                il.Emit(OpCodes.Ldsfld, ctx.Runtime!.SymbolReplace);
+                return true;
+            case "search":
+                il.Emit(OpCodes.Ldsfld, ctx.Runtime!.SymbolSearch);
+                return true;
+            case "split":
+                il.Emit(OpCodes.Ldsfld, ctx.Runtime!.SymbolSplit);
+                return true;
             // Stage 4y: Symbol.for / Symbol.keyFor as values so test262's
             // isConstructor harness sees `typeof Symbol.for === "function"`.
             case "for":
@@ -144,6 +159,7 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
     public bool HasStaticProperty(string memberName) => memberName is
         "iterator" or "asyncIterator" or "toStringTag" or "hasInstance" or
         "isConcatSpreadable" or "toPrimitive" or "species" or "unscopables" or
-        "dispose" or "asyncDispose"
+        "dispose" or "asyncDispose" or "match" or "matchAll" or "replace" or
+        "search" or "split"
         or "for" or "keyFor";
 }

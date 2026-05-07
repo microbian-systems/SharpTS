@@ -39,6 +39,11 @@ public static class SymbolBuiltIns
             "unscopables" => BuiltInMethod.CreateConstant("unscopables", SharpTSSymbol.Unscopables),
             "dispose" => BuiltInMethod.CreateConstant("dispose", SharpTSSymbol.Dispose),
             "asyncDispose" => BuiltInMethod.CreateConstant("asyncDispose", SharpTSSymbol.AsyncDispose),
+            "match" => BuiltInMethod.CreateConstant("match", SharpTSSymbol.Match),
+            "matchAll" => BuiltInMethod.CreateConstant("matchAll", SharpTSSymbol.MatchAll),
+            "replace" => BuiltInMethod.CreateConstant("replace", SharpTSSymbol.Replace),
+            "search" => BuiltInMethod.CreateConstant("search", SharpTSSymbol.Search),
+            "split" => BuiltInMethod.CreateConstant("split", SharpTSSymbol.Split),
 
             // Symbol.for() - returns a shared symbol from the global symbol registry
             "for" => new BuiltInMethod("for", 1, (_, _, args) =>

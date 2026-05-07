@@ -129,13 +129,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
         il.Emit(OpCodes.Stloc, symbolDictLocal);
-        // if (symbolDict.TryGetValue(index, out value)) return value; else return undefined;
+        // if (symbolDict.TryGetValue(index, out value)) return value;
         il.Emit(OpCodes.Ldloc, symbolDictLocal);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloca, symbolValueLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
         var symbolFoundLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, symbolFoundLabel);
+
+        // Not found in user-set symbol dict — fall back to prototype-keyed
+        // well-known-symbol dispatch. Currently only RegExp.prototype carries
+        // symbol-keyed methods (@@match/@@matchAll/@@replace/@@search/@@split,
+        // ECMA-262 §22.2.5).
+        var notRegExpForSymbolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+        il.Emit(OpCodes.Brfalse, notRegExpForSymbolLabel);
+        EmitRegExpSymbolDispatch(il, runtime);
+        il.MarkLabel(notRegExpForSymbolLabel);
+
         // Return undefined for missing symbol properties (JavaScript semantics)
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
@@ -1085,6 +1097,51 @@ public partial class RuntimeEmitter
         il.MarkLabel(trueLabel);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits inline IL for the RegExp.prototype symbol-keyed dispatch path.
+    /// Stack on entry: empty.
+    /// Stack on exit: empty (control falls through if no match) OR returns
+    /// from the enclosing method with a $TSFunction value.
+    ///
+    /// Compares Ldarg_1 against each well-known RegExp symbol field
+    /// (Symbol.match, etc.). On match, constructs a $TSFunction wrapping the
+    /// corresponding static helper on $RegExp with the regex bound as
+    /// `_target`, and returns it.
+    /// </summary>
+    private void EmitRegExpSymbolDispatch(ILGenerator il, EmittedRuntime runtime)
+    {
+        EmitRegExpSymbolCase(il, runtime, runtime.SymbolMatch, runtime.TSRegExpSymMatchHelper);
+        EmitRegExpSymbolCase(il, runtime, runtime.SymbolMatchAll, runtime.TSRegExpSymMatchAllHelper);
+        EmitRegExpSymbolCase(il, runtime, runtime.SymbolReplace, runtime.TSRegExpSymReplaceHelper);
+        EmitRegExpSymbolCase(il, runtime, runtime.SymbolSearch, runtime.TSRegExpSymSearchHelper);
+        EmitRegExpSymbolCase(il, runtime, runtime.SymbolSplit, runtime.TSRegExpSymSplitHelper);
+    }
+
+    /// <summary>
+    /// One symbol-vs-helper comparison: if Ldarg_1 == knownSymbol, return a
+    /// $TSFunction(target=Ldarg_0, method=helper). Otherwise fall through.
+    /// </summary>
+    private void EmitRegExpSymbolCase(ILGenerator il, EmittedRuntime runtime,
+        FieldBuilder symbolField, MethodBuilder helperMethod)
+    {
+        var notMatchLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldsfld, symbolField);
+        il.Emit(OpCodes.Bne_Un, notMatchLabel);
+
+        // return new $TSFunction(rx, MethodInfo of helper)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, helperMethod);
+        il.Emit(OpCodes.Ldtoken, helperMethod.DeclaringType!);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+            _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notMatchLabel);
     }
 }
 

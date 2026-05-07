@@ -132,6 +132,31 @@ public class SharpTSSymbol : ITypeCategorized
     /// Symbol.asyncDispose - Used for asynchronous resource disposal (explicit resource management).
     /// </summary>
     public static readonly SharpTSSymbol AsyncDispose = new("Symbol.asyncDispose");
+
+    /// <summary>
+    /// Symbol.match - Used by String.prototype.match and matched against a regex.
+    /// </summary>
+    public static readonly SharpTSSymbol Match = new("Symbol.match");
+
+    /// <summary>
+    /// Symbol.matchAll - Used by String.prototype.matchAll.
+    /// </summary>
+    public static readonly SharpTSSymbol MatchAll = new("Symbol.matchAll");
+
+    /// <summary>
+    /// Symbol.replace - Used by String.prototype.replace and replaceAll.
+    /// </summary>
+    public static readonly SharpTSSymbol Replace = new("Symbol.replace");
+
+    /// <summary>
+    /// Symbol.search - Used by String.prototype.search.
+    /// </summary>
+    public static readonly SharpTSSymbol Search = new("Symbol.search");
+
+    /// <summary>
+    /// Symbol.split - Used by String.prototype.split.
+    /// </summary>
+    public static readonly SharpTSSymbol Split = new("Symbol.split");
     #endregion
 
     public SharpTSSymbol(string? description = null)

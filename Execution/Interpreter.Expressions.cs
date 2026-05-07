@@ -794,6 +794,16 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(Runtime.BuiltIns.MathBuiltIns.GetMember(key) ?? SharpTSUndefined.Instance);
         }
 
+        // ECMA-262 §22.2.5: RegExp.prototype has well-known-symbol-keyed methods
+        // (@@match, @@matchAll, @@replace, @@search, @@split). These are bracket-only
+        // and don't appear in ResolveIndexTarget — dispatch them here.
+        if (obj is SharpTSRegExp regexObj && index is SharpTSSymbol regexSym)
+        {
+            var member = Runtime.BuiltIns.RegExpBuiltIns.GetSymbolMember(regexObj, regexSym);
+            if (member is BuiltInMethod bim) return RuntimeValue.FromBoxed(bim.Bind(regexObj));
+            return RuntimeValue.FromBoxed(member ?? SharpTSUndefined.Instance);
+        }
+
         return RuntimeValue.FromBoxed(ResolveIndexTarget(obj, index) switch
         {
             IndexTarget.Array t => t.Target.Get(t.Index),

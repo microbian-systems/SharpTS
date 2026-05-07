@@ -232,8 +232,8 @@ public partial class TypeChecker
                 return rec3.NumberIndexType;
         }
 
-        // Handle symbol index
-        if (indexType is TypeInfo.Symbol)
+        // Handle symbol index (Symbol and UniqueSymbol both qualify)
+        if (indexType is TypeInfo.Symbol or TypeInfo.UniqueSymbol)
         {
             if (objType is TypeInfo.Interface itf4 && itf4.SymbolIndexType != null)
                 return itf4.SymbolIndexType;
@@ -242,6 +242,11 @@ public partial class TypeChecker
 
             // Allow symbol bracket access on any object (returns any)
             if (objType is TypeInfo.Record or TypeInfo.Interface or TypeInfo.Instance)
+                return new TypeInfo.Any();
+
+            // ECMA-262 §22.2.5: RegExp.prototype[@@match/@@matchAll/@@replace/@@search/@@split].
+            // Treat as `any` to permit `r[Symbol.match](str)` etc. Runtime does the actual dispatch.
+            if (objType is TypeInfo.RegExp)
                 return new TypeInfo.Any();
         }
 

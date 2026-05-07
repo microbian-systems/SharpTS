@@ -1033,7 +1033,10 @@ public partial class Interpreter
             case TypeCategory.RegExp when obj is SharpTSRegExp regex:
                 if (memberName == "lastIndex")
                 {
-                    regex.LastIndex = (int)(double)value!;
+                    // Route through RegExpBuiltIns.SetMember so the setter does
+                    // ECMA ToLength coercion (handles `undefined`, string, bool,
+                    // boxed objects) instead of a hard (double) cast that throws.
+                    Runtime.BuiltIns.RegExpBuiltIns.SetMember(regex, memberName, value);
                     return value;
                 }
                 // JS: RegExp instances are objects; allow arbitrary property assignment

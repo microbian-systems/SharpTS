@@ -226,12 +226,17 @@ public class SharpTSRegExp : ITypeCategorized
     }
 
     /// <summary>
-    /// Executes the regex on the string and returns match info.
+    /// Executes the regex on the string and returns the match result.
     /// For global regexes, maintains state via lastIndex.
     /// </summary>
     /// <param name="input">The string to match against.</param>
-    /// <returns>An array with the match and capture groups, or null if no match.</returns>
-    public SharpTSObject? Exec(string input)
+    /// <returns>
+    /// An Array exotic (per ECMA-262 §22.2.5.6.6 RegExpBuiltinExec) carrying
+    /// the matched substrings as elements 0..N and the metadata properties
+    /// <c>index</c>, <c>input</c>, <c>groups</c> as named properties; or
+    /// <c>null</c> when no match was found.
+    /// </returns>
+    public SharpTSArray? Exec(string input)
     {
         Match match;
 
@@ -260,23 +265,21 @@ public class SharpTSRegExp : ITypeCategorized
             LastIndex = match.Index + match.Length;
         }
 
-        // Build result object with indexed properties: "0", "1", ..., plus index, input, groups
-        var fields = new Dictionary<string, object?>
-        {
-            ["0"] = match.Value,
-            ["index"] = (double)match.Index,
-            ["input"] = input,
-            ["groups"] = BuildGroupsObject(match)
-        };
-
-        // Add capture groups (skip group 0 which is the full match)
+        // ECMA-262 §22.2.5.6.6 step 27: build an Array exotic with element 0 =
+        // matched substring, elements 1..N = capture groups, plus index/input/
+        // groups as own named properties (CreateDataProperty steps 24-26, 33).
+        var elements = new List<object?>(match.Groups.Count) { match.Value };
         for (int i = 1; i < match.Groups.Count; i++)
         {
             var group = match.Groups[i];
-            fields[i.ToString()] = group.Success ? group.Value : null;
+            elements.Add(group.Success ? group.Value : null);
         }
 
-        return new SharpTSObject(fields);
+        var result = new SharpTSArray(elements);
+        result.SetNamedProperty("index", (double)match.Index);
+        result.SetNamedProperty("input", input);
+        result.SetNamedProperty("groups", BuildGroupsObject(match));
+        return result;
     }
 
     /// <summary>

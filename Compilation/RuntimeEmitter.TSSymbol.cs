@@ -85,6 +85,16 @@ public partial class RuntimeEmitter
         runtime.SymbolDispose = disposeField;
         var asyncDisposeField = typeBuilder.DefineField("asyncDispose", typeBuilder, FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly);
         runtime.SymbolAsyncDispose = asyncDisposeField;
+        var matchField = typeBuilder.DefineField("match", typeBuilder, FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly);
+        runtime.SymbolMatch = matchField;
+        var matchAllField = typeBuilder.DefineField("matchAll", typeBuilder, FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly);
+        runtime.SymbolMatchAll = matchAllField;
+        var replaceField = typeBuilder.DefineField("replace", typeBuilder, FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly);
+        runtime.SymbolReplace = replaceField;
+        var searchField = typeBuilder.DefineField("search", typeBuilder, FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly);
+        runtime.SymbolSearch = searchField;
+        var splitField = typeBuilder.DefineField("split", typeBuilder, FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly);
+        runtime.SymbolSplit = splitField;
 
         // ============================================================
         // Symbol.For(string key) - static method
@@ -300,6 +310,26 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Ldstr, "Symbol.asyncDispose");
         cctorIL.Emit(OpCodes.Newobj, ctorBuilder);
         cctorIL.Emit(OpCodes.Stsfld, asyncDisposeField);
+
+        cctorIL.Emit(OpCodes.Ldstr, "Symbol.match");
+        cctorIL.Emit(OpCodes.Newobj, ctorBuilder);
+        cctorIL.Emit(OpCodes.Stsfld, matchField);
+
+        cctorIL.Emit(OpCodes.Ldstr, "Symbol.matchAll");
+        cctorIL.Emit(OpCodes.Newobj, ctorBuilder);
+        cctorIL.Emit(OpCodes.Stsfld, matchAllField);
+
+        cctorIL.Emit(OpCodes.Ldstr, "Symbol.replace");
+        cctorIL.Emit(OpCodes.Newobj, ctorBuilder);
+        cctorIL.Emit(OpCodes.Stsfld, replaceField);
+
+        cctorIL.Emit(OpCodes.Ldstr, "Symbol.search");
+        cctorIL.Emit(OpCodes.Newobj, ctorBuilder);
+        cctorIL.Emit(OpCodes.Stsfld, searchField);
+
+        cctorIL.Emit(OpCodes.Ldstr, "Symbol.split");
+        cctorIL.Emit(OpCodes.Newobj, ctorBuilder);
+        cctorIL.Emit(OpCodes.Stsfld, splitField);
 
         cctorIL.Emit(OpCodes.Ret);
 

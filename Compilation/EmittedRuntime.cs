@@ -636,6 +636,11 @@ public class EmittedRuntime
     public FieldBuilder SymbolUnscopables { get; set; } = null!;
     public FieldBuilder SymbolDispose { get; set; } = null!;
     public FieldBuilder SymbolAsyncDispose { get; set; } = null!;
+    public FieldBuilder SymbolMatch { get; set; } = null!;
+    public FieldBuilder SymbolMatchAll { get; set; } = null!;
+    public FieldBuilder SymbolReplace { get; set; } = null!;
+    public FieldBuilder SymbolSearch { get; set; } = null!;
+    public FieldBuilder SymbolSplit { get; set; } = null!;
 
     // Symbol.for() and Symbol.keyFor() global registry support
     public MethodBuilder SymbolFor { get; set; } = null!;
@@ -944,6 +949,15 @@ public class EmittedRuntime
     public MethodBuilder TSRegExpExecMethod { get; set; } = null!;
     public MethodBuilder TSRegExpToStringMethod { get; set; } = null!;
     public MethodBuilder BuildNamedGroups { get; set; } = null!;
+
+    // RegExp.prototype well-known-symbol-keyed methods (ECMA-262 §22.2.5).
+    // Emitted as static helpers `(rx, str, ...)` so they can be wrapped in
+    // a $TSFunction with the regex bound as `_target`.
+    public MethodBuilder TSRegExpSymMatchHelper { get; set; } = null!;
+    public MethodBuilder TSRegExpSymMatchAllHelper { get; set; } = null!;
+    public MethodBuilder TSRegExpSymReplaceHelper { get; set; } = null!;
+    public MethodBuilder TSRegExpSymSearchHelper { get; set; } = null!;
+    public MethodBuilder TSRegExpSymSplitHelper { get; set; } = null!;
 
     // groupBy support
     public MethodBuilder ObjectGroupBy { get; set; } = null!;
