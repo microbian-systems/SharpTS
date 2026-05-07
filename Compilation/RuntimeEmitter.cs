@@ -89,6 +89,13 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSObject
         EmitTSObjectClass(moduleBuilder, runtime);
 
+        // Emit $PropertyDescriptorStore and $CompiledPropertyDescriptor early
+        // so types that build property descriptors during their own emission
+        // ($RegExp.Exec attaches `index`/`input`/`groups` to its Array result
+        // via PDS so the result remains a List<object?> for `instanceof Array`)
+        // can reference CompiledPropertyDescriptorType / PDSDefineProperty.
+        EmitPropertyDescriptorTypes(moduleBuilder, runtime);
+
         // Emit $RegExp class for standalone regex support
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSRegExp
         EmitTSRegExpClass(moduleBuilder, runtime);
@@ -297,9 +304,9 @@ public partial class RuntimeEmitter
         // Must come before EmitRuntimeClass so InvokeTaggedTemplate can use the constructor
         EmitTemplateStringsListClass(moduleBuilder, runtime);
 
-        // Emit $PropertyDescriptorStore and supporting types for standalone object semantics
-        // Must come before EmitRuntimeClass so Object.freeze/seal/etc. can use it
-        EmitPropertyDescriptorTypes(moduleBuilder, runtime);
+        // $PropertyDescriptorStore is now emitted earlier (just before $RegExp)
+        // so types that need CompiledPropertyDescriptorType during their own
+        // emission can reference it. This used to live here.
 
         // Emit $NetSocket type definition (Phase 1a)
         // Must come after EventEmitter ($NetSocket extends $EventEmitter)

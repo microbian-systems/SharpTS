@@ -2341,6 +2341,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(listNotIndexLabel);
+        // PDS-stored own descriptor (e.g., RegExp.exec result has `index` /
+        // `input` / `groups` attached via PropertyDescriptorStore so the
+        // returned value can be a real Array exotic — `instanceof Array` true
+        // — while still answering `result.index` / `result.input` correctly).
+        // Without this, those metadata properties are invisible.
+        var listPdsLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, listPdsLocal);
+        il.Emit(OpCodes.Ldloc, listPdsLocal);
+        var listSkipPdsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, listSkipPdsLabel);
+        il.Emit(OpCodes.Ldloc, listPdsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(listSkipPdsLabel);
         // For other properties on List (like methods push, pop, etc.), use GetListProperty
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.ListOfObject);
