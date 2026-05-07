@@ -43,21 +43,21 @@ public partial class RuntimeEmitter
             EmitUtilPromisify(typeBuilder, runtime);
         }
 
-        // Emit util.inherits
-        EmitUtilInherits(typeBuilder, runtime);
+        // util.inherits / toUSVString / stripVTControlCharacters / getSystemError*
+        // are user-facing utility functions — gated on UsesUtilFormat.
+        if (_features.UsesUtilFormat)
+        {
+            EmitUtilInherits(typeBuilder, runtime);
+            EmitUtilToUSVString(typeBuilder, runtime);
+            EmitUtilStripVTControlCharacters(typeBuilder, runtime);
+            EmitUtilGetSystemErrorName(typeBuilder, runtime);
+            EmitUtilGetSystemErrorMap(typeBuilder, runtime);
+        }
 
-        // Emit util.toUSVString (already standalone)
-        EmitUtilToUSVString(typeBuilder, runtime);
-
-        // Emit util.stripVTControlCharacters
-        EmitUtilStripVTControlCharacters(typeBuilder, runtime);
-
-        // Emit util.getSystemErrorName and getSystemErrorMap
-        EmitUtilGetSystemErrorName(typeBuilder, runtime);
-        EmitUtilGetSystemErrorMap(typeBuilder, runtime);
-
-        // Define method signatures for format, inspect, isDeepStrictEqual, parseArgs
-        // (bodies will be emitted by EmitUtilStandaloneMethods)
+        // Define method signatures for format, inspect, isDeepStrictEqual, parseArgs.
+        // UtilInspect is used by console.dir (always-on), so it's still defined
+        // regardless of UsesUtilFormat — its body comes from EmitUtilStandaloneMethods
+        // which is also always emitted (the inspect family is the only mandatory part).
         runtime.UtilFormat = typeBuilder.DefineMethod(
             "UtilFormat",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -70,19 +70,24 @@ public partial class RuntimeEmitter
             _types.String,
             [_types.Object, _types.Object]);
 
-        runtime.UtilIsDeepStrictEqual = typeBuilder.DefineMethod(
-            "UtilIsDeepStrictEqual",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Boolean,
-            [_types.Object, _types.Object]);
+        if (_features.UsesUtilFormat)
+        {
+            runtime.UtilIsDeepStrictEqual = typeBuilder.DefineMethod(
+                "UtilIsDeepStrictEqual",
+                MethodAttributes.Public | MethodAttributes.Static,
+                _types.Boolean,
+                [_types.Object, _types.Object]);
 
-        runtime.UtilParseArgs = typeBuilder.DefineMethod(
-            "UtilParseArgs",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            [_types.Object]);
+            runtime.UtilParseArgs = typeBuilder.DefineMethod(
+                "UtilParseArgs",
+                MethodAttributes.Public | MethodAttributes.Static,
+                _types.Object,
+                [_types.Object]);
+        }
 
-        // Emit standalone helper method bodies
+        // Emit standalone helper method bodies. Some pieces (UtilInspect*) feed
+        // console.dir and are always required; others (UtilFormat / parseArgs /
+        // IsDeepStrictEqual) are gated inside that method on UsesUtilFormat.
         EmitUtilStandaloneMethods(typeBuilder, runtime);
     }
 
@@ -247,10 +252,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, typeof(DateTime));
         il.Emit(OpCodes.Brtrue, trueLabel);
 
-        // Check for $TSDate
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSDateType);
-        il.Emit(OpCodes.Brtrue, trueLabel);
+        // Check for $TSDate (only if UsesDate gated on)
+        if (_features.UsesDate)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSDateType);
+            il.Emit(OpCodes.Brtrue, trueLabel);
+        }
 
         il.MarkLabel(falseLabel);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -325,10 +333,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, typeof(System.Text.RegularExpressions.Regex));
         il.Emit(OpCodes.Brtrue, trueLabel);
 
-        // Check for $RegExp
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
-        il.Emit(OpCodes.Brtrue, trueLabel);
+        // Check for $RegExp (only if UsesRegExp gated on)
+        if (_features.UsesRegExp)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            il.Emit(OpCodes.Brtrue, trueLabel);
+        }
 
         il.MarkLabel(falseLabel);
         il.Emit(OpCodes.Ldc_I4_0);

@@ -55,6 +55,12 @@ public sealed class RuntimeFeatureDetector
             UsesReflectMetadata = false,
             UsesCjsRequire = false,
             UsesJSON = false,
+            UsesIntl = false,
+            UsesReflect = false,
+            UsesUtilFormat = false,
+            UsesIteratorHelpers = false,
+            UsesDate = false,
+            UsesRegExp = false,
             TypedArrays = RuntimeFeatureSet.TypedArrayKinds.None,
         };
     }
@@ -137,7 +143,11 @@ public sealed class RuntimeFeatureDetector
                 _set.UsesReadline = true; break;
             case "util":
             case "util/types":
-                _set.UsesUtilPromisify = true; break;
+                // `import 'util'` brings both promisify-family and format-family
+                // surface into scope. Trigger both flags conservatively.
+                _set.UsesUtilPromisify = true;
+                _set.UsesUtilFormat = true;
+                break;
             case "worker_threads":
                 _set.UsesBroadcastChannel = true;
                 _set.UsesAsyncLocalStorage = true;
@@ -259,7 +269,40 @@ public sealed class RuntimeFeatureDetector
             case "JSON":
                 _set.UsesJSON = true; break;
 
-            // globalThis / global escape hatch
+            // Intl namespace — `Intl.NumberFormat`, `Intl.DateTimeFormat`,
+            // `Intl.Collator`. Bare identifier covers `globalThis.Intl` and
+            // any value-form access.
+            case "Intl":
+                _set.UsesIntl = true; break;
+
+            // Reflect — used both for ES2015 Reflect.get/set/has/etc. and for
+            // Reflect.metadata (which has its own UsesReflectMetadata flag).
+            // We flag Reflect generally; the metadata-specific arms are still
+            // flagged separately via HandleMemberAccess for finer granularity.
+            case "Reflect":
+                _set.UsesReflect = true; break;
+
+            // Date — bare identifier covers `new Date()`, `Date.now()`,
+            // `Date.parse(...)`, value-form `globalThis.Date`, etc.
+            case "Date":
+                _set.UsesDate = true; break;
+
+            // RegExp — bare identifier covers `new RegExp(...)` and
+            // `RegExp.X` constructors. Regex literals (/pattern/) get a
+            // separate trigger via VisitExpr's RegexLiteral case.
+            case "RegExp":
+                _set.UsesRegExp = true; break;
+
+            // util module identifiers — `util` (CommonJS bare reference),
+            // `format`, `inspect`, `parseArgs`, `promisify`/etc. would land
+            // here only if the user does `import { format, ... } from 'util'`
+            // and then uses them as bare identifiers. The detector already
+            // tracks `import 'util'` as both UsesUtilPromisify and UsesUtilFormat
+            // via HandleModulePath. This catches the bare-identifier case.
+
+            // globalThis / global escape hatch — many runtime identifiers can be
+            // resolved through these. Set the broad-net features as a safety
+            // valve; the fine-grained ones still get set by their own triggers.
             case "globalThis":
             case "global":
                 _set.UsesFetch = true;
@@ -267,6 +310,10 @@ public sealed class RuntimeFeatureDetector
                 _set.UsesWebStreams = true;
                 _set.UsesBroadcastChannel = true;
                 _set.UsesFinalizationRegistry = true;
+                _set.UsesJSON = true;
+                _set.UsesIntl = true;
+                _set.UsesReflect = true;
+                _set.UsesUtilFormat = true;
                 _set.TypedArrays = RuntimeFeatureSet.TypedArrayKinds.All;
                 break;
         }
@@ -284,11 +331,24 @@ public sealed class RuntimeFeatureDetector
                 case "callbackify":
                 case "deprecate":
                     _set.UsesUtilPromisify = true; break;
+                case "format":
+                case "inspect":
+                case "parseArgs":
+                case "getSystemErrorName":
+                case "getSystemErrorMap":
+                case "toUSVString":
+                case "stripVTControlCharacters":
+                case "isDeepStrictEqual":
+                case "inherits":
+                    _set.UsesUtilFormat = true; break;
             }
         }
-        if (objectName == "Reflect" && (memberName == "metadata" || memberName == "defineMetadata" || memberName == "getMetadata"))
+        if (objectName == "Reflect")
         {
-            _set.UsesReflectMetadata = true;
+            if (memberName == "metadata" || memberName == "defineMetadata" || memberName == "getMetadata")
+                _set.UsesReflectMetadata = true;
+            // Any other Reflect.X access flips the broader flag (Reflect.set/get/etc.)
+            _set.UsesReflect = true;
         }
         // JSON.parse / JSON.stringify — accept both lowercase / capitalized forms
         // and uppercase identifier `JSON` (the standard one). Conservative: any
@@ -641,6 +701,11 @@ public sealed class RuntimeFeatureDetector
                 if (ce.Accessors is not null)
                     foreach (var a in ce.Accessors)
                         foreach (var s in a.Body) VisitStmt(s);
+                break;
+
+            case Expr.RegexLiteral:
+                // Regex literal /pattern/flags — needs $TSRegExp emission.
+                _set.UsesRegExp = true;
                 break;
 
             // Leaves with no nested expressions worth walking.

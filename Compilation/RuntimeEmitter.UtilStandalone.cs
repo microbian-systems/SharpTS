@@ -16,27 +16,37 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitUtilStandaloneMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // Phase 1: Define all method signatures
+        // Phase 1: Define method signatures. UtilInspect family is mandatory
+        // (console.dir uses it); the rest is gated on UsesUtilFormat.
         DefineUtilHelperSignatures(typeBuilder, runtime);
-        DefineUtilDeepEqualSignature(typeBuilder, runtime);
-        DefineUtilParseArgsSignatures(typeBuilder, runtime);
+        if (_features.UsesUtilFormat)
+        {
+            DefineUtilDeepEqualSignature(typeBuilder, runtime);
+            DefineUtilParseArgsSignatures(typeBuilder, runtime);
+        }
 
-        // Phase 2: Emit all method bodies (can now reference each other)
+        // Phase 2: Emit all method bodies (can now reference each other).
+        // UtilInspect* are always emitted (console.dir feeds into them);
+        // UtilFormat / IsDeepStrictEqual / DeepEqualImpl are user-facing util
+        // functions and gate together.
         EmitUtilInspectValueBody(runtime);
         EmitUtilInspectArrayBody(runtime);
         EmitUtilInspectObjectBody(runtime);
         EmitUtilInspectBody(runtime);
-        EmitUtilFormatBody(runtime);
-        EmitUtilIsDeepStrictEqualBody(runtime);
-        EmitUtilDeepEqualImplBody(runtime);
+        if (_features.UsesUtilFormat)
+        {
+            EmitUtilFormatBody(runtime);
+            EmitUtilIsDeepStrictEqualBody(runtime);
+            EmitUtilDeepEqualImplBody(runtime);
 
-        // Phase 3: Emit parseArgs helper methods
-        EmitUtilParseArgsGetBoolOptionBody(runtime);
-        EmitUtilParseArgsGetArgsArrayBody(runtime);
-        EmitUtilParseArgsGetOptionsDefBody(runtime);
-        EmitUtilParseLongOptionBody(runtime);
-        EmitUtilParseShortOptionsBody(runtime);
-        EmitUtilParseArgsBody(runtime);
+            // Phase 3: parseArgs helper methods (only meaningful when format is on).
+            EmitUtilParseArgsGetBoolOptionBody(runtime);
+            EmitUtilParseArgsGetArgsArrayBody(runtime);
+            EmitUtilParseArgsGetOptionsDefBody(runtime);
+            EmitUtilParseLongOptionBody(runtime);
+            EmitUtilParseShortOptionsBody(runtime);
+            EmitUtilParseArgsBody(runtime);
+        }
     }
 
     private void DefineUtilHelperSignatures(TypeBuilder typeBuilder, EmittedRuntime runtime)

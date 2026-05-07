@@ -140,13 +140,17 @@ public partial class RuntimeEmitter
         // Not found in user-set symbol dict — fall back to prototype-keyed
         // well-known-symbol dispatch. Currently only RegExp.prototype carries
         // symbol-keyed methods (@@match/@@matchAll/@@replace/@@search/@@split,
-        // ECMA-262 §22.2.5).
-        var notRegExpForSymbolLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
-        il.Emit(OpCodes.Brfalse, notRegExpForSymbolLabel);
-        EmitRegExpSymbolDispatch(il, runtime);
-        il.MarkLabel(notRegExpForSymbolLabel);
+        // ECMA-262 §22.2.5). When UsesRegExp is gated off there can't be a
+        // RegExp value at runtime, so skip the Isinst entirely.
+        if (_features.UsesRegExp)
+        {
+            var notRegExpForSymbolLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            il.Emit(OpCodes.Brfalse, notRegExpForSymbolLabel);
+            EmitRegExpSymbolDispatch(il, runtime);
+            il.MarkLabel(notRegExpForSymbolLabel);
+        }
 
         // Return undefined for missing symbol properties (JavaScript semantics)
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);

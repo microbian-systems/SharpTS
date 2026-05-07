@@ -579,13 +579,20 @@ public partial class RuntimeEmitter
         EmitObjectGetPrototypeOf(typeBuilder, runtime, prototypeStoreField);
         EmitObjectSetPrototypeOf(typeBuilder, runtime, prototypeStoreField, nonExtensibleObjectsField);
         EmitObjectGroupBy(typeBuilder, runtime);
-        EmitReflectSet(typeBuilder, runtime);
-        EmitReflectSetPrototypeOf(typeBuilder, runtime, prototypeStoreField, nonExtensibleObjectsField);
-        EmitReflectDefineProperty(typeBuilder, runtime);
-        EmitReflectOwnKeys(typeBuilder, runtime);
-        EmitReflectApply(typeBuilder, runtime);
+        // Reflect.set / setPrototypeOf / defineProperty / ownKeys / apply /
+        // construct — gated on UsesReflect. (Reflect.metadata uses
+        // UsesReflectMetadata, gated separately at line 848.)
+        // EmitIsConstructor is shared infrastructure so stays unconditional.
         EmitIsConstructor(typeBuilder, runtime);
-        EmitReflectConstruct(typeBuilder, runtime);
+        if (_features.UsesReflect)
+        {
+            EmitReflectSet(typeBuilder, runtime);
+            EmitReflectSetPrototypeOf(typeBuilder, runtime, prototypeStoreField, nonExtensibleObjectsField);
+            EmitReflectDefineProperty(typeBuilder, runtime);
+            EmitReflectOwnKeys(typeBuilder, runtime);
+            EmitReflectApply(typeBuilder, runtime);
+            EmitReflectConstruct(typeBuilder, runtime);
+        }
         EmitIsArray(typeBuilder, runtime);
         EmitSpreadArray(typeBuilder, runtime);
         EmitConcatArrays(typeBuilder, runtime);
@@ -714,7 +721,8 @@ public partial class RuntimeEmitter
         // ordering. Without this, the populate wires those slots to a
         // null-returning stub that drops args and breaks `new String(...)
         // .search(...)` (45 Test262 regressions, root-caused 2026-05-01).
-        EmitRegExpMethods(typeBuilder, runtime);
+        if (_features.UsesRegExp)
+            EmitRegExpMethods(typeBuilder, runtime);
         // String.prototype dict populate — must come AFTER all the String* helpers,
         // the stubs (emitted earlier), AND the RegExp methods above.
         EmitStringPrototypePopulate(typeBuilder, runtime);
@@ -765,7 +773,8 @@ public partial class RuntimeEmitter
         // Virtual timer infrastructure (must come before DateMethods which calls ProcessPendingTimers)
         EmitTimerQueueInfrastructure(typeBuilder, runtime);
         // Date methods
-        EmitDateMethods(typeBuilder, runtime);
+        if (_features.UsesDate)
+            EmitDateMethods(typeBuilder, runtime);
         // RegExp methods moved earlier — emitted before EmitStringPrototypePopulate.
         // Error methods
         EmitErrorMethods(typeBuilder, runtime);
@@ -872,8 +881,9 @@ public partial class RuntimeEmitter
         EmitPerfPrimitiveMethods(typeBuilder, runtime);
         // string_decoder module migrated to stdlib/node/string_decoder.ts.
 
-        // Intl support (Intl.NumberFormat)
-        EmitIntlMethods(typeBuilder, runtime);
+        // Intl support (Intl.NumberFormat / DateTimeFormat / Collator) — gated.
+        if (_features.UsesIntl)
+            EmitIntlMethods(typeBuilder, runtime);
 
         // TLS handshake helpers (called via late-binding from emitted TLS types)
         EmitTlsHandshakeHelpers(typeBuilder, runtime);

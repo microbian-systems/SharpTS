@@ -70,9 +70,10 @@ public partial class RuntimeEmitter
 
         // NOTE: $IteratorWrapper is emitted later, after iterator methods are defined
 
-        // Emit $TSDate class for standalone Date support
+        // Emit $TSDate class for standalone Date support — gated on UsesDate.
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSDate
-        EmitTSDateClass(moduleBuilder, runtime);
+        if (features.UsesDate)
+            EmitTSDateClass(moduleBuilder, runtime);
 
         // Emit $Error class hierarchy for standalone error support
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSError and subclasses
@@ -113,9 +114,10 @@ public partial class RuntimeEmitter
         // can reference CompiledPropertyDescriptorType / PDSDefineProperty.
         EmitPropertyDescriptorTypes(moduleBuilder, runtime);
 
-        // Emit $RegExp class for standalone regex support
+        // Emit $RegExp class for standalone regex support — gated on UsesRegExp.
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSRegExp
-        EmitTSRegExpClass(moduleBuilder, runtime);
+        if (features.UsesRegExp)
+            EmitTSRegExpClass(moduleBuilder, runtime);
 
         // AssertionError now lives in stdlib/node/assert.ts (embedded stdlib migration).
         // Emit $NodeError class for standalone fs module support

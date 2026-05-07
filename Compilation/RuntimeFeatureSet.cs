@@ -46,6 +46,12 @@ public sealed class RuntimeFeatureSet
     public bool UsesReflectMetadata { get; set; } = true;   // Reflect.metadata / Reflect.defineMetadata
     public bool UsesCjsRequire { get; set; } = true;        // require() / module.exports
     public bool UsesJSON { get; set; } = true;              // JSON.parse / JSON.stringify
+    public bool UsesIntl { get; set; } = true;              // Intl.NumberFormat, DateTimeFormat, Collator
+    public bool UsesReflect { get; set; } = true;           // Reflect.set/get/deleteProperty/has/etc.
+    public bool UsesUtilFormat { get; set; } = true;        // util.format/inspect/parseArgs/getSystemErrorName
+    public bool UsesIteratorHelpers { get; set; } = true;   // Iterator.prototype.map/filter/flatMap/take/drop
+    public bool UsesDate { get; set; } = true;              // new Date(), Date.now(), Date.X
+    public bool UsesRegExp { get; set; } = true;            // /pattern/ or new RegExp()
 
     // ── Typed arrays ──────────────────────────────────────────────────────
     /// <summary>

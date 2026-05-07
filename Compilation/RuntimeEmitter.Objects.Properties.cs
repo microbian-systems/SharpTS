@@ -858,12 +858,18 @@ public partial class RuntimeEmitter
         // names (like `obj.length`, `obj[0]`).
         var pdsStoreLabel = il.DefineLabel();
         var afterPdsStoreLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSDateType);
-        il.Emit(OpCodes.Brtrue, pdsStoreLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
-        il.Emit(OpCodes.Brtrue, pdsStoreLabel);
+        if (_features.UsesDate)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSDateType);
+            il.Emit(OpCodes.Brtrue, pdsStoreLabel);
+        }
+        if (_features.UsesRegExp)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            il.Emit(OpCodes.Brtrue, pdsStoreLabel);
+        }
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
         il.Emit(OpCodes.Brtrue, pdsStoreLabel);
