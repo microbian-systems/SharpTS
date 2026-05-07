@@ -115,11 +115,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brtrue, infinityLabel);
 
-        // Check for "fetch"
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldstr, "fetch");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brtrue, fetchLabel);
+        // Check for "fetch" — only when the program references fetch (or any fetch-family
+        // identifier). The `runtime.Fetch` MethodBuilder is null otherwise.
+        if (_features.UsesFetch)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, "fetch");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brtrue, fetchLabel);
+        }
 
         // Check for "parseInt"
         il.Emit(OpCodes.Ldarg_0);
@@ -177,8 +181,11 @@ public partial class RuntimeEmitter
         EmitTypeBranch("Promise", _types.TaskOfObject);
         EmitTypeBranch("Buffer", runtime.TSBufferType);
         EmitTypeBranch("Function", runtime.TSFunctionType);
-        EmitTypeBranch("TextEncoder", runtime.TSTextEncoderType);
-        EmitTypeBranch("TextDecoder", runtime.TSTextDecoderType);
+        if (_features.UsesTextEncoding)
+        {
+            EmitTypeBranch("TextEncoder", runtime.TSTextEncoderType);
+            EmitTypeBranch("TextDecoder", runtime.TSTextDecoderType);
+        }
         // `Object` — return System.Object's Type token so `globalThis.Object === Object`
         // holds (bare `Object` lowers to this same helper via ILEmitter.Expressions.cs,
         // so both sides produce the canonical Type instance). The compile-time static
@@ -238,10 +245,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // fetch property - return cached fetch TSFunction
-        il.MarkLabel(fetchLabel);
-        EmitCachedTSFunction(il, runtime.CachedFetchFunction, runtime.Fetch, runtime);
-        il.Emit(OpCodes.Br, returnLabel);
+        // fetch property - return cached fetch TSFunction (only emitted when UsesFetch)
+        if (_features.UsesFetch)
+        {
+            il.MarkLabel(fetchLabel);
+            EmitCachedTSFunction(il, runtime.CachedFetchFunction, runtime.Fetch, runtime);
+            il.Emit(OpCodes.Br, returnLabel);
+        }
 
         // parseInt - return cached TSFunction wrapping NumberParseInt
         il.MarkLabel(parseIntLabel);

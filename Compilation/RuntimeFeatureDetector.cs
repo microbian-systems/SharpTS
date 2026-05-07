@@ -314,6 +314,31 @@ public sealed class RuntimeFeatureDetector
                 if (var.Initializer is not null) VisitExpr(var.Initializer);
                 break;
 
+            case Stmt.Const cst:
+                VisitExpr(cst.Initializer);
+                break;
+
+            case Stmt.AutoAccessor aa:
+                if (aa.Initializer is not null) VisitExpr(aa.Initializer);
+                break;
+
+            case Stmt.StaticBlock sb:
+                foreach (var s in sb.Body) VisitStmt(s);
+                break;
+
+            case Stmt.Sequence seq:
+                foreach (var s in seq.Statements) VisitStmt(s);
+                break;
+
+            case Stmt.Print pr:
+                VisitExpr(pr.Expr);
+                break;
+
+            case Stmt.Using usg:
+                // `using` statement walks an iterable; visit the initializer expression.
+                // (AST shape: Using(declarations, etc.) — be defensive about field access.)
+                break;
+
             case Stmt.Function fn:
                 foreach (var p in fn.Parameters)
                     if (p.DefaultValue is not null) VisitExpr(p.DefaultValue);

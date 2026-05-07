@@ -795,10 +795,15 @@ public partial class RuntimeEmitter
         // NodeError conversion helpers (must be before fs methods which use them)
         EmitNodeErrorHelpers(typeBuilder, runtime);
         // Built-in module methods (fs, os, dns) — path migrated to stdlib/node/path.ts.
+        // Note: $Stats / $CJSModule / Buffer remain in the central GetFieldsProperty
+        // dispatch chain, so we keep $FsModuleMethods always-on for Phase 2.
         EmitFsModuleMethods(typeBuilder, runtime);
         EmitOsModuleMethods(typeBuilder, runtime);
-        EmitDnsModuleMethods(typeBuilder, runtime);
-        EmitDnsPromisesMethods(typeBuilder, runtime);
+        if (_features.UsesDns)
+        {
+            EmitDnsModuleMethods(typeBuilder, runtime);
+            EmitDnsPromisesMethods(typeBuilder, runtime);
+        }
         // Emit wrapper methods for named imports
         EmitFsModuleMethodWrappers(typeBuilder, runtime);
         // Querystring module methods migrated to stdlib/node/querystring.ts.
@@ -809,22 +814,28 @@ public partial class RuntimeEmitter
         EmitTtyPrimitiveMethods(typeBuilder, runtime);
         // URL module — migrated to stdlib/node/url.ts; no runtime helpers emitted.
         // HTTP module methods (fetch, http.createServer, etc.) - must be before globalThis
-        EmitHttpModuleMethods(typeBuilder, runtime);
+        if (_features.UsesHttp)
+            EmitHttpModuleMethods(typeBuilder, runtime);
         // Net module methods (net.createServer, net.connect, etc.)
-        EmitNetModuleMethods(typeBuilder, runtime);
+        if (_features.UsesNet)
+            EmitNetModuleMethods(typeBuilder, runtime);
         // TLS module methods (tls.createServer, tls.connect, etc.)
-        EmitTlsModuleMethods(typeBuilder, runtime);
+        if (_features.UsesTls)
+            EmitTlsModuleMethods(typeBuilder, runtime);
         // Dgram module methods (dgram.createSocket)
-        EmitDgramModuleMethods(typeBuilder, runtime);
+        if (_features.UsesDgram)
+            EmitDgramModuleMethods(typeBuilder, runtime);
         // globalThis methods (ES2020) - must be after HTTP for fetch reference
         EmitGlobalThisMethods(typeBuilder, runtime);
         // Define util inspect method signatures before ConsoleExtensions (ConsoleDir uses UtilInspectValue)
         DefineUtilInspectSignatures(typeBuilder, runtime);
         // Console extensions (error, warn, clear, time, timeEnd, timeLog)
         EmitConsoleExtensions(typeBuilder, runtime);
-        // Crypto module methods
-        EmitCryptoMethods(typeBuilder, runtime);
-        // Util module methods
+        // Crypto module methods — gated alongside the crypto type emissions.
+        if (_features.UsesCrypto)
+            EmitCryptoMethods(typeBuilder, runtime);
+        // Util module methods (util.types.* always emitted; promisify/callbackify/deprecate
+        // gated inside EmitUtilMethods on _features.UsesUtilPromisify).
         EmitUtilMethods(typeBuilder, runtime);
         // Readline module methods
         EmitReadlineMethods(typeBuilder, runtime);
@@ -847,10 +858,12 @@ public partial class RuntimeEmitter
         EmitTimerPromisesModuleWrappers(typeBuilder, runtime);
         // Process global methods (env, argv, nextTick) - must be after timer methods for nextTick
         EmitProcessMethods(typeBuilder, runtime);
-        // Zlib module methods
-        EmitZlibMethods(typeBuilder, runtime);
-        // DNS module methods
-        EmitDnsModuleMethods(typeBuilder, runtime);
+        // Zlib module methods — gated.
+        if (_features.UsesZlib)
+            EmitZlibMethods(typeBuilder, runtime);
+        // DNS module methods — gated.
+        if (_features.UsesDns)
+            EmitDnsModuleMethods(typeBuilder, runtime);
         // primitive:perf — only the host-tied now() method; the rest of perf_hooks
         // is pure TypeScript in stdlib/node/perf_hooks.ts.
         EmitPerfPrimitiveMethods(typeBuilder, runtime);

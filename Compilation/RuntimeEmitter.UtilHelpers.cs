@@ -28,14 +28,20 @@ public partial class RuntimeEmitter
         EmitUtilTypesIsWeakSet(typeBuilder, runtime);
         EmitUtilTypesIsArrayBuffer(typeBuilder, runtime);
 
-        // Emit util.deprecate
-        EmitUtilDeprecate(typeBuilder, runtime);
+        // util.deprecate / callbackify / promisify reference $DeprecatedFunction,
+        // $CallbackifiedFunction, $PromisifiedFunction respectively. Skip together
+        // with the type emission when UsesUtilPromisify is off.
+        if (_features.UsesUtilPromisify)
+        {
+            // Emit util.deprecate
+            EmitUtilDeprecate(typeBuilder, runtime);
 
-        // Emit util.callbackify
-        EmitUtilCallbackify(typeBuilder, runtime);
+            // Emit util.callbackify
+            EmitUtilCallbackify(typeBuilder, runtime);
 
-        // Emit util.promisify
-        EmitUtilPromisify(typeBuilder, runtime);
+            // Emit util.promisify
+            EmitUtilPromisify(typeBuilder, runtime);
+        }
 
         // Emit util.inherits
         EmitUtilInherits(typeBuilder, runtime);

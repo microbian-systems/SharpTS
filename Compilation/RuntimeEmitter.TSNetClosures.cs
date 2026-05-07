@@ -30,7 +30,9 @@ public partial class RuntimeEmitter
         EmitSocketReadEndClosure(moduleBuilder, runtime);
         EmitSocketConnectOkClosure(moduleBuilder, runtime);
         EmitSocketConnectErrClosure(moduleBuilder, runtime);
-        EmitHttpAcceptClosure(moduleBuilder, runtime);
+        // $HttpAcceptClosure references $HttpServer, which is gated on UsesHttp.
+        if (_features.UsesHttp)
+            EmitHttpAcceptClosure(moduleBuilder, runtime);
         EmitIpcWriteClosure(moduleBuilder, runtime);
     }
 

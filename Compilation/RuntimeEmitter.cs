@@ -127,20 +127,22 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSBuffer
         EmitTSBufferClass(moduleBuilder, runtime);
 
-        // Crypto helper types — always emit. EmitGlobalThisMethods inside
-        // $Runtime references the crypto namespace getter unconditionally;
-        // gating these would require additional dispatch-site work. Phase 2.
-        EmitTSHashClass(moduleBuilder, runtime);
-        EmitTSHmacClass(moduleBuilder, runtime);
-        EmitTSCipherClass(moduleBuilder, runtime);
-        EmitTSDecipherClass(moduleBuilder, runtime);
-        EmitTSSignTypeDefinition(moduleBuilder, runtime);
-        EmitTSVerifyTypeDefinition(moduleBuilder, runtime);
-        EmitTSKeyObjectClass(moduleBuilder, runtime);
-        EmitTSECDHTypeDefinition(moduleBuilder, runtime);
-        EmitBoundECDHMethodTypeDefinition(moduleBuilder, runtime);
-        EmitTSDHTypeDefinition(moduleBuilder, runtime);
-        EmitBoundDHMethodTypeDefinition(moduleBuilder, runtime);
+        // Crypto helper types — gated on UsesCrypto. All references are confined
+        // to crypto's own emit files; no central-dispatch fallout.
+        if (features.UsesCrypto)
+        {
+            EmitTSHashClass(moduleBuilder, runtime);
+            EmitTSHmacClass(moduleBuilder, runtime);
+            EmitTSCipherClass(moduleBuilder, runtime);
+            EmitTSDecipherClass(moduleBuilder, runtime);
+            EmitTSSignTypeDefinition(moduleBuilder, runtime);
+            EmitTSVerifyTypeDefinition(moduleBuilder, runtime);
+            EmitTSKeyObjectClass(moduleBuilder, runtime);
+            EmitTSECDHTypeDefinition(moduleBuilder, runtime);
+            EmitBoundECDHMethodTypeDefinition(moduleBuilder, runtime);
+            EmitTSDHTypeDefinition(moduleBuilder, runtime);
+            EmitBoundDHMethodTypeDefinition(moduleBuilder, runtime);
+        }
 
         // Emit $EventLoop singleton (must come before timer types and net/http types that call Ref/Unref/Schedule)
         EmitTSEventLoopClass(moduleBuilder, runtime);
@@ -177,11 +179,12 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSEventEmitter
         EmitTSEventEmitterClass(moduleBuilder, runtime);
 
-        // HTTP / TLS types — always emit. EmitGlobalThisMethods references the
-        // fetch/Headers/Request/Response getters unconditionally; gating these
-        // would require conditional dispatch emission. Phase 2.
-        EmitHttpTypes(moduleBuilder, runtime);
-        EmitTlsTypes(moduleBuilder, runtime);
+        // HTTP / TLS types — gated on UsesHttp / UsesTls. The detector arranges
+        // implications so UsesFetch ⇒ UsesHttp ⇒ UsesNet, UsesTls ⇒ UsesNet.
+        if (features.UsesHttp)
+            EmitHttpTypes(moduleBuilder, runtime);
+        if (features.UsesTls)
+            EmitTlsTypes(moduleBuilder, runtime);
 
         // Emit cluster types for standalone cluster support
         // NOTE: Must come after EventEmitter ($ClusterWorker and $ClusterManager extend it)
@@ -228,26 +231,32 @@ public partial class RuntimeEmitter
         EmitTSReadableMapFilterMethods(runtime);               // Phase 2b: Map, Filter (need Transform) + CreateType
         EmitTSPassThroughClass(moduleBuilder, runtime);
         EmitTSStreamUtilsClass(moduleBuilder, runtime);
-        EmitTSZlibTransformClass(moduleBuilder, runtime);
+        if (features.UsesZlib)
+            EmitTSZlibTransformClass(moduleBuilder, runtime);
 
         // Function wrapper emission is deferred below until AFTER $BoundArrayMethod /
         // $BoundMapMethod / $BoundSetMethod Phase 1 so their Invoke MethodBuilders
         // are available to the wrapper bodies (for dispatching .call/.apply/.bind on
         // bound methods).
 
-        // Emit util module types for standalone execution
-        // Must come after $Buffer (TextEncoder returns $Buffer).
-        // $DeprecatedFunction / $CallbackifiedFunction / $PromisifiedFunction and
-        // $TextDecoderDecodeMethod are referenced from EmitInvokeValue's central
-        // dispatch — always emit in Phase 1. Phase 2 will gate by also gating the
-        // dispatch arms.
-        EmitTSDeprecatedFunctionClass(moduleBuilder, runtime);
-        EmitTSCallbackifiedFunctionClass(moduleBuilder, runtime);
-        EmitPromisifyCallbackClass(moduleBuilder, runtime);  // Must come before PromisifiedFunction
-        EmitTSPromisifiedFunctionClass(moduleBuilder, runtime);
-        EmitTSTextEncoderClass(moduleBuilder, runtime);
-        EmitTSTextDecoderClass(moduleBuilder, runtime);
-        EmitTSTextDecoderDecodeMethodClass(moduleBuilder, runtime);
+        // util.promisify family — gated on UsesUtilPromisify. Matching dispatch
+        // arms in EmitInvokeValue / EmitInvokeMethodValue / EmitTypeOf are gated
+        // on the same flag.
+        if (features.UsesUtilPromisify)
+        {
+            EmitTSDeprecatedFunctionClass(moduleBuilder, runtime);
+            EmitTSCallbackifiedFunctionClass(moduleBuilder, runtime);
+            EmitPromisifyCallbackClass(moduleBuilder, runtime);  // Must come before PromisifiedFunction
+            EmitTSPromisifiedFunctionClass(moduleBuilder, runtime);
+        }
+        // TextEncoder/Decoder — gated on UsesTextEncoding. $TextDecoderDecodeMethod
+        // is referenced from EmitInvokeValue's dispatch, gated on the same flag.
+        if (features.UsesTextEncoding)
+        {
+            EmitTSTextEncoderClass(moduleBuilder, runtime);
+            EmitTSTextDecoderClass(moduleBuilder, runtime);
+            EmitTSTextDecoderDecodeMethodClass(moduleBuilder, runtime);
+        }
 
         // $StringDecoder class removed — StringDecoder migrated to
         // stdlib/node/string_decoder.ts (pure-TS over the Buffer JS API).
@@ -297,10 +306,15 @@ public partial class RuntimeEmitter
         // so types that need CompiledPropertyDescriptorType during their own
         // emission can reference it. This used to live here.
 
-        // Net / Dgram types — always emit. Same central-dispatch concern as HTTP/TLS.
-        EmitTSNetSocketPhase1(moduleBuilder, runtime);
-        EmitTSNetServerPhase1(moduleBuilder, runtime);
-        EmitDatagramSocketTypeDefinition(moduleBuilder, runtime);
+        // Net / Dgram types — gated on UsesNet / UsesDgram. UsesNet is implied
+        // by UsesHttp and UsesTls (both extend $NetServer-style sockets).
+        if (features.UsesNet)
+        {
+            EmitTSNetSocketPhase1(moduleBuilder, runtime);
+            EmitTSNetServerPhase1(moduleBuilder, runtime);
+        }
+        if (features.UsesDgram)
+            EmitDatagramSocketTypeDefinition(moduleBuilder, runtime);
 
         // Emit $ReadlineInterface type definition (Phase 1)
         // Must come before EmitRuntimeClass so ReadlineCreateInterface can use the constructor
@@ -334,13 +348,17 @@ public partial class RuntimeEmitter
         if (features.UsesBroadcastChannel)
             EmitBroadcastChannelClass(moduleBuilder, runtime);
 
-        // Web Streams — always emit. EmitGlobalThisMethods references the
-        // ReadableStream/WritableStream/TransformStream getters unconditionally.
-        // Phase 2 will gate by also gating those globalThis arms.
-        EmitQueuingStrategyClasses(moduleBuilder, runtime);
-        EmitWritableStreamClasses(moduleBuilder, runtime);
-        EmitReadableStreamClasses(moduleBuilder, runtime);
-        EmitTransformStreamClasses(moduleBuilder, runtime);
+        // Web Streams — gated on UsesWebStreams. The only external references are
+        // user-code `new ReadableStream(...)`/`new WritableStream(...)`/`new TransformStream(...)`
+        // in ExpressionEmitterBase.Constructors.cs, which only fire when the
+        // detector has already flipped the flag.
+        if (features.UsesWebStreams)
+        {
+            EmitQueuingStrategyClasses(moduleBuilder, runtime);
+            EmitWritableStreamClasses(moduleBuilder, runtime);
+            EmitReadableStreamClasses(moduleBuilder, runtime);
+            EmitTransformStreamClasses(moduleBuilder, runtime);
+        }
 
         // Emit $ReflectMetadataDecorator closure class
         // Must come after EmitRuntimeClass (calls ReflectDefineMetadata)
@@ -361,66 +379,60 @@ public partial class RuntimeEmitter
         // Finalize $MethodCallable with Invoke method (Phase 2)
         EmitMethodCallableFinalize(runtime);
 
-        // Emit net/http closure types (Phase 1b)
-        // Must come after Phase 1a (references $NetSocket/$NetServer/$HttpServer TypeBuilders/fields)
-        // Must come before Phase 2 (methods Newobj the closure constructors)
-        EmitNetClosureTypes(moduleBuilder, runtime);
+        // Net / Http / Tls / Dgram phase-1b/phase-2 finalize work — gated on
+        // their own feature flags. UsesHttp ⇒ UsesNet, UsesTls ⇒ UsesNet.
+        if (features.UsesNet)
+        {
+            EmitNetClosureTypes(moduleBuilder, runtime);
+        }
 
-        // Emit HTTP accept worker body (Phase 2)
-        // Must come after EmitNetClosureTypes (uses $HttpAcceptClosure)
-        EmitHttpServerAcceptWorkerBody(runtime);
+        if (features.UsesHttp)
+            EmitHttpServerAcceptWorkerBody(runtime);
 
-        // Finalize $NetSocket class (Phase 2)
-        EmitTSNetSocketPhase2(runtime);
+        if (features.UsesNet)
+        {
+            EmitTSNetSocketPhase2(runtime);
+            EmitTSNetServerPhase2(runtime);
+        }
 
-        // Finalize $NetServer class (Phase 2)
-        EmitTSNetServerPhase2(runtime);
+        if (features.UsesDgram)
+        {
+            EmitDgramMessageClosureClass(moduleBuilder, runtime);
+            EmitDgramReceiveWorkerBody(runtime);
+            EmitDatagramSocketFinalize(runtime);
+        }
 
-        // Emit dgram message closure class (needed by receive worker body)
-        EmitDgramMessageClosureClass(moduleBuilder, runtime);
+        if (features.UsesTls)
+        {
+            EmitTlsAcceptClosureClass(moduleBuilder, runtime);
+            EmitTlsConnectClosureClass(moduleBuilder, runtime);
+            EmitTlsConnectBody(runtime);
+        }
 
-        // Finalize $DatagramSocket class (Phase 2)
-        // Must come after EmitRuntimeClass and DgramMessageClosure
-        EmitDgramReceiveWorkerBody(runtime);
-        EmitDatagramSocketFinalize(runtime);
-
-        // Emit TLS closure classes, finalize $Runtime and $TlsServer (Phase 2)
-        // Must come after EmitRuntimeClass (TlsConnectAndHandshake helper is on $Runtime)
-        EmitTlsAcceptClosureClass(moduleBuilder, runtime);
-        EmitTlsConnectClosureClass(moduleBuilder, runtime);
-        EmitTlsConnectBody(runtime);   // Deferred TlsConnect body (needs $TlsConnectClosure)
         EmitRuntimeClassFinalize();     // Finalize $Runtime after all method bodies
-        EmitTlsServerAcceptWorkerBody(runtime);
-        EmitTlsServerFinalize();
+
+        if (features.UsesTls)
+        {
+            EmitTlsServerAcceptWorkerBody(runtime);
+            EmitTlsServerFinalize();
+        }
 
         // Finalize $ReadlineInterface class (Phase 2)
         // Must come after EmitRuntimeClass (Question uses InvokeValue)
         if (features.UsesReadline)
             EmitReadlineInterfaceFinalize(runtime);
 
-        // Finalize $Sign class (Phase 2)
-        // Must come after EmitRuntimeClass (Sign uses SignDataBytes)
-        EmitTSSignFinalize(runtime);
-
-        // Finalize $Verify class (Phase 2)
-        // Must come after EmitRuntimeClass (Verify uses VerifyDataBytes)
-        EmitTSVerifyFinalize(runtime);
-
-        // Finalize $ECDH class (Phase 2)
-        // Must come after EmitRuntimeClass (methods use EncodeResult/DecodeInput)
-        EmitTSECDHFinalize(runtime);
-
-        // Finalize $BoundECDHMethod class (Phase 2)
-        // Must come after ECDH methods (Invoke calls them)
-        EmitBoundECDHMethodFinalize(runtime);
-
-        // Finalize $DiffieHellman class (Phase 2)
-        // Must come after EmitRuntimeClass (methods use EncodeResult/DecodeInput)
-        EmitTSDHFinalize(runtime);
-
-        // Finalize $BoundDHMethod class (Phase 2)
-        // Must come after DH methods (Invoke calls them)
-        EmitBoundDHMethodFinalize(runtime);
+        // Crypto Phase-2 finalize calls — gated on UsesCrypto with the type
+        // emission above.
+        if (features.UsesCrypto)
+        {
+            EmitTSSignFinalize(runtime);
+            EmitTSVerifyFinalize(runtime);
+            EmitTSECDHFinalize(runtime);
+            EmitBoundECDHMethodFinalize(runtime);
+            EmitTSDHFinalize(runtime);
+            EmitBoundDHMethodFinalize(runtime);
+        }
 
         return runtime;
     }
