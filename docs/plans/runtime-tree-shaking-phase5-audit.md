@@ -76,19 +76,25 @@ all of which must exist if anyone reads `arr.map`).
 
 ## Recommended sequencing for Phase 5b–5h
 
-| Phase | Cluster | Rationale | Risk |
-|-------|---------|-----------|------|
-| **5b** | EmitReadlineMethods (orphan-flag fix) | Trivial — flag exists, just add the `if`. Ships pattern with zero new detection logic. | Very low. |
-| **5c** | EmitReflectMetadataMethods (orphan-flag fix) | Same — `UsesReflectMetadata` already detected. Verify and gate. | Very low. |
-| **5d** | EmitTlsHandshakeHelpers under `UsesTls` | Trivial implication — TLS helpers only meaningful with TLS. | Very low. |
-| **5e** | New `UsesOs` flag + gate `EmitOsModuleMethods` | Big size win (~38KB), easy detection (`os` module path). | Low. |
-| **5f** | New `UsesChildProcess` + gate `EmitChildProcessMethods` | Biggest single-file win (54KB). | Low–medium (some test patterns spawn). |
-| **5g** | New `UsesVm` + gate `EmitVmMethods` | Small but trivial. | Very low. |
-| **5h** | New `UsesProxy` flag + gate `EmitProxyMethods` | Niche but isolated. | Low (Proxy detection already exists for runtime checks?). |
-| **Audit** | Re-measure DLL size, decide on Tier-2 (Map/Set/AbortController/etc.) and Tier-3 (prototype population). | Data-driven next step. | — |
+| Phase | Cluster | Rationale | Status |
+|-------|---------|-----------|--------|
+| **5b** | EmitReadlineMethods orphan-flag fix | Flag existed; gate added. | ✅ landed `0e0147b` |
+| **5c** | EmitReflectMetadataMethods orphan-flag fix | Same pattern. | ✅ landed `0e0147b` |
+| **5d** | EmitTlsHandshakeHelpers under `UsesTls` | Implication of existing flag. | ✅ landed `0e0147b` |
+| **5e** | New `UsesOs` + gate `EmitOsModuleMethods` | New flag, module-path detection. | ✅ landed `090d25b` |
+| **5f** | New `UsesChildProcess` + gate `EmitChildProcessMethods` | Biggest single-file source skipped. | ✅ landed `6ecba2a` |
+| **5g/h** | `UsesVm` + `UsesTty` + `UsesPerf` (batched) | Three small modules. | ✅ landed `cf0e3db` |
+| **Audit** | Re-measure DLL size, decide on Tier-2 (Map/Set/AbortController/Proxy) and Tier-3 (prototype population). | Next step. | pending |
 
-Phases 5b–5d are essentially **free** — they fix orphan flags or trivially
-imply from existing gates. Phases 5e–5h add new flags but follow the
-established pattern. After Phase 5h, the next round would be the harder
-cases (Array/String prototype shaking) which need a different approach
-(populate-table pruning).
+Cumulative DLL after Phase 5h: ~150KB (from ~387KB pre-Phase-1, -61%).
+
+Remaining easy targets identified during execution (Phase 5i+ candidates):
+- **Map / Set / WeakMap / WeakSet** methods — only emit when `new X()` or
+  bare identifier appears in source.
+- **Proxy** methods — only emit when `Proxy` identifier appears.
+- **AbortController / AbortSignal** — common in fetch/timer code.
+- **DynamicImport** methods — only when `import(...)` syntax appears.
+- **AsyncGenerator** continue helpers — only when `async function*` exists.
+
+After those, the next tier requires a different shaking approach
+(populate-table pruning for Array/String/Number prototype methods).
