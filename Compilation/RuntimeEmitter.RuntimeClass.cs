@@ -857,12 +857,15 @@ public partial class RuntimeEmitter
         // Util module methods (util.types.* always emitted; promisify/callbackify/deprecate
         // gated inside EmitUtilMethods on _features.UsesUtilPromisify).
         EmitUtilMethods(typeBuilder, runtime);
-        // Readline module methods
-        EmitReadlineMethods(typeBuilder, runtime);
+        // Readline module methods — gated on UsesReadline (flag was already
+        // detected via `import 'readline'` but the call site used to ignore it).
+        if (_features.UsesReadline)
+            EmitReadlineMethods(typeBuilder, runtime);
         // Child process module methods
         EmitChildProcessMethods(typeBuilder, runtime);
-        // Reflect metadata API
-        EmitReflectMetadataMethods(typeBuilder, runtime);
+        // Reflect metadata API — gated on UsesReflectMetadata (orphan-flag fix).
+        if (_features.UsesReflectMetadata)
+            EmitReflectMetadataMethods(typeBuilder, runtime);
         // fs.watch / fs.watchFile / fs.unwatchFile — gated on UsesFs.
         if (_features.UsesFs)
             EmitFsWatchFactories(typeBuilder, runtime);
@@ -894,8 +897,9 @@ public partial class RuntimeEmitter
         if (_features.UsesIntl)
             EmitIntlMethods(typeBuilder, runtime);
 
-        // TLS handshake helpers (called via late-binding from emitted TLS types)
-        EmitTlsHandshakeHelpers(typeBuilder, runtime);
+        // TLS handshake helpers — only meaningful with TLS types emitted.
+        if (_features.UsesTls)
+            EmitTlsHandshakeHelpers(typeBuilder, runtime);
 
         // Worker Threads support (SharedArrayBuffer, TypedArrays, Atomics, MessagePort, Worker)
         EmitWorkerHelpers(typeBuilder, runtime);
