@@ -795,12 +795,15 @@ public partial class RuntimeEmitter
         EmitMapGroupBy(typeBuilder, runtime);
         // Set methods
         EmitSetMethods(typeBuilder, runtime);
-        // WeakMap methods
-        EmitWeakMapMethods(typeBuilder, runtime);
-        // WeakSet methods
-        EmitWeakSetMethods(typeBuilder, runtime);
-        // WeakRef methods
-        EmitWeakRefMethods(typeBuilder, runtime);
+        // WeakMap methods — gated on UsesWeakMap (`new WeakMap()` / bare `WeakMap`).
+        if (_features.UsesWeakMap)
+            EmitWeakMapMethods(typeBuilder, runtime);
+        // WeakSet methods — gated on UsesWeakSet.
+        if (_features.UsesWeakSet)
+            EmitWeakSetMethods(typeBuilder, runtime);
+        // WeakRef methods — gated on UsesWeakRef.
+        if (_features.UsesWeakRef)
+            EmitWeakRefMethods(typeBuilder, runtime);
         // FinalizationRegistry methods
         EmitFinalizationRegistryMethods(typeBuilder, runtime);
         // Proxy methods — gated on UsesProxy (`new Proxy()` / bare `Proxy`).

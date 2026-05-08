@@ -72,6 +72,9 @@ public sealed class RuntimeFeatureDetector
             UsesProxy = false,
             UsesDynamicImport = false,
             UsesAsyncGenerator = false,
+            UsesWeakRef = false,
+            UsesWeakMap = false,
+            UsesWeakSet = false,
             TypedArrays = RuntimeFeatureSet.TypedArrayKinds.None,
         };
     }
@@ -390,6 +393,16 @@ public sealed class RuntimeFeatureDetector
             // Proxy — `new Proxy(target, handler)` or bare value-form access.
             case "Proxy":
                 _set.UsesProxy = true; break;
+
+            // Weak collections — `new WeakRef(t)`, `new WeakMap()`, `new WeakSet()`.
+            // Each has an isolated emitter; methods are not consumed by other
+            // emit paths, so the gate is safe.
+            case "WeakRef":
+                _set.UsesWeakRef = true; break;
+            case "WeakMap":
+                _set.UsesWeakMap = true; break;
+            case "WeakSet":
+                _set.UsesWeakSet = true; break;
 
             // util module identifiers — `util` (CommonJS bare reference),
             // `format`, `inspect`, `parseArgs`, `promisify`/etc. would land

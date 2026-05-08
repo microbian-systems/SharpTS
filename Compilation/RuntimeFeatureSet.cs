@@ -63,6 +63,9 @@ public sealed class RuntimeFeatureSet
     public bool UsesProxy { get; set; } = true;             // `new Proxy(...)` / bare `Proxy` identifier
     public bool UsesDynamicImport { get; set; } = true;     // `import(specifier)` syntax (Expr.DynamicImport)
     public bool UsesAsyncGenerator { get; set; } = true;    // `async function*` / async generators
+    public bool UsesWeakRef { get; set; } = true;           // `new WeakRef(target)` — bare or `new`
+    public bool UsesWeakMap { get; set; } = true;           // `new WeakMap(...)` — bare or `new`
+    public bool UsesWeakSet { get; set; } = true;           // `new WeakSet(...)` — bare or `new`
 
     // ── Typed arrays ──────────────────────────────────────────────────────
     /// <summary>

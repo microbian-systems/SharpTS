@@ -343,6 +343,10 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
             "CreateProxy",
             "DynamicImportModule",
             "AsyncGeneratorAwaitContinue",
+            // Phase 5j: WeakRef / WeakMap / WeakSet
+            "CreateWeakRef", "WeakRefDeref",
+            "WeakMapGet", "WeakMapSet", "WeakMapHas", "WeakMapDelete",
+            "WeakSetAdd", "WeakSetHas", "WeakSetDelete",
         };
 
         var missing = gatedMethods.Where(m => !actualMethods.Contains(m)).ToList();
