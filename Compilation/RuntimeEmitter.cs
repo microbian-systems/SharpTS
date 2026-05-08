@@ -300,9 +300,12 @@ public partial class RuntimeEmitter
         EmitBoundArrayMethodTypeDefinition(moduleBuilder, runtime);
 
         // Emit $BoundMapMethod / $BoundSetMethod types and constructors (Phase 1)
-        // Must come before EmitRuntimeClass so GetMapProperty/GetSetProperty can use them
-        EmitBoundMapMethodTypeDefinition(moduleBuilder, runtime);
-        EmitBoundSetMethodTypeDefinition(moduleBuilder, runtime);
+        // Must come before EmitRuntimeClass so GetMapProperty/GetSetProperty can use them.
+        // Gated alongside the rest of Map/Set emission.
+        if (features.UsesMap)
+            EmitBoundMapMethodTypeDefinition(moduleBuilder, runtime);
+        if (features.UsesSet)
+            EmitBoundSetMethodTypeDefinition(moduleBuilder, runtime);
 
         // Emit $BoundAnyFunction (the partial-apply wrapper for .bind on non-$TSFunction
         // callables) and the function bind/call/apply wrappers. All reference the
@@ -396,9 +399,12 @@ public partial class RuntimeEmitter
         EmitBoundArrayMethodFinalize(runtime);
 
         // Finalize $BoundMapMethod / $BoundSetMethod with Invoke method (Phase 2)
-        // Must come after EmitRuntimeClass (needs Map*/Set* runtime methods defined)
-        EmitBoundMapMethodFinalize(runtime);
-        EmitBoundSetMethodFinalize(runtime);
+        // Must come after EmitRuntimeClass (needs Map*/Set* runtime methods defined).
+        // Gated alongside the rest of Map/Set emission.
+        if (features.UsesMap)
+            EmitBoundMapMethodFinalize(runtime);
+        if (features.UsesSet)
+            EmitBoundSetMethodFinalize(runtime);
 
         // Finalize $MethodCallable with Invoke method (Phase 2)
         EmitMethodCallableFinalize(runtime);

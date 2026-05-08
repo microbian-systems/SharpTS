@@ -1396,17 +1396,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brtrue, tsObjectLabel);
 
-        // Map (Dictionary<object, object>) - check for "size" property
+        // Map (Dictionary<object, object>) - check for "size" property.
+        // Gated together with the handler body below.
         var mapLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.DictionaryObjectObject);
-        il.Emit(OpCodes.Brtrue, mapLabel);
+        if (_features.UsesMap)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, _types.DictionaryObjectObject);
+            il.Emit(OpCodes.Brtrue, mapLabel);
+        }
 
-        // Set (HashSet<object>) - duck-typed access via GetSetProperty
+        // Set (HashSet<object>) - duck-typed access via GetSetProperty.
         var setLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.HashSetOfObject);
-        il.Emit(OpCodes.Brtrue, setLabel);
+        if (_features.UsesSet)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, _types.HashSetOfObject);
+            il.Emit(OpCodes.Brtrue, setLabel);
+        }
 
         // Dictionary (regular object)
         il.Emit(OpCodes.Ldarg_0);
@@ -1557,12 +1564,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
         il.Emit(OpCodes.Brtrue, callableWrapperLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
-        il.Emit(OpCodes.Brtrue, callableWrapperLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
-        il.Emit(OpCodes.Brtrue, callableWrapperLabel);
+        if (_features.UsesMap)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
+            il.Emit(OpCodes.Brtrue, callableWrapperLabel);
+        }
+        if (_features.UsesSet)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
+            il.Emit(OpCodes.Brtrue, callableWrapperLabel);
+        }
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.BoundAnyFunctionType);
         il.Emit(OpCodes.Brtrue, callableWrapperLabel);
@@ -1807,24 +1820,30 @@ public partial class RuntimeEmitter
         il.MarkLabel(notBAMNameLabel);
 
         var notBMMNameLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
-        il.Emit(OpCodes.Brfalse, notBMMNameLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.BoundMapMethodType);
-        il.Emit(OpCodes.Ldfld, runtime.BoundMapMethodNameField);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notBMMNameLabel);
+        if (_features.UsesMap)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
+            il.Emit(OpCodes.Brfalse, notBMMNameLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.BoundMapMethodType);
+            il.Emit(OpCodes.Ldfld, runtime.BoundMapMethodNameField);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notBMMNameLabel);
+        }
 
         var notBSMNameLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
-        il.Emit(OpCodes.Brfalse, notBSMNameLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.BoundSetMethodType);
-        il.Emit(OpCodes.Ldfld, runtime.BoundSetMethodNameField);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notBSMNameLabel);
+        if (_features.UsesSet)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
+            il.Emit(OpCodes.Brfalse, notBSMNameLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.BoundSetMethodType);
+            il.Emit(OpCodes.Ldfld, runtime.BoundSetMethodNameField);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notBSMNameLabel);
+        }
 
         // $BoundAnyFunction has no name field — fall through to GetFunctionMethod (returns "")
 
@@ -2298,39 +2317,46 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Ret);
 
-        // Map (Dictionary<object, object>) handler - check for "size" property
-        il.MarkLabel(mapLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "size");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        var notMapSizeLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, notMapSizeLabel);
-        // Return map.Count as double
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryObjectObject);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.DictionaryObjectObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notMapSizeLabel);
-        // For other Map properties, dispatch via GetMapProperty — returns a $BoundMapMethod
-        // wrapper for known methods (get/set/has/...) so that `typeof m.get === 'function'`
-        // and `m.get.call(m, k)` work on a Map received from another module.
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryObjectObject);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.GetMapProperty);
-        il.Emit(OpCodes.Ret);
+        // Map (Dictionary<object, object>) handler - check for "size" property.
+        // Gated together with the dispatch arm above.
+        if (_features.UsesMap)
+        {
+            il.MarkLabel(mapLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "size");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            var notMapSizeLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, notMapSizeLabel);
+            // Return map.Count as double
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.DictionaryObjectObject);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.DictionaryObjectObject, "Count").GetGetMethod()!);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notMapSizeLabel);
+            // For other Map properties, dispatch via GetMapProperty — returns a $BoundMapMethod
+            // wrapper for known methods (get/set/has/...) so that `typeof m.get === 'function'`
+            // and `m.get.call(m, k)` work on a Map received from another module.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.DictionaryObjectObject);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.GetMapProperty);
+            il.Emit(OpCodes.Ret);
+        }
 
         // Set (HashSet<object>) handler - dispatch via GetSetProperty for size +
         // $BoundSetMethod wrappers on known methods (add/has/delete/... plus ES2025
         // set ops). Mirrors the Map handler above.
-        il.MarkLabel(setLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.HashSetOfObject);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.GetSetProperty);
-        il.Emit(OpCodes.Ret);
+        if (_features.UsesSet)
+        {
+            il.MarkLabel(setLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.HashSetOfObject);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.GetSetProperty);
+            il.Emit(OpCodes.Ret);
+        }
 
         il.MarkLabel(listLabel);
         // Check for "length"

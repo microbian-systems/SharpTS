@@ -66,6 +66,8 @@ public sealed class RuntimeFeatureSet
     public bool UsesWeakRef { get; set; } = true;           // `new WeakRef(target)` — bare or `new`
     public bool UsesWeakMap { get; set; } = true;           // `new WeakMap(...)` — bare or `new`
     public bool UsesWeakSet { get; set; } = true;           // `new WeakSet(...)` — bare or `new`
+    public bool UsesMap { get; set; } = true;               // `new Map(...)` / `Map.groupBy` — bare or `new`
+    public bool UsesSet { get; set; } = true;               // `new Set(...)` — bare or `new`
 
     // ── Typed arrays ──────────────────────────────────────────────────────
     /// <summary>

@@ -384,33 +384,40 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notBAMLabel);
 
-        // $BoundMapMethod → target.Invoke(args)
+        // $BoundMapMethod → target.Invoke(args). Gated on UsesMap (the wrapper
+        // type only exists when EmitBoundMapMethod{TypeDefinition,Finalize} run).
         var notBMMLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, targetField);
-        il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
-        il.Emit(OpCodes.Brfalse, notBMMLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, targetField);
-        il.Emit(OpCodes.Castclass, runtime.BoundMapMethodType);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, runtime.BoundMapMethodInvoke);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notBMMLabel);
+        if (_features.UsesMap)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, targetField);
+            il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
+            il.Emit(OpCodes.Brfalse, notBMMLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, targetField);
+            il.Emit(OpCodes.Castclass, runtime.BoundMapMethodType);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, runtime.BoundMapMethodInvoke);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notBMMLabel);
+        }
 
-        // $BoundSetMethod → target.Invoke(args)
+        // $BoundSetMethod → target.Invoke(args). Gated on UsesSet.
         var notBSMLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, targetField);
-        il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
-        il.Emit(OpCodes.Brfalse, notBSMLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, targetField);
-        il.Emit(OpCodes.Castclass, runtime.BoundSetMethodType);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Callvirt, runtime.BoundSetMethodInvoke);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notBSMLabel);
+        if (_features.UsesSet)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, targetField);
+            il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
+            il.Emit(OpCodes.Brfalse, notBSMLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, targetField);
+            il.Emit(OpCodes.Castclass, runtime.BoundSetMethodType);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, runtime.BoundSetMethodInvoke);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notBSMLabel);
+        }
 
         // $BoundAnyFunction → target.Invoke(args) (recursive chained .bind)
         var notBAFLabel = il.DefineLabel();

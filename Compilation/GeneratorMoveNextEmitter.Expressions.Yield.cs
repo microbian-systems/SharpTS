@@ -123,34 +123,51 @@ public partial class GeneratorMoveNextEmitter
         EnsureBoxed();
         _il.Emit(OpCodes.Stloc, iterableLocal);
 
-        // Handle Map/Set specially - convert to List before iteration
+        // Handle Map/Set specially - convert to List before iteration. Each
+        // arm checks the corresponding $Runtime method MethodBuilder for null;
+        // when Map/Set emission is gated off, the dispatch arm is skipped.
+        var hasMapEntries = _ctx?.Runtime?.MapEntries != null;
+        var hasSetValues = _ctx?.Runtime?.SetValues != null;
+        if (hasMapEntries || hasSetValues)
         {
             var afterMapSetLabel = _il.DefineLabel();
             var checkSetLabel = _il.DefineLabel();
             var dictionaryType = typeof(Dictionary<object, object?>);
             var hashSetType = typeof(HashSet<object>);
 
-            // Check if iterable is Dictionary<object, object?> (Map)
-            _il.Emit(OpCodes.Ldloc, iterableLocal);
-            _il.Emit(OpCodes.Isinst, dictionaryType);
-            _il.Emit(OpCodes.Brfalse, checkSetLabel);
+            if (hasMapEntries)
+            {
+                // Check if iterable is Dictionary<object, object?> (Map)
+                _il.Emit(OpCodes.Ldloc, iterableLocal);
+                _il.Emit(OpCodes.Isinst, dictionaryType);
+                _il.Emit(OpCodes.Brfalse, checkSetLabel);
 
-            // It's a Map - call MapEntries
-            _il.Emit(OpCodes.Ldloc, iterableLocal);
-            _il.Emit(OpCodes.Call, _ctx!.Runtime!.MapEntries);
-            _il.Emit(OpCodes.Stloc, iterableLocal);
-            _il.Emit(OpCodes.Br, afterMapSetLabel);
+                // It's a Map - call MapEntries
+                _il.Emit(OpCodes.Ldloc, iterableLocal);
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.MapEntries);
+                _il.Emit(OpCodes.Stloc, iterableLocal);
+                _il.Emit(OpCodes.Br, afterMapSetLabel);
+            }
 
-            // Check if iterable is HashSet<object> (Set)
-            _il.MarkLabel(checkSetLabel);
-            _il.Emit(OpCodes.Ldloc, iterableLocal);
-            _il.Emit(OpCodes.Isinst, hashSetType);
-            _il.Emit(OpCodes.Brfalse, afterMapSetLabel);
+            if (hasSetValues)
+            {
+                // Check if iterable is HashSet<object> (Set)
+                _il.MarkLabel(checkSetLabel);
+                _il.Emit(OpCodes.Ldloc, iterableLocal);
+                _il.Emit(OpCodes.Isinst, hashSetType);
+                _il.Emit(OpCodes.Brfalse, afterMapSetLabel);
 
-            // It's a Set - call SetValues
-            _il.Emit(OpCodes.Ldloc, iterableLocal);
-            _il.Emit(OpCodes.Call, _ctx!.Runtime!.SetValues);
-            _il.Emit(OpCodes.Stloc, iterableLocal);
+                // It's a Set - call SetValues
+                _il.Emit(OpCodes.Ldloc, iterableLocal);
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.SetValues);
+                _il.Emit(OpCodes.Stloc, iterableLocal);
+            }
+            else
+            {
+                // Map-only: still need to mark checkSetLabel so the Map arm's
+                // Brfalse has a target.
+                _il.MarkLabel(checkSetLabel);
+            }
 
             _il.MarkLabel(afterMapSetLabel);
         }

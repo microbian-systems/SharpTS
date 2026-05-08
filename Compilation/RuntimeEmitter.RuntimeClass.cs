@@ -484,8 +484,14 @@ public partial class RuntimeEmitter
         EmitInvokeMethodValue(typeBuilder, runtime);
         EmitGetFieldsProperty(typeBuilder, runtime);
         EmitGetListProperty(typeBuilder, runtime);
-        EmitGetMapProperty(typeBuilder, runtime);
-        EmitGetSetProperty(typeBuilder, runtime);
+        // GetMapProperty / GetSetProperty are the duck-typed property dispatchers
+        // for Dictionary<object,object> / HashSet<object> receivers. Each calls
+        // its respective Map/Set method MethodBuilders (and BoundMapMethodCtor
+        // / BoundSetMethodCtor wrappers), so they fold up under UsesMap / UsesSet.
+        if (_features.UsesMap)
+            EmitGetMapProperty(typeBuilder, runtime);
+        if (_features.UsesSet)
+            EmitGetSetProperty(typeBuilder, runtime);
         // Exception helpers were moved earlier (above EmitToNumber) since
         // ToNumber's Symbol-throw branch emits a CreateException call that
         // must resolve to a non-null MethodBuilder.
@@ -790,11 +796,18 @@ public partial class RuntimeEmitter
         // the spec-compliant ErrorToStringSpec helper can reference $Error
         // metadata (TSErrorType, ErrorGetName/ErrorGetMessage already populated).
         EmitErrorPrototypePopulate(typeBuilder, runtime);
-        // Map methods
-        EmitMapMethods(typeBuilder, runtime);
-        EmitMapGroupBy(typeBuilder, runtime);
-        // Set methods
-        EmitSetMethods(typeBuilder, runtime);
+        // Map methods — gated on UsesMap. EmitMapGroupBy (`Map.groupBy(...)`)
+        // depends on Map's own MapHas/Set/Get methods so it folds up under
+        // the same gate. ObjectGroupBy stays unconditional (it builds a plain
+        // Dictionary<string,object>, not a Map).
+        if (_features.UsesMap)
+        {
+            EmitMapMethods(typeBuilder, runtime);
+            EmitMapGroupBy(typeBuilder, runtime);
+        }
+        // Set methods — gated on UsesSet.
+        if (_features.UsesSet)
+            EmitSetMethods(typeBuilder, runtime);
         // WeakMap methods — gated on UsesWeakMap (`new WeakMap()` / bare `WeakMap`).
         if (_features.UsesWeakMap)
             EmitWeakMapMethods(typeBuilder, runtime);

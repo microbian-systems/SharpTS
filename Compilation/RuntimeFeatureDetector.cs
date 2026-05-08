@@ -75,6 +75,8 @@ public sealed class RuntimeFeatureDetector
             UsesWeakRef = false,
             UsesWeakMap = false,
             UsesWeakSet = false,
+            UsesMap = false,
+            UsesSet = false,
             TypedArrays = RuntimeFeatureSet.TypedArrayKinds.None,
         };
     }
@@ -138,9 +140,10 @@ public sealed class RuntimeFeatureDetector
         {
             _set.UsesBigInt = true;
         }
-        // ReadableStream's pipeTo / pipeThrough check signal abort state —
-        // imply UsesAbortController so AbortSignalGetAborted/GetReason exist.
-        if (_set.UsesWebStreams)
+        // ReadableStream's pipeTo / pipeThrough check signal abort state, and
+        // fetch's request handler honours AbortSignal cancellation. Imply
+        // UsesAbortController so AbortSignalGetAborted/GetReason exist.
+        if (_set.UsesWebStreams || _set.UsesFetch || _set.UsesHttp)
         {
             _set.UsesAbortController = true;
         }
@@ -403,6 +406,16 @@ public sealed class RuntimeFeatureDetector
                 _set.UsesWeakMap = true; break;
             case "WeakSet":
                 _set.UsesWeakSet = true; break;
+
+            // Map / Set collections — bare or `new`. Their dispatch is
+            // cross-cutting: GetFieldsProperty and InvokeMethodValue route
+            // Dictionary<object,object> / HashSet<object> receivers through
+            // GetMapProperty/GetSetProperty. The dispatch arms fold up under
+            // the same flag (see RuntimeEmitter.Objects.Properties).
+            case "Map":
+                _set.UsesMap = true; break;
+            case "Set":
+                _set.UsesSet = true; break;
 
             // util module identifiers — `util` (CommonJS bare reference),
             // `format`, `inspect`, `parseArgs`, `promisify`/etc. would land
@@ -685,6 +698,26 @@ public sealed class RuntimeFeatureDetector
                     case "matchAll":
                     case "search":
                         _set.UsesRegExp = true;
+                        break;
+
+                    // Duck-typed Map/Set method access on `any` receivers
+                    // (cross-module patterns: `import { makeSet } from './lib';
+                    // s.has(x)`) routes through ILEmitter.Calls.MapMethods which
+                    // unconditionally emits runtime.MapHas/Get/Set/etc. Flag
+                    // both Map and Set conservatively — false positives just
+                    // over-emit the small dispatch wrappers.
+                    case "has":
+                    case "get":
+                    case "set":
+                    case "delete":
+                    case "entries":
+                    case "keys":
+                    case "values":
+                    case "forEach":
+                    case "size":
+                    case "clear":
+                        _set.UsesMap = true;
+                        _set.UsesSet = true;
                         break;
                 }
                 VisitExpr(g.Object);

@@ -3315,13 +3315,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
         il.Emit(OpCodes.Brtrue, functionLabel);
 
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
-        il.Emit(OpCodes.Brtrue, functionLabel);
+        if (_features.UsesMap)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.BoundMapMethodType);
+            il.Emit(OpCodes.Brtrue, functionLabel);
+        }
 
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
-        il.Emit(OpCodes.Brtrue, functionLabel);
+        if (_features.UsesSet)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.BoundSetMethodType);
+            il.Emit(OpCodes.Brtrue, functionLabel);
+        }
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.BoundAnyFunctionType);
