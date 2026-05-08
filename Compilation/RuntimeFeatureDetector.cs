@@ -61,6 +61,7 @@ public sealed class RuntimeFeatureDetector
             UsesIteratorHelpers = false,
             UsesDate = false,
             UsesRegExp = false,
+            UsesBuffer = false,
             TypedArrays = RuntimeFeatureSet.TypedArrayKinds.None,
         };
     }
@@ -92,11 +93,22 @@ public sealed class RuntimeFeatureDetector
             // $TlsSocket etc. extend $NetSocket-ish plumbing.
             _set.UsesNet = true;
         }
-        if (_set.UsesFs || _set.UsesHttp)
+        if (_set.UsesFs || _set.UsesHttp || _set.UsesZlib)
         {
             // $FsReadStream / $FsWriteStream extend $Readable / $Writable.
             // $HttpServer's responder writes to a $Writable (chunked encoding).
+            // $TSZlibTransform extends $Transform.
             _set.UsesNodeStreams = true;
+        }
+        // $Buffer is the return type of crypto's hash.digest, fs.readFileSync,
+        // zlib.gzipSync, fetch's response.arrayBuffer, dgram messages, etc.
+        // TextEncoder.encode also returns a $Buffer.
+        // Imply UsesBuffer from any feature that produces or consumes Buffer.
+        if (_set.UsesCrypto || _set.UsesFs || _set.UsesZlib || _set.UsesHttp
+            || _set.UsesFetch || _set.UsesDgram || _set.UsesNet
+            || _set.UsesTextEncoding)
+        {
+            _set.UsesBuffer = true;
         }
         // Anything that needs a typed-array kind also needs $TypedArray + $ArrayBuffer.
         if (_set.TypedArrays != RuntimeFeatureSet.TypedArrayKinds.None)
@@ -197,6 +209,15 @@ public sealed class RuntimeFeatureDetector
             case "WritableStream":
             case "TransformStream":
                 _set.UsesWebStreams = true; break;
+
+            // Atomics — operates on typed arrays. Pull in $TypedArray + $ArrayBuffer +
+            // $SharedArrayBuffer so the Atomics helpers (gated on HasAnyTypedArray) get
+            // emitted along with their dependencies.
+            case "Atomics":
+                _set.TypedArrays |= RuntimeFeatureSet.TypedArrayKinds.ArrayBuffer
+                                  | RuntimeFeatureSet.TypedArrayKinds.SharedArrayBuffer
+                                  | RuntimeFeatureSet.TypedArrayKinds.TypedArrayBase;
+                break;
 
             // Typed arrays — bare identifier and `new X(...)` paths land here.
             case "ArrayBuffer":
@@ -307,6 +328,12 @@ public sealed class RuntimeFeatureDetector
             case "Transform":
             case "PassThrough":
                 _set.UsesNodeStreams = true; break;
+
+            // Node Buffer — covers `Buffer.from(...)`, `Buffer.alloc(...)`,
+            // `new Buffer(...)` (deprecated but still supported), and bare
+            // value-form access.
+            case "Buffer":
+                _set.UsesBuffer = true; break;
 
             // util module identifiers — `util` (CommonJS bare reference),
             // `format`, `inspect`, `parseArgs`, `promisify`/etc. would land
@@ -548,6 +575,22 @@ public sealed class RuntimeFeatureDetector
             case Expr.Get g:
                 if (g.Object is Expr.Variable ov)
                     HandleMemberAccess(ov.Name.Lexeme, g.Name.Lexeme);
+                // String methods that StringEmitter routes through RegExp
+                // helpers (split/replace/replaceAll/match/matchAll/search) need
+                // $RegExp helpers emitted even when no /literal/ or `new RegExp`
+                // appears. Conservative — flag UsesRegExp on any access of these
+                // names regardless of receiver type. False positives just over-emit.
+                switch (g.Name.Lexeme)
+                {
+                    case "split":
+                    case "replace":
+                    case "replaceAll":
+                    case "match":
+                    case "matchAll":
+                    case "search":
+                        _set.UsesRegExp = true;
+                        break;
+                }
                 VisitExpr(g.Object);
                 break;
 

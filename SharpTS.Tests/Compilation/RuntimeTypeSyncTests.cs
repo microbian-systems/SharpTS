@@ -60,6 +60,11 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
                 var deadCodeInfo = deadCodeAnalyzer.Analyze(statements);
 
                 var compiler = new ILCompiler("sync_test");
+                // Sync test compiles a trivial program (`const x = 1;`) but asserts that
+                // every $Date/$RegExp/$Buffer/etc. emitted type exists in the output. With
+                // tree-shaking enabled, those types are skipped when the source doesn't use
+                // them. Force-emit everything so the sync invariants still hold.
+                compiler.SetRuntimeFeatures(RuntimeFeatureSet.EmitEverything());
                 compiler.Compile(statements, typeMap, deadCodeInfo);
                 compiler.Save(dllPath);
 

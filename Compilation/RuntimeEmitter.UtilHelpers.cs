@@ -486,10 +486,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, falseLabel);
 
-        // Check for $Buffer
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSBufferType);
-        il.Emit(OpCodes.Brtrue, trueLabel);
+        // Check for $Buffer (only when emitted; without UsesBuffer the type
+        // can't appear and Isinst on a null token would NRE).
+        if (_features.UsesBuffer)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSBufferType);
+            il.Emit(OpCodes.Brtrue, trueLabel);
+        }
 
         il.MarkLabel(falseLabel);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -687,10 +691,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, falseLabel);
 
-        // Check for $Buffer (which backs ArrayBuffer in SharpTS)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSBufferType);
-        il.Emit(OpCodes.Brtrue, trueLabel);
+        // Check for $Buffer (which backs ArrayBuffer in SharpTS) — gated.
+        if (_features.UsesBuffer)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSBufferType);
+            il.Emit(OpCodes.Brtrue, trueLabel);
+        }
 
         // Check for byte[]
         il.Emit(OpCodes.Ldarg_0);

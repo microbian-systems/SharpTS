@@ -542,8 +542,11 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
-        // 6. Check for $Buffer — iterate bytes as doubles (matches interpreter's SharpTSBuffer handling)
+        // 6. Check for $Buffer — iterate bytes as doubles (matches interpreter's SharpTSBuffer handling).
+        // Gated together with the dispatch branch above; when not gated, the IEnumerable
+        // arm's Brfalse-to-tryBufferLabel falls through directly to the throwLabel below.
         il.MarkLabel(tryBufferLabel);
+        if (_features.UsesBuffer)
         {
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Isinst, runtime.TSBufferType);

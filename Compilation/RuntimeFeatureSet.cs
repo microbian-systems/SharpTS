@@ -52,6 +52,7 @@ public sealed class RuntimeFeatureSet
     public bool UsesIteratorHelpers { get; set; } = true;   // Iterator.prototype.map/filter/flatMap/take/drop
     public bool UsesDate { get; set; } = true;              // new Date(), Date.now(), Date.X
     public bool UsesRegExp { get; set; } = true;            // /pattern/ or new RegExp()
+    public bool UsesBuffer { get; set; } = true;            // Buffer.from(), new Buffer() — also implied by crypto/fs/zlib/http/fetch/dgram
 
     // ── Typed arrays ──────────────────────────────────────────────────────
     /// <summary>

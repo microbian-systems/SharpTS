@@ -181,7 +181,8 @@ public partial class RuntimeEmitter
         EmitTypeBranch("WeakMap", _types.ConditionalWeakTableObjectObject);
         EmitTypeBranch("WeakSet", _types.ConditionalWeakTableObjectObject);
         EmitTypeBranch("Promise", _types.TaskOfObject);
-        EmitTypeBranch("Buffer", runtime.TSBufferType);
+        if (_features.UsesBuffer)
+            EmitTypeBranch("Buffer", runtime.TSBufferType);
         EmitTypeBranch("Function", runtime.TSFunctionType);
         if (_features.UsesTextEncoding)
         {

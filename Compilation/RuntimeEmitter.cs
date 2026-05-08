@@ -124,10 +124,14 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with NodeError in Runtime/BuiltIns/Modules/NodeError.cs
         EmitNodeErrorClass(moduleBuilder, runtime);
 
-        // Emit $Buffer class for standalone buffer support
+        // Emit $Buffer class for standalone buffer support — gated on UsesBuffer.
+        // Implied by crypto/fs/zlib/http/fetch/dgram/net (their methods return
+        // or consume Buffer values), so the gate only fires when ALL of those
+        // are off too.
         // NOTE: Must come before $Hash and $Hmac since they return Buffer
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSBuffer
-        EmitTSBufferClass(moduleBuilder, runtime);
+        if (features.UsesBuffer)
+            EmitTSBufferClass(moduleBuilder, runtime);
 
         // Crypto helper types — gated on UsesCrypto. All references are confined
         // to crypto's own emit files; no central-dispatch fallout.

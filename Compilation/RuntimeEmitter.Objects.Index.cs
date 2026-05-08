@@ -45,9 +45,12 @@ public partial class RuntimeEmitter
 
         // $Buffer (check before TypedArray — the emitted IsTypedArray helper
         // excludes $Buffer, and GetTypedArrayElement would throw for it).
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSBufferType);
-        il.Emit(OpCodes.Brtrue, tsBufferLabel);
+        if (_features.UsesBuffer)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSBufferType);
+            il.Emit(OpCodes.Brtrue, tsBufferLabel);
+        }
 
         // TypedArray (check before List since TypedArray is more specific)
         // Skip when no typed-array kind was emitted — IsTypedArrayMethod always
@@ -176,45 +179,48 @@ public partial class RuntimeEmitter
 
         // $Buffer handler: load byte from the underlying byte[] and return as boxed double.
         // Matches SharpTSBuffer.this[int] semantics: out-of-range returns NaN (boxed double),
-        // in-range returns the byte as a double.
-        il.MarkLabel(tsBufferLabel);
-        var bufDataLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
-        var bufIndexLocal = il.DeclareLocal(_types.Int32);
-        var bufInRangeLabel = il.DefineLabel();
-        var bufOutOfRangeLabel = il.DefineLabel();
-        // data = ((TSBuffer)obj).Data;
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TSBufferType);
-        il.Emit(OpCodes.Call, runtime.TSBufferGetData);
-        il.Emit(OpCodes.Stloc, bufDataLocal);
-        // idx = Convert.ToInt32(index);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Stloc, bufIndexLocal);
-        // if (idx < 0) goto outOfRange;
-        il.Emit(OpCodes.Ldloc, bufIndexLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Blt, bufOutOfRangeLabel);
-        // if (idx >= data.Length) goto outOfRange;
-        il.Emit(OpCodes.Ldloc, bufIndexLocal);
-        il.Emit(OpCodes.Ldloc, bufDataLocal);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Bge, bufOutOfRangeLabel);
-        il.Emit(OpCodes.Br, bufInRangeLabel);
-        // out-of-range: return NaN (boxed) — matches SharpTSBuffer.this[int] return.
-        il.MarkLabel(bufOutOfRangeLabel);
-        il.Emit(OpCodes.Ldc_R8, double.NaN);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Ret);
-        // in-range: return (double)data[idx] boxed
-        il.MarkLabel(bufInRangeLabel);
-        il.Emit(OpCodes.Ldloc, bufDataLocal);
-        il.Emit(OpCodes.Ldloc, bufIndexLocal);
-        il.Emit(OpCodes.Ldelem_U1);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Ret);
+        // in-range returns the byte as a double. Gated together with the dispatch arm.
+        if (_features.UsesBuffer)
+        {
+            il.MarkLabel(tsBufferLabel);
+            var bufDataLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+            var bufIndexLocal = il.DeclareLocal(_types.Int32);
+            var bufInRangeLabel = il.DefineLabel();
+            var bufOutOfRangeLabel = il.DefineLabel();
+            // data = ((TSBuffer)obj).Data;
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TSBufferType);
+            il.Emit(OpCodes.Call, runtime.TSBufferGetData);
+            il.Emit(OpCodes.Stloc, bufDataLocal);
+            // idx = Convert.ToInt32(index);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+            il.Emit(OpCodes.Stloc, bufIndexLocal);
+            // if (idx < 0) goto outOfRange;
+            il.Emit(OpCodes.Ldloc, bufIndexLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Blt, bufOutOfRangeLabel);
+            // if (idx >= data.Length) goto outOfRange;
+            il.Emit(OpCodes.Ldloc, bufIndexLocal);
+            il.Emit(OpCodes.Ldloc, bufDataLocal);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Bge, bufOutOfRangeLabel);
+            il.Emit(OpCodes.Br, bufInRangeLabel);
+            // out-of-range: return NaN (boxed) — matches SharpTSBuffer.this[int] return.
+            il.MarkLabel(bufOutOfRangeLabel);
+            il.Emit(OpCodes.Ldc_R8, double.NaN);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Ret);
+            // in-range: return (double)data[idx] boxed
+            il.MarkLabel(bufInRangeLabel);
+            il.Emit(OpCodes.Ldloc, bufDataLocal);
+            il.Emit(OpCodes.Ldloc, bufIndexLocal);
+            il.Emit(OpCodes.Ldelem_U1);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Ret);
+        }
 
         // Class instance handler: stringify the key (ECMA ToPropertyKey) and
         // route through GetFieldsProperty(obj, key). Single path handles
@@ -550,9 +556,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, symbolKeyLabel);
 
         // $Buffer (check before TypedArray — IsTypedArray excludes $Buffer).
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSBufferType);
-        il.Emit(OpCodes.Brtrue, tsBufferSetLabel);
+        if (_features.UsesBuffer)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSBufferType);
+            il.Emit(OpCodes.Brtrue, tsBufferSetLabel);
+        }
 
         // TypedArray (check before List since TypedArray is more specific) —
         // gated alongside the handler body below.
@@ -662,38 +671,42 @@ public partial class RuntimeEmitter
 
         // $Buffer handler: data[idx] = (byte)(Convert.ToInt32(value) & 0xFF).
         // Matches SharpTSBuffer.this[int]= semantics: out-of-range is a no-op.
-        il.MarkLabel(tsBufferSetLabel);
-        var bufSetDataLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
-        var bufSetIndexLocal = il.DeclareLocal(_types.Int32);
-        var bufSetDoneLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TSBufferType);
-        il.Emit(OpCodes.Call, runtime.TSBufferGetData);
-        il.Emit(OpCodes.Stloc, bufSetDataLocal);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Stloc, bufSetIndexLocal);
-        // if (idx < 0) goto done;
-        il.Emit(OpCodes.Ldloc, bufSetIndexLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Blt, bufSetDoneLabel);
-        // if (idx >= data.Length) goto done;
-        il.Emit(OpCodes.Ldloc, bufSetIndexLocal);
-        il.Emit(OpCodes.Ldloc, bufSetDataLocal);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Bge, bufSetDoneLabel);
-        // data[idx] = (byte)(Convert.ToInt32(value) & 0xFF);
-        il.Emit(OpCodes.Ldloc, bufSetDataLocal);
-        il.Emit(OpCodes.Ldloc, bufSetIndexLocal);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Ldc_I4, 0xFF);
-        il.Emit(OpCodes.And);
-        il.Emit(OpCodes.Conv_U1);
-        il.Emit(OpCodes.Stelem_I1);
-        il.MarkLabel(bufSetDoneLabel);
-        il.Emit(OpCodes.Ret);
+        // Gated together with the dispatch arm above.
+        if (_features.UsesBuffer)
+        {
+            il.MarkLabel(tsBufferSetLabel);
+            var bufSetDataLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+            var bufSetIndexLocal = il.DeclareLocal(_types.Int32);
+            var bufSetDoneLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TSBufferType);
+            il.Emit(OpCodes.Call, runtime.TSBufferGetData);
+            il.Emit(OpCodes.Stloc, bufSetDataLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+            il.Emit(OpCodes.Stloc, bufSetIndexLocal);
+            // if (idx < 0) goto done;
+            il.Emit(OpCodes.Ldloc, bufSetIndexLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Blt, bufSetDoneLabel);
+            // if (idx >= data.Length) goto done;
+            il.Emit(OpCodes.Ldloc, bufSetIndexLocal);
+            il.Emit(OpCodes.Ldloc, bufSetDataLocal);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Bge, bufSetDoneLabel);
+            // data[idx] = (byte)(Convert.ToInt32(value) & 0xFF);
+            il.Emit(OpCodes.Ldloc, bufSetDataLocal);
+            il.Emit(OpCodes.Ldloc, bufSetIndexLocal);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+            il.Emit(OpCodes.Ldc_I4, 0xFF);
+            il.Emit(OpCodes.And);
+            il.Emit(OpCodes.Conv_U1);
+            il.Emit(OpCodes.Stelem_I1);
+            il.MarkLabel(bufSetDoneLabel);
+            il.Emit(OpCodes.Ret);
+        }
 
         // Class instance / unknown handler: SetFieldsProperty(obj, Stringify(index), value).
         // Stringify covers ECMA ToPropertyKey for primitives so numeric / undefined /

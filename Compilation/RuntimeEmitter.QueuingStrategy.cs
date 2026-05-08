@@ -119,16 +119,21 @@ public partial class RuntimeEmitter
         sizeIL.Emit(OpCodes.Ret);
 
         // if (chunk is $Buffer buf) return (double)buf.Length;
+        // Skipped when $Buffer wasn't emitted — without UsesBuffer the type
+        // can't appear, and the Isinst would NRE on a null type token.
         sizeIL.MarkLabel(notByteArrayLabel);
-        sizeIL.Emit(OpCodes.Ldarg_1);
-        sizeIL.Emit(OpCodes.Isinst, runtime.TSBufferType);
-        sizeIL.Emit(OpCodes.Brfalse, notBufferLabel);
-        sizeIL.Emit(OpCodes.Ldarg_1);
-        sizeIL.Emit(OpCodes.Castclass, runtime.TSBufferType);
-        sizeIL.Emit(OpCodes.Callvirt, runtime.TSBufferGetData);
-        sizeIL.Emit(OpCodes.Ldlen);
-        sizeIL.Emit(OpCodes.Conv_R8);
-        sizeIL.Emit(OpCodes.Ret);
+        if (_features.UsesBuffer)
+        {
+            sizeIL.Emit(OpCodes.Ldarg_1);
+            sizeIL.Emit(OpCodes.Isinst, runtime.TSBufferType);
+            sizeIL.Emit(OpCodes.Brfalse, notBufferLabel);
+            sizeIL.Emit(OpCodes.Ldarg_1);
+            sizeIL.Emit(OpCodes.Castclass, runtime.TSBufferType);
+            sizeIL.Emit(OpCodes.Callvirt, runtime.TSBufferGetData);
+            sizeIL.Emit(OpCodes.Ldlen);
+            sizeIL.Emit(OpCodes.Conv_R8);
+            sizeIL.Emit(OpCodes.Ret);
+        }
 
         sizeIL.MarkLabel(notBufferLabel);
         sizeIL.MarkLabel(returnZeroLabel);
