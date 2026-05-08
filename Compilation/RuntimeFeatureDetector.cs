@@ -64,6 +64,7 @@ public sealed class RuntimeFeatureDetector
             UsesBuffer = false,
             UsesBigInt = false,
             UsesOs = false,
+            UsesChildProcess = false,
             TypedArrays = RuntimeFeatureSet.TypedArrayKinds.None,
         };
     }
@@ -161,6 +162,8 @@ public sealed class RuntimeFeatureDetector
                 _set.UsesZlib = true; break;
             case "os":
                 _set.UsesOs = true; break;
+            case "child_process":
+                _set.UsesChildProcess = true; break;
             case "stream":
             case "stream/promises":
             case "stream/web":

@@ -863,8 +863,9 @@ public partial class RuntimeEmitter
         // detected via `import 'readline'` but the call site used to ignore it).
         if (_features.UsesReadline)
             EmitReadlineMethods(typeBuilder, runtime);
-        // Child process module methods
-        EmitChildProcessMethods(typeBuilder, runtime);
+        // Child process module methods — gated on UsesChildProcess.
+        if (_features.UsesChildProcess)
+            EmitChildProcessMethods(typeBuilder, runtime);
         // Reflect metadata API — gated on UsesReflectMetadata (orphan-flag fix).
         if (_features.UsesReflectMetadata)
             EmitReflectMetadataMethods(typeBuilder, runtime);

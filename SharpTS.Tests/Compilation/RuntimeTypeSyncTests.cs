@@ -326,6 +326,10 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
             "BigIntBitwiseNot", "BigIntLeftShift", "BigIntRightShift",
             // Phase 5e: Os family
             "OsFreemem", "OsLoadavg", "OsNetworkInterfaces",
+            // Phase 5f: ChildProcess family
+            "ChildProcessExec", "ChildProcessExecFile", "ChildProcessExecFileSync",
+            "ChildProcessExecSync", "ChildProcessFork", "ChildProcessSpawn",
+            "ChildProcessSpawnSync",
         };
 
         var missing = gatedMethods.Where(m => !actualMethods.Contains(m)).ToList();
