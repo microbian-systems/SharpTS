@@ -193,14 +193,18 @@ public partial class RuntimeEmitter
         if (features.UsesCluster)
             EmitClusterTypes(moduleBuilder, runtime);
 
-        // Emit $FileDescriptorTable for standalone fs fd-based operations (Phase 21)
-        // NOTE: Must come after $NodeError (uses NodeErrorCtor for EBADF errors)
-        EmitFileDescriptorTableType(moduleBuilder, runtime);
+        // FS-only types — gated on UsesFs together with the FS module methods.
+        if (features.UsesFs)
+        {
+            // Emit $FileDescriptorTable for standalone fs fd-based operations (Phase 21)
+            // NOTE: Must come after $NodeError (uses NodeErrorCtor for EBADF errors)
+            EmitFileDescriptorTableType(moduleBuilder, runtime);
 
-        // Emit $Dirent and $Dir for standalone fs.opendirSync support (Phase 21)
-        // NOTE: Must emit Dirent first since Dir's ReadSync creates Dirent instances
-        EmitDirentType(moduleBuilder, runtime);
-        EmitDirType(moduleBuilder, runtime);
+            // Emit $Dirent and $Dir for standalone fs.opendirSync support (Phase 21)
+            // NOTE: Must emit Dirent first since Dir's ReadSync creates Dirent instances
+            EmitDirentType(moduleBuilder, runtime);
+            EmitDirType(moduleBuilder, runtime);
+        }
 
         // Emit $ArrayBuffer, $SharedArrayBuffer, $DataView, and the 11 typed-array
         // variants. Gated on TypedArrays != None — granular per-kind selection
@@ -223,22 +227,22 @@ public partial class RuntimeEmitter
         // - Transform extends Duplex
         // - PassThrough extends Transform
         //
-        // Two-phase approach to resolve circular reference:
-        // Phase 1: Define types, fields, and most methods (no CreateType)
-        // Phase 2: Add methods that need cross-references, then CreateType
         // Node-stream types ($Readable / $Writable / $Duplex / $Transform / etc.)
-        // are referenced from EmitInvokeValue's central dispatch in $Runtime, so
-        // we always emit them in Phase 1. Defer node-stream gating to Phase 2.
-        EmitTSWritableClass(moduleBuilder, runtime);
-        EmitTSReadableTypeDefinition(moduleBuilder, runtime);  // Phase 1: type, fields, most methods
-        EmitTSDuplexTypeDefinition(moduleBuilder, runtime);    // Phase 1: type, fields, all methods
-        EmitTSReadablePhaseTwoMethods(runtime);                  // Phase 2a: Push, Pipe (need Duplex)
-        EmitTSDuplexFinalize(runtime);                         // Phase 2: CreateType
-        EmitTSTransformClass(moduleBuilder, runtime);
-        EmitMapFilterTransformCallbackClasses(moduleBuilder, runtime); // Helper classes for map/filter
-        EmitTSReadableMapFilterMethods(runtime);               // Phase 2b: Map, Filter (need Transform) + CreateType
-        EmitTSPassThroughClass(moduleBuilder, runtime);
-        EmitTSStreamUtilsClass(moduleBuilder, runtime);
+        // — gated on UsesNodeStreams. The detector implies UsesFs ⇒ UsesNodeStreams
+        // (FsReadStream extends Readable) and UsesHttp ⇒ UsesNodeStreams.
+        if (features.UsesNodeStreams)
+        {
+            EmitTSWritableClass(moduleBuilder, runtime);
+            EmitTSReadableTypeDefinition(moduleBuilder, runtime);  // Phase 1: type, fields, most methods
+            EmitTSDuplexTypeDefinition(moduleBuilder, runtime);    // Phase 1: type, fields, all methods
+            EmitTSReadablePhaseTwoMethods(runtime);                  // Phase 2a: Push, Pipe (need Duplex)
+            EmitTSDuplexFinalize(runtime);                         // Phase 2: CreateType
+            EmitTSTransformClass(moduleBuilder, runtime);
+            EmitMapFilterTransformCallbackClasses(moduleBuilder, runtime); // Helper classes for map/filter
+            EmitTSReadableMapFilterMethods(runtime);               // Phase 2b: Map, Filter (need Transform) + CreateType
+            EmitTSPassThroughClass(moduleBuilder, runtime);
+            EmitTSStreamUtilsClass(moduleBuilder, runtime);
+        }
         if (features.UsesZlib)
             EmitTSZlibTransformClass(moduleBuilder, runtime);
 
@@ -269,9 +273,12 @@ public partial class RuntimeEmitter
         // $StringDecoder class removed — StringDecoder migrated to
         // stdlib/node/string_decoder.ts (pure-TS over the Buffer JS API).
 
-        // Emit $Stats class for fs.stat() and related methods
-        // Must come before fs module methods which use it
-        EmitStatsClass(moduleBuilder, runtime);
+        // Emit $Stats class for fs.stat() and related methods — gated on UsesFs.
+        // Must come before fs module methods which use it. Conditional Isinst
+        // in GetFieldsProperty's central dispatch (Properties.cs) is gated on
+        // the same flag.
+        if (features.UsesFs)
+            EmitStatsClass(moduleBuilder, runtime);
 
         // Emit $CJSModule — backs the `module` local bound in every CJS module init.
         // Gated on UsesCjsRequire (the detector flips this whenever the program
@@ -335,11 +342,15 @@ public partial class RuntimeEmitter
         if (features.UsesFinalizationRegistry)
             EmitFinRegEntryTypeDefinition(moduleBuilder, runtime);
 
-        // FS stream/watcher types — always emit (FS module methods reference them
-        // unconditionally inside $Runtime). Phase 2.
-        EmitFsStreamTypeDefinitions(moduleBuilder, runtime);
-        EmitFsWatcherClass(moduleBuilder, runtime);
-        EmitStatWatcherClass(moduleBuilder, runtime);
+        // FS stream/watcher types — gated on UsesFs. EmitFsModuleMethods is
+        // also gated below in EmitRuntimeClass on the same flag, so dependent
+        // runtime methods skip in tandem.
+        if (features.UsesFs)
+        {
+            EmitFsStreamTypeDefinitions(moduleBuilder, runtime);
+            EmitFsWatcherClass(moduleBuilder, runtime);
+            EmitStatWatcherClass(moduleBuilder, runtime);
+        }
 
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime);

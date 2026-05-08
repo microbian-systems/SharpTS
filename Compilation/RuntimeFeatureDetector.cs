@@ -92,6 +92,12 @@ public sealed class RuntimeFeatureDetector
             // $TlsSocket etc. extend $NetSocket-ish plumbing.
             _set.UsesNet = true;
         }
+        if (_set.UsesFs || _set.UsesHttp)
+        {
+            // $FsReadStream / $FsWriteStream extend $Readable / $Writable.
+            // $HttpServer's responder writes to a $Writable (chunked encoding).
+            _set.UsesNodeStreams = true;
+        }
         // Anything that needs a typed-array kind also needs $TypedArray + $ArrayBuffer.
         if (_set.TypedArrays != RuntimeFeatureSet.TypedArrayKinds.None)
         {
@@ -293,6 +299,15 @@ public sealed class RuntimeFeatureDetector
             case "RegExp":
                 _set.UsesRegExp = true; break;
 
+            // Node stream class names — both bare references and `new X()` end
+            // up here. Conservative — flag if mentioned, even when shadowed.
+            case "Readable":
+            case "Writable":
+            case "Duplex":
+            case "Transform":
+            case "PassThrough":
+                _set.UsesNodeStreams = true; break;
+
             // util module identifiers — `util` (CommonJS bare reference),
             // `format`, `inspect`, `parseArgs`, `promisify`/etc. would land
             // here only if the user does `import { format, ... } from 'util'`
@@ -349,6 +364,12 @@ public sealed class RuntimeFeatureDetector
                 _set.UsesReflectMetadata = true;
             // Any other Reflect.X access flips the broader flag (Reflect.set/get/etc.)
             _set.UsesReflect = true;
+        }
+        // process.stdout / process.stderr / process.stdin are $Writable / $Readable
+        // singletons that only exist when Node streams are emitted.
+        if (objectName == "process" && (memberName == "stdout" || memberName == "stderr" || memberName == "stdin"))
+        {
+            _set.UsesNodeStreams = true;
         }
         // JSON.parse / JSON.stringify — accept both lowercase / capitalized forms
         // and uppercase identifier `JSON` (the standard one). Conservative: any

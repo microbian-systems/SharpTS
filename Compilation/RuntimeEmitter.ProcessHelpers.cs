@@ -22,7 +22,10 @@ public partial class RuntimeEmitter
         EmitStdinMethods(typeBuilder, runtime);
         EmitStdoutMethods(typeBuilder, runtime);
         EmitStderrMethods(typeBuilder, runtime);
-        EmitProcessStreamSingletons(typeBuilder, runtime);
+        // process.stdout / stderr / stdin singletons are $Writable / $Readable
+        // instances. Without UsesNodeStreams the stream types don't exist.
+        if (_features.UsesNodeStreams)
+            EmitProcessStreamSingletons(typeBuilder, runtime);
     }
 
     /// <summary>

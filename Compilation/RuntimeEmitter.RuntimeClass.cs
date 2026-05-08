@@ -807,9 +807,8 @@ public partial class RuntimeEmitter
         // NodeError conversion helpers (must be before fs methods which use them)
         EmitNodeErrorHelpers(typeBuilder, runtime);
         // Built-in module methods (fs, os, dns) — path migrated to stdlib/node/path.ts.
-        // Note: $Stats / $CJSModule / Buffer remain in the central GetFieldsProperty
-        // dispatch chain, so we keep $FsModuleMethods always-on for Phase 2.
-        EmitFsModuleMethods(typeBuilder, runtime);
+        if (_features.UsesFs)
+            EmitFsModuleMethods(typeBuilder, runtime);
         EmitOsModuleMethods(typeBuilder, runtime);
         if (_features.UsesDns)
         {
@@ -817,7 +816,8 @@ public partial class RuntimeEmitter
             EmitDnsPromisesMethods(typeBuilder, runtime);
         }
         // Emit wrapper methods for named imports
-        EmitFsModuleMethodWrappers(typeBuilder, runtime);
+        if (_features.UsesFs)
+            EmitFsModuleMethodWrappers(typeBuilder, runtime);
         // Querystring module methods migrated to stdlib/node/querystring.ts.
         // Path module methods migrated to stdlib/node/path.ts.
         // Assert module methods migrated to stdlib/node/assert.ts.
@@ -855,8 +855,9 @@ public partial class RuntimeEmitter
         EmitChildProcessMethods(typeBuilder, runtime);
         // Reflect metadata API
         EmitReflectMetadataMethods(typeBuilder, runtime);
-        // fs.watch / fs.watchFile / fs.unwatchFile
-        EmitFsWatchFactories(typeBuilder, runtime);
+        // fs.watch / fs.watchFile / fs.unwatchFile — gated on UsesFs.
+        if (_features.UsesFs)
+            EmitFsWatchFactories(typeBuilder, runtime);
         // Timer methods (setTimeout, clearTimeout, setInterval, clearInterval)
         EmitSetTimeoutMethod(typeBuilder, runtime);
         EmitClearTimeoutMethod(typeBuilder, runtime);

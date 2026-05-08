@@ -1443,11 +1443,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSBufferType);
         il.Emit(OpCodes.Brtrue, tsBufferLabel);
 
-        // $Stats - check for isFile, isDirectory, size, etc.
+        // $Stats - check for isFile, isDirectory, size, etc. Only when fs is on.
         var tsStatsLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.StatsType);
-        il.Emit(OpCodes.Brtrue, tsStatsLabel);
+        if (_features.UsesFs)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.StatsType);
+            il.Emit(OpCodes.Brtrue, tsStatsLabel);
+        }
 
         // $TSFunction - check for bind/call/apply
         var tsFunctionLabel = il.DefineLabel();
@@ -2535,7 +2538,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
-        // $Stats handler - return method wrappers or property values
+        // $Stats handler - return method wrappers or property values.
+        // Whole block is gated; without UsesFs there's no Stats type to dispatch on.
+        if (_features.UsesFs)
+        {
         il.MarkLabel(tsStatsLabel);
         // Check for "size" property
         il.Emit(OpCodes.Ldarg_1);
@@ -2666,6 +2672,7 @@ public partial class RuntimeEmitter
         // Unknown stats property - return null
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
+        }  // end if (_features.UsesFs) — $Stats handler block
 
         il.MarkLabel(stringLabel);
         // Check for "length"

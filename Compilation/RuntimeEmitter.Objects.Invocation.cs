@@ -141,15 +141,19 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brtrue, callbackifiedLabel);
         }
 
+        // Stream callback wrappers — only meaningful when Node streams emit.
         var transformCbLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TransformDoneCallbackType);
-        il.Emit(OpCodes.Brtrue, transformCbLabel);
-
         var writeCallbackWrapperLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.WriteCallbackWrapperType);
-        il.Emit(OpCodes.Brtrue, writeCallbackWrapperLabel);
+        if (_features.UsesNodeStreams)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TransformDoneCallbackType);
+            il.Emit(OpCodes.Brtrue, transformCbLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.WriteCallbackWrapperType);
+            il.Emit(OpCodes.Brtrue, writeCallbackWrapperLabel);
+        }
 
         var resolveCallbackLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -321,19 +325,22 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
-        il.MarkLabel(transformCbLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TransformDoneCallbackType);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, runtime.TransformDoneCallbackInvoke);
-        il.Emit(OpCodes.Ret);
+        if (_features.UsesNodeStreams)
+        {
+            il.MarkLabel(transformCbLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TransformDoneCallbackType);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, runtime.TransformDoneCallbackInvoke);
+            il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(writeCallbackWrapperLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.WriteCallbackWrapperType);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, runtime.WriteCallbackWrapperInvoke);
-        il.Emit(OpCodes.Ret);
+            il.MarkLabel(writeCallbackWrapperLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.WriteCallbackWrapperType);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, runtime.WriteCallbackWrapperInvoke);
+            il.Emit(OpCodes.Ret);
+        }
 
         il.MarkLabel(resolveCallbackLabel);
         il.Emit(OpCodes.Ldarg_0);
@@ -523,9 +530,12 @@ public partial class RuntimeEmitter
             EmitWrapperCheck(runtime.TSCallbackifiedFunctionType, runtime.TSCallbackifiedFunctionInvoke);
         if (_features.UsesTextEncoding)
             EmitWrapperCheck(runtime.TSTextDecoderDecodeMethodType, runtime.TSTextDecoderDecodeMethodInvoke);
-        // Stream callback wrappers — always emitted (Phase 1 doesn't gate node streams).
-        EmitWrapperCheck(runtime.TransformDoneCallbackType, runtime.TransformDoneCallbackInvoke);
-        EmitWrapperCheck(runtime.WriteCallbackWrapperType, runtime.WriteCallbackWrapperInvoke);
+        // Stream callback wrappers — gated on UsesNodeStreams.
+        if (_features.UsesNodeStreams)
+        {
+            EmitWrapperCheck(runtime.TransformDoneCallbackType, runtime.TransformDoneCallbackInvoke);
+            EmitWrapperCheck(runtime.WriteCallbackWrapperType, runtime.WriteCallbackWrapperInvoke);
+        }
         // Promise callbacks — always emitted (Promise infrastructure is core).
         EmitWrapperCheck(runtime.PromiseResolveCallbackType, runtime.PromiseResolveCallbackInvoke);
         EmitWrapperCheck(runtime.PromiseRejectCallbackType, runtime.PromiseRejectCallbackInvoke);
