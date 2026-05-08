@@ -148,18 +148,32 @@ public sealed class ProcessStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
 
-            // Stream objects - return cached $Writable/$Readable singleton instances
+            // Stream objects - return cached $Writable/$Readable singleton instances.
+            // Member access (`process.stdin`) flips UsesNodeStreams via the detector's
+            // HandleMemberAccess hook, so the helper is normally non-null when this
+            // path runs. Null-guard regardless for defense-in-depth, mirroring
+            // ProcessModuleEmitter's tolerant emission — emit Ldnull (-> JS undefined)
+            // if the helper somehow wasn't generated.
             case "stdin":
-                il.Emit(OpCodes.Call, ctx.Runtime!.GetStdin);
-                return true;
+                {
+                    var m = ctx.Runtime?.GetStdin;
+                    if (m is null) il.Emit(OpCodes.Ldnull); else il.Emit(OpCodes.Call, m);
+                    return true;
+                }
 
             case "stdout":
-                il.Emit(OpCodes.Call, ctx.Runtime!.GetStdout);
-                return true;
+                {
+                    var m = ctx.Runtime?.GetStdout;
+                    if (m is null) il.Emit(OpCodes.Ldnull); else il.Emit(OpCodes.Call, m);
+                    return true;
+                }
 
             case "stderr":
-                il.Emit(OpCodes.Call, ctx.Runtime!.GetStderr);
-                return true;
+                {
+                    var m = ctx.Runtime?.GetStderr;
+                    if (m is null) il.Emit(OpCodes.Ldnull); else il.Emit(OpCodes.Call, m);
+                    return true;
+                }
 
             // Methods accessible as properties (for typeof checks)
             case "nextTick":

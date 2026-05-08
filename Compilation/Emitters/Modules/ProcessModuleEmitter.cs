@@ -313,24 +313,40 @@ public sealed class ProcessModuleEmitter : IBuiltInModuleEmitter
         return true;
     }
 
+    // process.stdio singletons depend on $Readable/$Writable, gated on
+    // UsesNodeStreams. When the gate is off, runtime.GetStdin/Stdout/Stderr
+    // are null MethodBuilders. Emit `null` (-> JS `undefined` on read) instead
+    // of crashing at IL-emit time.
+    //
+    // The stdlib `process` shim re-exports stdin/stdout/stderr eagerly even
+    // when downstream user code only uses `nextTick`; without this null-emit
+    // path the shim wouldn't compile under conservative gating. Programs that
+    // actually USE process.stdout.write etc. flip UsesNodeStreams via the
+    // member-access trigger in HandleMemberAccess, keeping the helpers alive.
     private static bool EmitStdin(IEmitterContext emitter)
     {
         var il = emitter.Context.IL;
-        il.Emit(OpCodes.Call, emitter.Context.Runtime!.GetStdin);
+        var getStdin = emitter.Context.Runtime?.GetStdin;
+        if (getStdin is null) il.Emit(OpCodes.Ldnull);
+        else il.Emit(OpCodes.Call, getStdin);
         return true;
     }
 
     private static bool EmitStdout(IEmitterContext emitter)
     {
         var il = emitter.Context.IL;
-        il.Emit(OpCodes.Call, emitter.Context.Runtime!.GetStdout);
+        var getStdout = emitter.Context.Runtime?.GetStdout;
+        if (getStdout is null) il.Emit(OpCodes.Ldnull);
+        else il.Emit(OpCodes.Call, getStdout);
         return true;
     }
 
     private static bool EmitStderr(IEmitterContext emitter)
     {
         var il = emitter.Context.IL;
-        il.Emit(OpCodes.Call, emitter.Context.Runtime!.GetStderr);
+        var getStderr = emitter.Context.Runtime?.GetStderr;
+        if (getStderr is null) il.Emit(OpCodes.Ldnull);
+        else il.Emit(OpCodes.Call, getStderr);
         return true;
     }
 
