@@ -330,6 +330,11 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
             "ChildProcessExec", "ChildProcessExecFile", "ChildProcessExecFileSync",
             "ChildProcessExecSync", "ChildProcessFork", "ChildProcessSpawn",
             "ChildProcessSpawnSync",
+            // Phase 5g/h: Vm / Tty / Perf primitives
+            "VmRunInNewContext", "VmRunInThisContext", "VmCompileFunction",
+            "VmCreateContext", "VmIsContext", "VmNewScript", "VmGetScriptConstructor",
+            "Tty_isatty",  // emitted method name uses underscore, not PascalCase
+            "PerfPrimitiveNow",  // PerfPrimitiveStartTicks/TicksPerMs are fields, not methods
         };
 
         var missing = gatedMethods.Where(m => !actualMethods.Contains(m)).ToList();

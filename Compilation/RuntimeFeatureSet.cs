@@ -56,6 +56,9 @@ public sealed class RuntimeFeatureSet
     public bool UsesBigInt { get; set; } = true;            // BigInt(), 123n literal, BigInt arithmetic operators
     public bool UsesOs { get; set; } = true;                // 'os' module — os.freemem, os.loadavg, os.networkInterfaces
     public bool UsesChildProcess { get; set; } = true;      // 'child_process' module — spawn, exec, fork, execSync, etc.
+    public bool UsesVm { get; set; } = true;                // 'vm' module — vm.runInNewContext, vm.compileFunction, etc.
+    public bool UsesTty { get; set; } = true;               // 'tty' module / process.stdout.isTTY — just isatty(fd)
+    public bool UsesPerf { get; set; } = true;              // performance.now() / performance.timeOrigin (host-tied primitive)
 
     // ── Typed arrays ──────────────────────────────────────────────────────
     /// <summary>

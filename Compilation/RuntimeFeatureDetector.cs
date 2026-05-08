@@ -65,6 +65,9 @@ public sealed class RuntimeFeatureDetector
             UsesBigInt = false,
             UsesOs = false,
             UsesChildProcess = false,
+            UsesVm = false,
+            UsesTty = false,
+            UsesPerf = false,
             TypedArrays = RuntimeFeatureSet.TypedArrayKinds.None,
         };
     }
@@ -164,6 +167,12 @@ public sealed class RuntimeFeatureDetector
                 _set.UsesOs = true; break;
             case "child_process":
                 _set.UsesChildProcess = true; break;
+            case "vm":
+                _set.UsesVm = true; break;
+            case "tty":
+                _set.UsesTty = true; break;
+            case "perf_hooks":
+                _set.UsesPerf = true; break;
             case "stream":
             case "stream/promises":
             case "stream/web":
@@ -357,6 +366,11 @@ public sealed class RuntimeFeatureDetector
             case "BigInt":
                 _set.UsesBigInt = true; break;
 
+            // Performance — `performance.now()`, `performance.timeOrigin`. The
+            // perf_hooks module path also flips UsesPerf via HandleModulePath.
+            case "performance":
+                _set.UsesPerf = true; break;
+
             // util module identifiers — `util` (CommonJS bare reference),
             // `format`, `inspect`, `parseArgs`, `promisify`/etc. would land
             // here only if the user does `import { format, ... } from 'util'`
@@ -434,6 +448,12 @@ public sealed class RuntimeFeatureDetector
         if (objectName == "os")
         {
             _set.UsesOs = true;
+        }
+        // `.isTTY` access on any receiver — typically `process.stdout.isTTY`.
+        // Conservative; false positives just over-emit a tiny isatty helper.
+        if (memberName == "isTTY")
+        {
+            _set.UsesTty = true;
         }
     }
 

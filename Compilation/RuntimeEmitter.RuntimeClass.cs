@@ -833,7 +833,9 @@ public partial class RuntimeEmitter
         // Assert module methods migrated to stdlib/node/assert.ts.
         // TTY module methods
         // primitive:tty — just isatty; user-facing tty is stdlib/node/tty.ts.
-        EmitTtyPrimitiveMethods(typeBuilder, runtime);
+        // Gated on UsesTty (set by `import 'tty'` or any `.isTTY` access).
+        if (_features.UsesTty)
+            EmitTtyPrimitiveMethods(typeBuilder, runtime);
         // URL module — migrated to stdlib/node/url.ts; no runtime helpers emitted.
         // HTTP module methods (fetch, http.createServer, etc.) - must be before globalThis
         if (_features.UsesHttp)
@@ -892,8 +894,10 @@ public partial class RuntimeEmitter
         if (_features.UsesDns)
             EmitDnsModuleMethods(typeBuilder, runtime);
         // primitive:perf — only the host-tied now() method; the rest of perf_hooks
-        // is pure TypeScript in stdlib/node/perf_hooks.ts.
-        EmitPerfPrimitiveMethods(typeBuilder, runtime);
+        // is pure TypeScript in stdlib/node/perf_hooks.ts. Gated on UsesPerf
+        // (set by `import 'perf_hooks'` or bare `performance` reference).
+        if (_features.UsesPerf)
+            EmitPerfPrimitiveMethods(typeBuilder, runtime);
         // string_decoder module migrated to stdlib/node/string_decoder.ts.
 
         // Intl support (Intl.NumberFormat / DateTimeFormat / Collator) — gated.
@@ -911,8 +915,9 @@ public partial class RuntimeEmitter
         if (_features.UsesCluster)
             EmitClusterHelpers(typeBuilder, runtime);
 
-        // Vm module support
-        EmitVmMethods(typeBuilder, runtime);
+        // Vm module support — gated on UsesVm (set by `import 'vm'`).
+        if (_features.UsesVm)
+            EmitVmMethods(typeBuilder, runtime);
 
         // Web Streams API (stream/web) is now fully pure-IL emitted via
         // RuntimeEmitter.QueuingStrategy.cs / WritableStream.cs /
