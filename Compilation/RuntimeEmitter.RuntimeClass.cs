@@ -803,15 +803,26 @@ public partial class RuntimeEmitter
         EmitWeakRefMethods(typeBuilder, runtime);
         // FinalizationRegistry methods
         EmitFinalizationRegistryMethods(typeBuilder, runtime);
-        // Proxy methods
-        EmitProxyMethods(typeBuilder, runtime);
-        // AbortController/AbortSignal methods (FireAbortEvent must be emitted before AbortController methods)
-        EmitFireAbortEvent(typeBuilder, runtime);
-        EmitAbortControllerMethods(typeBuilder, runtime);
-        // Dynamic import methods
+        // Proxy methods — gated on UsesProxy (`new Proxy()` / bare `Proxy`).
+        if (_features.UsesProxy)
+            EmitProxyMethods(typeBuilder, runtime);
+        // AbortController/AbortSignal methods (FireAbortEvent must be emitted
+        // before AbortController methods). Gated on UsesAbortController, also
+        // implied by UsesWebStreams (ReadableStream pipeTo checks abort state).
+        if (_features.UsesAbortController)
+        {
+            EmitFireAbortEvent(typeBuilder, runtime);
+            EmitAbortControllerMethods(typeBuilder, runtime);
+        }
+        // Dynamic import support. Module registry + WrapTaskAsPromise stay
+        // unconditional (used by multi-module bundling and dns/fs/http/timer
+        // promise wrappers). The actual `import(specifier)` impl is gated
+        // inside EmitDynamicImportMethods on UsesDynamicImport.
         EmitDynamicImportMethods(typeBuilder, runtime);
-        // Async generator await continuation helper
-        EmitAsyncGeneratorAwaitContinueMethods(typeBuilder, moduleBuilder, runtime);
+        // Async generator await continuation helper — gated on UsesAsyncGenerator
+        // (any `async function*` or async-generator arrow in the AST).
+        if (_features.UsesAsyncGenerator)
+            EmitAsyncGeneratorAwaitContinueMethods(typeBuilder, moduleBuilder, runtime);
         // NodeError conversion helpers (must be before fs methods which use them)
         EmitNodeErrorHelpers(typeBuilder, runtime);
         // Built-in module methods (fs, os, dns) — path migrated to stdlib/node/path.ts.

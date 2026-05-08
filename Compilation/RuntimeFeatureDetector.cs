@@ -68,6 +68,10 @@ public sealed class RuntimeFeatureDetector
             UsesVm = false,
             UsesTty = false,
             UsesPerf = false,
+            UsesAbortController = false,
+            UsesProxy = false,
+            UsesDynamicImport = false,
+            UsesAsyncGenerator = false,
             TypedArrays = RuntimeFeatureSet.TypedArrayKinds.None,
         };
     }
@@ -130,6 +134,12 @@ public sealed class RuntimeFeatureDetector
                               | RuntimeFeatureSet.TypedArrayKinds.BigUint64)) != 0)
         {
             _set.UsesBigInt = true;
+        }
+        // ReadableStream's pipeTo / pipeThrough check signal abort state —
+        // imply UsesAbortController so AbortSignalGetAborted/GetReason exist.
+        if (_set.UsesWebStreams)
+        {
+            _set.UsesAbortController = true;
         }
 
         return _set;
@@ -371,6 +381,16 @@ public sealed class RuntimeFeatureDetector
             case "performance":
                 _set.UsesPerf = true; break;
 
+            // AbortController / AbortSignal — `new AbortController()`,
+            // bare value-form access, also implicitly used by fetch/timer cancel.
+            case "AbortController":
+            case "AbortSignal":
+                _set.UsesAbortController = true; break;
+
+            // Proxy — `new Proxy(target, handler)` or bare value-form access.
+            case "Proxy":
+                _set.UsesProxy = true; break;
+
             // util module identifiers — `util` (CommonJS bare reference),
             // `format`, `inspect`, `parseArgs`, `promisify`/etc. would land
             // here only if the user does `import { format, ... } from 'util'`
@@ -515,6 +535,8 @@ public sealed class RuntimeFeatureDetector
                 break;
 
             case Stmt.Function fn:
+                if (fn.IsAsync && fn.IsGenerator)
+                    _set.UsesAsyncGenerator = true;
                 foreach (var p in fn.Parameters)
                     if (p.DefaultValue is not null) VisitExpr(p.DefaultValue);
                 if (fn.Body is not null)
@@ -525,6 +547,11 @@ public sealed class RuntimeFeatureDetector
                 if (cls.SuperclassExpr is not null) VisitExpr(cls.SuperclassExpr);
                 foreach (var m in cls.Methods)
                 {
+                    // Class methods can be `async *foo()` — async generators.
+                    // The Stmt.Function visit happens via ClassMembersBuild,
+                    // not the top-level Stmt switch, so re-check the flags here.
+                    if (m.IsAsync && m.IsGenerator)
+                        _set.UsesAsyncGenerator = true;
                     foreach (var p in m.Parameters)
                         if (p.DefaultValue is not null) VisitExpr(p.DefaultValue);
                     if (m.Body is not null)
@@ -770,6 +797,8 @@ public sealed class RuntimeFeatureDetector
                 break;
 
             case Expr.ArrowFunction af:
+                if (af.IsAsync && af.IsGenerator)
+                    _set.UsesAsyncGenerator = true;
                 foreach (var ap in af.Parameters)
                     if (ap.DefaultValue is not null) VisitExpr(ap.DefaultValue);
                 if (af.ExpressionBody is not null) VisitExpr(af.ExpressionBody);
@@ -797,6 +826,7 @@ public sealed class RuntimeFeatureDetector
                 VisitExpr(aw.Expression);
                 break;
             case Expr.DynamicImport dimp:
+                _set.UsesDynamicImport = true;
                 VisitExpr(dimp.PathExpression);
                 if (dimp.PathExpression is Expr.Literal lit2 && lit2.Value is string p)
                     HandleModulePath(p);
@@ -811,6 +841,8 @@ public sealed class RuntimeFeatureDetector
                 if (ce.SuperclassExpr is not null) VisitExpr(ce.SuperclassExpr);
                 foreach (var m in ce.Methods)
                 {
+                    if (m.IsAsync && m.IsGenerator)
+                        _set.UsesAsyncGenerator = true;
                     foreach (var mp in m.Parameters)
                         if (mp.DefaultValue is not null) VisitExpr(mp.DefaultValue);
                     if (m.Body is not null)

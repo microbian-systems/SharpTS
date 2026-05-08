@@ -13,10 +13,20 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitDynamicImportMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Module registry + WrapTaskAsPromise stay unconditional — they're
+        // shared infrastructure: ILCompiler.Modules calls
+        // InitializeModuleRegistry/RegisterModule for multi-module bundling
+        // even without `import()`, and WrapTaskAsPromise is consumed by
+        // dns/fs/http/timer-promises emitters too.
         EmitModuleRegistry(typeBuilder, runtime);
         EmitWrapTaskAsPromise(typeBuilder, runtime);
-        EmitWrapVoidTaskAsObjectTask(typeBuilder, runtime);
-        EmitDynamicImportModule(typeBuilder, runtime);
+        // The two `import(specifier)`-specific helpers are gated separately:
+        // only emit when UsesDynamicImport is set.
+        if (_features.UsesDynamicImport)
+        {
+            EmitWrapVoidTaskAsObjectTask(typeBuilder, runtime);
+            EmitDynamicImportModule(typeBuilder, runtime);
+        }
     }
 
     /// <summary>

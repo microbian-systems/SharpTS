@@ -59,6 +59,10 @@ public sealed class RuntimeFeatureSet
     public bool UsesVm { get; set; } = true;                // 'vm' module — vm.runInNewContext, vm.compileFunction, etc.
     public bool UsesTty { get; set; } = true;               // 'tty' module / process.stdout.isTTY — just isatty(fd)
     public bool UsesPerf { get; set; } = true;              // performance.now() / performance.timeOrigin (host-tied primitive)
+    public bool UsesAbortController { get; set; } = true;   // AbortController / AbortSignal identifiers
+    public bool UsesProxy { get; set; } = true;             // `new Proxy(...)` / bare `Proxy` identifier
+    public bool UsesDynamicImport { get; set; } = true;     // `import(specifier)` syntax (Expr.DynamicImport)
+    public bool UsesAsyncGenerator { get; set; } = true;    // `async function*` / async generators
 
     // ── Typed arrays ──────────────────────────────────────────────────────
     /// <summary>

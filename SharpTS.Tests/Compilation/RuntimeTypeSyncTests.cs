@@ -335,6 +335,14 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
             "VmCreateContext", "VmIsContext", "VmNewScript", "VmGetScriptConstructor",
             "Tty_isatty",  // emitted method name uses underscore, not PascalCase
             "PerfPrimitiveNow",  // PerfPrimitiveStartTicks/TicksPerMs are fields, not methods
+            // Phase 5i: AbortController / Proxy / DynamicImport / AsyncGenerator
+            "CreateAbortController", "AbortControllerAbort", "AbortControllerGetSignal",
+            "AbortSignalAbort", "AbortSignalAddEventListener", "AbortSignalAny",
+            "AbortSignalGetAborted", "AbortSignalGetReason", "AbortSignalThrowIfAborted",
+            "AbortSignalTimeout", "FireAbortEvent",
+            "CreateProxy",
+            "DynamicImportModule",
+            "AsyncGeneratorAwaitContinue",
         };
 
         var missing = gatedMethods.Where(m => !actualMethods.Contains(m)).ToList();
