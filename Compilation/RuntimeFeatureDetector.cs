@@ -512,6 +512,30 @@ public sealed class RuntimeFeatureDetector
         {
             case Stmt.Import imp:
                 HandleModulePath(imp.ModulePath);
+                // Named imports can carry stdio bindings even from non-stream
+                // module paths. Specifically, the user-facing `'process'`
+                // module is a TS stdlib shim (stdlib/node/process.ts) whose
+                // own `import { ..., stdin, stdout, stderr, ... } from
+                // 'primitive:process'` lands in the compilation graph along
+                // with the user's source. Without this hook, the detector
+                // sees only the user's `import { nextTick } from 'process'`,
+                // misses the shim's stdio re-exports, and UsesNodeStreams
+                // stays false — making compiled `process.stdin` reference
+                // a null GetStdin MethodBuilder.
+                if (imp.NamedImports is not null)
+                {
+                    foreach (var spec in imp.NamedImports)
+                    {
+                        switch (spec.Imported.Lexeme)
+                        {
+                            case "stdin":
+                            case "stdout":
+                            case "stderr":
+                                _set.UsesNodeStreams = true;
+                                break;
+                        }
+                    }
+                }
                 break;
             case Stmt.ImportRequire req:
                 HandleModulePath(req.ModulePath);
