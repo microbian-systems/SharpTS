@@ -817,7 +817,9 @@ public partial class RuntimeEmitter
         // Built-in module methods (fs, os, dns) — path migrated to stdlib/node/path.ts.
         if (_features.UsesFs)
             EmitFsModuleMethods(typeBuilder, runtime);
-        EmitOsModuleMethods(typeBuilder, runtime);
+        // os module — gated on UsesOs (set by `import 'os'` or `os.X` access).
+        if (_features.UsesOs)
+            EmitOsModuleMethods(typeBuilder, runtime);
         if (_features.UsesDns)
         {
             EmitDnsModuleMethods(typeBuilder, runtime);

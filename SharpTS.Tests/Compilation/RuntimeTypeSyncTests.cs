@@ -324,6 +324,8 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
             "BigIntGreaterThanOrEqual", "BigIntEquals",
             "BigIntBitwiseAnd", "BigIntBitwiseOr", "BigIntBitwiseXor",
             "BigIntBitwiseNot", "BigIntLeftShift", "BigIntRightShift",
+            // Phase 5e: Os family
+            "OsFreemem", "OsLoadavg", "OsNetworkInterfaces",
         };
 
         var missing = gatedMethods.Where(m => !actualMethods.Contains(m)).ToList();

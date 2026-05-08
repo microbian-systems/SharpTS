@@ -63,6 +63,7 @@ public sealed class RuntimeFeatureDetector
             UsesRegExp = false,
             UsesBuffer = false,
             UsesBigInt = false,
+            UsesOs = false,
             TypedArrays = RuntimeFeatureSet.TypedArrayKinds.None,
         };
     }
@@ -158,6 +159,8 @@ public sealed class RuntimeFeatureDetector
                 _set.UsesCrypto = true; break;
             case "zlib":
                 _set.UsesZlib = true; break;
+            case "os":
+                _set.UsesOs = true; break;
             case "stream":
             case "stream/promises":
             case "stream/web":
@@ -420,6 +423,14 @@ public sealed class RuntimeFeatureDetector
         if (objectName == "JSON")
         {
             _set.UsesJSON = true;
+        }
+        // `os` namespace (`import * as os`) member access — `os.platform()`,
+        // `os.cpus()`, etc. The module-path trigger covers the import; this
+        // catches the rare case where `os` is bound by other means
+        // (e.g. `globalThis.os` or a local with the same name and any-typed).
+        if (objectName == "os")
+        {
+            _set.UsesOs = true;
         }
     }
 

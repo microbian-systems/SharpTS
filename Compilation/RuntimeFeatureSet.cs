@@ -54,6 +54,7 @@ public sealed class RuntimeFeatureSet
     public bool UsesRegExp { get; set; } = true;            // /pattern/ or new RegExp()
     public bool UsesBuffer { get; set; } = true;            // Buffer.from(), new Buffer() — also implied by crypto/fs/zlib/http/fetch/dgram
     public bool UsesBigInt { get; set; } = true;            // BigInt(), 123n literal, BigInt arithmetic operators
+    public bool UsesOs { get; set; } = true;                // 'os' module — os.freemem, os.loadavg, os.networkInterfaces
 
     // ── Typed arrays ──────────────────────────────────────────────────────
     /// <summary>
