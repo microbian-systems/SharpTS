@@ -15,20 +15,19 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitWorkerHelpers(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
-        // SharedArrayBuffer constructor helper
-        EmitSharedArrayBufferHelper(runtimeType, runtime);
-
-        // ArrayBuffer constructor helper
-        EmitArrayBufferHelper(runtimeType, runtime);
-
-        // DataView constructor helper
-        EmitDataViewHelper(runtimeType, runtime);
-
-        // TypedArray constructor helpers
-        EmitTypedArrayHelpers(runtimeType, runtime);
-
-        // Atomics static methods (pure-IL with reflection fallback for SharpTS types)
-        EmitAtomicsHelpersPure(runtimeType, runtime);
+        // ArrayBuffer / SharedArrayBuffer / DataView / TypedArray constructor
+        // helpers + Atomics — gated together on HasAnyTypedArray. Without any
+        // typed-array kind referenced by the program, none of these helpers'
+        // runtime field references would be valid.
+        if (_features.HasAnyTypedArray)
+        {
+            EmitSharedArrayBufferHelper(runtimeType, runtime);
+            EmitArrayBufferHelper(runtimeType, runtime);
+            EmitDataViewHelper(runtimeType, runtime);
+            EmitTypedArrayHelpers(runtimeType, runtime);
+            // Atomics static methods (pure-IL with reflection fallback for SharpTS types)
+            EmitAtomicsHelpersPure(runtimeType, runtime);
+        }
 
         // MessageChannel constructor helper
         EmitMessageChannelHelper(runtimeType, runtime);
@@ -659,10 +658,17 @@ public partial class RuntimeEmitter
     /// </summary>
     public void EmitTypedArrayDetectionHelpers(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
+        // IsTypedArray is always emitted (GetProperty's central dispatch may
+        // call it, and tree-shaking the GetProperty arm itself was already done).
+        // The body is gated on HasAnyTypedArray inside the helper — when no
+        // typed-array type was emitted, IsTypedArray just returns false.
         EmitIsTypedArrayHelper(runtimeType, runtime);
-        EmitGetTypedArrayElementHelper(runtimeType, runtime);
-        EmitSetTypedArrayElementHelper(runtimeType, runtime);
-        EmitGetTypedArrayMemberHelper(runtimeType, runtime);
+        if (_features.HasAnyTypedArray)
+        {
+            EmitGetTypedArrayElementHelper(runtimeType, runtime);
+            EmitSetTypedArrayElementHelper(runtimeType, runtime);
+            EmitGetTypedArrayMemberHelper(runtimeType, runtime);
+        }
     }
 
     /// <summary>
@@ -688,10 +694,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, falseNullObjLabel);
 
-        // First check if it's an emitted $TypedArray type
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TypedArrayBaseType);
-        il.Emit(OpCodes.Brtrue, trueLabel);
+        // First check if it's an emitted $TypedArray type. When tree-shaking has
+        // gated typed arrays off, $TypedArray base type was never emitted —
+        // skip the check (the helper just always returns false).
+        if (_features.HasAnyTypedArray)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TypedArrayBaseType);
+            il.Emit(OpCodes.Brtrue, trueLabel);
+        }
 
         // Handle null obj case (stack is empty)
         il.MarkLabel(falseNullObjLabel);
@@ -1332,13 +1343,22 @@ public partial class RuntimeEmitter
         coreIl.Emit(OpCodes.Ret);
         coreIl.MarkLabel(nextCheckNull);
 
-        // SharedArrayBuffer is transferred by reference.
+        // SharedArrayBuffer is transferred by reference. Skip when typed
+        // arrays aren't emitted — no SharedArrayBuffer values can exist.
         coreIl.MarkLabel(checkSharedArrayBuffer);
-        coreIl.Emit(OpCodes.Ldarg_0);
-        coreIl.Emit(OpCodes.Isinst, runtime.SharedArrayBufferType);
-        coreIl.Emit(OpCodes.Brfalse, checkList);
-        coreIl.Emit(OpCodes.Ldarg_0);
-        coreIl.Emit(OpCodes.Ret);
+        if (_features.HasAnyTypedArray)
+        {
+            coreIl.Emit(OpCodes.Ldarg_0);
+            coreIl.Emit(OpCodes.Isinst, runtime.SharedArrayBufferType);
+            coreIl.Emit(OpCodes.Brfalse, checkList);
+            coreIl.Emit(OpCodes.Ldarg_0);
+            coreIl.Emit(OpCodes.Ret);
+        }
+        else
+        {
+            // Always fall through to the next check.
+            coreIl.Emit(OpCodes.Br, checkList);
+        }
 
         // List<object> deep clone.
         coreIl.MarkLabel(checkList);

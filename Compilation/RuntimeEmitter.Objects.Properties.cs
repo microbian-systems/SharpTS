@@ -1462,10 +1462,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, boundFunctionLabel);
 
         // $CJSModule - route to the module's GetMember(name) for exports/id/filename/etc.
+        // Only emitted when the program uses CommonJS (require/module/exports).
         var cjsModuleGetLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.CjsModuleType);
-        il.Emit(OpCodes.Brtrue, cjsModuleGetLabel);
+        if (_features.UsesCjsRequire)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.CjsModuleType);
+            il.Emit(OpCodes.Brtrue, cjsModuleGetLabel);
+        }
 
         // Task<object?> (Promise) - check for then/catch/finally
         var promiseLabel = il.DefineLabel();
@@ -1478,29 +1482,35 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
         il.Emit(OpCodes.Brtrue, promiseLabel);
 
-        // $ArrayBuffer - check for "byteLength"
+        // ArrayBuffer / SharedArrayBuffer / DataView / TypedArray dispatch arms —
+        // skipped when no typed-array kind is referenced. The handler bodies
+        // (MarkLabel'd at lines ~1834+) are gated on the same flag.
         var arrayBufferLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.ArrayBufferType);
-        il.Emit(OpCodes.Brtrue, arrayBufferLabel);
-
-        // $SharedArrayBuffer - check for "byteLength"
         var sharedArrayBufferLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.SharedArrayBufferType);
-        il.Emit(OpCodes.Brtrue, sharedArrayBufferLabel);
-
-        // $DataView - check for "byteLength", "byteOffset", "buffer"
         var dataViewLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.DataViewType);
-        il.Emit(OpCodes.Brtrue, dataViewLabel);
-
-        // TypedArray - use emitted helper dispatch for standalone behavior
         var typedArrayLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.IsTypedArrayMethod);
-        il.Emit(OpCodes.Brtrue, typedArrayLabel);
+        if (_features.HasAnyTypedArray)
+        {
+            // $ArrayBuffer - check for "byteLength"
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.ArrayBufferType);
+            il.Emit(OpCodes.Brtrue, arrayBufferLabel);
+
+            // $SharedArrayBuffer - check for "byteLength"
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.SharedArrayBufferType);
+            il.Emit(OpCodes.Brtrue, sharedArrayBufferLabel);
+
+            // $DataView - check for "byteLength", "byteOffset", "buffer"
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.DataViewType);
+            il.Emit(OpCodes.Brtrue, dataViewLabel);
+
+            // TypedArray - use emitted helper dispatch for standalone behavior
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.IsTypedArrayMethod);
+            il.Emit(OpCodes.Brtrue, typedArrayLabel);
+        }
 
         // Primitive bool/double receivers — look up the named property in the
         // matching prototype singleton (Boolean.prototype / Number.prototype).
@@ -1819,53 +1829,65 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.GetFunctionMethod);
         il.Emit(OpCodes.Ret);
 
-        // TypedArray handler - call emitted typed-array member helper
-        il.MarkLabel(typedArrayLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.GetTypedArrayMemberMethod);
-        il.Emit(OpCodes.Ret);
+        // TypedArray family handlers — gated together with the dispatch arms
+        // above. When typed arrays aren't referenced, none of these labels are
+        // branched to, so we skip the entire body.
+        if (_features.HasAnyTypedArray)
+        {
+            // TypedArray handler - call emitted typed-array member helper
+            il.MarkLabel(typedArrayLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.GetTypedArrayMemberMethod);
+            il.Emit(OpCodes.Ret);
 
-        // $ArrayBuffer handler - check for "byteLength"
-        il.MarkLabel(arrayBufferLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "byteLength");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        var notArrayBufferByteLengthLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, notArrayBufferByteLengthLabel);
-        // Return ByteLength as double
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.ArrayBufferType);
-        il.Emit(OpCodes.Callvirt, runtime.ArrayBufferByteLengthGetter);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notArrayBufferByteLengthLabel);
-        // Return null for other properties
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+            // $ArrayBuffer handler - check for "byteLength"
+            il.MarkLabel(arrayBufferLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "byteLength");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            var notArrayBufferByteLengthLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, notArrayBufferByteLengthLabel);
+            // Return ByteLength as double
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.ArrayBufferType);
+            il.Emit(OpCodes.Callvirt, runtime.ArrayBufferByteLengthGetter);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notArrayBufferByteLengthLabel);
+            // Return null for other properties
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ret);
 
-        // $SharedArrayBuffer handler - check for "byteLength"
-        il.MarkLabel(sharedArrayBufferLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "byteLength");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        var notSharedArrayBufferByteLengthLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, notSharedArrayBufferByteLengthLabel);
-        // Return ByteLength as double
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.SharedArrayBufferType);
-        il.Emit(OpCodes.Callvirt, runtime.SharedArrayBufferByteLengthGetter);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notSharedArrayBufferByteLengthLabel);
-        // Return null for other properties
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+            // $SharedArrayBuffer handler - check for "byteLength"
+            il.MarkLabel(sharedArrayBufferLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "byteLength");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            var notSharedArrayBufferByteLengthLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, notSharedArrayBufferByteLengthLabel);
+            // Return ByteLength as double
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.SharedArrayBufferType);
+            il.Emit(OpCodes.Callvirt, runtime.SharedArrayBufferByteLengthGetter);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notSharedArrayBufferByteLengthLabel);
+            // Return null for other properties
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ret);
 
-        // $DataView handler - check for "byteLength", "byteOffset", "buffer"
-        il.MarkLabel(dataViewLabel);
+            EmitDataViewHandler();
+        }
+
+        // $DataView handler local helper — extracted so the enclosing
+        // `if (_features.HasAnyTypedArray)` block can call it once.
+        void EmitDataViewHandler()
+        {
+            // $DataView handler - check for "byteLength", "byteOffset", "buffer"
+            il.MarkLabel(dataViewLabel);
         // Check "byteLength"
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldstr, "byteLength");
@@ -1905,10 +1927,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, runtime.DataViewType);
         il.Emit(OpCodes.Callvirt, runtime.DataViewBufferGetter);
         il.Emit(OpCodes.Ret);
-        il.MarkLabel(notDataViewBufferLabel);
-        // Return null for other properties
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+            il.MarkLabel(notDataViewBufferLabel);
+            // Return null for other properties
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ret);
+        }
 
         // Namespace handler - call ns.Get(name)
         il.MarkLabel(namespaceLabel);
@@ -2045,13 +2068,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.GetFunctionMethod);
         il.Emit(OpCodes.Ret);
 
-        // $CJSModule handler - call module.GetMember(name)
-        il.MarkLabel(cjsModuleGetLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.CjsModuleType);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, runtime.CjsModuleType.GetMethod("GetMember", [_types.String])!);
-        il.Emit(OpCodes.Ret);
+        // $CJSModule handler - call module.GetMember(name) — only emitted when
+        // UsesCjsRequire is on (matching the dispatch arm above).
+        if (_features.UsesCjsRequire)
+        {
+            il.MarkLabel(cjsModuleGetLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.CjsModuleType);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, runtime.CjsModuleType.GetMethod("GetMember", [_types.String])!);
+            il.Emit(OpCodes.Ret);
+        }
 
         // Promise (Task<object?> or $Promise) handler - return TSFunction wrappers for then/catch/finally
         il.MarkLabel(promiseLabel);
@@ -2764,13 +2791,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, tsFunctionSetLabel);
 
         // $CJSModule — `module.exports = X` (or any aliased write) goes through here.
-        // The exports setter writes through to the module's static $exports field via
-        // reflection so require() sees the update. Other property writes are silently
-        // ignored (spec: id/filename/loaded are informational and not writable from userland).
+        // Only emit when UsesCjsRequire is on (matching the type emission gate).
         var cjsModuleSetLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.CjsModuleType);
-        il.Emit(OpCodes.Brtrue, cjsModuleSetLabel);
+        if (_features.UsesCjsRequire)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.CjsModuleType);
+            il.Emit(OpCodes.Brtrue, cjsModuleSetLabel);
+        }
 
         // System.Type (class reference used as value, e.g. `Scalar.PLAIN = 'x'`). JS allows
         // arbitrary static property assignment on classes; we store them in PropertyDescriptorStore.
@@ -2806,22 +2834,25 @@ public partial class RuntimeEmitter
         }
 
         // $CJSModule handler — only "exports" is writable; others are no-ops (spec behavior).
-        il.MarkLabel(cjsModuleSetLabel);
+        if (_features.UsesCjsRequire)
         {
-            var notExportsLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Ldstr, "exports");
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-            il.Emit(OpCodes.Brfalse, notExportsLabel);
-            // module.exports = value
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Castclass, runtime.CjsModuleType);
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Callvirt, runtime.CjsModuleExportsSetter);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(notExportsLabel);
-            // Silently ignore writes to other module properties
-            il.Emit(OpCodes.Ret);
+            il.MarkLabel(cjsModuleSetLabel);
+            {
+                var notExportsLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldstr, "exports");
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+                il.Emit(OpCodes.Brfalse, notExportsLabel);
+                // module.exports = value
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Castclass, runtime.CjsModuleType);
+                il.Emit(OpCodes.Ldarg_2);
+                il.Emit(OpCodes.Callvirt, runtime.CjsModuleExportsSetter);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(notExportsLabel);
+                // Silently ignore writes to other module properties
+                il.Emit(OpCodes.Ret);
+            }
         }
 
         // $Array handler — `arr.length = N` routes through SetLength. Any
@@ -3060,11 +3091,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Brtrue, tsFunctionSetStrictLabel);
 
-        // $CJSModule — mirror the non-strict branch.
+        // $CJSModule — mirror the non-strict branch. Gated on UsesCjsRequire.
         var cjsModuleSetStrictLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.CjsModuleType);
-        il.Emit(OpCodes.Brtrue, cjsModuleSetStrictLabel);
+        if (_features.UsesCjsRequire)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.CjsModuleType);
+            il.Emit(OpCodes.Brtrue, cjsModuleSetStrictLabel);
+        }
 
         // Not a dict or $Object or $TSFunction or $CJSModule - fall back to SetFieldsPropertyStrict
         il.Emit(OpCodes.Ldarg_0);
@@ -3074,21 +3108,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.SetFieldsPropertyStrict);
         il.Emit(OpCodes.Ret);
 
-        // $CJSModule strict handler — same as non-strict for now.
-        il.MarkLabel(cjsModuleSetStrictLabel);
+        // $CJSModule strict handler — same as non-strict for now. Gated.
+        if (_features.UsesCjsRequire)
         {
-            var notExportsLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Ldstr, "exports");
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-            il.Emit(OpCodes.Brfalse, notExportsLabel);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Castclass, runtime.CjsModuleType);
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Callvirt, runtime.CjsModuleExportsSetter);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(notExportsLabel);
-            il.Emit(OpCodes.Ret);
+            il.MarkLabel(cjsModuleSetStrictLabel);
+            {
+                var notExportsLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldstr, "exports");
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+                il.Emit(OpCodes.Brfalse, notExportsLabel);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Castclass, runtime.CjsModuleType);
+                il.Emit(OpCodes.Ldarg_2);
+                il.Emit(OpCodes.Callvirt, runtime.CjsModuleExportsSetter);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(notExportsLabel);
+                il.Emit(OpCodes.Ret);
+            }
         }
 
         // $TSFunction handler: create data descriptor with the value, store via PDSDefineProperty

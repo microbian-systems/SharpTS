@@ -202,11 +202,17 @@ public partial class RuntimeEmitter
         EmitDirentType(moduleBuilder, runtime);
         EmitDirType(moduleBuilder, runtime);
 
-        // Emit $ArrayBuffer, $SharedArrayBuffer, and $DataView for standalone TypedArray support (Phase 20)
-        EmitArrayBufferType(moduleBuilder, runtime);
-        EmitSharedArrayBufferType(moduleBuilder, runtime);
-        EmitDataViewType(moduleBuilder, runtime);
-        EmitTypedArrayTypes(moduleBuilder, runtime);
+        // Emit $ArrayBuffer, $SharedArrayBuffer, $DataView, and the 11 typed-array
+        // variants. Gated on TypedArrays != None — granular per-kind selection
+        // (Int8 vs Float32 etc.) is a future refinement; today we emit them as
+        // a single bag whenever any typed-array identifier was seen.
+        if (features.HasAnyTypedArray)
+        {
+            EmitArrayBufferType(moduleBuilder, runtime);
+            EmitSharedArrayBufferType(moduleBuilder, runtime);
+            EmitDataViewType(moduleBuilder, runtime);
+            EmitTypedArrayTypes(moduleBuilder, runtime);
+        }
 
         // Emit stream classes for standalone stream support
         // NOTE: Must come after EventEmitter (stream types extend $EventEmitter)
@@ -268,9 +274,10 @@ public partial class RuntimeEmitter
         EmitStatsClass(moduleBuilder, runtime);
 
         // Emit $CJSModule — backs the `module` local bound in every CJS module init.
-        // No ordering constraint relative to EmitRuntimeClass; placed here alongside
-        // other small emitted wrapper types.
-        EmitCjsModuleClass(moduleBuilder, runtime);
+        // Gated on UsesCjsRequire (the detector flips this whenever the program
+        // mentions `require`, `module`, `exports`, or has a require('...') call).
+        if (features.UsesCjsRequire)
+            EmitCjsModuleClass(moduleBuilder, runtime);
 
         // Emit $Arguments : List<object> marker subclass. Must come before
         // any IL that constructs `arguments` (ILCompiler.Functions.cs uses

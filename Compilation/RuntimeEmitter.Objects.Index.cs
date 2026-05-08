@@ -50,10 +50,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, tsBufferLabel);
 
         // TypedArray (check before List since TypedArray is more specific)
-        // Use type name check to avoid hard dependency on SharpTS.dll
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.IsTypedArrayMethod);
-        il.Emit(OpCodes.Brtrue, typedArrayLabel);
+        // Skip when no typed-array kind was emitted — IsTypedArrayMethod always
+        // returns false in that case anyway, but eliding the call is cleaner.
+        if (_features.HasAnyTypedArray)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.IsTypedArrayMethod);
+            il.Emit(OpCodes.Brtrue, typedArrayLabel);
+        }
 
         // $Array (wrapper around List<object?>) - check before List
         var tsArrayLabel = il.DefineLabel();
@@ -159,13 +163,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, symbolValueLocal);
         il.Emit(OpCodes.Ret);
 
-        // TypedArray handler: use helper to get element (avoids hard dependency on SharpTS.dll)
-        il.MarkLabel(typedArrayLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Call, runtime.GetTypedArrayElementMethod);
-        il.Emit(OpCodes.Ret);
+        // TypedArray handler — skipped when typed arrays aren't emitted.
+        if (_features.HasAnyTypedArray)
+        {
+            il.MarkLabel(typedArrayLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+            il.Emit(OpCodes.Call, runtime.GetTypedArrayElementMethod);
+            il.Emit(OpCodes.Ret);
+        }
 
         // $Buffer handler: load byte from the underlying byte[] and return as boxed double.
         // Matches SharpTSBuffer.this[int] semantics: out-of-range returns NaN (boxed double),
@@ -547,11 +554,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSBufferType);
         il.Emit(OpCodes.Brtrue, tsBufferSetLabel);
 
-        // TypedArray (check before List since TypedArray is more specific)
-        // Use type name check to avoid hard dependency on SharpTS.dll
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.IsTypedArrayMethod);
-        il.Emit(OpCodes.Brtrue, typedArraySetLabel);
+        // TypedArray (check before List since TypedArray is more specific) —
+        // gated alongside the handler body below.
+        if (_features.HasAnyTypedArray)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.IsTypedArrayMethod);
+            il.Emit(OpCodes.Brtrue, typedArraySetLabel);
+        }
 
         // $Array (wrapper around List<object?>) - check before List
         var tsArraySetLabel = il.DefineLabel();
@@ -638,14 +648,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item"));
         il.Emit(OpCodes.Ret);
 
-        // TypedArray handler: use helper to set element (avoids hard dependency on SharpTS.dll)
-        il.MarkLabel(typedArraySetLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, runtime.SetTypedArrayElementMethod);
-        il.Emit(OpCodes.Ret);
+        // TypedArray handler — skipped when typed arrays aren't emitted.
+        if (_features.HasAnyTypedArray)
+        {
+            il.MarkLabel(typedArraySetLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Call, runtime.SetTypedArrayElementMethod);
+            il.Emit(OpCodes.Ret);
+        }
 
         // $Buffer handler: data[idx] = (byte)(Convert.ToInt32(value) & 0xFF).
         // Matches SharpTSBuffer.this[int]= semantics: out-of-range is a no-op.

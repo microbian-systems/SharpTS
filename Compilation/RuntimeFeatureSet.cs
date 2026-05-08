@@ -86,6 +86,12 @@ public sealed class RuntimeFeatureSet
     }
 
     /// <summary>
+    /// True if any typed-array kind is referenced (gates the whole $ArrayBuffer /
+    /// $SharedArrayBuffer / $DataView / $Int8Array / etc. cluster together).
+    /// </summary>
+    public bool HasAnyTypedArray => TypedArrays != TypedArrayKinds.None;
+
+    /// <summary>
     /// Returns a <see cref="RuntimeFeatureSet"/> with every flag set to <c>true</c>.
     /// Equivalent to the default constructor; named for clarity at call sites that
     /// want to opt out of tree-shaking ("emit all helper types").
