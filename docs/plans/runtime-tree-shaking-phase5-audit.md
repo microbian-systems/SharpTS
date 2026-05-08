@@ -88,13 +88,22 @@ all of which must exist if anyone reads `arr.map`).
 
 Cumulative DLL after Phase 5h: ~150KB (from ~387KB pre-Phase-1, -61%).
 
-Remaining easy targets identified during execution (Phase 5i+ candidates):
-- **Map / Set / WeakMap / WeakSet** methods — only emit when `new X()` or
-  bare identifier appears in source.
-- **Proxy** methods — only emit when `Proxy` identifier appears.
-- **AbortController / AbortSignal** — common in fetch/timer code.
-- **DynamicImport** methods — only when `import(...)` syntax appears.
-- **AsyncGenerator** continue helpers — only when `async function*` exists.
+| Phase | Cluster | Status |
+|-------|---------|--------|
+| **5i** | AbortController + Proxy + DynamicImport + AsyncGenerator | ✅ landed `acd6d69` |
+| **5j** | WeakRef + WeakMap + WeakSet (isolated emitters) | ✅ landed `68dcdc3` |
+| **5k** | Map + Set with full dispatch chain (7 files touched) | ✅ landed `bedebc7` |
 
-After those, the next tier requires a different shaking approach
+Cumulative DLL after Phase 5k: ~143KB (-63% from ~387KB baseline).
+
+Phase 5k notes: Map/Set's `.has`/`.get`/`.set`/`.size`/etc. method names
+are not unique — they appear on JS Map/Set, but also on idiomatic user
+code (and the duck-typed `EmitMapMethodCall` path emits `runtime.MapHas`
+unconditionally on `any`-typed receivers). Per the conservative-bias rule,
+those names ALL trigger `UsesMap || UsesSet` even when the receiver might
+not be a JS Map. Real savings only materialize when source code uses
+*none* of these names — that's why the bench script (which calls
+`.forEach`) still emits both clusters.
+
+After Phase 5k, the next tier requires a different shaking approach
 (populate-table pruning for Array/String/Number prototype methods).

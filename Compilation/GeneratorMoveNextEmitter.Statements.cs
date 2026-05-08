@@ -126,37 +126,55 @@ public partial class GeneratorMoveNextEmitter
         }
         else
         {
-            // Fallback: runtime type checking for Map/Set when compile-time type isn't available
-            var afterMapSetLabel = _il.DefineLabel();
-            var checkSetLabel = _il.DefineLabel();
-            var dictionaryType = typeof(Dictionary<object, object?>);
-            var hashSetType = typeof(HashSet<object>);
+            // Fallback: runtime type checking for Map/Set when compile-time
+            // type isn't available. Each arm gates on whether the corresponding
+            // $Runtime helper was emitted (null MethodBuilder ⇒ feature off).
+            var hasMapEntries = _ctx.Runtime?.MapEntries != null;
+            var hasSetValues = _ctx.Runtime?.SetValues != null;
             var iterableLocal = _il.DeclareLocal(_types.Object);
             _il.Emit(OpCodes.Stloc, iterableLocal);
 
-            // Check if iterable is Dictionary<object, object?> (Map)
-            _il.Emit(OpCodes.Ldloc, iterableLocal);
-            _il.Emit(OpCodes.Isinst, dictionaryType);
-            _il.Emit(OpCodes.Brfalse, checkSetLabel);
+            if (hasMapEntries || hasSetValues)
+            {
+                var afterMapSetLabel = _il.DefineLabel();
+                var checkSetLabel = _il.DefineLabel();
+                var dictionaryType = typeof(Dictionary<object, object?>);
+                var hashSetType = typeof(HashSet<object>);
 
-            // It's a Map - call MapEntries to get List<object?>
-            _il.Emit(OpCodes.Ldloc, iterableLocal);
-            _il.Emit(OpCodes.Call, _ctx.Runtime!.MapEntries);
-            _il.Emit(OpCodes.Stloc, iterableLocal);
-            _il.Emit(OpCodes.Br, afterMapSetLabel);
+                if (hasMapEntries)
+                {
+                    // Check if iterable is Dictionary<object, object?> (Map)
+                    _il.Emit(OpCodes.Ldloc, iterableLocal);
+                    _il.Emit(OpCodes.Isinst, dictionaryType);
+                    _il.Emit(OpCodes.Brfalse, checkSetLabel);
 
-            // Check if iterable is HashSet<object> (Set)
-            _il.MarkLabel(checkSetLabel);
-            _il.Emit(OpCodes.Ldloc, iterableLocal);
-            _il.Emit(OpCodes.Isinst, hashSetType);
-            _il.Emit(OpCodes.Brfalse, afterMapSetLabel);
+                    // It's a Map - call MapEntries to get List<object?>
+                    _il.Emit(OpCodes.Ldloc, iterableLocal);
+                    _il.Emit(OpCodes.Call, _ctx.Runtime!.MapEntries);
+                    _il.Emit(OpCodes.Stloc, iterableLocal);
+                    _il.Emit(OpCodes.Br, afterMapSetLabel);
+                }
 
-            // It's a Set - call SetValues to get List<object?>
-            _il.Emit(OpCodes.Ldloc, iterableLocal);
-            _il.Emit(OpCodes.Call, _ctx.Runtime!.SetValues);
-            _il.Emit(OpCodes.Stloc, iterableLocal);
+                if (hasSetValues)
+                {
+                    _il.MarkLabel(checkSetLabel);
+                    _il.Emit(OpCodes.Ldloc, iterableLocal);
+                    _il.Emit(OpCodes.Isinst, hashSetType);
+                    _il.Emit(OpCodes.Brfalse, afterMapSetLabel);
 
-            _il.MarkLabel(afterMapSetLabel);
+                    // It's a Set - call SetValues to get List<object?>
+                    _il.Emit(OpCodes.Ldloc, iterableLocal);
+                    _il.Emit(OpCodes.Call, _ctx.Runtime!.SetValues);
+                    _il.Emit(OpCodes.Stloc, iterableLocal);
+                }
+                else
+                {
+                    // Map-only: still need checkSetLabel as the Map arm's Brfalse target.
+                    _il.MarkLabel(checkSetLabel);
+                }
+
+                _il.MarkLabel(afterMapSetLabel);
+            }
             _il.Emit(OpCodes.Ldloc, iterableLocal);
         }
 
