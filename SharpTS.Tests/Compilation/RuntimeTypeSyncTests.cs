@@ -294,6 +294,48 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
             $"Expected at least 20 emitted runtime types, found {emittedTypes.Count}");
     }
 
+    /// <summary>
+    /// Per-method shaking sync: under EmitEverything(), $Runtime must contain
+    /// every method that any feature flag could need. Catches the case where a
+    /// per-method gate accidentally drops a method from the everything-emit path.
+    /// Add new methods here as Phase 5+ gates them.
+    /// </summary>
+    [Fact]
+    public void EmittedRuntime_HasAllGatedMethods()
+    {
+        if (_fixture.CompiledAssembly == null) return;
+
+        var runtime = _fixture.CompiledAssembly.GetType("$Runtime");
+        Assert.NotNull(runtime);
+
+        var actualMethods = runtime!
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance)
+            .Select(m => m.Name)
+            .ToHashSet();
+
+        // Methods that Phase 5+ gates conditionally. Under EmitEverything()
+        // (used by the fixture), every name listed here must exist.
+        var gatedMethods = new[]
+        {
+            // Phase 5a: BigInt family
+            "CreateBigInt", "BigIntAdd", "BigIntSubtract", "BigIntMultiply",
+            "BigIntDivide", "BigIntRemainder", "BigIntPow",
+            "BigIntLessThan", "BigIntLessThanOrEqual", "BigIntGreaterThan",
+            "BigIntGreaterThanOrEqual", "BigIntEquals",
+            "BigIntBitwiseAnd", "BigIntBitwiseOr", "BigIntBitwiseXor",
+            "BigIntBitwiseNot", "BigIntLeftShift", "BigIntRightShift",
+        };
+
+        var missing = gatedMethods.Where(m => !actualMethods.Contains(m)).ToList();
+        if (missing.Count > 0)
+        {
+            _output.WriteLine($"$Runtime methods (sample): {string.Join(", ", actualMethods.OrderBy(n => n).Take(40))}");
+            _output.WriteLine($"MISSING gated methods: {string.Join(", ", missing)}");
+        }
+
+        Assert.Empty(missing);
+    }
+
     public static IEnumerable<object[]> GetSyncPairData()
     {
         return SyncPairs.Select(p => new object[] { p.RuntimeType.Name, p.EmittedNameSuffix });

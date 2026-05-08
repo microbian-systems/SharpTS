@@ -754,11 +754,19 @@ public partial class RuntimeEmitter
             EmitJsonStringify(typeBuilder, runtime);
             EmitJsonStringifyFull(typeBuilder, runtime);
         }
-        // BigInt methods
-        EmitCreateBigInt(typeBuilder, runtime);
-        EmitBigIntArithmetic(typeBuilder, runtime);
-        EmitBigIntComparison(typeBuilder, runtime);
-        EmitBigIntBitwise(typeBuilder, runtime);
+        // BigInt methods — gated on UsesBigInt. Detector flips it on for any
+        // `123n` literal, bare `BigInt` identifier, or BigInt64Array/BigUint64Array
+        // typed-array reference. EmitBigIntBinary in ILEmitter.Operators.cs only
+        // runs when the type-checker has marked an operand as TypeInfo.BigInt,
+        // which itself requires a BigInt source — so the call sites are
+        // naturally aligned with this gate.
+        if (_features.UsesBigInt)
+        {
+            EmitCreateBigInt(typeBuilder, runtime);
+            EmitBigIntArithmetic(typeBuilder, runtime);
+            EmitBigIntComparison(typeBuilder, runtime);
+            EmitBigIntBitwise(typeBuilder, runtime);
+        }
         // Promise methods moved earlier (before GetProperty, which needs PromiseThen for typeof p.then)
         // Number methods
         EmitNumberMethods(typeBuilder, runtime);

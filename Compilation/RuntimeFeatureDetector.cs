@@ -62,6 +62,7 @@ public sealed class RuntimeFeatureDetector
             UsesDate = false,
             UsesRegExp = false,
             UsesBuffer = false,
+            UsesBigInt = false,
             TypedArrays = RuntimeFeatureSet.TypedArrayKinds.None,
         };
     }
@@ -115,6 +116,15 @@ public sealed class RuntimeFeatureDetector
         {
             _set.TypedArrays |= RuntimeFeatureSet.TypedArrayKinds.ArrayBuffer
                               | RuntimeFeatureSet.TypedArrayKinds.TypedArrayBase;
+        }
+        // BigInt64Array / BigUint64Array store BigInteger values. Even without
+        // a `123n` literal in the source, arithmetic on their elements lowers
+        // to BigInt helpers in the type-checker. Imply UsesBigInt to keep them
+        // emitted.
+        if ((_set.TypedArrays & (RuntimeFeatureSet.TypedArrayKinds.BigInt64
+                              | RuntimeFeatureSet.TypedArrayKinds.BigUint64)) != 0)
+        {
+            _set.UsesBigInt = true;
         }
 
         return _set;
@@ -334,6 +344,12 @@ public sealed class RuntimeFeatureDetector
             // value-form access.
             case "Buffer":
                 _set.UsesBuffer = true; break;
+
+            // BigInt — `BigInt(123)` constructor calls, `BigInt.asIntN(...)`,
+            // and bare value-form access. The `123n` literal path is detected
+            // separately via Expr.Literal in VisitExpr (BigInteger value).
+            case "BigInt":
+                _set.UsesBigInt = true; break;
 
             // util module identifiers — `util` (CommonJS bare reference),
             // `format`, `inspect`, `parseArgs`, `promisify`/etc. would land
@@ -570,6 +586,12 @@ public sealed class RuntimeFeatureDetector
         {
             case Expr.Variable v:
                 HandleIdentifier(v.Name.Lexeme);
+                break;
+
+            case Expr.Literal lit when lit.Value is System.Numerics.BigInteger:
+                // `123n` literal — BigInt arithmetic helpers are needed even
+                // without a bare `BigInt` identifier.
+                _set.UsesBigInt = true;
                 break;
 
             case Expr.Get g:
