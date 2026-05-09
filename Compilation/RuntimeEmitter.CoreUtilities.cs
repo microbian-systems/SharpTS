@@ -3288,6 +3288,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Brtrue, functionLabel);
 
+        // $BoundTSFunction => "function" (returned by Function.prototype.bind
+        // and similar paths; without this, `typeof fn.bind(x) === "object"`).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brtrue, functionLabel);
+
+        // $FunctionBindWrapper / $FunctionCallWrapper / $FunctionApplyWrapper
+        // => "function". These wrap non-$TSFunction targets for late-bound
+        // dispatch and need to be callable from JS land.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.FunctionBindWrapperType);
+        il.Emit(OpCodes.Brtrue, functionLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.FunctionCallWrapperType);
+        il.Emit(OpCodes.Brtrue, functionLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.FunctionApplyWrapperType);
+        il.Emit(OpCodes.Brtrue, functionLabel);
+
         // Delegate => "function"
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.Delegate);

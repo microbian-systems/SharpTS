@@ -1671,6 +1671,38 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldsfld, runtime.ErrorPrototypeField);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notErrorLabel);
+
+            // typeof($TSFunction) → return Function.prototype singleton.
+            // Required so `Function.prototype.call.bind(...)` (test262
+            // propertyHelper.js's first line) resolves; without this, the
+            // harness errors at load and ~1200 tests show as RuntimeError.
+            var notFunctionLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldtoken, runtime.TSFunctionType);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Bne_Un, notFunctionLabel);
+            il.Emit(OpCodes.Call, runtime.FunctionPrototypePopulateMethod);
+            il.Emit(OpCodes.Ldsfld, runtime.FunctionPrototypeField);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notFunctionLabel);
+
+            // typeof($RegExp) → return RegExp.prototype singleton. Hosts the
+            // five well-known-symbol-keyed methods (@@match, etc.) used by
+            // ECMA-262 §22.2.5 protocol tests. Gated on UsesRegExp because
+            // $RegExp itself is gated and the populate's referenced helpers
+            // (TSRegExpSym*Helper) only exist when RegExp is emitted.
+            if (_features.UsesRegExp)
+            {
+                var notRegExpLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldtoken, runtime.TSRegExpType);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+                il.Emit(OpCodes.Bne_Un, notRegExpLabel);
+                il.Emit(OpCodes.Call, runtime.RegExpPrototypePopulateMethod);
+                il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(notRegExpLabel);
+            }
             il.MarkLabel(notProtoNameLabel);
 
             var typePdsDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);

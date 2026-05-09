@@ -161,6 +161,30 @@ public partial class RuntimeEmitter
             FieldAttributes.Public | FieldAttributes.Static);
         runtime.ErrorPrototypeField = errorPrototypeField;
 
+        // Function.prototype singleton — populated lazily with $TSFunction
+        // wrappers for call/apply/bind/toString/constructor. test262's
+        // propertyHelper.js opens with
+        //   `Function.prototype.call.bind(Object.prototype.hasOwnProperty)`,
+        // so without this every test that includes propertyHelper bails at
+        // harness load. Returned by GetFieldsProperty's Type-receiver branch
+        // when receiver is typeof($TSFunction).
+        var functionPrototypeField = typeBuilder.DefineField(
+            "_functionPrototype",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.FunctionPrototypeField = functionPrototypeField;
+
+        // RegExp.prototype singleton — a Dictionary host whose ConditionalWeak-
+        // Table symbol-dict slot carries the 5 well-known-symbol-keyed methods
+        // (@@match/@@matchAll/@@replace/@@search/@@split, ECMA-262 §22.2.5),
+        // reachable via `RegExp.prototype[Symbol.X]`. Returned by
+        // GetFieldsProperty's Type-receiver branch when receiver is typeof($RegExp).
+        var regexpPrototypeField = typeBuilder.DefineField(
+            "_regexpPrototype",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.RegExpPrototypeField = regexpPrototypeField;
+
         // CheckCancellation(): if (_cancelRequested) throw new
         //   OperationCanceledException("Compiled execution cancelled.");
         // Called by loop emitters at each backedge. Method body is emitted
@@ -264,6 +288,8 @@ public partial class RuntimeEmitter
         DefineNumberPrototypePopulateShell(typeBuilder, runtime);
         DefineBooleanPrototypePopulateShell(typeBuilder, runtime);
         DefineErrorPrototypePopulateShell(typeBuilder, runtime);
+        DefineFunctionPrototypePopulateShell(typeBuilder, runtime);
+        DefineRegExpPrototypePopulateShell(typeBuilder, runtime);
 
         // Static constructor to initialize Random and symbol storage
         var cctorBuilder = typeBuilder.DefineConstructor(
@@ -307,6 +333,16 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         cctorIL.Emit(OpCodes.Stsfld, errorPrototypeField);
 
+        // Function.prototype starts empty; populated by
+        // EmitFunctionPrototypePopulate (eagerly invoked from cctor tail).
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Stsfld, functionPrototypeField);
+
+        // RegExp.prototype starts empty; populated by
+        // EmitRegExpPrototypePopulate (eagerly invoked from cctor tail).
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Stsfld, regexpPrototypeField);
+
         // Initialize _symbolStorage = new ConditionalWeakTable<object, Dictionary<object, object?>>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(symbolStorageType));
         cctorIL.Emit(OpCodes.Stsfld, symbolStorageField);
@@ -347,6 +383,8 @@ public partial class RuntimeEmitter
         EmitLinkProto(stringPrototypeField);
         EmitLinkProto(arrayPrototypeField);
         EmitLinkProto(errorPrototypeField);
+        EmitLinkProto(functionPrototypeField);
+        EmitLinkProto(regexpPrototypeField);
 
         // Initialize _mapNullSentinel = new object()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.Object));
@@ -373,6 +411,8 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Call, runtime.BooleanPrototypePopulateMethod);
         cctorIL.Emit(OpCodes.Call, runtime.StringPrototypePopulateMethod);
         cctorIL.Emit(OpCodes.Call, runtime.ErrorPrototypePopulateMethod);
+        cctorIL.Emit(OpCodes.Call, runtime.FunctionPrototypePopulateMethod);
+        cctorIL.Emit(OpCodes.Call, runtime.RegExpPrototypePopulateMethod);
 
         cctorIL.Emit(OpCodes.Ret);
 
@@ -796,6 +836,17 @@ public partial class RuntimeEmitter
         // the spec-compliant ErrorToStringSpec helper can reference $Error
         // metadata (TSErrorType, ErrorGetName/ErrorGetMessage already populated).
         EmitErrorPrototypePopulate(typeBuilder, runtime);
+        // Function.prototype populate body — must come after $TSFunction +
+        // $BoundTSFunction emission and after InvokeMethodValue is wired
+        // (the call/apply helpers route through it). Emitted in the same tail
+        // section as ErrorPrototype.
+        EmitFunctionPrototypePopulate(typeBuilder, runtime);
+        // RegExp.prototype populate body — must come after $RegExp's
+        // TSRegExpSym* helpers are emitted (they're referenced from the
+        // populate IL). Emitted gated on UsesRegExp; otherwise the helpers
+        // were never created.
+        if (_features.UsesRegExp)
+            EmitRegExpPrototypePopulate(typeBuilder, runtime);
         // Map methods — gated on UsesMap. EmitMapGroupBy (`Map.groupBy(...)`)
         // depends on Map's own MapHas/Set/Get methods so it folds up under
         // the same gate. ObjectGroupBy stays unconditional (it builds a plain

@@ -1,0 +1,106 @@
+using System.Reflection;
+using System.Reflection.Emit;
+
+namespace SharpTS.Compilation;
+
+public partial class RuntimeEmitter
+{
+    /// <summary>
+    /// Populates <see cref="EmittedRuntime.RegExpPrototypeField"/> with the
+    /// five well-known-symbol-keyed methods from ECMA-262 §22.2.5
+    /// (@@match/@@matchAll/@@replace/@@search/@@split). The string-keyed dict
+    /// gets a `constructor` slot pointing at typeof($RegExp); the symbol
+    /// methods live in the per-object ConditionalWeakTable symbol-dict so
+    /// `RegExp.prototype[Symbol.match]` resolves through the same path
+    /// `regex[Symbol.match]` does.
+    ///
+    /// When <c>UsesRegExp</c> is false the helpers don't exist, so the body
+    /// degenerates to a no-op Ret — the field is still initialized to an
+    /// empty dictionary by the cctor.
+    /// </summary>
+    private void DefineRegExpPrototypePopulateShell(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.RegExpPrototypePopulateMethod = typeBuilder.DefineMethod(
+            "_RegExpPrototypePopulate",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            Type.EmptyTypes);
+
+        // Pre-create a body for the no-RegExp case. EmitRegExpPrototypePopulate
+        // is gated on UsesRegExp and replaces this body when invoked. When
+        // UsesRegExp is false, this stub keeps the cctor's populate call valid.
+        if (!_features.UsesRegExp)
+        {
+            var stubIL = runtime.RegExpPrototypePopulateMethod.GetILGenerator();
+            stubIL.Emit(OpCodes.Ret);
+        }
+    }
+
+    private void EmitRegExpPrototypePopulate(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = runtime.RegExpPrototypePopulateMethod;
+        var il = method.GetILGenerator();
+        var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item",
+            _types.String, _types.Object);
+
+        // Idempotent guard.
+        var doFillLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.DictionaryStringObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, doFillLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(doFillLabel);
+
+        // ECMA-262 §22.2.6 RegExp.prototype.constructor === RegExp.
+        il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Ldtoken, runtime.TSRegExpType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Callvirt, setItem);
+
+        // Populate the symbol-keyed slots. The dispatch path
+        // (RuntimeEmitter.Objects.Index.cs `symbolKeyLabel`) reads from
+        // GetSymbolDict(obj), so we plant the entries in
+        // GetSymbolDict(RegExpPrototypeField).
+        var symbolDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Stloc, symbolDictLocal);
+
+        var symbolSetItem = _types.GetMethod(_types.DictionaryObjectObject, "set_Item",
+            _types.Object, _types.Object);
+
+        void WireSymbol(FieldBuilder symbolField, MethodBuilder helper, string jsName, int jsLength)
+        {
+            // GetSymbolDict(proto)[symbolField] = new $TSFunction(null, helper-as-MethodInfo, jsName, jsLength);
+            il.Emit(OpCodes.Ldloc, symbolDictLocal);
+            il.Emit(OpCodes.Ldsfld, symbolField);
+            il.Emit(OpCodes.Ldnull);                                // target
+            il.Emit(OpCodes.Ldtoken, helper);
+            il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+                _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldc_I4, jsLength);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+            il.Emit(OpCodes.Callvirt, symbolSetItem);
+        }
+
+        // ECMA-262 §22.2.5 spec lengths:
+        //   @@match=1, @@matchAll=1, @@replace=2, @@search=1, @@split=2.
+        WireSymbol(runtime.SymbolMatch,    runtime.TSRegExpSymMatchHelper,    "[Symbol.match]",    1);
+        WireSymbol(runtime.SymbolMatchAll, runtime.TSRegExpSymMatchAllHelper, "[Symbol.matchAll]", 1);
+        WireSymbol(runtime.SymbolReplace,  runtime.TSRegExpSymReplaceHelper,  "[Symbol.replace]",  2);
+        WireSymbol(runtime.SymbolSearch,   runtime.TSRegExpSymSearchHelper,   "[Symbol.search]",   1);
+        WireSymbol(runtime.SymbolSplit,    runtime.TSRegExpSymSplitHelper,    "[Symbol.split]",    2);
+
+        // RegExp.prototype's [[Prototype]] is %Object.prototype% per
+        // ECMA-262 §22.2.6.
+        il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
+
+        il.Emit(OpCodes.Ret);
+    }
+}

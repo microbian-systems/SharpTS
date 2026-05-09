@@ -427,6 +427,23 @@ public class EmittedRuntime
     public MethodBuilder ErrorPrototypePopulateMethod { get; set; } = null!;
     /// <summary>$Runtime.ErrorToStringSpec(this) — ECMA-262 20.5.3.4 Error.prototype.toString. Throws TypeError on non-object receiver; otherwise reads name/message via Get and returns the formatted string.</summary>
     public MethodBuilder ErrorToStringSpec { get; set; } = null!;
+
+    /// <summary>Function.prototype singleton dict, populated lazily with $TSFunction wrappers for call/apply/bind/toString/constructor (ECMA-262 §20.2.3).</summary>
+    public FieldBuilder FunctionPrototypeField { get; set; } = null!;
+    /// <summary>Idempotent populate for <see cref="FunctionPrototypeField"/>.</summary>
+    public MethodBuilder FunctionPrototypePopulateMethod { get; set; } = null!;
+    /// <summary>RegExp.prototype singleton dict — primarily a host for the five well-known symbol-keyed methods (@@match/@@replace/@@search/@@split/@@matchAll, ECMA-262 §22.2.5) reachable via `RegExp.prototype[Symbol.X]`. The symbol entries live in the per-object ConditionalWeakTable symbol dict, populated at module init.</summary>
+    public FieldBuilder RegExpPrototypeField { get; set; } = null!;
+    /// <summary>Idempotent populate for <see cref="RegExpPrototypeField"/>.</summary>
+    public MethodBuilder RegExpPrototypePopulateMethod { get; set; } = null!;
+    /// <summary>$Runtime.FunctionProtoCall(__this, args) — ECMA-262 §20.2.3.3 Function.prototype.call. Dispatches __this with args[0] as thisArg, args[1..] as call args.</summary>
+    public MethodBuilder FunctionProtoCallHelper { get; set; } = null!;
+    /// <summary>$Runtime.FunctionProtoApply(__this, args) — ECMA-262 §20.2.3.1 Function.prototype.apply. Dispatches __this with args[0] as thisArg, args[1] (array-like) as call args.</summary>
+    public MethodBuilder FunctionProtoApplyHelper { get; set; } = null!;
+    /// <summary>$Runtime.FunctionProtoBind(__this, args) — ECMA-262 §20.2.3.2 Function.prototype.bind. Returns a $BoundTSFunction (or shim) capturing __this + thisArg + boundArgs.</summary>
+    public MethodBuilder FunctionProtoBindHelper { get; set; } = null!;
+    /// <summary>$Runtime.FunctionProtoToString(__this) — ECMA-262 §20.2.3.5. Stringifies the function (or returns native-source-like text).</summary>
+    public MethodBuilder FunctionProtoToStringHelper { get; set; } = null!;
     public MethodBuilder GetIndex { get; set; } = null!;
     public MethodBuilder SetIndex { get; set; } = null!;
     public MethodBuilder SetIndexStrict { get; set; } = null!;

@@ -8,6 +8,20 @@ namespace SharpTS.Compilation;
 public partial class RuntimeEmitter
 {
     /// <summary>
+    /// Helper: emits IL to set a boolean descriptor field
+    /// (writable/enumerable/configurable) on the result dict to a constant
+    /// value. Reduces 6 lines of boilerplate to one call at each site.
+    /// </summary>
+    private void EmitDescriptorBoolField(ILGenerator il, LocalBuilder resultDictLocal, string fieldName, bool value)
+    {
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, fieldName);
+        il.Emit(value ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+    }
+
+    /// <summary>
     /// Emits Object.defineProperty(obj, prop, descriptor) - defines or modifies a property.
     /// Signature: object ObjectDefineProperty(object obj, object prop, object descriptor)
     /// Creates a $CompiledPropertyDescriptor and registers it in the emitted $PropertyDescriptorStore.
@@ -371,6 +385,64 @@ public partial class RuntimeEmitter
         // If descriptor is not null, convert it to a JS object
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Brtrue, hasDescriptorLabel);
+
+        // ECMA-262 §17 — built-in functions expose `name` and `length` as
+        // { writable: false, enumerable: false, configurable: true } own data
+        // properties. Synthesize those descriptors when the receiver is a
+        // $TSFunction (covers RegExp.prototype[Symbol.match], etc. that
+        // verifyProperty inspects). Other callable wrappers fall through to
+        // the existing paths (PDS / dict / class instance).
+        var notTSFunctionForDescLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notTSFunctionForDescLabel);
+
+        // name / length only — anything else on a function returns null.
+        var notFnNameLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notFnNameLabel);
+        // value = TSFunction.GetMember(fn, "name") — or just inline it via the
+        // GetProperty path which handles function name lookup.
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, resultDictLocal);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        EmitDescriptorBoolField(il, resultDictLocal, "writable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(notFnNameLabel);
+
+        var notFnLengthLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notFnLengthLabel);
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, resultDictLocal);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        EmitDescriptorBoolField(il, resultDictLocal, "writable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(notFnLengthLabel);
+
+        // Other keys on a function: not own → null.
+        il.Emit(OpCodes.Br, returnNullLabel);
+        il.MarkLabel(notTSFunctionForDescLabel);
 
         // No descriptor - check if it's an array first
         var notListLabel = il.DefineLabel();
