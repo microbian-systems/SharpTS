@@ -33,6 +33,14 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]);
         runtime.HasOwnPropertyHelperMethod = method;
 
+        // Name parameter 0 as "__this" so the wrapping $TSFunction sets
+        // _expectsThis. That routes `.call(receiver, name)` through
+        // InvokeWithThis's expectsThis branch (which prepends the explicit
+        // thisArg as args[0]) instead of relying on a target-bound shortcut
+        // that double-prepends and trims the wrong argument.
+        method.DefineParameter(1, ParameterAttributes.None, "__this");
+        method.DefineParameter(2, ParameterAttributes.None, "name");
+
         var il = method.GetILGenerator();
         var nameLocal = il.DeclareLocal(_types.String);
 

@@ -551,10 +551,42 @@ public partial class RuntimeEmitter
         iwt.Emit(OpCodes.Conv_I4);  // length
         iwt.Emit(OpCodes.Call, _types.ArrayType.GetMethod("Copy", [_types.ArrayType, _types.Int32, _types.ArrayType, _types.Int32, _types.Int32])!);
 
-        // Call Invoke(effectiveArgs) and return
+        // Save _target, null it, call Invoke(effectiveArgs), then restore.
+        // Why: when this $TSFunction's helper has `__this` as its first
+        // parameter (expectsThis), we've already prepended the explicit
+        // thisArg to args[0]. But Invoke's `IsStatic && _target != null`
+        // check would ALSO prepend `_target` — in cases where the wrapper was
+        // built via the dict-branch short-circuit at
+        // RuntimeEmitter.Objects.Properties.cs (`Object.prototype.hasOwnProperty`,
+        // etc., where _target is the host dict), this double-prepends and
+        // AdjustArgs trims the wrong tail, dropping the real argument.
+        // Nulling _target around the inner Invoke routes through the
+        // notStaticWithTarget branch, so the args we built here flow through
+        // unchanged. The save/restore is safe under recursion: each frame's
+        // outer scope captures the original; the inner sees null and
+        // re-saves null — when it restores, the outer's original is still
+        // intact.
+        var savedTargetIWT = iwt.DeclareLocal(_types.Object);
+        var iwtResultLocal = iwt.DeclareLocal(_types.Object);
+        iwt.Emit(OpCodes.Ldarg_0);
+        iwt.Emit(OpCodes.Ldfld, targetField);
+        iwt.Emit(OpCodes.Stloc, savedTargetIWT);
+        iwt.Emit(OpCodes.Ldarg_0);
+        iwt.Emit(OpCodes.Ldnull);
+        iwt.Emit(OpCodes.Stfld, targetField);
+
+        iwt.BeginExceptionBlock();
         iwt.Emit(OpCodes.Ldarg_0);
         iwt.Emit(OpCodes.Ldloc, effectiveArgsIWT);
         iwt.Emit(OpCodes.Callvirt, invokeBuilder);
+        iwt.Emit(OpCodes.Stloc, iwtResultLocal);
+        iwt.BeginFinallyBlock();
+        iwt.Emit(OpCodes.Ldarg_0);
+        iwt.Emit(OpCodes.Ldloc, savedTargetIWT);
+        iwt.Emit(OpCodes.Stfld, targetField);
+        iwt.EndExceptionBlock();
+
+        iwt.Emit(OpCodes.Ldloc, iwtResultLocal);
         iwt.Emit(OpCodes.Ret);
 
         // ToString method

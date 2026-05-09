@@ -21,10 +21,14 @@ public partial class RuntimeEmitter
             _types.Boolean,
             [_types.Object, _types.Object]);
         runtime.IsPrototypeOfHelperMethod = method;
-        // Note: do NOT name first param "__this". The wrappers use target
-        // binding (TSFunctionCtor with target=receiver), so Invoke's
-        // static-with-target path prepends target. If we also marked
-        // __this, InvokeWithThis would double-prepend.
+        // Param 0 is "__this" so the wrapping $TSFunction routes
+        // .call(other, target) through InvokeWithThis's expectsThis path —
+        // which now nulls _target around the inner Invoke so direct dispatch
+        // (`o.isPrototypeOf(target)`) and .call dispatch produce the same
+        // semantic answer. (Pre-fix the double-prepend / target-bound shape
+        // collided; see the InvokeWithThis fix in RuntimeEmitter.TSFunction.cs.)
+        method.DefineParameter(1, ParameterAttributes.None, "__this");
+        method.DefineParameter(2, ParameterAttributes.None, "target");
 
         var il = method.GetILGenerator();
         var falseLabel = il.DefineLabel();

@@ -2217,28 +2217,36 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(dictLabel);
         // Object.prototype methods short-circuit: return $TSFunction wrappers
-        // bound to this dict. Same pattern as GetFunctionMethod for
-        // $TSFunction receivers. Per ECMA-262 every object inherits these
-        // from Object.prototype.
-        void EmitObjProtoMethodCheck(string jsName, MethodBuilder helper)
+        // for the helper. target=null + cached name+length means the wrapper
+        // dispatches via InvokeWithThis (the helper's first param is "__this"
+        // so _expectsThis=true), letting .call(receiver, ...) inject the right
+        // receiver instead of being shadowed by a target-bound prepending
+        // that double-applies and trims the wrong tail. Direct dispatch
+        // (`obj.method(args)`) still works because compiled-mode method calls
+        // route through InvokeMethodValue → InvokeWithThis with the receiver
+        // as thisArg. JS-spec name + length surface to user code via fn.name
+        // / fn.length introspection.
+        void EmitObjProtoMethodCheck(string jsName, MethodBuilder helper, int jsLength)
         {
             var skip = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldstr, jsName);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
             il.Emit(OpCodes.Brfalse, skip);
-            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ldtoken, helper);
             il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
                 _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
             il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldc_I4, jsLength);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(skip);
         }
-        EmitObjProtoMethodCheck("hasOwnProperty", runtime.HasOwnPropertyHelperMethod);
-        EmitObjProtoMethodCheck("isPrototypeOf",  runtime.IsPrototypeOfHelperMethod);
+        EmitObjProtoMethodCheck("hasOwnProperty", runtime.HasOwnPropertyHelperMethod, 1);
+        EmitObjProtoMethodCheck("isPrototypeOf",  runtime.IsPrototypeOfHelperMethod, 1);
 
         // Check for getter accessor via $PropertyDescriptorStore - fully standalone, no reflection
         var getterLocal = il.DeclareLocal(_types.Object);
