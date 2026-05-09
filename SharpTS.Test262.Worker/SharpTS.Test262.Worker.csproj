@@ -17,6 +17,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>SharpTS.Test262.Worker</RootNamespace>
     <AssemblyName>SharpTS.Test262.Worker</AssemblyName>
+    <!-- Server GC: workers do back-to-back compile + ALC unload — workstation GC's
+         per-thread stop-the-world hurts on the 50-test forced-GC cycle. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <!-- Share the runner code with the in-process test project rather than

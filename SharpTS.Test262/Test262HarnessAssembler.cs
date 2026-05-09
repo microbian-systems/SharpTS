@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 
 namespace SharpTS.Test262;
@@ -12,6 +13,12 @@ namespace SharpTS.Test262;
 public sealed class Test262HarnessAssembler
 {
     private readonly string _harnessDir;
+
+    // Harness files (sta.js, assert.js, includes/*) are read fresh from disk per test
+    // by AppendHarnessFile. Across a ~10K-test run that's ~50K File.ReadAllText calls
+    // for files that never change. Cache by absolute path; a single SharpTS.dll's
+    // worth of test runs (parent + N workers) shares this once per process.
+    private static readonly ConcurrentDictionary<string, string> _harnessCache = new(StringComparer.Ordinal);
 
     public Test262HarnessAssembler(string test262Root)
     {
@@ -57,9 +64,14 @@ public sealed class Test262HarnessAssembler
     private void AppendHarnessFile(StringBuilder sb, string name)
     {
         var path = Path.Combine(_harnessDir, name);
-        if (!File.Exists(path))
-            throw new FileNotFoundException($"Test262 harness file missing: {name}", path);
-        sb.Append(File.ReadAllText(path));
+        var content = _harnessCache.GetOrAdd(path, static p =>
+        {
+            if (!File.Exists(p))
+                throw new FileNotFoundException(
+                    $"Test262 harness file missing: {Path.GetFileName(p)}", p);
+            return File.ReadAllText(p);
+        });
+        sb.Append(content);
         if (sb.Length > 0 && sb[^1] != '\n') sb.Append('\n');
     }
 }

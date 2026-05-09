@@ -15,7 +15,18 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Server GC: per-test compile + ALC unload churn benefits from per-core heaps and
+         concurrent collection vs. workstation GC's stop-the-world pauses. Pure-throughput
+         wins, no behavior change. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pre-warm the ThreadPool: avoids per-test thread-creation lag when xUnit
+         dispatches collections in parallel. -->
+    <RuntimeHostConfigurationOption Include="System.Threading.ThreadPool.MinThreads" Value="16" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />

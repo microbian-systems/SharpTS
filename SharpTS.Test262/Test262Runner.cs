@@ -51,8 +51,19 @@ public sealed class Test262Runner
     // the GC cost.
     private const int GcEveryNTests = 50;
 
-    // Serializes Console.Out/Error redirection across parallel test cases.
-    private static readonly object ConsoleLock = new();
+    // AsyncLocal-scoped Console.Out / Console.Error redirection. Replaces the prior
+    // pattern of `lock(ConsoleLock) { Console.SetOut(sw); … Console.SetOut(orig); }`
+    // around every test execution. That pattern had two costs:
+    //   1. Console.SetOut wraps in TextWriter.Synchronized — every JS console.log
+    //      then takes a process-global lock, capping parallelism even within a worker.
+    //   2. The wrap allocation + push/pop happens twice per test × ~10K tests.
+    // The AsyncLocal redirector installs a proxy on Console.Out exactly once per
+    // process, then per-test scopes are pure AsyncLocal slot writes — no allocation,
+    // no global lock.
+    private static readonly AsyncLocal<TextWriter?> _outOverride = new();
+    private static readonly AsyncLocal<TextWriter?> _errOverride = new();
+    private static int _consoleProxyInstalled;
+    private static readonly object _consoleProxyLock = new();
 
     private readonly string _test262Root;
     private readonly Test262HarnessAssembler _assembler;
@@ -68,6 +79,100 @@ public sealed class Test262Runner
         _assembler = new Test262HarnessAssembler(test262Root);
         _timeout = timeout ?? DefaultTimeout;
         _skipFeatures = skipFeatures ?? new HashSet<string>(StringComparer.Ordinal);
+        EnsureConsoleProxyInstalled();
+    }
+
+    private static IDisposable RedirectConsoleOut(TextWriter writer)
+    {
+        var prior = _outOverride.Value;
+        _outOverride.Value = writer;
+        return new ConsoleScope(_outOverride, prior);
+    }
+
+    private static IDisposable RedirectConsoleError(TextWriter writer)
+    {
+        var prior = _errOverride.Value;
+        _errOverride.Value = writer;
+        return new ConsoleScope(_errOverride, prior);
+    }
+
+    /// <summary>
+    /// Installs Console.Out/Error proxies once per process. Writes go through the
+    /// proxy, which reads the AsyncLocal slot to find the per-context destination.
+    /// We bypass <see cref="Console.SetOut"/> by reflecting directly into
+    /// <c>System.Console.s_out</c>/<c>s_error</c> — <see cref="Console.SetOut"/>
+    /// would wrap our proxy in <see cref="TextWriter.Synchronized"/> and re-introduce
+    /// a process-global lock on every <see cref="Console.WriteLine"/>, which is
+    /// the exact thing this redirector exists to avoid.
+    /// </summary>
+    private static void EnsureConsoleProxyInstalled()
+    {
+        if (Volatile.Read(ref _consoleProxyInstalled) == 1) return;
+        lock (_consoleProxyLock)
+        {
+            if (_consoleProxyInstalled == 1) return;
+
+            var outProxy = new ProxyWriter(Console.Out, _outOverride);
+            var errProxy = new ProxyWriter(TextWriter.Null, _errOverride);
+
+            var ok = TrySetConsoleField("s_out", outProxy)
+                  && TrySetConsoleField("s_error", errProxy);
+            if (!ok)
+            {
+                // Older runtime — fall back to the synchronized SetOut path.
+                // Tests still work, just slightly slower.
+                Console.SetOut(outProxy);
+                Console.SetError(errProxy);
+            }
+            Volatile.Write(ref _consoleProxyInstalled, 1);
+        }
+    }
+
+    private static bool TrySetConsoleField(string fieldName, object proxy)
+    {
+        var field = typeof(Console).GetField(
+            fieldName,
+            BindingFlags.NonPublic | BindingFlags.Static);
+        if (field is null) return false;
+        field.SetValue(null, proxy);
+        return true;
+    }
+
+    private sealed class ConsoleScope : IDisposable
+    {
+        private readonly AsyncLocal<TextWriter?> _slot;
+        private readonly TextWriter? _prior;
+        private bool _disposed;
+        public ConsoleScope(AsyncLocal<TextWriter?> slot, TextWriter? prior)
+        {
+            _slot = slot;
+            _prior = prior;
+        }
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _slot.Value = _prior;
+        }
+    }
+
+    private sealed class ProxyWriter : TextWriter
+    {
+        private readonly TextWriter _fallback;
+        private readonly AsyncLocal<TextWriter?> _slot;
+        public ProxyWriter(TextWriter fallback, AsyncLocal<TextWriter?> slot)
+        {
+            _fallback = fallback;
+            _slot = slot;
+        }
+        public override System.Text.Encoding Encoding => _fallback.Encoding;
+        private TextWriter Target => _slot.Value ?? _fallback;
+        public override void Write(char value) => Target.Write(value);
+        public override void Write(string? value) { if (value is not null) Target.Write(value); }
+        public override void Write(char[] buffer, int index, int count) => Target.Write(buffer, index, count);
+        public override void WriteLine() => Target.WriteLine();
+        public override void WriteLine(string? value) => Target.WriteLine(value);
+        public override void Flush() => Target.Flush();
     }
 
     /// <summary>
@@ -361,43 +466,30 @@ public sealed class Test262Runner
 
     private Test262Result InvokeCompiledMain(MethodInfo mainMethod, int harnessLength, FieldInfo? cancelField, bool isAsync)
     {
-        // Serialize Console redirection; multiple compiled tests can run in
-        // parallel xUnit cases but must not cross-contaminate stdout.
+        // AsyncLocal-scoped redirection. Each Task.Run inherits its parent's
+        // ExecutionContext (which carries the AsyncLocal slots), so the per-test
+        // override naturally follows the test's logical execution context. No lock,
+        // no per-test SetOut wrapping cost.
         Test262Result? result = null;
         StringWriter? capturedStdout = null;
         var task = Task.Run(() =>
         {
-            lock (ConsoleLock)
+            var sw = new StringWriter();
+            capturedStdout = sw;
+            using var _outScope = RedirectConsoleOut(sw);
+            using var _errScope = RedirectConsoleError(TextWriter.Null);
+            try
             {
-                var originalOut = Console.Out;
-                var originalError = Console.Error;
-                var sw = new StringWriter();
-                capturedStdout = sw;
-                Console.SetOut(sw);
-                Console.SetError(TextWriter.Null);
-                try
-                {
-                    try
-                    {
-                        mainMethod.Invoke(null, null);
-                    }
-                    catch (TargetInvocationException tie)
-                    {
-                        result = ClassifyExecutionException(tie.InnerException ?? tie, harnessLength);
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        result = ClassifyExecutionException(ex, harnessLength);
-                        return;
-                    }
-                    result = new Test262Result(Test262Outcome.Pass, null, null);
-                }
-                finally
-                {
-                    Console.SetOut(originalOut);
-                    Console.SetError(originalError);
-                }
+                mainMethod.Invoke(null, null);
+                result = new Test262Result(Test262Outcome.Pass, null, null);
+            }
+            catch (TargetInvocationException tie)
+            {
+                result = ClassifyExecutionException(tie.InnerException ?? tie, harnessLength);
+            }
+            catch (Exception ex)
+            {
+                result = ClassifyExecutionException(ex, harnessLength);
             }
         });
 
