@@ -5,15 +5,15 @@ using Xunit.Abstractions;
 namespace SharpTS.Test262;
 
 /// <summary>
-/// Serialize the baseline facts — compiled mode redirects Console.Out under a
-/// process-wide lock, and running two big runs concurrently would fight over
-/// it and risk cross-contamination.
-/// </summary>
-[CollectionDefinition("Test262Baseline", DisableParallelization = true)]
-public class Test262BaselineCollection { }
-
-/// <summary>
 /// Milestone 2: subset coverage with a committed baseline.
+///
+/// Split into two classes (<see cref="Test262InterpretedTests"/>,
+/// <see cref="Test262CompiledTests"/>) so xUnit treats them as separate
+/// collections that can run concurrently. The earlier
+/// <c>[CollectionDefinition(DisableParallelization = true)]</c> existed to
+/// serialize a process-wide <c>Console.SetOut/restore</c> window; the
+/// AsyncLocal-scoped redirector in <see cref="Test262Runner"/> removed that
+/// constraint.
 ///
 /// Flow:
 ///   1. Enumerate every <c>.js</c> under the subset folders.
@@ -27,20 +27,13 @@ public class Test262BaselineCollection { }
 ///   <c>SHARPTS_TEST262_WIDE_SWEEP=1</c>      — use <c>wide-sweep.json</c>;
 ///                                              write <c>wide-sweep-report.md</c> instead of diffing.
 /// </summary>
-[Collection("Test262Baseline")]
-public class Test262Tests
+public abstract class Test262TestsBase
 {
-    private readonly ITestOutputHelper _output;
+    protected readonly ITestOutputHelper _output;
 
-    public Test262Tests(ITestOutputHelper output) => _output = output;
+    protected Test262TestsBase(ITestOutputHelper output) => _output = output;
 
-    [Fact]
-    public void InterpretedBaseline() => RunBaseline(Test262ExecutionMode.Interpreted);
-
-    [Fact]
-    public void CompiledBaseline() => RunBaseline(Test262ExecutionMode.Compiled);
-
-    private void RunBaseline(Test262ExecutionMode mode)
+    protected void RunBaseline(Test262ExecutionMode mode)
     {
         var test262Root = Test262Paths.TryFindRoot();
         var projectDir = Test262Paths.TryFindProjectDir();
@@ -257,4 +250,20 @@ public class Test262Tests
             sb.AppendLine($"| {kv.Key} | {kv.Value} |");
         File.AppendAllText(path, sb.ToString());
     }
+}
+
+public class Test262InterpretedTests : Test262TestsBase
+{
+    public Test262InterpretedTests(ITestOutputHelper output) : base(output) { }
+
+    [Fact]
+    public void InterpretedBaseline() => RunBaseline(Test262ExecutionMode.Interpreted);
+}
+
+public class Test262CompiledTests : Test262TestsBase
+{
+    public Test262CompiledTests(ITestOutputHelper output) : base(output) { }
+
+    [Fact]
+    public void CompiledBaseline() => RunBaseline(Test262ExecutionMode.Compiled);
 }
