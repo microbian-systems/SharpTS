@@ -720,6 +720,11 @@ public partial class Interpreter
             // Plain Dictionary<string, object?> from runtime helpers (e.g.,
             // Web Streams iterator results) — see SharpTSReadableStream.MakeReadResult.
             IDictionary<string, object?> d => d.Keys,
+            // ECMA-262 §17 — built-in functions have only `name` and `length`
+            // as own properties, both non-enumerable. for-in yields nothing,
+            // but throwing here would crash test262's verifyProperty (which
+            // for-in iterates its target object before checking enumerability).
+            ISharpTSCallable => Enumerable.Empty<string>(),
             _ => throw new InterpreterException("for...in requires an object.")
         };
 

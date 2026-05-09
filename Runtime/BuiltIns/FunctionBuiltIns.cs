@@ -8,9 +8,24 @@ namespace SharpTS.Runtime.BuiltIns;
 /// </summary>
 public static class FunctionBuiltIns
 {
-    private static readonly BuiltInMethod _bind = new("bind", 0, int.MaxValue, Bind);
-    private static readonly BuiltInMethod _call = new("call", 0, int.MaxValue, Call);
-    private static readonly BuiltInMethod _apply = new("apply", 0, 2, Apply);
+    // Spec lengths per ECMA-262 §20.2.3: bind=1, call=1, apply=2.
+    private static readonly BuiltInMethod _bind = new BuiltInMethod("bind", 0, int.MaxValue, Bind).WithSpecLength(1);
+    private static readonly BuiltInMethod _call = new BuiltInMethod("call", 0, int.MaxValue, Call).WithSpecLength(1);
+    private static readonly BuiltInMethod _apply = new BuiltInMethod("apply", 0, 2, Apply).WithSpecLength(2);
+
+    /// <summary>
+    /// Returns the unbound singleton callable for a Function.prototype method
+    /// (call/apply/bind), or null. Lets <c>Function.prototype.call</c> and
+    /// <c>fn.call</c> share one BuiltInMethod instance, so reference equality
+    /// holds across both access paths and bound variants compose correctly.
+    /// </summary>
+    public static BuiltInMethod? GetPrototypeMethod(string name) => name switch
+    {
+        "call" => _call,
+        "apply" => _apply,
+        "bind" => _bind,
+        _ => null,
+    };
 
     /// <summary>
     /// Gets a member from a function (bind, call, apply, length, name).
@@ -281,6 +296,17 @@ public class BoundFunction : ISharpTSCallable, ISharpTSCallableV2
                     return v2.CallV2(interpreter, combined);
                 return RuntimeValue.FromBoxed(boundArrow.Call(interpreter, combined.Select(rv => rv.ToObject()).ToList()));
             }
+
+            // Mirror the legacy Call path for BuiltInMethod (issue #101): the
+            // V2 path is hit by JS-level invocation of a BoundFunction wrapping
+            // a BuiltInMethod target (e.g. Function.prototype.call.bind(...)).
+            // Without this rebind the inner method receives no receiver and the
+            // implementation throws "called on non-function".
+            if (_target is BuiltInMethod bim)
+            {
+                return ((ISharpTSCallableV2)bim.Bind(_thisArg))
+                    .CallV2(interpreter, combined);
+            }
         }
 
         // Fast path: target supports V2
@@ -316,6 +342,17 @@ public class BoundFunction : ISharpTSCallable, ISharpTSCallableV2
             {
                 var boundArrow = arrow.Bind(_thisArg);
                 return boundArrow.Call(interpreter, combinedArgs);
+            }
+
+            // Built-in methods read their receiver from the bound `_receiver`
+            // slot, not from a synthetic `this` environment. For
+            // `Function.prototype.call.bind(hasOwn)` to work, the BuiltInMethod
+            // path must rebind via `.Bind(thisArg)` before invoking — without
+            // this, the inner method sees a null receiver and the implementation
+            // throws.
+            if (_target is BuiltInMethod bim)
+            {
+                return bim.Bind(_thisArg).Call(interpreter, combinedArgs);
             }
         }
 

@@ -29,14 +29,22 @@ public sealed class SharpTSFunctionGlobal : ISharpTSCallable
 }
 
 /// <summary>
-/// Minimal <c>Function.prototype</c> accessor. Exposes <c>toString</c> for
-/// lodash's native-detection path (<c>funcToString.call(fn)</c>).
+/// <c>Function.prototype</c> accessor. Returns the unbound <c>call</c>/
+/// <c>apply</c>/<c>bind</c> singletons that <see cref="BuiltIns.FunctionBuiltIns"/>
+/// also exposes for instance-level dispatch — so
+/// <c>Function.prototype.call</c> and <c>fn.call</c> resolve to the same
+/// callable, and <c>Function.prototype.call.bind(hasOwn)</c> composes with
+/// the BuiltInMethod rebind path that real-world test262 harness code (e.g.
+/// <c>propertyHelper.js</c>) relies on.
 /// </summary>
 public sealed class SharpTSFunctionPrototype
 {
     public object? GetMember(string name)
     {
+        var method = BuiltIns.FunctionBuiltIns.GetPrototypeMethod(name);
+        if (method != null) return method;
         if (name == "toString") return SharpTSFunctionProtoToString.Instance;
+        if (name == "constructor") return SharpTSFunctionGlobal.Instance;
         return null;
     }
 

@@ -93,6 +93,12 @@ public partial class Interpreter : IDisposable
         // that real-world CJS packages (yaml, lodash internals) rely on.
         globals[BuiltInNames.Array] = Runtime.Types.SharpTSArrayGlobal.Instance;
 
+        // Bare `Function` reference — required for `Function.prototype.call.bind(...)`
+        // patterns used by test262 propertyHelper.js (and many libraries' native-
+        // detection paths). Without this, the harness fails at load before any
+        // test body runs.
+        globals[BuiltInNames.Function] = Runtime.Types.SharpTSFunctionGlobal.Instance;
+
         // Node-style `global` alias for globalThis. CJS packages (lodash)
         // detect the global object via `typeof global == 'object'` and alias
         // its Array/Object/Date/etc. into a local scope.

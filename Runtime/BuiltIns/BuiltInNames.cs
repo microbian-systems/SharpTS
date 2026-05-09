@@ -114,6 +114,7 @@ public static class BuiltInNames
     public const string Number = "Number";
     public const string String = "String";
     public const string Boolean = "Boolean";
+    public const string Function = "Function";
     public const string Promise = "Promise";
     public const string ArrayBuffer = "ArrayBuffer";
     public const string SharedArrayBuffer = "SharedArrayBuffer";

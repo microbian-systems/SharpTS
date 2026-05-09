@@ -863,6 +863,22 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(value);
         }
 
+        // Built-in callables expose `name` / `length` as non-writable own
+        // properties (ECMA-262 §17). Index assignment to those should silently
+        // no-op in sloppy mode and throw TypeError in strict mode — test262's
+        // verifyProperty / isWritable rely on the TypeError shape to classify
+        // writability. Other keys on a callable (user-stored fn[k] = v) aren't
+        // supported here either; let them fall through to the spec-conformant
+        // error.
+        if (obj is ISharpTSCallable && obj is not SharpTSFunction
+            && index?.ToString() is "name" or "length")
+        {
+            if (strictMode)
+                throw new ThrowException(new Runtime.Types.SharpTSTypeError(
+                    $"Cannot assign to read only property '{index}' of function"));
+            return RuntimeValue.FromBoxed(value);
+        }
+
         var target = ResolveIndexTarget(obj, index);
 
         if (target is IndexTarget.EnumReverse or IndexTarget.ConstEnumError)
