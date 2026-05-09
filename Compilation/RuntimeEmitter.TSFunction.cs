@@ -523,7 +523,24 @@ public partial class RuntimeEmitter
         iwt.Emit(OpCodes.Ldloc, resultIWT);
         iwt.Emit(OpCodes.Ret);
 
-        // expectsThis is true - prepend thisArg to args
+        // expectsThis is true - prepend thisArg to args, then dispatch
+        // directly via the cached _invoker, choosing invokeTarget based on
+        // method.IsStatic. This bypasses the regular Invoke() body so we
+        // avoid its `IsStatic && _target != null` branch (which would
+        // double-prepend the bound _target on top of the thisArg we just
+        // injected — and trim the real argument off the tail in AdjustArgs).
+        //
+        // Two distinct call shapes converge here:
+        //   • Static helper with `__this` first param + bound _target (e.g.
+        //     EmitObjProtoMethodCheck's wrappers): _target is a host dict
+        //     used by direct `dict.method(arg)` dispatch. For .call(other,...)
+        //     dispatch we WANT to drop _target and use the explicit thisArg.
+        //     IsStatic=true → invokeTarget=null.
+        //   • Instance method on display class with `__this` first param +
+        //     display-instance _target (anon function expressions with
+        //     captures): _target IS the IL-level receiver of the method, NOT
+        //     a JS-level "this". The JS this is the injected thisArg, the IL
+        //     receiver MUST stay as _target. IsStatic=false → invokeTarget=_target.
         iwt.MarkLabel(expectsThisLabel);
 
         // effectiveArgs = new object[args.Length + 1]
@@ -551,42 +568,69 @@ public partial class RuntimeEmitter
         iwt.Emit(OpCodes.Conv_I4);  // length
         iwt.Emit(OpCodes.Call, _types.ArrayType.GetMethod("Copy", [_types.ArrayType, _types.Int32, _types.ArrayType, _types.Int32, _types.Int32])!);
 
-        // Save _target, null it, call Invoke(effectiveArgs), then restore.
-        // Why: when this $TSFunction's helper has `__this` as its first
-        // parameter (expectsThis), we've already prepended the explicit
-        // thisArg to args[0]. But Invoke's `IsStatic && _target != null`
-        // check would ALSO prepend `_target` — in cases where the wrapper was
-        // built via the dict-branch short-circuit at
-        // RuntimeEmitter.Objects.Properties.cs (`Object.prototype.hasOwnProperty`,
-        // etc., where _target is the host dict), this double-prepends and
-        // AdjustArgs trims the wrong tail, dropping the real argument.
-        // Nulling _target around the inner Invoke routes through the
-        // notStaticWithTarget branch, so the args we built here flow through
-        // unchanged. The save/restore is safe under recursion: each frame's
-        // outer scope captures the original; the inner sees null and
-        // re-saves null — when it restores, the outer's original is still
-        // intact.
-        var savedTargetIWT = iwt.DeclareLocal(_types.Object);
-        var iwtResultLocal = iwt.DeclareLocal(_types.Object);
-        iwt.Emit(OpCodes.Ldarg_0);
-        iwt.Emit(OpCodes.Ldfld, targetField);
-        iwt.Emit(OpCodes.Stloc, savedTargetIWT);
-        iwt.Emit(OpCodes.Ldarg_0);
-        iwt.Emit(OpCodes.Ldnull);
-        iwt.Emit(OpCodes.Stfld, targetField);
-
-        iwt.BeginExceptionBlock();
+        // adjustedArgs = this.AdjustArgs(effectiveArgs)
+        var iwtAdjustedArgsLocal = iwt.DeclareLocal(_types.ObjectArray);
         iwt.Emit(OpCodes.Ldarg_0);
         iwt.Emit(OpCodes.Ldloc, effectiveArgsIWT);
-        iwt.Emit(OpCodes.Callvirt, invokeBuilder);
-        iwt.Emit(OpCodes.Stloc, iwtResultLocal);
-        iwt.BeginFinallyBlock();
-        iwt.Emit(OpCodes.Ldarg_0);
-        iwt.Emit(OpCodes.Ldloc, savedTargetIWT);
-        iwt.Emit(OpCodes.Stfld, targetField);
-        iwt.EndExceptionBlock();
+        iwt.Emit(OpCodes.Callvirt, adjustArgsMethod);
+        iwt.Emit(OpCodes.Stloc, iwtAdjustedArgsLocal);
 
-        iwt.Emit(OpCodes.Ldloc, iwtResultLocal);
+        // Optional Convert/Coerce gated on _needsArgConversion.
+        var iwtSkipConvLabel = iwt.DefineLabel();
+        iwt.Emit(OpCodes.Ldarg_0);
+        iwt.Emit(OpCodes.Ldfld, needsArgConversionField);
+        iwt.Emit(OpCodes.Brfalse, iwtSkipConvLabel);
+        iwt.Emit(OpCodes.Ldarg_0);
+        iwt.Emit(OpCodes.Ldfld, methodField);
+        iwt.Emit(OpCodes.Ldloc, iwtAdjustedArgsLocal);
+        iwt.Emit(OpCodes.Call, convertArgsMethod);
+        iwt.Emit(OpCodes.Ldarg_0);
+        iwt.Emit(OpCodes.Ldfld, methodField);
+        iwt.Emit(OpCodes.Ldloc, iwtAdjustedArgsLocal);
+        iwt.Emit(OpCodes.Call, coercePrimitivesMethod);
+        iwt.MarkLabel(iwtSkipConvLabel);
+
+        // Publish effectiveArgs (thisArg + caller args) to thread-static.
+        // Mirrors what Invoke() did pre-fix when called from this path:
+        // function bodies that read JS `arguments` skip the leading __this
+        // slot and expect the rest to be the user's actual arguments. Using
+        // raw Ldarg_2 here would empty out `arguments` for any `arguments.length`
+        // / `arguments[i]` access from inside a function-expression body.
+        if (runtime.CurrentArgumentsField != null)
+        {
+            iwt.Emit(OpCodes.Ldloc, effectiveArgsIWT);
+            iwt.Emit(OpCodes.Stsfld, runtime.CurrentArgumentsField);
+        }
+
+        // invokeTarget = method.IsStatic ? null : _target
+        var iwtInvokeTargetLocal = iwt.DeclareLocal(_types.Object);
+        var iwtIsInstanceLabel = iwt.DefineLabel();
+        var iwtAfterTargetLabel = iwt.DefineLabel();
+        iwt.Emit(OpCodes.Ldarg_0);
+        iwt.Emit(OpCodes.Ldfld, methodField);
+        iwt.Emit(OpCodes.Callvirt, _types.MethodInfo.GetProperty("IsStatic")!.GetGetMethod()!);
+        iwt.Emit(OpCodes.Brfalse, iwtIsInstanceLabel);
+        // Static: invokeTarget = null
+        iwt.Emit(OpCodes.Ldnull);
+        iwt.Emit(OpCodes.Stloc, iwtInvokeTargetLocal);
+        iwt.Emit(OpCodes.Br, iwtAfterTargetLabel);
+        // Instance: invokeTarget = _target (display-class instance)
+        iwt.MarkLabel(iwtIsInstanceLabel);
+        iwt.Emit(OpCodes.Ldarg_0);
+        iwt.Emit(OpCodes.Ldfld, targetField);
+        iwt.Emit(OpCodes.Stloc, iwtInvokeTargetLocal);
+        iwt.MarkLabel(iwtAfterTargetLabel);
+
+        // _invoker.Invoke(invokeTarget, new Span<object>(adjustedArgs))
+        var iwtSpanOfObject = typeof(Span<>).MakeGenericType(typeof(object));
+        var iwtSpanCtor = iwtSpanOfObject.GetConstructor([typeof(object[])])!;
+        var iwtInvokerInvokeSpan = _types.MethodInvoker.GetMethod("Invoke", [_types.Object, iwtSpanOfObject])!;
+        iwt.Emit(OpCodes.Ldarg_0);
+        iwt.Emit(OpCodes.Ldfld, invokerField);
+        iwt.Emit(OpCodes.Ldloc, iwtInvokeTargetLocal);
+        iwt.Emit(OpCodes.Ldloc, iwtAdjustedArgsLocal);
+        iwt.Emit(OpCodes.Newobj, iwtSpanCtor);
+        iwt.Emit(OpCodes.Callvirt, iwtInvokerInvokeSpan);
         iwt.Emit(OpCodes.Ret);
 
         // ToString method
