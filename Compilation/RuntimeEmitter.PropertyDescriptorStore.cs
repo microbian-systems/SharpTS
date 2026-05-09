@@ -222,11 +222,11 @@ public partial class RuntimeEmitter
 
         // Use TypeBuilder.GetConstructor for generic types containing TypeBuilder-created types
         // _descriptors = new ConditionalWeakTable<...>()
-        cctorIl.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(cwtDescriptors, cwtOpenCtor));
+        cctorIl.Emit(OpCodes.Newobj, EmitterTypeHelpers.ResolveConstructor(cwtDescriptors, cwtOpenCtor));
         cctorIl.Emit(OpCodes.Stsfld, descriptorsField);
 
         // _frozenSealedState = new ConditionalWeakTable<...>()
-        cctorIl.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(cwtFrozenSealed, cwtOpenCtor));
+        cctorIl.Emit(OpCodes.Newobj, EmitterTypeHelpers.ResolveConstructor(cwtFrozenSealed, cwtOpenCtor));
         cctorIl.Emit(OpCodes.Stsfld, frozenSealedField);
 
         // _symbolStorage = new ConditionalWeakTable<...>()
@@ -234,7 +234,7 @@ public partial class RuntimeEmitter
         cctorIl.Emit(OpCodes.Stsfld, symbolStorageField);
 
         // _prototypeStore = new ConditionalWeakTable<...>()
-        cctorIl.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(cwtPrototype, cwtOpenCtor));
+        cctorIl.Emit(OpCodes.Newobj, EmitterTypeHelpers.ResolveConstructor(cwtPrototype, cwtOpenCtor));
         cctorIl.Emit(OpCodes.Stsfld, prototypeStoreField);
 
         cctorIl.Emit(OpCodes.Ret);
@@ -251,11 +251,11 @@ public partial class RuntimeEmitter
         var cwtTryGetValue = cwtOpenType.GetMethod("TryGetValue")!;
 
         // Get closed methods for each ConditionalWeakTable type
-        var frozenSealedGetOrCreate = TypeBuilder.GetMethod(cwtFrozenSealed, cwtGetOrCreateValue);
-        var frozenSealedTryGet = TypeBuilder.GetMethod(cwtFrozenSealed, cwtTryGetValue);
-        var prototypeGetOrCreate = TypeBuilder.GetMethod(cwtPrototype, cwtGetOrCreateValue);
-        var prototypeTryGet = TypeBuilder.GetMethod(cwtPrototype, cwtTryGetValue);
-        var descriptorsTryGet = TypeBuilder.GetMethod(cwtDescriptors, cwtTryGetValue);
+        var frozenSealedGetOrCreate = EmitterTypeHelpers.ResolveMethod(cwtFrozenSealed, cwtGetOrCreateValue);
+        var frozenSealedTryGet = EmitterTypeHelpers.ResolveMethod(cwtFrozenSealed, cwtTryGetValue);
+        var prototypeGetOrCreate = EmitterTypeHelpers.ResolveMethod(cwtPrototype, cwtGetOrCreateValue);
+        var prototypeTryGet = EmitterTypeHelpers.ResolveMethod(cwtPrototype, cwtTryGetValue);
+        var descriptorsTryGet = EmitterTypeHelpers.ResolveMethod(cwtDescriptors, cwtTryGetValue);
 
         // Get Dictionary<string, CompiledPropertyDescriptor> type and methods
         // Must use TypeBuilder.GetMethod since CompiledPropertyDescriptorType is TypeBuilder-created
@@ -264,12 +264,12 @@ public partial class RuntimeEmitter
         var dictOpenContainsKey = dictOpenType.GetMethod("ContainsKey")!;
         var dictOpenTryGetValue = dictOpenType.GetMethod("TryGetValue")!;
         var dictOpenSetItem = dictOpenType.GetMethod("set_Item")!;
-        var descriptorsDictContainsKey = TypeBuilder.GetMethod(descriptorsDictType, dictOpenContainsKey);
-        var descriptorsDictTryGetValue = TypeBuilder.GetMethod(descriptorsDictType, dictOpenTryGetValue);
-        var descriptorsDictSetItem = TypeBuilder.GetMethod(descriptorsDictType, dictOpenSetItem);
+        var descriptorsDictContainsKey = EmitterTypeHelpers.ResolveMethod(descriptorsDictType, dictOpenContainsKey);
+        var descriptorsDictTryGetValue = EmitterTypeHelpers.ResolveMethod(descriptorsDictType, dictOpenTryGetValue);
+        var descriptorsDictSetItem = EmitterTypeHelpers.ResolveMethod(descriptorsDictType, dictOpenSetItem);
 
         // Get _descriptors.GetOrCreateValue method for DefineProperty
-        var descriptorsGetOrCreate = TypeBuilder.GetMethod(cwtDescriptors, cwtGetOrCreateValue);
+        var descriptorsGetOrCreate = EmitterTypeHelpers.ResolveMethod(cwtDescriptors, cwtGetOrCreateValue);
 
         // Emit all methods
         EmitPDSFreeze(typeBuilder, runtime, frozenSealedField, frozenSealedGetOrCreate);

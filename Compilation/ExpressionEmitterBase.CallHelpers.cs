@@ -1458,7 +1458,7 @@ public abstract partial class ExpressionEmitterBase
         ConstructorInfo ctorToCall = parentCtor;
         Type? baseType = Ctx.CurrentClassBuilder?.BaseType;
         if (baseType != null && baseType.IsGenericType && baseType.IsConstructedGenericType)
-            ctorToCall = TypeBuilder.GetConstructor(baseType, parentCtor);
+            ctorToCall = EmitterTypeHelpers.ResolveConstructor(baseType, parentCtor);
 
         IL.Emit(OpCodes.Call, ctorToCall);
         IL.Emit(OpCodes.Ldnull);

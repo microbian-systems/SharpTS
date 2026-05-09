@@ -33,7 +33,19 @@ namespace SharpTS.Compilation;
 public partial class ILCompiler
 {
     private readonly string _assemblyName;
-    private readonly PersistedAssemblyBuilder _assemblyBuilder;
+    /// <summary>
+    /// The assembly builder. Concrete type is either <see cref="PersistedAssemblyBuilder"/>
+    /// (default; supports <see cref="SaveToBytes"/> for shipping a standalone DLL) or the
+    /// runtime <see cref="AssemblyBuilder"/> when <c>inMemoryOnly</c> is set (test-only fast
+    /// path that skips the PE-format roundtrip entirely — saves ~150ms per compile).
+    /// </summary>
+    private readonly AssemblyBuilder _assemblyBuilder;
+    /// <summary>
+    /// True when the assembly builder is the runtime <see cref="AssemblyBuilder"/> (no PE
+    /// emission). Used by tests to skip the ~150ms-per-test save+load roundtrip.
+    /// SaveToBytes/Save are unavailable in this mode.
+    /// </summary>
+    private readonly bool _inMemoryOnly;
     private readonly ModuleBuilder _moduleBuilder;
     private readonly TypeMapper _typeMapper;
     private readonly TypeEmitterRegistry _typeEmitterRegistry = new();  // Type-first method dispatch registry
@@ -222,6 +234,25 @@ public partial class ILCompiler
     /// <param name="references">Optional list of external assembly paths for @DotNetType support.</param>
     /// <param name="target">Output target type: DLL (class library) or EXE (executable).</param>
     public ILCompiler(string assemblyName, bool preserveConstEnums, bool useReferenceAssemblies, string? sdkPath, AssemblyMetadata? metadata, IReadOnlyList<string>? references, OutputTarget target)
+        : this(assemblyName, preserveConstEnums, useReferenceAssemblies, sdkPath, metadata, references, target, inMemoryOnly: false)
+    {
+    }
+
+    /// <summary>
+    /// Creates an in-memory compiler that skips PE-format save/load entirely.
+    /// Test-only fast path — the resulting assembly is invokable directly via
+    /// <see cref="GetEmittedAssembly"/> but cannot be saved to disk.
+    /// Saves ~150ms per compile (the cost of <see cref="PersistedAssemblyBuilder.GenerateMetadata"/>
+    /// + <see cref="Assembly.Load(byte[])"/> + PE parsing).
+    /// </summary>
+    public static ILCompiler CreateInMemory(string assemblyName) =>
+        new(assemblyName, preserveConstEnums: false, useReferenceAssemblies: false,
+            sdkPath: null, metadata: null, references: null, OutputTarget.Dll, inMemoryOnly: true);
+
+    /// <summary>
+    /// Full constructor with the in-memory-only flag exposed.
+    /// </summary>
+    public ILCompiler(string assemblyName, bool preserveConstEnums, bool useReferenceAssemblies, string? sdkPath, AssemblyMetadata? metadata, IReadOnlyList<string>? references, OutputTarget target, bool inMemoryOnly)
     {
         _assemblyName = assemblyName;
         _preserveConstEnums = preserveConstEnums;
@@ -230,6 +261,7 @@ public partial class ILCompiler
         _metadata = metadata;
         _referenceAssemblies = references;
         _outputTarget = target;
+        _inMemoryOnly = inMemoryOnly;
 
         // Initialize reference loader if external assemblies are provided
         if (references != null && references.Count > 0)
@@ -251,10 +283,14 @@ public partial class ILCompiler
             asmName.Version = metadata.Version;
         }
 
-        _assemblyBuilder = new PersistedAssemblyBuilder(
-            asmName,
-            _types.CoreAssembly
-        );
+        // In-memory mode skips the PE-format roundtrip used for shipping a standalone DLL.
+        // PersistedAssemblyBuilder is needed when SaveToBytes is called (it produces the
+        // PE bytes); the legacy in-memory AssemblyBuilder produces a directly-loadable
+        // dynamic assembly with no save support, ~150x faster end-to-end on small
+        // tests. See the perf-probe in .perf-probe/Program.cs.
+        _assemblyBuilder = _inMemoryOnly
+            ? AssemblyBuilder.DefineDynamicAssembly(asmName, AssemblyBuilderAccess.Run)
+            : new PersistedAssemblyBuilder(asmName, _types.CoreAssembly);
 
         // Apply assembly-level attributes if metadata is provided
         if (metadata != null)
@@ -1140,9 +1176,27 @@ public partial class ILCompiler
     /// latency on contended file systems (Windows + Defender scanning every
     /// freshly written DLL is the killer case).
     /// </summary>
+    /// <summary>
+    /// Returns the live in-memory assembly. Only valid when constructed via
+    /// <see cref="CreateInMemory"/> — the test-mode fast path that skips PE save/load.
+    /// </summary>
+    public Assembly GetEmittedAssembly()
+    {
+        if (!_inMemoryOnly)
+            throw new InvalidOperationException(
+                "GetEmittedAssembly() only works when ILCompiler was created with inMemoryOnly=true. " +
+                "For shipping DLLs, use SaveToBytes() / Save(path) and Assembly.Load(bytes) instead.");
+        return _assemblyBuilder;
+    }
+
     public byte[] SaveToBytes()
     {
-        MetadataBuilder metadataBuilder = _assemblyBuilder.GenerateMetadata(
+        if (_inMemoryOnly)
+            throw new InvalidOperationException(
+                "SaveToBytes() is unavailable in inMemoryOnly mode. Use GetEmittedAssembly() to access " +
+                "the live dynamic assembly directly, or construct ILCompiler without inMemoryOnly=true.");
+
+        MetadataBuilder metadataBuilder = ((PersistedAssemblyBuilder)_assemblyBuilder).GenerateMetadata(
             out BlobBuilder ilStream,
             out BlobBuilder fieldData);
 

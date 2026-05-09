@@ -38,12 +38,33 @@ public class ModuleResolver
     private readonly HashSet<string> _loadingScriptRefs = [];  // For circular script reference detection
     private readonly Dictionary<string, ModulePackageJson?> _packageJsonCache = [];
     private readonly StdlibProviderChain _stdlibChain;
+    /// <summary>
+    /// Optional in-memory virtual file system. When non-null, all file existence checks and
+    /// reads consult this map instead of touching the disk. Tests use this to bypass the
+    /// kernel-serialized Windows file system (Defender real-time scan in particular makes
+    /// concurrent <c>File.WriteAllText</c>/<c>File.ReadAllText</c> calls largely sequential —
+    /// measured 1.4× speedup at 12 threads vs ideal 12×). Keys are normalized via
+    /// <see cref="NormalizePath"/> (full path + OS-appropriate casing).
+    /// </summary>
+    private readonly Dictionary<string, string>? _virtualFiles;
 
     /// <summary>
     /// Creates a new module resolver rooted at the given path.
     /// </summary>
     /// <param name="basePath">Entry point file path or base directory</param>
-    public ModuleResolver(string basePath)
+    public ModuleResolver(string basePath) : this(basePath, virtualFiles: null) { }
+
+    /// <summary>
+    /// Creates a new module resolver with an optional in-memory virtual file system.
+    /// When <paramref name="virtualFiles"/> is non-null, the resolver bypasses the disk
+    /// entirely — all file existence checks and content reads consult the map. Tests use
+    /// this to avoid the per-file Windows kernel/AV serialization that bottlenecks
+    /// parallel test execution.
+    /// </summary>
+    /// <param name="basePath">Entry point file path or base directory</param>
+    /// <param name="virtualFiles">If non-null, an in-memory file system. Keys must be
+    /// absolute paths; normalization happens internally.</param>
+    public ModuleResolver(string basePath, IReadOnlyDictionary<string, string>? virtualFiles)
     {
         _basePath = Path.GetDirectoryName(Path.GetFullPath(basePath)) ?? ".";
         _stdlibChain = new StdlibProviderChain(
@@ -52,6 +73,38 @@ public class ModuleResolver
             new EmbeddedStdlibProvider(),
             new BuiltInCSharpProvider(),
         ]);
+        if (virtualFiles is not null)
+        {
+            _virtualFiles = new Dictionary<string, string>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var (k, v) in virtualFiles)
+                _virtualFiles[NormalizePath(k)] = v;
+        }
+    }
+
+    private static string NormalizePath(string path) => Path.GetFullPath(path);
+
+    private bool ResolverFileExists(string path)
+    {
+        if (_virtualFiles is null) return File.Exists(path);
+        return _virtualFiles.ContainsKey(NormalizePath(path));
+    }
+
+    private bool ResolverDirectoryExists(string path)
+    {
+        if (_virtualFiles is null) return Directory.Exists(path);
+        var canonical = NormalizePath(path);
+        var prefix = canonical + Path.DirectorySeparatorChar;
+        foreach (var k in _virtualFiles.Keys)
+            if (k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    private string ResolverReadAllText(string path)
+    {
+        if (_virtualFiles is not null && _virtualFiles.TryGetValue(NormalizePath(path), out var src))
+            return src;
+        return File.ReadAllText(path);
     }
 
     /// <summary>
@@ -153,7 +206,7 @@ public class ModuleResolver
         {
             string packageDir = Path.Combine(currentDir, "node_modules", packageName);
 
-            if (Directory.Exists(packageDir))
+            if (ResolverDirectoryExists(packageDir))
             {
                 var result = TryResolveInPackageDir(packageDir, subpath, kind);
                 if (result != null)
@@ -166,7 +219,7 @@ public class ModuleResolver
                 foreach (var ext in SourceExtensions)
                 {
                     string directPath = Path.Combine(currentDir, "node_modules", packageName + ext);
-                    if (File.Exists(directPath))
+                    if (ResolverFileExists(directPath))
                         return directPath;
                 }
             }
@@ -221,7 +274,7 @@ public class ModuleResolver
         foreach (var ext in SourceExtensions)
         {
             string indexPath = Path.Combine(packageDir, "index" + ext);
-            if (File.Exists(indexPath))
+            if (ResolverFileExists(indexPath))
                 return indexPath;
         }
 
@@ -231,49 +284,49 @@ public class ModuleResolver
     /// <summary>
     /// Resolves a path from the exports algorithm, applying extension mapping (.js → .ts, etc.).
     /// </summary>
-    private static string? ResolveExportsPath(string resolvedRelative, string packageDir)
+    private string? ResolveExportsPath(string resolvedRelative, string packageDir)
     {
         // Strip leading "./" and combine with package dir
         string relPath = resolvedRelative.StartsWith("./") ? resolvedRelative[2..] : resolvedRelative;
         string fullPath = Path.GetFullPath(Path.Combine(packageDir, relPath));
 
         // If path exists as-is, use it
-        if (File.Exists(fullPath))
+        if (ResolverFileExists(fullPath))
             return fullPath;
 
         // Extension mapping: .js → .ts, .tsx
         if (fullPath.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
         {
             string tsPath = fullPath[..^3] + ".ts";
-            if (File.Exists(tsPath)) return tsPath;
+            if (ResolverFileExists(tsPath)) return tsPath;
             string tsxPath = fullPath[..^3] + ".tsx";
-            if (File.Exists(tsxPath)) return tsxPath;
+            if (ResolverFileExists(tsxPath)) return tsxPath;
         }
         else if (fullPath.EndsWith(".mjs", StringComparison.OrdinalIgnoreCase))
         {
             string mtsPath = fullPath[..^4] + ".mts";
-            if (File.Exists(mtsPath)) return mtsPath;
+            if (ResolverFileExists(mtsPath)) return mtsPath;
         }
         else if (fullPath.EndsWith(".cjs", StringComparison.OrdinalIgnoreCase))
         {
             string ctsPath = fullPath[..^4] + ".cts";
-            if (File.Exists(ctsPath)) return ctsPath;
+            if (ResolverFileExists(ctsPath)) return ctsPath;
         }
 
         // Try appending each known extension
         foreach (var ext in SourceExtensions)
         {
             string candidate = fullPath + ext;
-            if (File.Exists(candidate)) return candidate;
+            if (ResolverFileExists(candidate)) return candidate;
         }
 
         // Try as directory with index.* file
-        if (Directory.Exists(fullPath))
+        if (ResolverDirectoryExists(fullPath))
         {
             foreach (var ext in SourceExtensions)
             {
                 string indexPath = Path.Combine(fullPath, "index" + ext);
-                if (File.Exists(indexPath)) return indexPath;
+                if (ResolverFileExists(indexPath)) return indexPath;
             }
         }
 
@@ -283,30 +336,30 @@ public class ModuleResolver
     /// <summary>
     /// Tries to add a file extension to a path, returning null if nothing resolves.
     /// </summary>
-    private static string? TryAddExtension(string path)
+    private string? TryAddExtension(string path)
     {
-        if (File.Exists(path))
+        if (ResolverFileExists(path))
             return path;
 
         foreach (var ext in SourceExtensions)
         {
             string candidate = path + ext;
-            if (File.Exists(candidate)) return candidate;
+            if (ResolverFileExists(candidate)) return candidate;
         }
 
         // .js → .ts (TS-source-for-JS-spec)
         if (path.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
         {
             string tsPath = path[..^3] + ".ts";
-            if (File.Exists(tsPath)) return tsPath;
+            if (ResolverFileExists(tsPath)) return tsPath;
         }
 
-        if (Directory.Exists(path))
+        if (ResolverDirectoryExists(path))
         {
             foreach (var ext in SourceExtensions)
             {
                 string indexPath = Path.Combine(path, "index" + ext);
-                if (File.Exists(indexPath)) return indexPath;
+                if (ResolverFileExists(indexPath)) return indexPath;
             }
         }
 
@@ -408,7 +461,14 @@ public class ModuleResolver
         if (_packageJsonCache.TryGetValue(path, out var cached))
             return cached;
 
-        var pkg = ModulePackageJson.TryLoad(path);
+        // Route through ResolverFileExists/ResolverReadAllText so test mode (virtual FS)
+        // can serve package.json from the in-memory map.
+        ModulePackageJson? pkg = null;
+        if (ResolverFileExists(path))
+        {
+            try { pkg = ModulePackageJson.TryLoadFromContent(ResolverReadAllText(path)); }
+            catch { pkg = null; }
+        }
         _packageJsonCache[path] = pkg;
         return pkg;
     }
@@ -418,7 +478,7 @@ public class ModuleResolver
     private string AddExtensionIfNeeded(string path)
     {
         // If path already has a known extension and exists, use it
-        if (HasKnownSourceExtension(path) && File.Exists(path))
+        if (HasKnownSourceExtension(path) && ResolverFileExists(path))
         {
             return path;
         }
@@ -427,23 +487,23 @@ public class ModuleResolver
         foreach (var ext in SourceExtensions)
         {
             string candidate = path + ext;
-            if (File.Exists(candidate))
+            if (ResolverFileExists(candidate))
                 return candidate;
         }
 
         // Try path as-is as a directory with index.* file
-        if (Directory.Exists(path))
+        if (ResolverDirectoryExists(path))
         {
             foreach (var ext in SourceExtensions)
             {
                 string indexPath = Path.Combine(path, "index" + ext);
-                if (File.Exists(indexPath))
+                if (ResolverFileExists(indexPath))
                     return indexPath;
             }
         }
 
         // If original path exists (e.g. an unusual extension), use it
-        if (File.Exists(path))
+        if (ResolverFileExists(path))
         {
             return path;
         }
@@ -469,18 +529,18 @@ public class ModuleResolver
     /// <param name="refPath">The path specified in the reference directive.</param>
     /// <param name="containingFilePath">The absolute path of the file containing the directive.</param>
     /// <returns>Absolute path to the referenced file.</returns>
-    private static string ResolveReferencePath(string refPath, string containingFilePath)
+    private string ResolveReferencePath(string refPath, string containingFilePath)
     {
         string directory = Path.GetDirectoryName(containingFilePath)!;
         string resolved = Path.GetFullPath(Path.Combine(directory, refPath));
 
         // Add .ts extension if needed
-        if (!File.Exists(resolved) && !resolved.EndsWith(".ts", StringComparison.OrdinalIgnoreCase))
+        if (!ResolverFileExists(resolved) && !resolved.EndsWith(".ts", StringComparison.OrdinalIgnoreCase))
         {
             resolved += ".ts";
         }
 
-        if (!File.Exists(resolved))
+        if (!ResolverFileExists(resolved))
         {
             throw new Exception($"Type Error: Referenced file not found: '{refPath}' (resolved to '{resolved}')");
         }
@@ -610,7 +670,7 @@ public class ModuleResolver
 
         try
         {
-            string source = File.ReadAllText(absolutePath);
+            string source = ResolverReadAllText(absolutePath);
 
             var lexer = new Lexer(source);
             var tokens = lexer.ScanTokens();

@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Reflection.Emit;
 
 namespace SharpTS.Compilation;
@@ -136,7 +136,7 @@ public partial class RuntimeEmitter
         forIL.Emit(OpCodes.Ldsfld, globalRegistryField);
         forIL.Emit(OpCodes.Ldarg_0);  // key
         forIL.Emit(OpCodes.Ldloca_S, forExisting);
-        var tryGetValueMethod = TypeBuilder.GetMethod(globalRegistryType, typeof(Dictionary<,>).GetMethod("TryGetValue")!);
+        var tryGetValueMethod = EmitterTypeHelpers.ResolveMethod(globalRegistryType, typeof(Dictionary<,>).GetMethod("TryGetValue")!);
         forIL.Emit(OpCodes.Callvirt, tryGetValueMethod);
         forIL.Emit(OpCodes.Brtrue, forFoundLabel);
 
@@ -149,14 +149,14 @@ public partial class RuntimeEmitter
         forIL.Emit(OpCodes.Ldsfld, globalRegistryField);
         forIL.Emit(OpCodes.Ldarg_0);  // key
         forIL.Emit(OpCodes.Ldloc_0);  // symbol
-        var setItemMethod = TypeBuilder.GetMethod(globalRegistryType, typeof(Dictionary<,>).GetMethod("set_Item")!);
+        var setItemMethod = EmitterTypeHelpers.ResolveMethod(globalRegistryType, typeof(Dictionary<,>).GetMethod("set_Item")!);
         forIL.Emit(OpCodes.Callvirt, setItemMethod);
 
         // _reverseRegistry[symbol] = key;
         forIL.Emit(OpCodes.Ldsfld, reverseRegistryField);
         forIL.Emit(OpCodes.Ldloc_0);  // symbol
         forIL.Emit(OpCodes.Ldarg_0);  // key
-        var reverseSetItemMethod = TypeBuilder.GetMethod(reverseRegistryType, typeof(Dictionary<,>).GetMethod("set_Item")!);
+        var reverseSetItemMethod = EmitterTypeHelpers.ResolveMethod(reverseRegistryType, typeof(Dictionary<,>).GetMethod("set_Item")!);
         forIL.Emit(OpCodes.Callvirt, reverseSetItemMethod);
 
         // Fall through to return existing (which now holds new symbol)
@@ -219,7 +219,7 @@ public partial class RuntimeEmitter
         keyForIL.Emit(OpCodes.Ldsfld, reverseRegistryField);
         keyForIL.Emit(OpCodes.Ldarg_0);  // symbol
         keyForIL.Emit(OpCodes.Ldloca_S, keyForResult);
-        var reverseTryGetValueMethod = TypeBuilder.GetMethod(reverseRegistryType, typeof(Dictionary<,>).GetMethod("TryGetValue")!);
+        var reverseTryGetValueMethod = EmitterTypeHelpers.ResolveMethod(reverseRegistryType, typeof(Dictionary<,>).GetMethod("TryGetValue")!);
         keyForIL.Emit(OpCodes.Callvirt, reverseTryGetValueMethod);
         keyForIL.Emit(OpCodes.Pop);  // Discard bool result, we just want the out value (null if not found)
 
@@ -252,12 +252,12 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Stsfld, registryLockField);
 
         // Initialize global registry: _globalRegistry = new Dictionary<string, $TSSymbol>()
-        var globalRegistryCtor = TypeBuilder.GetConstructor(globalRegistryType, typeof(Dictionary<,>).GetConstructor(Type.EmptyTypes)!);
+        var globalRegistryCtor = EmitterTypeHelpers.ResolveConstructor(globalRegistryType, typeof(Dictionary<,>).GetConstructor(Type.EmptyTypes)!);
         cctorIL.Emit(OpCodes.Newobj, globalRegistryCtor);
         cctorIL.Emit(OpCodes.Stsfld, globalRegistryField);
 
         // Initialize reverse registry: _reverseRegistry = new Dictionary<$TSSymbol, string>()
-        var reverseRegistryCtor = TypeBuilder.GetConstructor(reverseRegistryType, typeof(Dictionary<,>).GetConstructor(Type.EmptyTypes)!);
+        var reverseRegistryCtor = EmitterTypeHelpers.ResolveConstructor(reverseRegistryType, typeof(Dictionary<,>).GetConstructor(Type.EmptyTypes)!);
         cctorIL.Emit(OpCodes.Newobj, reverseRegistryCtor);
         cctorIL.Emit(OpCodes.Stsfld, reverseRegistryField);
 

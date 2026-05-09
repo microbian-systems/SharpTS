@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Reflection.Emit;
 
@@ -160,7 +160,7 @@ public partial class RuntimeEmitter
         // member resolution on such a constructed type must go through
         // TypeBuilder.GetConstructor/GetMethod rather than .GetConstructor directly.
         var concurrentDictOpenCtor = typeof(System.Collections.Concurrent.ConcurrentDictionary<,>).GetConstructor(Type.EmptyTypes)!;
-        cctorIL.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(instanceCacheType, concurrentDictOpenCtor));
+        cctorIL.Emit(OpCodes.Newobj, EmitterTypeHelpers.ResolveConstructor(instanceCacheType, concurrentDictOpenCtor));
         cctorIL.Emit(OpCodes.Stsfld, instanceCacheField);
         // Prototype cache: ConcurrentDictionary<MethodInfo, object> — generic args
         // are both concrete CLR types, so the constructor resolves directly.
@@ -272,8 +272,8 @@ public partial class RuntimeEmitter
         var openGetOrAdd = concurrentDictOpen.GetMethods()
             .First(m => m.Name == "GetOrAdd" && m.GetParameters().Length == 2
                  && m.GetParameters()[1].ParameterType == m.DeclaringType!.GetGenericArguments()[1]);
-        var tryGetValueM = TypeBuilder.GetMethod(instanceCacheType, openTryGet);
-        var getOrAddM = TypeBuilder.GetMethod(instanceCacheType, openGetOrAdd);
+        var tryGetValueM = EmitterTypeHelpers.ResolveMethod(instanceCacheType, openTryGet);
+        var getOrAddM = EmitterTypeHelpers.ResolveMethod(instanceCacheType, openGetOrAdd);
 
         // if (_instanceCache.TryGetValue(method, out existing)) return existing;
         gocIL.Emit(OpCodes.Ldsfld, instanceCacheField);

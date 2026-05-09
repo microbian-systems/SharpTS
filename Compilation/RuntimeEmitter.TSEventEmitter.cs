@@ -124,13 +124,13 @@ public partial class RuntimeEmitter
     /// Gets a method on a constructed generic type using TypeBuilder.GetMethod.
     /// </summary>
     private static MethodInfo GetListMethod(Type listType, MethodInfo openMethod)
-        => TypeBuilder.GetMethod(listType, openMethod);
+        => EmitterTypeHelpers.ResolveMethod(listType, openMethod);
 
     /// <summary>
     /// Gets a method on a constructed generic Dictionary type using TypeBuilder.GetMethod.
     /// </summary>
     private static MethodInfo GetDictMethod(Type dictType, MethodInfo openMethod)
-        => TypeBuilder.GetMethod(dictType, openMethod);
+        => EmitterTypeHelpers.ResolveMethod(dictType, openMethod);
 
     private void EmitListenerWrapperType(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
@@ -204,7 +204,7 @@ public partial class RuntimeEmitter
         // Need to use TypeBuilder.GetConstructor for generic types with TypeBuilder arguments
         il.Emit(OpCodes.Ldarg_0);
         var openDictCtor = typeof(Dictionary<,>).GetConstructor(Type.EmptyTypes)!;
-        var dictCtor = TypeBuilder.GetConstructor(dictType, openDictCtor);
+        var dictCtor = EmitterTypeHelpers.ResolveConstructor(dictType, openDictCtor);
         il.Emit(OpCodes.Newobj, dictCtor);
         il.Emit(OpCodes.Stfld, _tsEventEmitterEventsField);
 
@@ -661,7 +661,7 @@ public partial class RuntimeEmitter
         var keysEnumeratorType = typeof(Dictionary<,>.KeyCollection.Enumerator).MakeGenericType(_types.String, _tsEventEmitterEventsField.FieldType.GetGenericArguments()[1]);
 
         // GetEnumerator on KeyCollection
-        var getEnumeratorMethod = TypeBuilder.GetMethod(keysCollectionType, typeof(Dictionary<,>.KeyCollection).GetMethod("GetEnumerator")!);
+        var getEnumeratorMethod = EmitterTypeHelpers.ResolveMethod(keysCollectionType, typeof(Dictionary<,>.KeyCollection).GetMethod("GetEnumerator")!);
         il.Emit(OpCodes.Call, getEnumeratorMethod);
 
         var enumeratorLocal = il.DeclareLocal(keysEnumeratorType);
@@ -672,13 +672,13 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(loopStart);
         il.Emit(OpCodes.Ldloca, enumeratorLocal);
-        var moveNextMethod = TypeBuilder.GetMethod(keysEnumeratorType, typeof(Dictionary<,>.KeyCollection.Enumerator).GetMethod("MoveNext")!);
+        var moveNextMethod = EmitterTypeHelpers.ResolveMethod(keysEnumeratorType, typeof(Dictionary<,>.KeyCollection.Enumerator).GetMethod("MoveNext")!);
         il.Emit(OpCodes.Call, moveNextMethod);
         il.Emit(OpCodes.Brfalse, loopEnd);
 
         il.Emit(OpCodes.Ldloc, resultListLocal);
         il.Emit(OpCodes.Ldloca, enumeratorLocal);
-        var getCurrentMethod = TypeBuilder.GetMethod(keysEnumeratorType, typeof(Dictionary<,>.KeyCollection.Enumerator).GetProperty("Current")!.GetGetMethod()!);
+        var getCurrentMethod = EmitterTypeHelpers.ResolveMethod(keysEnumeratorType, typeof(Dictionary<,>.KeyCollection.Enumerator).GetProperty("Current")!.GetGetMethod()!);
         il.Emit(OpCodes.Call, getCurrentMethod);
         il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
 
@@ -809,7 +809,7 @@ public partial class RuntimeEmitter
         // Create new list
         il.MarkLabel(createListLabel);
         var openListCtor = typeof(List<>).GetConstructor(Type.EmptyTypes)!;
-        var listCtor = TypeBuilder.GetConstructor(listType, openListCtor);
+        var listCtor = EmitterTypeHelpers.ResolveConstructor(listType, openListCtor);
         il.Emit(OpCodes.Newobj, listCtor);
         il.Emit(OpCodes.Stloc, listenersLocal);
         il.Emit(OpCodes.Ldarg_0);

@@ -1291,7 +1291,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             {
                 Type[] typeArgs = n.TypeArgs.Select(ResolveTypeArg).ToArray();
                 targetType = typeBuilder.MakeGenericType(typeArgs);
-                targetCtor = TypeBuilder.GetConstructor(targetType, ctorBuilder);
+                targetCtor = EmitterTypeHelpers.ResolveConstructor(targetType, ctorBuilder);
             }
 
             var ctorParams = ctorBuilder.GetParameters();

@@ -31,6 +31,19 @@ internal static class AsyncLocalConsoleRedirector
     /// <summary>
     /// Installs proxy <see cref="Console.Out"/>/<see cref="Console.Error"/>/<see cref="Console.In"/>
     /// once per process. Idempotent.
+    ///
+    /// Critical: writes directly to the private <c>System.Console.s_out</c>/<c>s_error</c>/<c>s_in</c>
+    /// fields rather than calling <see cref="Console.SetOut"/>. <see cref="Console.SetOut"/>
+    /// unconditionally wraps the writer in <see cref="TextWriter.Synchronized"/> — that
+    /// wrapper takes a lock on every <see cref="Console.WriteLine"/> call. Compiled-mode
+    /// tests run in parallel under xUnit, and every emitted <c>console.log</c> would queue
+    /// on that single global lock, capping testhost CPU at ~1 core regardless of how many
+    /// collections xUnit dispatches in parallel (observed: 9% CPU on a 12-core box).
+    ///
+    /// Our <see cref="ProxyWriter"/> + <see cref="AsyncLocal{T}"/> design is already safe
+    /// for concurrent writers: each test reads its own <c>_slot.Value</c> and writes to its
+    /// own per-test <see cref="StringBuilderWriter"/>. There is no shared mutable state to
+    /// guard, so the synchronizing wrapper is pure overhead.
     /// </summary>
     public static void Install()
     {
@@ -38,14 +51,38 @@ internal static class AsyncLocalConsoleRedirector
         lock (_installLock)
         {
             if (_installed) return;
-            Console.SetOut(new ProxyWriter(Console.Out, _outOverride));
+
+            var outProxy = new ProxyWriter(Console.Out, _outOverride);
             // Compiled-mode tests assert on stdout only; mute stderr globally for tests
             // that don't explicitly capture it. Tests that do capture stderr push their
             // own writer via WithErr.
-            Console.SetError(new ProxyWriter(TextWriter.Null, _errOverride));
-            Console.SetIn(new ProxyReader(Console.In, _inOverride));
+            var errProxy = new ProxyWriter(TextWriter.Null, _errOverride);
+            var inProxy = new ProxyReader(Console.In, _inOverride);
+
+            // Bypass Console.SetOut/SetError/SetIn — they wrap in Synchronized writers/readers.
+            // We write directly to the static backing fields to avoid the lock.
+            if (!TrySetConsoleField("s_out", outProxy) ||
+                !TrySetConsoleField("s_error", errProxy) ||
+                !TrySetConsoleField("s_in", inProxy))
+            {
+                // Field names changed in this runtime — fall back to the locked path.
+                // Tests still work; just slower.
+                Console.SetOut(outProxy);
+                Console.SetError(errProxy);
+                Console.SetIn(inProxy);
+            }
             _installed = true;
         }
+    }
+
+    private static bool TrySetConsoleField(string fieldName, object proxy)
+    {
+        var field = typeof(Console).GetField(
+            fieldName,
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        if (field is null) return false;
+        field.SetValue(null, proxy);
+        return true;
     }
 
     /// <summary>

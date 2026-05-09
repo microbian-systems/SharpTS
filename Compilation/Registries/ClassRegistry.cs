@@ -518,7 +518,7 @@ public sealed class ClassRegistry
                 typeArgs[i] = typeof(object);
 
             var closedType = classBuilder.MakeGenericType(typeArgs);
-            method = TypeBuilder.GetMethod(closedType, methodBuilder!);
+            method = EmitterTypeHelpers.ResolveMethod(closedType, methodBuilder!);
             return true;
         }
 
@@ -547,7 +547,7 @@ public sealed class ClassRegistry
                 typeArgs[i] = typeof(object);
 
             var closedType = classBuilder.MakeGenericType(typeArgs);
-            field = TypeBuilder.GetField(closedType, fieldBuilder!);
+            field = EmitterTypeHelpers.ResolveField(closedType, fieldBuilder!);
             return true;
         }
 

@@ -707,7 +707,7 @@ public partial class RuntimeEmitter
 
         // _microtaskQueue = new Queue<$TSFunction>();
         var queueOpenCtor = _types.QueueOpen.GetConstructor(Type.EmptyTypes)!;
-        var queueCtor = TypeBuilder.GetConstructor(queueType, queueOpenCtor);
+        var queueCtor = EmitterTypeHelpers.ResolveConstructor(queueType, queueOpenCtor);
         il.Emit(OpCodes.Newobj, queueCtor);
         il.Emit(OpCodes.Stsfld, microtaskQueueField);
 
@@ -715,7 +715,7 @@ public partial class RuntimeEmitter
 
         // _microtaskQueue.Enqueue(callback);
         var queueOpenEnqueue = _types.QueueOpen.GetMethod("Enqueue")!;
-        var enqueueMethod = TypeBuilder.GetMethod(queueType, queueOpenEnqueue);
+        var enqueueMethod = EmitterTypeHelpers.ResolveMethod(queueType, queueOpenEnqueue);
         il.Emit(OpCodes.Ldsfld, microtaskQueueField);
         il.Emit(OpCodes.Ldarg_0); // callback
         il.Emit(OpCodes.Callvirt, enqueueMethod);
@@ -747,9 +747,9 @@ public partial class RuntimeEmitter
 
         // Get generic methods for Queue<$TSFunction>
         var queueOpenCountGetter = _types.QueueOpen.GetProperty("Count")!.GetGetMethod()!;
-        var countGetter = TypeBuilder.GetMethod(queueType, queueOpenCountGetter);
+        var countGetter = EmitterTypeHelpers.ResolveMethod(queueType, queueOpenCountGetter);
         var queueOpenDequeue = _types.QueueOpen.GetMethod("Dequeue")!;
-        var dequeueMethod = TypeBuilder.GetMethod(queueType, queueOpenDequeue);
+        var dequeueMethod = EmitterTypeHelpers.ResolveMethod(queueType, queueOpenDequeue);
 
         var callbackLocal = il.DeclareLocal(runtime.TSFunctionType);
 

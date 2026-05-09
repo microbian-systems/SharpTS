@@ -23,7 +23,7 @@ namespace SharpTS.Compilation;
 public partial class ILCompiler
 {
     /// <summary>
-    /// Per-CJS-module init guard fields (kept directly because <see cref="TypeBuilder.GetField(string, BindingFlags)"/>
+    /// Per-CJS-module init guard fields (kept directly because <see cref="EmitterTypeHelpers.ResolveField(string, BindingFlags)"/>
     /// doesn't work before <c>CreateType()</c>).
     /// </summary>
     private readonly Dictionary<string, (FieldBuilder InitStarted, FieldBuilder Initialized)> _cjsInitGuardFields = [];

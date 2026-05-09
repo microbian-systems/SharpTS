@@ -645,30 +645,154 @@ public static class TestHarness
     /// <returns>Captured console output</returns>
     public static string RunModulesInterpreted(Dictionary<string, string> files, string entryPoint)
     {
+        // Tests using __dirname / __filename / cluster.fork need files to exist on a real
+        // disk path that the runtime can stat / spawn workers against; route those through
+        // the disk-based path. Everything else uses the in-memory virtual file system.
+        if (RequiresRealDisk(files.Values))
+            return RunModulesInterpretedOnDisk(files, entryPoint);
+
+        // Build an in-memory virtual file system instead of writing to %TEMP%. Concurrent
+        // disk operations on Windows serialize through the kernel/AV — measured 1.4× speedup
+        // at 12 threads vs ideal 12×, which capped testhost CPU at ~10% during the run.
+        var (virtualFiles, entryPath) = BuildVirtualModuleFs(files, entryPoint);
+
+        var task = Task.Run(() =>
+        {
+            var sw = new StringWriter();
+
+            var resolver = new ModuleResolver(entryPath, virtualFiles);
+            var entryModule = resolver.LoadModule(entryPath);
+            var allModules = resolver.GetModulesInOrder(entryModule);
+
+            var checker = new TypeChecker();
+            var typeMap = checker.CheckModules(allModules, resolver);
+
+            using var interpreter = new Interpreter(stdout: sw, stderr: TextWriter.Null);
+            interpreter.InterpretModules(allModules, resolver, typeMap);
+
+            return sw.ToString().Replace("\r\n", "\n");
+        });
+
+        try
+        {
+            if (task.Wait(DefaultTimeout))
+                return task.Result;
+
+            throw new TimeoutException(
+                $"Interpreted module execution exceeded {DefaultTimeout.TotalSeconds}s timeout.");
+        }
+        catch (AggregateException ex)
+        {
+            if (ex.InnerExceptions.Count == 1)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
+            }
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Materializes a test's <c>files</c> dictionary as an in-memory file system. Returns
+    /// (virtualFiles map, absolute virtual entry path). The virtual base directory is a
+    /// per-call GUID-named path under <see cref="Path.GetTempPath"/> — that directory is
+    /// never actually created on disk; the path is just a unique key for the virtual map
+    /// so the resolver's <c>Path.GetFullPath</c> normalization yields stable keys.
+    /// </summary>
+    private static (Dictionary<string, string> Files, string EntryPath) BuildVirtualModuleFs(
+        Dictionary<string, string> files, string entryPoint)
+    {
+        var virtualBase = Path.Combine(Path.GetTempPath(), $"sharpts_vfs_{Guid.NewGuid():N}");
+        var virtualFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (path, content) in files)
+        {
+            var fullPath = Path.GetFullPath(Path.Combine(virtualBase, path.TrimStart('.', '/', '\\')));
+            virtualFiles[fullPath] = content;
+        }
+        var entryPath = Path.GetFullPath(Path.Combine(virtualBase, entryPoint.TrimStart('.', '/', '\\')));
+        return (virtualFiles, entryPath);
+    }
+
+    /// <summary>
+    /// Compiles multiple TypeScript modules to a .NET DLL, executes it, and captures output.
+    /// Defaults to in-process <see cref="Assembly.Load(byte[])"/> for speed (mirrors the
+    /// single-source <see cref="RunCompiledInProcess"/> path). Falls back to a real subprocess
+    /// for tests whose source touches process-global state the testhost can't isolate:
+    ///   - <c>process.exit(...)</c> would terminate the testhost
+    ///   - <c>process.chdir(...)</c> mutates <see cref="Environment.CurrentDirectory"/> and
+    ///     races with parallel tests
+    ///   - <c>process.cwd()</c> / <c>process.argv</c> read <see cref="Environment"/> directly
+    ///     (see <c>RuntimeEmitter.ProcessHelpers</c>) and would return the testhost's view
+    /// </summary>
+    public static string RunModulesCompiled(Dictionary<string, string> files, string entryPoint)
+    {
+        if (RequiresSubprocess(files.Values))
+            return RunModulesCompiledViaSubprocess(files, entryPoint);
+        if (RequiresRealDisk(files.Values))
+            return RunModulesCompiledInProcessOnDisk(files, entryPoint);
+        return RunModulesCompiledInProcess(files, entryPoint);
+    }
+
+    private static bool RequiresSubprocess(IEnumerable<string> sources)
+    {
+        foreach (var s in sources)
+        {
+            if (s.Contains("process.exit(") ||
+                s.Contains("process.chdir(") ||
+                s.Contains("process.cwd(") ||
+                s.Contains("process.argv"))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Some test sources need the file to exist on a real disk path:
+    /// <list type="bullet">
+    ///   <item><c>__dirname</c> / <c>__filename</c> — the runtime returns the script's
+    ///   path; with the virtual FS that path doesn't exist on disk, so any subsequent
+    ///   <c>fs.existsSync</c> / <c>fs.readFileSync</c> against it fails.</item>
+    ///   <item><c>cluster.fork(</c> — workers spawn as separate dotnet processes that
+    ///   load the source from disk. Virtual FS isn't visible across processes.</item>
+    /// </list>
+    /// </summary>
+    private static bool RequiresRealDisk(IEnumerable<string> sources)
+    {
+        foreach (var s in sources)
+        {
+            if (s.Contains("__dirname") ||
+                s.Contains("__filename") ||
+                s.Contains("cluster.fork("))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Materializes the test's <c>files</c> dict on real disk under <see cref="Path.GetTempPath"/>,
+    /// then runs the interpreter in-process. Used for tests that depend on real-disk paths
+    /// (<c>__dirname</c>, <c>cluster.fork</c>) — see <see cref="RequiresRealDisk"/>.
+    /// </summary>
+    private static string RunModulesInterpretedOnDisk(Dictionary<string, string> files, string entryPoint)
+    {
         var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_module_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempDir);
 
         try
         {
-            // Write all files to temp directory
             foreach (var (path, content) in files)
             {
                 var fullPath = Path.Combine(tempDir, path.TrimStart('.', '/', '\\'));
                 var dir = Path.GetDirectoryName(fullPath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                {
                     Directory.CreateDirectory(dir);
-                }
                 File.WriteAllText(fullPath, content);
             }
 
             string entryPath = Path.Combine(tempDir, entryPoint.TrimStart('.', '/', '\\'));
 
-            // Run in a task with timeout to prevent infinite hangs (e.g., DNS on macOS)
             var task = Task.Run(() =>
             {
                 var sw = new StringWriter();
-
                 var resolver = new ModuleResolver(entryPath);
                 var entryModule = resolver.LoadModule(entryPath);
                 var allModules = resolver.GetModulesInOrder(entryModule);
@@ -685,42 +809,177 @@ public static class TestHarness
             try
             {
                 if (task.Wait(DefaultTimeout))
-                {
                     return task.Result;
-                }
-
                 throw new TimeoutException(
                     $"Interpreted module execution exceeded {DefaultTimeout.TotalSeconds}s timeout.");
             }
-            catch (AggregateException ex)
+            catch (AggregateException ex) when (ex.InnerExceptions.Count == 1)
             {
-                if (ex.InnerExceptions.Count == 1)
-                {
-                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
-                }
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
                 throw;
             }
         }
         finally
         {
-            try
-            {
-                Directory.Delete(tempDir, true);
-            }
-            catch
-            {
-                // Ignore cleanup errors
-            }
+            try { Directory.Delete(tempDir, true); } catch { /* ignore cleanup errors */ }
         }
     }
 
     /// <summary>
-    /// Compiles multiple TypeScript modules to a .NET DLL, executes it, and captures output.
+    /// Disk-backed in-process compiled path for tests that need real-disk paths
+    /// (<c>__dirname</c>, <c>cluster.fork</c>) — see <see cref="RequiresRealDisk"/>.
     /// </summary>
-    /// <param name="files">Dictionary mapping file paths to source code</param>
-    /// <param name="entryPoint">The entry point file path (e.g., "./main.ts")</param>
-    /// <returns>Captured console output from the compiled executable</returns>
-    public static string RunModulesCompiled(Dictionary<string, string> files, string entryPoint)
+    private static string RunModulesCompiledInProcessOnDisk(Dictionary<string, string> files, string entryPoint)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_module_test_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            foreach (var (path, content) in files)
+            {
+                var fullPath = Path.Combine(tempDir, path.TrimStart('.', '/', '\\'));
+                var dir = Path.GetDirectoryName(fullPath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+                File.WriteAllText(fullPath, content);
+            }
+
+            var entryPath = Path.Combine(tempDir, entryPoint.TrimStart('.', '/', '\\'));
+            var assemblyName = $"test_modules_{Guid.NewGuid():N}";
+
+            var resolver = new ModuleResolver(entryPath);
+            var entryModule = resolver.LoadModule(entryPath);
+            var allModules = resolver.GetModulesInOrder(entryModule);
+
+            var checker = new TypeChecker();
+            var typeMap = checker.CheckModules(allModules, resolver);
+
+            var allStatements = allModules.SelectMany(m => m.Statements).ToList();
+            var deadCodeAnalyzer = new DeadCodeAnalyzer(typeMap);
+            var deadCodeInfo = deadCodeAnalyzer.Analyze(allStatements);
+
+            var compiler = new ILCompiler(assemblyName);
+            compiler.CompileModules(allModules, resolver, typeMap, deadCodeInfo);
+
+            var bytes = compiler.SaveToBytes();
+            var assembly = Assembly.Load(bytes);
+            var programType = assembly.GetType("$Program")
+                ?? throw new InvalidOperationException("Compiled assembly has no $Program type");
+            var mainMethod = programType.GetMethod("Main", BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("$Program has no public static Main method");
+
+            var task = Task.Run(() =>
+            {
+                using var capture = AsyncLocalConsoleRedirector.Capture();
+                try { mainMethod.Invoke(null, null); }
+                catch (TargetInvocationException tie) when (tie.InnerException is not null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                }
+                return capture.GetOutput().Replace("\r\n", "\n");
+            });
+
+            try
+            {
+                if (task.Wait(DefaultTimeout))
+                    return task.Result;
+                throw new TimeoutException(
+                    $"Compiled module execution exceeded {DefaultTimeout.TotalSeconds}s timeout.");
+            }
+            catch (AggregateException ex) when (ex.InnerExceptions.Count == 1)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
+                throw;
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { /* ignore cleanup errors */ }
+        }
+    }
+
+    private static string RunModulesCompiledInProcess(Dictionary<string, string> files, string entryPoint)
+    {
+        // In-memory virtual file system — see BuildVirtualModuleFs and the comment on
+        // RunModulesInterpreted for the rationale.
+        var (virtualFiles, entryPath) = BuildVirtualModuleFs(files, entryPoint);
+
+        try
+        {
+            var assemblyName = $"test_modules_{Guid.NewGuid():N}";
+
+            var resolver = new ModuleResolver(entryPath, virtualFiles);
+            var entryModule = resolver.LoadModule(entryPath);
+            var allModules = resolver.GetModulesInOrder(entryModule);
+
+            var checker = new TypeChecker();
+            var typeMap = checker.CheckModules(allModules, resolver);
+
+            var allStatements = allModules.SelectMany(m => m.Statements).ToList();
+            var deadCodeAnalyzer = new DeadCodeAnalyzer(typeMap);
+            var deadCodeInfo = deadCodeAnalyzer.Analyze(allStatements);
+
+            var compiler = new ILCompiler(assemblyName);
+            compiler.CompileModules(allModules, resolver, typeMap, deadCodeInfo);
+
+            var bytes = compiler.SaveToBytes();
+            var assembly = Assembly.Load(bytes);
+            var programType = assembly.GetType("$Program")
+                ?? throw new InvalidOperationException("Compiled assembly has no $Program type");
+            var mainMethod = programType.GetMethod("Main", BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("$Program has no public static Main method");
+
+            var task = Task.Run(() =>
+            {
+                using var capture = AsyncLocalConsoleRedirector.Capture();
+                try
+                {
+                    mainMethod.Invoke(null, null);
+                }
+                catch (TargetInvocationException tie) when (tie.InnerException is not null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                }
+                return capture.GetOutput().Replace("\r\n", "\n");
+            });
+
+            try
+            {
+                if (task.Wait(DefaultTimeout))
+                    return task.Result;
+
+                try
+                {
+                    var cancelField = assembly.GetType("$Runtime")?.GetField("_cancelRequested",
+                        BindingFlags.Public | BindingFlags.Static);
+                    cancelField?.SetValue(null, true);
+                }
+                catch { /* best-effort */ }
+
+                try { task.Wait(TimeSpan.FromSeconds(2)); } catch { /* surfacing TimeoutException below */ }
+
+                throw new TimeoutException(
+                    $"Compiled module execution exceeded {DefaultTimeout.TotalSeconds}s timeout. " +
+                    "This likely indicates an infinite loop bug.");
+            }
+            catch (AggregateException ex) when (ex.InnerExceptions.Count == 1)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
+                throw;
+            }
+        }
+        finally
+        {
+            // No-op: virtual file system, nothing to clean on disk.
+        }
+    }
+
+    /// <summary>
+    /// Subprocess fallback for <see cref="RunModulesCompiled"/>. Used when a module's source
+    /// touches <c>process.exit/chdir/cwd/argv</c> — the in-process path can't isolate those.
+    /// </summary>
+    private static string RunModulesCompiledViaSubprocess(Dictionary<string, string> files, string entryPoint)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_module_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempDir);

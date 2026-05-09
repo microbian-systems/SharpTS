@@ -121,7 +121,7 @@ public partial class RuntimeEmitter
         var listType = _types.MakeGenericType(_types.ListOpen, runtime.VirtualTimerType);
         // Use TypeBuilder.GetConstructor for generic types containing TypeBuilder
         var listOpenCtor = _types.ListOpen.GetConstructor(Type.EmptyTypes)!;
-        var listCtor = TypeBuilder.GetConstructor(listType, listOpenCtor);
+        var listCtor = EmitterTypeHelpers.ResolveConstructor(listType, listOpenCtor);
         il.Emit(OpCodes.Newobj, listCtor);
         il.Emit(OpCodes.Stsfld, timerQueueField);
 
@@ -195,11 +195,11 @@ public partial class RuntimeEmitter
 
         // Get generic methods for List<$VirtualTimer> using TypeBuilder.GetMethod
         var listOpenCountGetter = _types.ListOpen.GetProperty("Count")!.GetGetMethod()!;
-        var countGetter = TypeBuilder.GetMethod(listType, listOpenCountGetter);
+        var countGetter = EmitterTypeHelpers.ResolveMethod(listType, listOpenCountGetter);
         var listOpenGetItem = _types.ListOpen.GetMethod("get_Item")!;
-        var getItem = TypeBuilder.GetMethod(listType, listOpenGetItem);
+        var getItem = EmitterTypeHelpers.ResolveMethod(listType, listOpenGetItem);
         var listOpenRemoveAt = _types.ListOpen.GetMethod("RemoveAt")!;
-        var removeAt = TypeBuilder.GetMethod(listType, listOpenRemoveAt);
+        var removeAt = EmitterTypeHelpers.ResolveMethod(listType, listOpenRemoveAt);
 
         // Process microtasks first - they always run before any macrotask (timers)
         // This ensures correct JavaScript event loop semantics
@@ -425,7 +425,7 @@ public partial class RuntimeEmitter
 
         // Get generic Add method for List<$VirtualTimer> using TypeBuilder.GetMethod
         var listOpenAdd = _types.ListOpen.GetMethod("Add")!;
-        var addMethod = TypeBuilder.GetMethod(listType, listOpenAdd);
+        var addMethod = EmitterTypeHelpers.ResolveMethod(listType, listOpenAdd);
 
         // EnsureTimerInitialized();
         il.Emit(OpCodes.Call, runtime.EnsureTimerInitialized);

@@ -164,7 +164,7 @@ public class SuperConstructorHandler : ICallHandler
         System.Reflection.ConstructorInfo ctorToCall = parentCtor;
         Type? baseType = ctx.CurrentClassBuilder?.BaseType;
         if (baseType != null && baseType.IsGenericType && baseType.IsConstructedGenericType)
-            ctorToCall = TypeBuilder.GetConstructor(baseType, parentCtor);
+            ctorToCall = EmitterTypeHelpers.ResolveConstructor(baseType, parentCtor);
 
         il.Emit(OpCodes.Call, ctorToCall);
         il.Emit(OpCodes.Ldnull);

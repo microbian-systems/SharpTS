@@ -30,10 +30,24 @@ internal sealed class ModulePackageJson
     {
         if (!File.Exists(packageJsonPath))
             return null;
-
         try
         {
-            var json = File.ReadAllText(packageJsonPath);
+            return TryLoadFromContent(File.ReadAllText(packageJsonPath));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Parses a package.json from a pre-read string. Used by <see cref="ModuleResolver"/>
+    /// in test mode where the resolver reads from a virtual file system rather than disk.
+    /// </summary>
+    public static ModulePackageJson? TryLoadFromContent(string json)
+    {
+        try
+        {
             var doc = JsonDocument.Parse(json, new JsonDocumentOptions
             {
                 AllowTrailingCommas = true,

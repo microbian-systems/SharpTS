@@ -182,7 +182,7 @@ public partial class ILCompiler
             if (baseType != null && baseType.IsGenericType && baseType.IsConstructedGenericType)
             {
                 // Get the constructor for the closed generic type
-                ctorToCall = TypeBuilder.GetConstructor(baseType, parentCtor);
+                ctorToCall = EmitterTypeHelpers.ResolveConstructor(baseType, parentCtor);
             }
 
             il.Emit(OpCodes.Call, ctorToCall);
