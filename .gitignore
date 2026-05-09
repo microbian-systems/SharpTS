@@ -73,6 +73,9 @@ TestResults/
 *.trx
 *.coverage
 
+# Local perf probes & test-suite profiling artifacts (TRX dumps, CPU samples, ad-hoc benchmarks)
+.perf-*/
+
 # AI tools
 .claude/
 /.cursor/
