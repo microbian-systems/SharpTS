@@ -512,6 +512,13 @@ public static class ObjectBuiltIns
             SharpTSInstance inst => inst.GetOwnPropertyDescriptor(propertyKey),
             SharpTSArray arr => arr.GetOwnPropertyDescriptor(propertyKey),
             Dictionary<string, object?> dict => GetDictionaryPropertyDescriptor(dict, propertyKey),
+            // Function metadata: ECMA-262 §17 — built-in functions expose `name`
+            // and `length` as { writable: false, enumerable: false, configurable: true }
+            // data properties. test262's verifyProperty() checks introspect these
+            // via getOwnPropertyDescriptor; without this branch the descriptor
+            // lookup returns null and the assertion fails.
+            ISharpTSCallable callable when propertyKey is "name" or "length"
+                => GetCallableMetaDescriptor(callable, propertyKey),
             _ => null
         };
 
@@ -522,6 +529,23 @@ public static class ObjectBuiltIns
 
         // Return as an object
         return descriptor.ToObject();
+    }
+
+    /// <summary>
+    /// Returns ECMA-262 §17 spec descriptor for a callable's `name` or
+    /// `length` introspection. Both are { writable: false, enumerable: false,
+    /// configurable: true } data properties on built-in functions.
+    /// </summary>
+    private static SharpTSPropertyDescriptor GetCallableMetaDescriptor(ISharpTSCallable callable, string propertyKey)
+    {
+        var value = FunctionBuiltIns.GetMember(callable, propertyKey);
+        return new SharpTSPropertyDescriptor
+        {
+            Value = value,
+            Writable = false,
+            Enumerable = false,
+            Configurable = true,
+        };
     }
 
     /// <summary>

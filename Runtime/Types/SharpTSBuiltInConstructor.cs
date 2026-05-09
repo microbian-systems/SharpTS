@@ -28,7 +28,16 @@ public sealed class SharpTSBuiltInConstructor : ISharpTSCallable
     /// Called by the interpreter's GetFieldsProperty dispatch chain via reflection.
     /// </summary>
     public object? GetMember(string name)
-        => BuiltInRegistry.Instance.GetStaticMethod(Name, name);
+    {
+        // ECMA-262 §22.2.6: RegExp.prototype is a regular object carrying the
+        // five well-known-symbol-keyed protocol methods (@@match, @@matchAll,
+        // @@replace, @@search, @@split). Surfacing it lets bracket access like
+        // `RegExp.prototype[Symbol.match]` resolve to the callable.
+        if (name == "prototype" && Name == BuiltInNames.RegExp)
+            return RegExpBuiltIns.Prototype;
+
+        return BuiltInRegistry.Instance.GetStaticMethod(Name, name);
+    }
 
     public override string ToString() => $"function {Name}() {{ [native code] }}";
 }

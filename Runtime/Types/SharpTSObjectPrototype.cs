@@ -90,12 +90,28 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable
     private static object? HasOwnPropertyImpl(object? target, List<object?> args)
     {
         if (target == null || args.Count == 0) return false;
+        // ECMA-262 §19.1.3.2 ToPropertyKey: symbol args route through the
+        // symbol-keyed dispatch instead of being stringified.
+        if (args[0] is SharpTSSymbol sym)
+        {
+            return target switch
+            {
+                SharpTSObject obj => obj.HasSymbolProperty(sym),
+                SharpTSInstance inst => inst.HasSymbolProperty(sym),
+                _ => false,
+            };
+        }
         var key = args[0]?.ToString() ?? "";
         return target switch
         {
             SharpTSObject obj => obj.HasProperty(key),
             SharpTSInstance inst => inst.HasProperty(key),
             IDictionary<string, object?> dict => dict.ContainsKey(key),
+            // Built-in functions expose `name` and `length` as own properties
+            // per ECMA-262 §17. test262's verifyProperty calls
+            // hasOwnProperty(fn, "name") before reading the descriptor — without
+            // this branch the assertion fails before we ever see the descriptor.
+            ISharpTSCallable when key is "name" or "length" => true,
             _ => false,
         };
     }
