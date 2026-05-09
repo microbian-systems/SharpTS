@@ -9306,7 +9306,7 @@ test/built-ins/RegExp/prototype/Symbol.match/y-fail-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/y-fail-return.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/y-init-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/y-set-lastindex.js Pass
-test/built-ins/RegExp/prototype/Symbol.matchAll/isregexp-called-once.js RuntimeError
+test/built-ins/RegExp/prototype/Symbol.matchAll/isregexp-called-once.js Pass
 test/built-ins/RegExp/prototype/Symbol.matchAll/isregexp-this-throws.js Pass
 test/built-ins/RegExp/prototype/Symbol.matchAll/length.js Pass
 test/built-ins/RegExp/prototype/Symbol.matchAll/name.js Pass
@@ -9404,11 +9404,11 @@ test/built-ins/RegExp/prototype/Symbol.replace/y-init-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/y-set-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/coerce-string-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/coerce-string.js Pass
-test/built-ins/RegExp/prototype/Symbol.search/cstm-exec-return-index.js RuntimeError
+test/built-ins/RegExp/prototype/Symbol.search/cstm-exec-return-index.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/cstm-exec-return-invalid.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/failure-return-val.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/get-lastindex-err.js Pass
-test/built-ins/RegExp/prototype/Symbol.search/lastindex-no-restore.js RuntimeError
+test/built-ins/RegExp/prototype/Symbol.search/lastindex-no-restore.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/length.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/match-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/name.js Pass

@@ -387,6 +387,23 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// ECMA-262 §7.3.3 Get(O, P) abstract operation. Reads a string-named
+    /// property from <paramref name="obj"/>, honoring user-defined getters
+    /// and propagating their thrown errors. Used by spec algorithms in
+    /// built-in helpers that need real Get semantics rather than the
+    /// type-specific shortcut accessors (e.g.
+    /// <see cref="Runtime.BuiltIns.RegExpBuiltIns"/>'s §22.2.5 protocol
+    /// methods read flags / lastIndex / exec / unicode / global via Get
+    /// so user-installed getters fire and throw upstream).
+    /// </summary>
+    internal object? GetProperty(object? obj, string name)
+    {
+        var syntheticName = new Token(TokenType.IDENTIFIER, name, null, 0);
+        var syntheticGet = new Expr.Get(null!, syntheticName, Optional: false);
+        return EvaluateGetOnObject(syntheticGet, obj).ToObject();
+    }
+
+    /// <summary>
     /// Core property access logic, shared between sync and async evaluation.
     /// Uses TypeCategoryResolver for unified type dispatch.
     /// </summary>
@@ -508,6 +525,20 @@ public partial class Interpreter
         // Named properties from Object.defineProperty
         if (obj is SharpTSArray array && array.HasNamedProperty(memberName))
             return RuntimeValue.FromBoxed(array.GetNamedProperty(memberName));
+
+        // Numeric-string index on $Array — `arr["0"]` is equivalent to
+        // `arr[0]` per JS semantics. ECMA-262 §10.4.2 (Array exotic objects)
+        // makes string-coerced canonical numeric indices behave like ordinary
+        // index access. Built-in spec algorithms (e.g. RegExp Symbol.match's
+        // `Get(result, "0")`) rely on this — without it, numeric-string Get
+        // returns undefined and the algorithm reads the wrong value.
+        if (obj is SharpTSArray arrIdx
+            && int.TryParse(memberName, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out int idx)
+            && idx >= 0 && idx < arrIdx.Length)
+        {
+            return RuntimeValue.FromBoxed(arrIdx[idx]);
+        }
 
         // Standard array built-in members via category dispatch
         var member = BuiltInRegistry.Instance.GetMemberByCategory(TypeCategory.Array, obj, memberName);
@@ -922,6 +953,20 @@ public partial class Interpreter
         object? obj = Evaluate(set.Object);
         object? value = Evaluate(set.Value);
         return EvaluateSetOnObjectRV(set, obj, value);
+    }
+
+    /// <summary>
+    /// ECMA-262 §7.3.4 Set(O, P, V, Throw) abstract operation. Writes a
+    /// string-named property on <paramref name="obj"/>, honoring user-defined
+    /// setters and propagating their thrown errors. Mirrors
+    /// <see cref="GetProperty"/> for the write side. Used by spec algorithms
+    /// in built-in helpers (RegExp Symbol.* set lastIndex via this).
+    /// </summary>
+    internal void SetProperty(object? obj, string name, object? value)
+    {
+        var syntheticName = new Token(TokenType.IDENTIFIER, name, null, 0);
+        var syntheticSet = new Expr.Set(null!, syntheticName, null!);
+        EvaluateSetOnObject(syntheticSet, obj, value);
     }
 
     /// <summary>

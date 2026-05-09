@@ -137,6 +137,17 @@ public static class FunctionBuiltIns
     /// <summary>
     /// Invokes a callable with a specific 'this' value.
     /// </summary>
+    /// <summary>
+    /// ECMA-262 §7.3.14 Call(F, V, [argumentsList]) abstract operation —
+    /// invoke <paramref name="callable"/> with <paramref name="thisArg"/> as
+    /// receiver. Used by built-in spec algorithms (e.g. RegExp Symbol.* —
+    /// `Call(exec, R, « S »)`) that need real Call semantics across the
+    /// various callable shapes (SharpTSFunction, BuiltInMethod, ArrayProto
+    /// wrappers, etc.). Same dispatch as <c>Function.prototype.call</c>.
+    /// </summary>
+    public static object? CallWithThis(Interpreter interp, ISharpTSCallable callable, object? thisArg, List<object?> args)
+        => InvokeWithThis(interp, callable, thisArg, args);
+
     private static object? InvokeWithThis(Interpreter interp, ISharpTSCallable callable, object? thisArg, List<object?> args)
     {
         // Arrow functions ignore thisArg
