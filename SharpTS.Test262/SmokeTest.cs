@@ -146,6 +146,90 @@ public class SmokeTest
         _output.WriteLine($"Compiled-mode overhead vs interpreted: {compiledMs - interpretedMs:F1} ms ({compiledMs / interpretedMs:F1}x)");
     }
 
+    /// <summary>
+    /// Diagnostic only — instruments per-phase compiled-mode time over a fixed
+    /// 200-test prefix of <c>built-ins/Math</c>. Math is chosen because it has
+    /// very few timeouts and pathological allocations, so the timings reflect
+    /// the steady-state compile + load + invoke path rather than outliers.
+    /// Sequential single-threaded so phase ratios are clean (no contention).
+    /// </summary>
+    [Fact]
+    public void Diagnostic_CompiledPhaseBreakdown()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) { _output.WriteLine("external/test262 not initialized"); return; }
+
+        var mathDir = Path.Combine(Test262Paths.TestDir(root), "built-ins", "Math");
+        if (!Directory.Exists(mathDir)) { _output.WriteLine($"missing {mathDir}"); return; }
+
+        var paths = Directory.EnumerateFiles(mathDir, "*.js", SearchOption.AllDirectories)
+            .Where(f => !f.EndsWith("_FIXTURE.js"))
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .Take(200)
+            .ToList();
+        _output.WriteLine($"profiling {paths.Count} tests from Math/");
+
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+
+        // Warm up (JIT, file caches, harness cache) so phase 1 isn't full of
+        // cold-start cost.
+        for (int i = 0; i < 3; i++)
+            runner.RunOne(paths[0], Test262ExecutionMode.Compiled);
+
+        DumpRun("collectible ALC (current)", false);
+        DumpRun("non-collectible Assembly.Load (diagnostic)", true);
+
+        void DumpRun(string label, bool nonCollectible)
+        {
+            Test262Runner.UseNonCollectibleLoad = nonCollectible;
+            try
+            {
+                CompiledPhaseStats.Reset();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                foreach (var p in paths)
+                    runner.RunOne(p, Test262ExecutionMode.Compiled);
+                sw.Stop();
+
+                long total = CompiledPhaseStats.LexParseTicks
+                           + CompiledPhaseStats.TypeCheckTicks
+                           + CompiledPhaseStats.DeadCodeTicks
+                           + CompiledPhaseStats.ILCompileTicks
+                           + CompiledPhaseStats.SaveBytesTicks
+                           + CompiledPhaseStats.AlcLoadTicks
+                           + CompiledPhaseStats.InvokeTicks
+                           + CompiledPhaseStats.UnloadTicks
+                           + CompiledPhaseStats.PeriodicGcTicks;
+                long count = CompiledPhaseStats.Count;
+                if (count == 0) { _output.WriteLine($"--- {label}: no tests measured"); return; }
+
+                _output.WriteLine($"--- {label} ---");
+                _output.WriteLine($"wall: {sw.Elapsed.TotalSeconds:F2} s   tests: {count}   wall/test: {sw.Elapsed.TotalMilliseconds / count:F2} ms");
+                _output.WriteLine($"  (total measured phase ticks: {CompiledPhaseStats.Ms(total):F1} ms)");
+                Row("LexParse",        CompiledPhaseStats.LexParseTicks, count, total);
+                Row("TypeCheck",       CompiledPhaseStats.TypeCheckTicks, count, total);
+                Row("DeadCode",        CompiledPhaseStats.DeadCodeTicks, count, total);
+                Row("ILCompile",       CompiledPhaseStats.ILCompileTicks, count, total);
+                Row("SaveBytes",       CompiledPhaseStats.SaveBytesTicks, count, total);
+                Row("AlcLoad",         CompiledPhaseStats.AlcLoadTicks, count, total);
+                Row("  AlcCtor",       CompiledPhaseStats.AlcCtorTicks, count, total);
+                Row("  AlcLoadStream", CompiledPhaseStats.AlcLoadFromStreamTicks, count, total);
+                Row("  AlcReflect",    CompiledPhaseStats.AlcReflectionTicks, count, total);
+                Row("Invoke",          CompiledPhaseStats.InvokeTicks, count, total);
+                Row("Unload",          CompiledPhaseStats.UnloadTicks, count, total);
+                Row("PeriodicGc",      CompiledPhaseStats.PeriodicGcTicks, count, total);
+            }
+            finally { Test262Runner.UseNonCollectibleLoad = false; }
+        }
+
+        void Row(string name, long ticks, long count, long total)
+        {
+            var ms = CompiledPhaseStats.Ms(ticks);
+            var perTest = ms / count;
+            var pct = total == 0 ? 0 : 100.0 * ticks / total;
+            _output.WriteLine($"  {name,-16} {ms,9:F1} ms total    {perTest,7:F2} ms/test    {pct,5:F1}%");
+        }
+    }
+
     [Theory]
     [InlineData(Test262ExecutionMode.Interpreted)]
     [InlineData(Test262ExecutionMode.Compiled)]

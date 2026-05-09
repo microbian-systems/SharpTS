@@ -52,7 +52,22 @@ if (string.IsNullOrEmpty(test262Root))
 }
 
 var skipFeatures = LoadSkipFeatures(skipFeaturesFile);
+// Subprocess workers use non-collectible Assembly.Load to skip the per-test
+// collectible-ALC tax (~25% wall on Math/200: LoadFromStream -15%, JIT -71%).
+// The trade-off — assemblies leak for the worker's lifetime — is bounded by
+// the working-set check below, which exits the worker cleanly when memory
+// crosses 1.5GB so the parent can spawn a fresh worker for the next batch.
+Test262Runner.UseNonCollectibleLoad = true;
 var runner = new Test262Runner(test262Root, TimeSpan.FromSeconds(timeoutSeconds), skipFeatures);
+
+// Memory ceiling for non-collectible mode. Each emitted assembly holds onto
+// metadata + JIT'd code in process memory permanently; left unchecked, a
+// 1900-test worker grows past comfortable limits. When the working set
+// crosses this, exit cleanly with _done and let the parent recover the
+// remaining queue with a fresh worker. 1.5GB chosen well below the prior
+// MemoryLimitBytes timeout watchdog (2GB) so a healthy worker exits before
+// any one test gets cancelled by the watchdog.
+const long WorkerMemoryCeilingBytes = 1_500L * 1024 * 1024;
 
 // CRITICAL: capture the original stdout NOW, before any test runs. The runner's
 // compiled-mode test execution does Console.SetOut(stringWriter) to capture
@@ -115,6 +130,22 @@ while ((path = Console.In.ReadLine()) != null)
                 count,
                 proc.WorkingSet64 / 1_048_576,
                 proc.PrivateMemorySize64 / 1_048_576);
+        }
+    }
+
+    // Non-collectible mode bounds: every Nth test, check working set. If
+    // we've crossed the ceiling, exit cleanly so the parent spawns a fresh
+    // worker for the rest of the queue. Polling every 25 tests keeps the
+    // syscall overhead negligible (~2 ms per check) while still catching
+    // growth before it runs away.
+    if (count % 25 == 0)
+    {
+        using var proc = System.Diagnostics.Process.GetCurrentProcess();
+        if (proc.WorkingSet64 > WorkerMemoryCeilingBytes)
+        {
+            TraceLog("memory ceiling hit at #{0}: working={1}MB; exiting for parent recycle",
+                count, proc.WorkingSet64 / 1_048_576);
+            break;
         }
     }
 }

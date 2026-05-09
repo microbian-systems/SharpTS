@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.Loader;
 using SharpTS.Compilation;
@@ -10,6 +11,49 @@ using SharpTS.TypeSystem;
 using SharpTS.TypeSystem.Exceptions;
 
 namespace SharpTS.Test262;
+
+/// <summary>
+/// Per-phase Stopwatch counters for diagnostic compiled-mode profiling.
+/// Always-on (the Stopwatch.GetTimestamp pair is ~5ns × 7 phases = 35ns per
+/// test, vs ~580ms per test in the real workload). Reset before a measurement
+/// run, then read at end. Thread-safe via <see cref="Interlocked.Add(ref long, long)"/>.
+/// </summary>
+public static class CompiledPhaseStats
+{
+    public static long LexParseTicks;
+    public static long TypeCheckTicks;
+    public static long DeadCodeTicks;
+    public static long ILCompileTicks;
+    public static long SaveBytesTicks;
+    public static long AlcLoadTicks;
+    public static long AlcCtorTicks;
+    public static long AlcLoadFromStreamTicks;
+    public static long AlcReflectionTicks;
+    public static long InvokeTicks;
+    public static long UnloadTicks;
+    public static long PeriodicGcTicks;
+    public static long Count;
+
+    public static void Reset()
+    {
+        Interlocked.Exchange(ref LexParseTicks, 0);
+        Interlocked.Exchange(ref TypeCheckTicks, 0);
+        Interlocked.Exchange(ref DeadCodeTicks, 0);
+        Interlocked.Exchange(ref ILCompileTicks, 0);
+        Interlocked.Exchange(ref SaveBytesTicks, 0);
+        Interlocked.Exchange(ref AlcLoadTicks, 0);
+        Interlocked.Exchange(ref AlcCtorTicks, 0);
+        Interlocked.Exchange(ref AlcLoadFromStreamTicks, 0);
+        Interlocked.Exchange(ref AlcReflectionTicks, 0);
+        Interlocked.Exchange(ref InvokeTicks, 0);
+        Interlocked.Exchange(ref UnloadTicks, 0);
+        Interlocked.Exchange(ref PeriodicGcTicks, 0);
+        Interlocked.Exchange(ref Count, 0);
+    }
+
+    public static double Ms(long ticks) =>
+        (double)ticks * 1000.0 / Stopwatch.Frequency;
+}
 
 /// <summary>Execution mode for a Test262 run.</summary>
 public enum Test262ExecutionMode
@@ -72,6 +116,18 @@ public sealed class Test262Runner
 
     // Counts compiled tests since the last forced GC. See GcEveryNTests.
     private int _compiledTestsSinceGc;
+
+    /// <summary>
+    /// When true, <see cref="RunCompiled"/> loads each emitted assembly into
+    /// the default (non-collectible) ALC via <see cref="Assembly.Load(byte[])"/>.
+    /// Bypasses the collectibility load-time tax (~25% wall on the Math/200
+    /// benchmark; LoadFromStream -15%, Invoke/JIT -71%) but leaks the assembly
+    /// for the lifetime of the process — only safe in a worker that restarts
+    /// before its working set exceeds a budget. The in-process fallback path
+    /// (when no worker DLL exists) leaves this off so dev runs don't OOM the
+    /// testhost. Diagnostic profiling code also flips it to compare modes.
+    /// </summary>
+    public static bool UseNonCollectibleLoad = false;
 
     public Test262Runner(string test262Root, TimeSpan? timeout = null, HashSet<string>? skipFeatures = null)
     {
@@ -362,6 +418,7 @@ public sealed class Test262Runner
 
         SharpTS.Diagnostics.ParseDiagnosticResult parseResult;
         Lexer lexer;
+        long _phaseStart = Stopwatch.GetTimestamp();
         try
         {
             lexer = new Lexer(source);
@@ -371,14 +428,17 @@ public sealed class Test262Runner
         }
         catch (Exception ex)
         {
+            Interlocked.Add(ref CompiledPhaseStats.LexParseTicks, Stopwatch.GetTimestamp() - _phaseStart);
             return new Test262Result(Test262Outcome.ParseError, ex.Message, null);
         }
+        Interlocked.Add(ref CompiledPhaseStats.LexParseTicks, Stopwatch.GetTimestamp() - _phaseStart);
         if (!parseResult.IsSuccess)
             return new Test262Result(Test262Outcome.ParseError, parseResult.Diagnostics.First().ToString(), null);
 
         // Test262 sources are .js — match tsc's default and skip type-checking
         // unless `// @ts-check` opts a specific test in.
         TypeMap typeMap = new();
+        _phaseStart = Stopwatch.GetTimestamp();
         if (TypeCheckPolicy.ShouldTypeCheck(filePath: ".js", lexer.Pragmas, checkJsDefault: false))
         {
             try
@@ -388,11 +448,16 @@ public sealed class Test262Runner
             }
             catch (TypeCheckException ex)
             {
+                Interlocked.Add(ref CompiledPhaseStats.TypeCheckTicks, Stopwatch.GetTimestamp() - _phaseStart);
                 return new Test262Result(Test262Outcome.TypeCheckError, ex.Message, null);
             }
         }
+        Interlocked.Add(ref CompiledPhaseStats.TypeCheckTicks, Stopwatch.GetTimestamp() - _phaseStart);
+
+        _phaseStart = Stopwatch.GetTimestamp();
         var deadCodeAnalyzer = new DeadCodeAnalyzer(typeMap);
         var deadCodeInfo = deadCodeAnalyzer.Analyze(parseResult.Statements);
+        Interlocked.Add(ref CompiledPhaseStats.DeadCodeTicks, Stopwatch.GetTimestamp() - _phaseStart);
 
         // Compile to bytes — no temp dir, no DLL on disk. ALC loads from
         // an in-memory stream below. On contended file systems (Windows +
@@ -402,9 +467,14 @@ public sealed class Test262Runner
         byte[] assemblyBytes;
         try
         {
+            _phaseStart = Stopwatch.GetTimestamp();
             var compiler = new ILCompiler(assemblyName);
             compiler.Compile(parseResult.Statements, typeMap, deadCodeInfo);
+            Interlocked.Add(ref CompiledPhaseStats.ILCompileTicks, Stopwatch.GetTimestamp() - _phaseStart);
+
+            _phaseStart = Stopwatch.GetTimestamp();
             assemblyBytes = compiler.SaveToBytes();
+            Interlocked.Add(ref CompiledPhaseStats.SaveBytesTicks, Stopwatch.GetTimestamp() - _phaseStart);
         }
         catch (Exception ex)
         {
@@ -415,25 +485,67 @@ public sealed class Test262Runner
         // released after the test runs (see issue #109). All references to
         // the assembly's reflected members must die before Unload + GC for
         // memory to actually free.
-        var alc = new AssemblyLoadContext($"test262_{assemblyName}", isCollectible: true);
+        var _alcLoadStart = Stopwatch.GetTimestamp();
+        _phaseStart = Stopwatch.GetTimestamp();
+        AssemblyLoadContext? alc = UseNonCollectibleLoad
+            ? null
+            : new AssemblyLoadContext($"test262_{assemblyName}", isCollectible: true);
+        Interlocked.Add(ref CompiledPhaseStats.AlcCtorTicks, Stopwatch.GetTimestamp() - _phaseStart);
+
+        Assembly assembly;
+        MethodInfo? mainMethod;
+        FieldInfo? cancelField;
         try
         {
-            using var assemblyStream = new MemoryStream(assemblyBytes);
-            var assembly = alc.LoadFromStream(assemblyStream);
+            _phaseStart = Stopwatch.GetTimestamp();
+            if (alc is not null)
+            {
+                using var assemblyStream = new MemoryStream(assemblyBytes);
+                assembly = alc.LoadFromStream(assemblyStream);
+            }
+            else
+            {
+                assembly = Assembly.Load(assemblyBytes);
+            }
+            Interlocked.Add(ref CompiledPhaseStats.AlcLoadFromStreamTicks, Stopwatch.GetTimestamp() - _phaseStart);
+
+            _phaseStart = Stopwatch.GetTimestamp();
             var programType = assembly.GetType("$Program");
-            var mainMethod = programType?.GetMethod("Main", BindingFlags.Public | BindingFlags.Static);
+            mainMethod = programType?.GetMethod("Main", BindingFlags.Public | BindingFlags.Static);
             if (mainMethod is null)
+            {
+                Interlocked.Add(ref CompiledPhaseStats.AlcReflectionTicks, Stopwatch.GetTimestamp() - _phaseStart);
+                Interlocked.Add(ref CompiledPhaseStats.AlcLoadTicks, Stopwatch.GetTimestamp() - _alcLoadStart);
+                Interlocked.Increment(ref CompiledPhaseStats.Count);
                 return new Test262Result(Test262Outcome.HarnessError, "$Program.Main not found in compiled assembly", null);
+            }
 
             var runtimeType = assembly.GetType("$Runtime");
-            var cancelField = runtimeType?.GetField("_cancelRequested",
+            cancelField = runtimeType?.GetField("_cancelRequested",
                 BindingFlags.Public | BindingFlags.Static);
+            Interlocked.Add(ref CompiledPhaseStats.AlcReflectionTicks, Stopwatch.GetTimestamp() - _phaseStart);
+        }
+        catch
+        {
+            Interlocked.Add(ref CompiledPhaseStats.AlcLoadTicks, Stopwatch.GetTimestamp() - _alcLoadStart);
+            try { alc?.Unload(); } catch { }
+            throw;
+        }
+        Interlocked.Add(ref CompiledPhaseStats.AlcLoadTicks, Stopwatch.GetTimestamp() - _alcLoadStart);
 
-            return InvokeCompiledMain(mainMethod, harnessLength, cancelField, isAsync);
+        try
+        {
+            _phaseStart = Stopwatch.GetTimestamp();
+            var result = InvokeCompiledMain(mainMethod, harnessLength, cancelField, isAsync);
+            Interlocked.Add(ref CompiledPhaseStats.InvokeTicks, Stopwatch.GetTimestamp() - _phaseStart);
+            return result;
         }
         finally
         {
-            alc.Unload();
+            _phaseStart = Stopwatch.GetTimestamp();
+            alc?.Unload();
+            Interlocked.Add(ref CompiledPhaseStats.UnloadTicks, Stopwatch.GetTimestamp() - _phaseStart);
+            Interlocked.Increment(ref CompiledPhaseStats.Count);
             MaybeRunPeriodicGc();
         }
     }
@@ -450,6 +562,7 @@ public sealed class Test262Runner
         if (_compiledTestsSinceGc >= GcEveryNTests)
         {
             _compiledTestsSinceGc = 0;
+            var gcStart = Stopwatch.GetTimestamp();
             // Drop runtime caches that pin emitted Types by acting as strong
             // back-references through their MethodInfo/FieldInfo values.
             // Without these clears, every emitted $TSFunction / $BoundTSFunction
@@ -461,6 +574,7 @@ public sealed class Test262Runner
             GC.Collect();
             GC.WaitForPendingFinalizers();
             GC.Collect();
+            Interlocked.Add(ref CompiledPhaseStats.PeriodicGcTicks, Stopwatch.GetTimestamp() - gcStart);
         }
     }
 
