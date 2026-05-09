@@ -3462,6 +3462,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brtrue, sharpTSObjectLabel);
 
+        // $TSFunction — `delete fn.name` records in the per-instance set so
+        // the synthetic name/length descriptors stop reporting (ECMA-262 §17
+        // configurable). Pre-fix this fell through to trueLabel without
+        // recording, so verifyProperty's isConfigurable failed.
+        var tsFunctionDelLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, tsFunctionDelLabel);
+
         // $Array — `delete arr[i]` turns the slot into a hole. Must come
         // BEFORE the Dictionary check (not relevant here, just ordering)
         // and BEFORE the trueLabel fallthrough so actual deletions happen.
@@ -3477,6 +3486,14 @@ public partial class RuntimeEmitter
 
         // Other types - cannot delete properties, return true (JS behavior for non-configurable)
         il.Emit(OpCodes.Br, trueLabel);
+
+        // $TSFunction delete handler.
+        il.MarkLabel(tsFunctionDelLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
 
         // $Array delete handler — if the key is a numeric index call
         // DeleteAt; otherwise return true (JS non-configurable behavior).
@@ -3595,6 +3612,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brtrue, sharpTSObjectLabel);
 
+        // $TSFunction — record name/length deletion (ECMA-262 §17 configurable).
+        var tsFunctionDelStrictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, tsFunctionDelStrictLabel);
+
         // Dictionary
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
@@ -3602,6 +3625,14 @@ public partial class RuntimeEmitter
 
         // Other types - cannot delete properties, return true (JS behavior for non-configurable)
         il.Emit(OpCodes.Br, trueLabel);
+
+        // $TSFunction strict delete handler.
+        il.MarkLabel(tsFunctionDelStrictLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
 
         // $TSObject - call DeletePropertyStrict instance method
         il.MarkLabel(sharpTSObjectLabel);

@@ -253,6 +253,21 @@ public partial class RuntimeEmitter
         );
         runtime.PrototypeStoreField = prototypeStoreField;
 
+        // ECMA-262 §17 declares `name`/`length` on built-in functions as
+        // configurable. test262's verifyProperty exercises that by deleting
+        // them and re-checking; without per-instance tracking, the synthetic
+        // values returned by GetFunctionMethod / HasOwnPropertyHelper /
+        // ObjectGetOwnPropertyDescriptor stay visible after delete and the
+        // configurability check fails. Track deletions per object via a
+        // ConditionalWeakTable<object, HashSet<string>>; helpers consult it
+        // before reporting the spec defaults.
+        var deletedBuiltinsField = typeBuilder.DefineField(
+            "_deletedBuiltins",
+            _types.ConditionalWeakTable,
+            FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly
+        );
+        runtime.DeletedBuiltinsField = deletedBuiltinsField;
+
         // Static sentinel field for null/undefined Map keys
         var mapNullSentinelField = typeBuilder.DefineField(
             "_mapNullSentinel",
@@ -362,6 +377,10 @@ public partial class RuntimeEmitter
         // Initialize _prototypeStore = new ConditionalWeakTable<object, object>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ConditionalWeakTable));
         cctorIL.Emit(OpCodes.Stsfld, prototypeStoreField);
+
+        // Initialize _deletedBuiltins = new ConditionalWeakTable<object, object>()
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ConditionalWeakTable));
+        cctorIL.Emit(OpCodes.Stsfld, deletedBuiltinsField);
 
         // Link the built-in singletons (Math, JSON, Boolean/Number/String/Array
         // prototypes) to Object.prototype via PDS. ECMA-262 declares each of
@@ -476,6 +495,11 @@ public partial class RuntimeEmitter
         // Object methods - must come BEFORE iterator methods since GetProperty, InvokeMethodValue are needed
         EmitCreateObject(typeBuilder, runtime);
         EmitGetArrayMethod(typeBuilder, runtime);
+        // Deleted-builtins tracking — used by HasOwnPropertyHelper /
+        // GetFunctionMethod / ObjectGetOwnPropertyDescriptor / DeleteIndex to
+        // hide name/length on a $TSFunction after `delete fn.name`. Emitted
+        // before its consumers.
+        EmitDeletedBuiltinsHelpers(typeBuilder, runtime);
         // hasOwnProperty + isPrototypeOf helpers — must come before
         // GetFunctionMethod so the corresponding arms can return $TSFunction
         // wrappers.

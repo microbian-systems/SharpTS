@@ -391,7 +391,10 @@ public partial class RuntimeEmitter
         // properties. Synthesize those descriptors when the receiver is a
         // $TSFunction (covers RegExp.prototype[Symbol.match], etc. that
         // verifyProperty inspects). Other callable wrappers fall through to
-        // the existing paths (PDS / dict / class instance).
+        // the existing paths (PDS / dict / class instance). After
+        // `delete fn.name`/`length`, IsBuiltinDeleted hides the synthetic
+        // descriptor — descriptor lookup returns null, matching the post-
+        // delete state expected by verifyProperty's isConfigurable check.
         var notTSFunctionForDescLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
@@ -403,6 +406,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "name");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, notFnNameLabel);
+        // Hide if this instance had `name` deleted.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Call, runtime.IsBuiltinDeletedMethod);
+        il.Emit(OpCodes.Brtrue, returnNullLabel);
         // value = TSFunction.GetMember(fn, "name") — or just inline it via the
         // GetProperty path which handles function name lookup.
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
@@ -425,6 +433,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "length");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, notFnLengthLabel);
+        // Hide if this instance had `length` deleted.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, runtime.IsBuiltinDeletedMethod);
+        il.Emit(OpCodes.Brtrue, returnNullLabel);
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultDictLocal);
         il.Emit(OpCodes.Ldloc, resultDictLocal);

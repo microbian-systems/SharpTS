@@ -479,6 +479,21 @@ public class EmittedRuntime
     public MethodBuilder RemoveEventSubscription { get; set; } = null!;
     public FieldBuilder NonExtensibleObjectsField { get; set; } = null!;
     public FieldBuilder PrototypeStoreField { get; set; } = null!;
+    /// <summary>
+    /// Per-object set of deleted built-in property names — `name`/`length`
+    /// on functions are configurable per ECMA-262 §17, but their values are
+    /// synthetic in compiled mode (no real backing slot). This table records
+    /// which names have been deleted so HasOwnPropertyHelper / GetFunctionMethod /
+    /// ObjectGetOwnPropertyDescriptor can hide them after `delete fn.name`.
+    /// Stored as ConditionalWeakTable&lt;object, HashSet&lt;string&gt;&gt; via the
+    /// open generic ConditionalWeakTable&lt;object, object&gt; (value is downcast
+    /// to HashSet&lt;string&gt; on read).
+    /// </summary>
+    public FieldBuilder DeletedBuiltinsField { get; set; } = null!;
+    /// <summary>$Runtime.MarkBuiltinDeleted(object obj, string name) — adds <paramref name="name"/> to the deleted-set for <paramref name="obj"/>, lazily creating the set.</summary>
+    public MethodBuilder MarkBuiltinDeletedMethod { get; set; } = null!;
+    /// <summary>$Runtime.IsBuiltinDeleted(object obj, string name) — true iff <paramref name="name"/> was deleted on <paramref name="obj"/>.</summary>
+    public MethodBuilder IsBuiltinDeletedMethod { get; set; } = null!;
 
     // Reflect API helpers
     public MethodBuilder ReflectOwnKeys { get; set; } = null!;

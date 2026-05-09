@@ -641,6 +641,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Brfalse, lengthNotTSFunctionLabel);
+        // If `length` was deleted on this $TSFunction, return undefined
+        // instead of the cached spec value (ECMA-262 §17 configurable).
+        var lengthDeletedSkipLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, runtime.IsBuiltinDeletedMethod);
+        il.Emit(OpCodes.Brfalse, lengthDeletedSkipLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(lengthDeletedSkipLabel);
         // It's a $TSFunction - call get_Length()
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
@@ -675,8 +685,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "");
         il.Emit(OpCodes.Br, nameEndLabel);
 
-        // It's a $TSFunction - call get_Name()
+        // It's a $TSFunction. If `name` was deleted on this instance, the
+        // property is gone — return undefined instead of the cached value.
         il.MarkLabel(nameIsTSFunctionLabel);
+        var nameDeletedSkipLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Call, runtime.IsBuiltinDeletedMethod);
+        il.Emit(OpCodes.Brfalse, nameDeletedSkipLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(nameDeletedSkipLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
         il.Emit(OpCodes.Call, runtime.TSFunctionNameGetter);

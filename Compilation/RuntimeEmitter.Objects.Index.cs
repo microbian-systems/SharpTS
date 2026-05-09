@@ -884,6 +884,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
         il.Emit(OpCodes.Brtrue, symbolKeyLabel);
 
+        // $TSFunction — `delete fn.name` / `delete fn.length` records the
+        // deletion in the per-instance set so HasOwnPropertyHelper /
+        // GetFunctionMethod / ObjectGetOwnPropertyDescriptor stop reporting
+        // the synthetic value. ECMA-262 §17 declares these as configurable;
+        // pre-fix this fell through to trueLabel without recording, so
+        // verifyProperty's isConfigurable (delete + re-check hasOwn) failed.
+        var tsFunctionDeleteIdxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, tsFunctionDeleteIdxLabel);
+
         // $Array — `delete arr[i]` turns the slot into a hole via DeleteAt.
         // Must come BEFORE the trueLabel fallthrough so we actually delete;
         // the pre-M3 code just returned true without mutating.
@@ -899,6 +910,16 @@ public partial class RuntimeEmitter
 
         // Other types (arrays, strings, etc.) - cannot delete, return true
         il.Emit(OpCodes.Br, trueLabel);
+
+        // $TSFunction handler: register the deletion in _deletedBuiltins,
+        // then return true. Coerce the index to string (ToPropertyKey).
+        il.MarkLabel(tsFunctionDeleteIdxLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
 
         // $Array handler: convert index to long, call DeleteAt, return true.
         // DeleteAt silently no-ops for frozen arrays / OOB indices (JS-spec).
@@ -1009,6 +1030,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
         il.Emit(OpCodes.Brtrue, symbolKeyLabel);
 
+        // $TSFunction — `delete fn.name` / `delete fn.length` records the
+        // deletion in the per-instance set so HasOwnPropertyHelper /
+        // GetFunctionMethod / ObjectGetOwnPropertyDescriptor stop reporting
+        // the synthetic value. ECMA-262 §17 declares these as configurable;
+        // pre-fix this fell through to trueLabel without recording, so
+        // verifyProperty's isConfigurable (delete + re-check hasOwn) failed.
+        var tsFunctionDeleteIdxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, tsFunctionDeleteIdxLabel);
+
         // $Array — `delete arr[i]` turns the slot into a hole via DeleteAt.
         // Must come BEFORE the trueLabel fallthrough so we actually delete;
         // the pre-M3 code just returned true without mutating.
@@ -1024,6 +1056,16 @@ public partial class RuntimeEmitter
 
         // Other types (arrays, strings, etc.) - cannot delete, return true
         il.Emit(OpCodes.Br, trueLabel);
+
+        // $TSFunction handler: register the deletion in _deletedBuiltins,
+        // then return true. Coerce the index to string (ToPropertyKey).
+        il.MarkLabel(tsFunctionDeleteIdxLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
 
         // $Array handler: convert index to long, call DeleteAt, return true.
         // DeleteAt silently no-ops for frozen arrays / OOB indices (JS-spec).
