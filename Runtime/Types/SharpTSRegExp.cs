@@ -130,6 +130,20 @@ public class SharpTSRegExp : ITypeCategorized
     public bool Multiline => _multiline;
 
     /// <summary>
+    /// Whether the sticky (y) flag is set. ECMA-262 §22.2.6: sticky matches
+    /// must start at exactly <see cref="LastIndex"/>; failure resets
+    /// LastIndex to 0. Used by the SpeciesConstructor protocol in
+    /// <c>RegExp.prototype[@@split]</c> (which constructs a sticky-flagged
+    /// splitter to scan strictly forward).
+    /// </summary>
+    public bool Sticky => _flags.Contains('y');
+
+    /// <summary>
+    /// Whether the unicode (u) flag is set.
+    /// </summary>
+    public bool Unicode => _flags.Contains('u');
+
+    /// <summary>
     /// Creates a RegExp with the specified pattern and optional flags.
     /// </summary>
     /// <param name="pattern">The regular expression pattern.</param>
@@ -178,6 +192,11 @@ public class SharpTSRegExp : ITypeCategorized
         if (flags.Contains('i')) sb.Append('i');
         if (flags.Contains('m')) sb.Append('m');
         if (flags.Contains('s')) sb.Append('s');
+        if (flags.Contains('u')) sb.Append('u');
+        // y (sticky) — required for the SpeciesConstructor protocol in
+        // RegExp.prototype[@@split] to work correctly. The matcher honors
+        // sticky in `Exec` by using .NET's startat-aware Match overload.
+        if (flags.Contains('y')) sb.Append('y');
         if (flags.Contains('d')) sb.Append('d');
         // v (Unicode-Sets, ES2024) is preserved through normalization so
         // `re.flags` round-trips and test262 generated CharacterClassEscapes
@@ -282,8 +301,10 @@ public class SharpTSRegExp : ITypeCategorized
     public SharpTSArray? Exec(string input)
     {
         Match match;
+        bool sticky = Sticky;
+        bool useLastIndex = _global || sticky;
 
-        if (_global)
+        if (useLastIndex)
         {
             if (LastIndex > input.Length)
             {
@@ -291,6 +312,14 @@ public class SharpTSRegExp : ITypeCategorized
                 return null;
             }
             match = _regex.Match(input, Math.Min(LastIndex, input.Length));
+            // Sticky requires the match to start exactly at LastIndex (no
+            // forward scanning). If the engine found a match further along,
+            // treat it as no-match and reset.
+            if (sticky && match.Success && match.Index != LastIndex)
+            {
+                LastIndex = 0;
+                return null;
+            }
         }
         else
         {
@@ -299,11 +328,11 @@ public class SharpTSRegExp : ITypeCategorized
 
         if (!match.Success)
         {
-            if (_global) LastIndex = 0;
+            if (useLastIndex) LastIndex = 0;
             return null;
         }
 
-        if (_global)
+        if (useLastIndex)
         {
             LastIndex = match.Index + match.Length;
         }

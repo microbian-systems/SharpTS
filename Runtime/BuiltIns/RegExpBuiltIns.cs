@@ -433,11 +433,10 @@ public static class RegExpBuiltIns
     }
 
     /// <summary>
-    /// ECMA-262 §22.2.5.13 RegExp.prototype [@@split] — simplified
-    /// implementation. Doesn't yet honor Symbol.species (custom constructor
-    /// dispatch); covers limit=0 early bail, sticky splitter semantics,
-    /// lastIndex round-tripping, and routes match through RegExpExec so
-    /// user-installed exec participates.
+    /// ECMA-262 §22.2.5.13 RegExp.prototype [@@split]. Constructs a
+    /// sticky-flagged splitter via SpeciesConstructor, then iterates
+    /// matches via that splitter (so user-installed Symbol.species or
+    /// constructor.exec participates).
     /// </summary>
     private static object? SymbolSplitImpl(Interpreter interp, object? recv, List<object?> args)
     {
@@ -445,7 +444,39 @@ public static class RegExpBuiltIns
         var s = ToStr(interp, args.Count > 0 ? args[0] : null);
         var limitArg = args.Count > 1 ? args[1] : null;
 
-        // limit: ToUint32 — undefined → 2^32-1.
+        // §22.2.5.13 step 4: C = SpeciesConstructor(rx, %RegExp%).
+        var speciesCtor = SpeciesConstructor(interp, recv);
+
+        // Step 5: flags = ToString(? Get(rx, "flags")).
+        var flags = ToStr(interp, interp.GetProperty(recv, "flags"));
+        bool fullUnicode = flags.Contains('u');
+
+        // Step 7-8: newFlags = "y" in flags ? flags : flags+"y".
+        string newFlags = flags.Contains('y') ? flags : flags + "y";
+
+        // Step 9: splitter = ? Construct(C, « rx, newFlags »).
+        // When the user didn't override constructor / species, fall back to
+        // %RegExp% — synthesize a fresh sticky-flagged regex from recv's
+        // source. The matching loop relies on sticky semantics (match must
+        // start at exactly lastIndex) to scan strictly forward.
+        object? splitter;
+        if (speciesCtor != null)
+        {
+            splitter = interp.Construct(speciesCtor, [recv, newFlags]);
+        }
+        else if (recv is SharpTSRegExp rxInstance)
+        {
+            splitter = new SharpTSRegExp(rxInstance.Source, newFlags);
+        }
+        else
+        {
+            // Non-RegExp `this` without species ctor — nothing to construct.
+            // Fall through with recv; the matching loop still routes through
+            // RegExpExec for any user-installed exec on it.
+            splitter = recv;
+        }
+
+        // Step 12: lim = ToUint32(limit).
         long limit = limitArg switch
         {
             null or SharpTSUndefined => uint.MaxValue,
@@ -457,29 +488,32 @@ public static class RegExpBuiltIns
         var arr = new List<object?>();
         if (s.Length == 0)
         {
-            // Empty input string: if rx matches empty → return []; else [""].
-            interp.SetProperty(recv, "lastIndex", 0.0);
-            var result = RegExpExec(interp, recv, s);
+            // Empty input string: if splitter matches empty → return []; else [""].
+            interp.SetProperty(splitter, "lastIndex", 0.0);
+            var result = RegExpExec(interp, splitter, s);
             if (result is null) arr.Add("");
             return new SharpTSArray(arr);
         }
 
         int p = 0;     // position in S where the next non-matched segment starts
         int q = 0;     // current scan position
-        var flags = ToStr(interp, interp.GetProperty(recv, "flags"));
-        bool fullUnicode = flags.Contains('u');
 
         while (q < s.Length)
         {
-            interp.SetProperty(recv, "lastIndex", (double)q);
-            var z = RegExpExec(interp, recv, s);
+            interp.SetProperty(splitter, "lastIndex", (double)q);
+            var z = RegExpExec(interp, splitter, s);
             if (z is null)
             {
                 q = AdvanceStringIndex(s, q, fullUnicode);
                 continue;
             }
 
-            int e = ToLengthAsInt(interp.GetProperty(recv, "lastIndex"));
+            // Read post-match lastIndex. With sticky support in SharpTSRegExp
+            // (`y` flag preserved + Exec verifies match position == LastIndex),
+            // a successful exec advances lastIndex by the match length. For
+            // non-sticky receivers (user-installed exec on a plain object),
+            // the user is responsible for advancing lastIndex.
+            int e = ToLengthAsInt(interp.GetProperty(splitter, "lastIndex"));
             e = Math.Min(e, s.Length);
             if (e == p)
             {
@@ -507,6 +541,73 @@ public static class RegExpBuiltIns
 
         arr.Add(s.Substring(p));
         return new SharpTSArray(arr);
+    }
+
+    /// <summary>
+    /// ECMA-262 §10.2.5 SpeciesConstructor(O, defaultConstructor) — looks
+    /// up the species constructor for <paramref name="O"/>. Returns null
+    /// when the user didn't override (the caller should fall back to the
+    /// default %RegExp%; we represent "use default" as null and let the
+    /// caller decide whether to construct a fresh regex via the built-in
+    /// factory or skip construction entirely).
+    /// </summary>
+    private static object? SpeciesConstructor(Interpreter interp, object? O)
+    {
+        // Step 2: Let C be ? Get(O, "constructor").
+        var c = interp.GetProperty(O, "constructor");
+
+        // Step 3: If C is undefined, return defaultConstructor (we signal
+        // "use default" with null).
+        if (c is null or SharpTSUndefined) return null;
+
+        // Step 4: If Type(C) is not Object, throw TypeError.
+        if (c is bool or double or string)
+            throw new ThrowException(new SharpTSTypeError(
+                "constructor must be an object"));
+
+        // Step 5: Let S be ? Get(C, @@species).
+        // For symbol-keyed lookup we go through the symbol-dict mechanism on
+        // the constructor object; SharpTSObject / Function / etc. expose
+        // GetBySymbol or accept defineProperty for symbol keys.
+        var species = c switch
+        {
+            SharpTSObject sObj => sObj.GetBySymbol(SharpTSSymbol.Species),
+            SharpTSInstance inst => inst.GetBySymbol(SharpTSSymbol.Species),
+            SharpTSFunction fn => GetSymbolPropertyFromCallable(fn, SharpTSSymbol.Species),
+            SharpTSArrowFunction arr => GetSymbolPropertyFromCallable(arr, SharpTSSymbol.Species),
+            _ => null
+        };
+
+        // Step 6-7: undefined / null → return defaultConstructor.
+        if (species is null or SharpTSUndefined) return null;
+
+        // Step 8: IsConstructor(S) → return S. We don't have IsConstructor
+        // implemented, so accept any callable (matches most test262 patterns
+        // — they install plain functions as species).
+        if (species is ISharpTSCallable) return species;
+
+        throw new ThrowException(new SharpTSTypeError("species is not a constructor"));
+    }
+
+    /// <summary>
+    /// Reads a symbol-keyed property from a callable that supports user
+    /// property assignment (Object.defineProperty path). SharpTSFunction has
+    /// per-instance symbol storage; arrow functions follow the same pattern.
+    /// </summary>
+    private static object? GetSymbolPropertyFromCallable(object obj, SharpTSSymbol symbol)
+    {
+        // Both SharpTSFunction and SharpTSArrowFunction expose user property
+        // storage via TryGetProperty; symbols are stored alongside string
+        // properties for our purposes here. Real spec storage would route
+        // through dedicated symbol slots, but the test262 species patterns
+        // set the property via `fn[Symbol.species] = ...` which our
+        // SetIndex path already routes through symbol storage on the
+        // function instance.
+        if (obj is SharpTSFunction fn && fn.TryGetSymbolProperty(symbol, out var v))
+            return v;
+        if (obj is SharpTSArrowFunction arr && arr.TryGetSymbolProperty(symbol, out var v2))
+            return v2;
+        return null;
     }
 
     /// <summary>

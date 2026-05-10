@@ -184,6 +184,68 @@ public partial class Interpreter
     /// Supports new on expressions: new ctor(), new Namespace.Class(), new (expr)()
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/classes.html#constructors">TypeScript Constructors</seealso>
+    /// <summary>
+    /// ECMA-262 §7.3.13 Construct(F, argumentsList) abstract operation.
+    /// Invokes <paramref name="callable"/> as a constructor with
+    /// <paramref name="args"/>, returning the constructed instance.
+    /// Mirrors the user-function arm of <see cref="EvaluateNew"/>: builds a
+    /// fresh `this` linked to F's prototype, runs the body, returns the
+    /// body's object return (or the fresh `this` when the body returns a
+    /// primitive). Used by spec algorithms in built-in helpers (e.g.
+    /// SpeciesConstructor in RegExp Symbol.split / Symbol.matchAll).
+    /// </summary>
+    internal object? Construct(object? callable, IList<object?> args)
+    {
+        if (callable is SharpTSFunction userFn)
+        {
+            if (!userFn.TryGetProperty("prototype", out var protoObj))
+            {
+                protoObj = new SharpTSObject(new Dictionary<string, object?>());
+                userFn.SetProperty("prototype", protoObj);
+            }
+            var newThis = new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["__proto__"] = protoObj,
+                ["constructor"] = userFn,
+            });
+            var bound = userFn.BindThis(newThis);
+            var result = bound.Call(this, [.. args]);
+            return result is SharpTSObject or SharpTSInstance or SharpTSArray
+                or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
+                ? result : newThis;
+        }
+        if (callable is SharpTSArrowFunction arrowFn && arrowFn.HasOwnThis)
+        {
+            if (!arrowFn.TryGetProperty("prototype", out var protoObj))
+            {
+                protoObj = new SharpTSObject(new Dictionary<string, object?>());
+                arrowFn.SetProperty("prototype", protoObj);
+            }
+            var newThis = new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["__proto__"] = protoObj,
+                ["constructor"] = arrowFn,
+            });
+            var bound = arrowFn.Bind(newThis);
+            var result = bound.Call(this, [.. args]);
+            return result is SharpTSObject or SharpTSInstance or SharpTSArray
+                or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
+                ? result : newThis;
+        }
+        // Built-in constructor (e.g. RegExp via SharpTSBuiltInConstructor).
+        // BuiltInConstructorFactory handles the factory dispatch.
+        if (callable is SharpTSBuiltInConstructor builtIn)
+        {
+            return BuiltInConstructorFactory.TryCreate(builtIn.Name, [.. args], this);
+        }
+        // Fallback: treat as a callable; Reflect.construct shape.
+        if (callable is ISharpTSCallable c)
+        {
+            return c.Call(this, [.. args]);
+        }
+        throw new InterpreterException("TypeError: Construct called on non-callable.");
+    }
+
     private RuntimeValue EvaluateNew(Expr.New newExpr)
     {
         // Built-in types only apply when callee is a simple identifier
@@ -254,6 +316,7 @@ public partial class Interpreter
             var bound = userFn.BindThis(newThis);
             var result = bound.Call(this, fnArgs);
             return RuntimeValue.FromBoxed(result is SharpTSObject or SharpTSInstance or SharpTSArray
+                or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
                 ? result
                 : newThis);
         }
@@ -282,6 +345,7 @@ public partial class Interpreter
             var bound = userArrowFn.Bind(newThis);
             var result = bound.Call(this, arrowArgs);
             return RuntimeValue.FromBoxed(result is SharpTSObject or SharpTSInstance or SharpTSArray
+                or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
                 ? result
                 : newThis);
         }

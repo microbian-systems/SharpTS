@@ -87,6 +87,30 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
         _properties[name] = value;
     }
 
+    // JS functions are objects — they accept symbol-keyed property
+    // assignment too (`fn[Symbol.species] = ...`). Without per-instance
+    // symbol storage, the spec patterns that install Symbol.species on
+    // a constructor function (test262 RegExp Symbol.split species-* tests)
+    // can't round-trip the value.
+    private Dictionary<SharpTSSymbol, object?>? _symbolProperties;
+
+    /// <summary>Sets a symbol-keyed property on this function.</summary>
+    public void SetBySymbol(SharpTSSymbol key, object? value)
+    {
+        _symbolProperties ??= [];
+        _symbolProperties[key] = value;
+    }
+
+    /// <summary>Reads a symbol-keyed property; returns true and the value
+    /// when one is registered. Used by SpeciesConstructor lookup, etc.</summary>
+    public bool TryGetSymbolProperty(SharpTSSymbol key, out object? value)
+    {
+        if (_symbolProperties != null && _symbolProperties.TryGetValue(key, out value))
+            return true;
+        value = null;
+        return false;
+    }
+
     /// <summary>Removes a JS-object property from this function.</summary>
     public bool DeleteProperty(string name)
     {
@@ -356,6 +380,28 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
     {
         _properties ??= [];
         _properties[name] = value;
+    }
+
+    // Symbol-keyed property storage — same rationale as SharpTSFunction
+    // above (test262 species-* patterns install Symbol.species on a
+    // constructor expression).
+    private Dictionary<SharpTSSymbol, object?>? _symbolProperties;
+
+    /// <summary>Sets a symbol-keyed property on this arrow function.</summary>
+    public void SetBySymbol(SharpTSSymbol key, object? value)
+    {
+        _symbolProperties ??= [];
+        _symbolProperties[key] = value;
+    }
+
+    /// <summary>Reads a symbol-keyed property; returns true and the value
+    /// when one is registered.</summary>
+    public bool TryGetSymbolProperty(SharpTSSymbol key, out object? value)
+    {
+        if (_symbolProperties != null && _symbolProperties.TryGetValue(key, out value))
+            return true;
+        value = null;
+        return false;
     }
 
     /// <summary>Removes a JS-object property from this arrow function.</summary>

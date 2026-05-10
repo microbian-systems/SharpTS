@@ -764,9 +764,24 @@ public partial class Interpreter
         // JS functions are objects — bracket access reads user properties.
         if (obj is SharpTSFunction fn)
         {
+            // Symbol-keyed bracket access (`fn[Symbol.species]`) routes
+            // through the per-instance symbol map. Set via the matching
+            // symbol-keyed branch in EvaluateSetIndex.
+            if (index is SharpTSSymbol fnSym && fn.TryGetSymbolProperty(fnSym, out var symVal))
+                return RuntimeValue.FromBoxed(symVal ?? SharpTSUndefined.Instance);
             string fnKey = index?.ToString() ?? "";
             if (fn.TryGetProperty(fnKey, out var propVal))
                 return RuntimeValue.FromBoxed(propVal);
+            return RuntimeValue.Undefined;
+        }
+        // Same for arrow functions / function expressions.
+        if (obj is SharpTSArrowFunction afn)
+        {
+            if (index is SharpTSSymbol arrSym && afn.TryGetSymbolProperty(arrSym, out var arrSymVal))
+                return RuntimeValue.FromBoxed(arrSymVal ?? SharpTSUndefined.Instance);
+            string arrKey = index?.ToString() ?? "";
+            if (afn.TryGetProperty(arrKey, out var arrPropVal))
+                return RuntimeValue.FromBoxed(arrPropVal);
             return RuntimeValue.Undefined;
         }
 
@@ -852,7 +867,27 @@ public partial class Interpreter
         // JS functions are objects — support bracket property assignment.
         if (obj is SharpTSFunction fn)
         {
+            // Symbol-keyed assignment (`fn[Symbol.species] = ...`) routes to
+            // the per-instance symbol map so SpeciesConstructor lookups
+            // round-trip. Without this branch the key gets stringified to
+            // "Symbol(...)" via ToString and is invisible to symbol-keyed
+            // reads.
+            if (index is SharpTSSymbol fnSym)
+            {
+                fn.SetBySymbol(fnSym, value);
+                return RuntimeValue.FromBoxed(value);
+            }
             fn.SetProperty(index?.ToString() ?? "", value);
+            return RuntimeValue.FromBoxed(value);
+        }
+        if (obj is SharpTSArrowFunction afn)
+        {
+            if (index is SharpTSSymbol arrSym)
+            {
+                afn.SetBySymbol(arrSym, value);
+                return RuntimeValue.FromBoxed(value);
+            }
+            afn.SetProperty(index?.ToString() ?? "", value);
             return RuntimeValue.FromBoxed(value);
         }
 
