@@ -992,6 +992,13 @@ public class EmittedRuntime
     public MethodBuilder TSRegExpProtoGetDotAll { get; set; } = null!;
     public MethodBuilder TSRegExpProtoGetHasIndices { get; set; } = null!;
     public MethodBuilder TSRegExpProtoGetUnicodeSets { get; set; } = null!;
+
+    // RegExp.prototype.exec / .test / .toString data methods. Throw
+    // TypeError on non-RegExp receivers; installed by RegExpPrototypePopulate
+    // as data properties on the prototype.
+    public MethodBuilder TSRegExpProtoExec { get; set; } = null!;
+    public MethodBuilder TSRegExpProtoTest { get; set; } = null!;
+    public MethodBuilder TSRegExpProtoToString { get; set; } = null!;
     public MethodBuilder TSRegExpTestMethod { get; set; } = null!;
     public MethodBuilder TSRegExpExecMethod { get; set; } = null!;
     public MethodBuilder TSRegExpToStringMethod { get; set; } = null!;

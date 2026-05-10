@@ -113,6 +113,13 @@ public partial class RuntimeEmitter
         // RegExp.prototype, 'source').get` returns the helper $TSFunction.
         EmitTSRegExpProtoAccessors(typeBuilder, runtime);
 
+        // RegExp.prototype.exec / .test / .toString — spec-required data
+        // methods (§22.2.5.2 / .5 / .14). Throw TypeError when called on
+        // non-RegExp `this`. test262's prototype/exec/S15.10.6.2_A2_*.js
+        // pattern (`var o={}; o.exec=RegExp.prototype.exec; o.exec(s)`)
+        // checks this surface.
+        EmitTSRegExpProtoMethods(typeBuilder, runtime);
+
         typeBuilder.CreateType();
     }
 
@@ -1436,93 +1443,21 @@ public partial class RuntimeEmitter
         runtime.TSRegExpSymMatchHelper = method;
 
         var il = method.GetILGenerator();
-        var rxLocal = il.DeclareLocal(typeBuilder);
         var sLocal = il.DeclareLocal(_types.String);
-        var listLocal = il.DeclareLocal(typeof(List<string>));
-        var resultLocal = il.DeclareLocal(_types.ListOfObject);
-        var enumLocal = il.DeclareLocal(typeof(List<string>.Enumerator));
-
-        var globalLabel = il.DefineLabel();
-        var emptyMatchLabel = il.DefineLabel();
-        var loopStartLabel = il.DefineLabel();
-        var loopBodyLabel = il.DefineLabel();
-        var slowPathLabel = il.DefineLabel();
 
         // ECMA-262 §22.2.5.6 step 2: throw TypeError if `this` is not an Object.
         EmitRequireObjectArg(il, runtime, method, argIndex: 0, "RegExp.prototype[Symbol.match]");
 
-        // Slow path: any Object that is NOT a $RegExp goes through the
-        // spec algorithm via Get/exec — see EmitSymMatchSlowPath.
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, typeBuilder);
-        il.Emit(OpCodes.Brfalse, slowPathLabel);
-
-        // var rx = ($RegExp)arg0;
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeBuilder);
-        il.Emit(OpCodes.Stloc, rxLocal);
-
-        // var s = arg1?.ToString() ?? "undefined";
-        EmitArgToJsString(il, runtime, argIndex: 1, sLocal);
-
-        // if (rx._global) goto globalLabel;
-        il.Emit(OpCodes.Ldloc, rxLocal);
-        il.Emit(OpCodes.Ldfld, _tsRegExpGlobalField);
-        il.Emit(OpCodes.Brtrue, globalLabel);
-
-        // Non-global: return rx.Exec(s);
-        il.Emit(OpCodes.Ldloc, rxLocal);
-        il.Emit(OpCodes.Ldloc, sLocal);
-        il.Emit(OpCodes.Callvirt, runtime.TSRegExpExecMethod);
-        il.Emit(OpCodes.Ret);
-
-        // Global: build a List<object?> of all match values.
-        il.MarkLabel(globalLabel);
-        // var list = rx.MatchAll(s);
-        il.Emit(OpCodes.Ldloc, rxLocal);
-        il.Emit(OpCodes.Ldloc, sLocal);
-        il.Emit(OpCodes.Call, _tsRegExpMatchAllMethod);
-        il.Emit(OpCodes.Stloc, listLocal);
-
-        // if (list.Count == 0) return null;
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Callvirt, typeof(List<string>).GetProperty("Count")!.GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, emptyMatchLabel);
-
-        // var result = new List<object?>(list.Count);
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Callvirt, typeof(List<string>).GetProperty("Count")!.GetGetMethod()!);
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
-        il.Emit(OpCodes.Stloc, resultLocal);
-
-        // foreach (var m in list) result.Add(m);
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Callvirt, typeof(List<string>).GetMethod("GetEnumerator")!);
-        il.Emit(OpCodes.Stloc, enumLocal);
-
-        il.Emit(OpCodes.Br, loopStartLabel);
-        il.MarkLabel(loopBodyLabel);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldloca, enumLocal);
-        il.Emit(OpCodes.Call, typeof(List<string>.Enumerator).GetProperty("Current")!.GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
-
-        il.MarkLabel(loopStartLabel);
-        il.Emit(OpCodes.Ldloca, enumLocal);
-        il.Emit(OpCodes.Call, typeof(List<string>.Enumerator).GetMethod("MoveNext")!);
-        il.Emit(OpCodes.Brtrue, loopBodyLabel);
-
-        // return new $Array(result);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
-        il.Emit(OpCodes.Ret);
-
-        // return null
-        il.MarkLabel(emptyMatchLabel);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
-
-        // === Slow path: spec-aligned algorithm for any Object `this` ===
+        // Spec-aligned algorithm for any Object `this`. The fast path that
+        // direct-called \$RegExp.Exec / .MatchAll bypassed the spec steps
+        // around reading `flags` via Get, lastIndex management, and the
+        // empty-match advance — many builtin-* tests verify those.
+        // \$Runtime.GetProperty / SetProperty now route \$RegExp's slots
+        // through the typed getters/setters, so the spec path produces the
+        // same final result on real regexes while picking up the side
+        // effects test262 verifies (see also the matching Symbol.search
+        // cleanup in 5c981eb9).
+        //
         // ECMA-262 §22.2.5.6 RegExp.prototype [@@match]:
         //   3. S = ToString(string)
         //   4. flags = ToString(? Get(rx, "flags"))
@@ -1530,7 +1465,6 @@ public partial class RuntimeEmitter
         //   6. Else (global): set lastIndex=0, loop calling RegExpExec,
         //      collecting result["0"] until null. Return null if no
         //      match, else the array. Empty matches advance lastIndex.
-        il.MarkLabel(slowPathLabel);
         EmitArgToJsString(il, runtime, argIndex: 1, sLocal);
         EmitSymMatchSlowPath(il, runtime, sLocal);
     }
@@ -2308,6 +2242,142 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(checkRegExpLabel);
+    }
+
+    /// <summary>
+    /// Emits the three RegExp.prototype data-method helpers (exec/test/
+    /// toString) as static methods on $RegExp. Each names its first param
+    /// "__this" so $TSFunction._expectsThis=true and `.call(receiver, ...)`
+    /// routes the receiver. Each throws TypeError when receiver is not a
+    /// $RegExp.
+    /// </summary>
+    private void EmitTSRegExpProtoMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.TSRegExpProtoExec = EmitProtoExecMethod(typeBuilder, runtime);
+        runtime.TSRegExpProtoTest = EmitProtoTestMethod(typeBuilder, runtime);
+        runtime.TSRegExpProtoToString = EmitProtoToStringMethod(typeBuilder, runtime);
+    }
+
+    private MethodBuilder EmitProtoExecMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ProtoExec",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]);
+        try { method.DefineParameter(1, ParameterAttributes.None, "__this"); }
+        catch { /* already named — ignore */ }
+
+        var il = method.GetILGenerator();
+        var rxLocal = il.DeclareLocal(runtime.TSRegExpType);
+        var sLocal = il.DeclareLocal(_types.String);
+
+        // If `this` is not a $RegExp, throw TypeError.
+        var okLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+        il.Emit(OpCodes.Stloc, rxLocal);
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Brtrue, okLabel);
+        il.Emit(OpCodes.Ldstr, "RegExp.prototype.exec called on non-RegExp");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(okLabel);
+
+        // s = ToString(arg1)
+        EmitArgToJsString(il, runtime, argIndex: 1, sLocal);
+
+        // return rx.Exec(s)
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Ldloc, sLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSRegExpExecMethod);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
+    private MethodBuilder EmitProtoTestMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ProtoTest",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]);
+        try { method.DefineParameter(1, ParameterAttributes.None, "__this"); }
+        catch { /* already named — ignore */ }
+
+        var il = method.GetILGenerator();
+        var rxLocal = il.DeclareLocal(runtime.TSRegExpType);
+        var sLocal = il.DeclareLocal(_types.String);
+
+        var okLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+        il.Emit(OpCodes.Stloc, rxLocal);
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Brtrue, okLabel);
+        il.Emit(OpCodes.Ldstr, "RegExp.prototype.test called on non-RegExp");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(okLabel);
+
+        EmitArgToJsString(il, runtime, argIndex: 1, sLocal);
+
+        // return rx.Test(s) boxed
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Ldloc, sLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSRegExpTestMethod);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
+    private MethodBuilder EmitProtoToStringMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ProtoToString",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        try { method.DefineParameter(1, ParameterAttributes.None, "__this"); }
+        catch { /* already named — ignore */ }
+
+        var il = method.GetILGenerator();
+        var rxLocal = il.DeclareLocal(runtime.TSRegExpType);
+
+        // Allow this === RegExp.prototype to return "/(?:)/" (spec default).
+        var notProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brfalse, notProtoLabel);
+        il.Emit(OpCodes.Ldstr, "/(?:)/");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notProtoLabel);
+
+        var okLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+        il.Emit(OpCodes.Stloc, rxLocal);
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Brtrue, okLabel);
+        il.Emit(OpCodes.Ldstr, "RegExp.prototype.toString called on non-RegExp");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(okLabel);
+
+        // return "/" + rx.Source + "/" + rx.Flags
+        il.Emit(OpCodes.Ldstr, "/");
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSRegExpSourceGetter);
+        il.Emit(OpCodes.Ldstr, "/");
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSRegExpFlagsGetter);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String, _types.String));
+        il.Emit(OpCodes.Ret);
+        return method;
     }
 
     private void EmitArgToJsString(ILGenerator il, EmittedRuntime runtime, int argIndex, LocalBuilder local)

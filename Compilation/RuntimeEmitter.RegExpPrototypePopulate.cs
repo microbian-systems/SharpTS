@@ -143,6 +143,30 @@ public partial class RuntimeEmitter
         InstallAccessor("hasIndices",   runtime.TSRegExpProtoGetHasIndices,  0);
         InstallAccessor("unicodeSets",  runtime.TSRegExpProtoGetUnicodeSets, 0);
 
+        // exec / test / toString as data properties. The helpers throw
+        // TypeError on non-RegExp receivers; test262's prototype/exec/
+        // S15.10.6.2_A2_*.js patterns set RegExp.prototype.exec onto a
+        // plain object and verify the resulting call throws.
+        void InstallDataMethod(string jsName, MethodBuilder helper, int jsLength)
+        {
+            il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldtoken, helper);
+            il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+                _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldc_I4, jsLength);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+            il.Emit(OpCodes.Callvirt, setItem);
+        }
+
+        InstallDataMethod("exec",     runtime.TSRegExpProtoExec,     1);
+        InstallDataMethod("test",     runtime.TSRegExpProtoTest,     1);
+        InstallDataMethod("toString", runtime.TSRegExpProtoToString, 0);
+
         // RegExp.prototype's [[Prototype]] is %Object.prototype% per
         // ECMA-262 §22.2.6.
         il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
