@@ -7,13 +7,9 @@ public partial class RuntimeEmitter
 {
     private void EmitCreateException(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "CreateException",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Exception,
-            [_types.Object]
-        );
-        runtime.CreateException = method;
+        // Signature forward-declared by DefineRuntimeClassPhase1; just
+        // emit the body on the existing MethodBuilder.
+        var method = (MethodBuilder)runtime.CreateException;
 
         var il = method.GetILGenerator();
         var exLocal = il.DeclareLocal(_types.Exception);

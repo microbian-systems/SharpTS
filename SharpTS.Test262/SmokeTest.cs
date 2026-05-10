@@ -179,6 +179,28 @@ public class SmokeTest
     }
 
     [Fact]
+    public void Diagnostic_CompiledThisValRegression()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var dir = Test262Paths.TestDir(root);
+        var paths = new[]
+        {
+            Path.Combine(dir, "built-ins", "RegExp", "prototype", "Symbol.match", "this-val-non-obj.js"),
+            Path.Combine(dir, "built-ins", "RegExp", "prototype", "Symbol.replace", "this-val-non-obj.js"),
+            Path.Combine(dir, "built-ins", "RegExp", "prototype", "Symbol.split", "this-val-non-obj.js"),
+            Path.Combine(dir, "built-ins", "RegExp", "prototype", "Symbol.search", "this-val-non-obj.js"),
+            Path.Combine(dir, "built-ins", "Array", "from", "iter-map-fn-this-non-strict.js"),
+        };
+        foreach (var p in paths)
+        {
+            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+            var result = runner.RunOne(p, Test262ExecutionMode.Compiled);
+            _output.WriteLine($"{Path.GetFileName(Path.GetDirectoryName(p))}/{Path.GetFileName(p)} → {result.Outcome}: {result.Message}");
+        }
+    }
+
+    [Fact]
     public void Diagnostic_CompiledNotAConstructor()
     {
         var root = Test262Paths.TryFindRoot();

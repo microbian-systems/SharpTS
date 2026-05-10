@@ -39,6 +39,14 @@ public partial class RuntimeEmitter
         // Emit $Undefined singleton class first (other methods need this type)
         EmitUndefinedClass(moduleBuilder, runtime);
 
+        // Forward-declare the $Runtime class plus a handful of helper signatures
+        // (Stringify, CreateException) so types that emit BEFORE EmitRuntimeClass
+        // — most importantly $RegExp, whose Symbol.* protocol helpers want to
+        // call them — can refer to the MethodBuilders. Bodies fill in later
+        // during EmitRuntimeClass / EmitStringify / EmitCreateException, which
+        // re-use the pre-allocated TypeBuilder + MethodBuilders.
+        DefineRuntimeClassPhase1(moduleBuilder, runtime);
+
         // Emit IUnionType marker interface first (union types need to implement this)
         EmitIUnionTypeInterface(moduleBuilder, runtime);
 

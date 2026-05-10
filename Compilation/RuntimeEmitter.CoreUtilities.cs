@@ -8,13 +8,11 @@ public partial class RuntimeEmitter
 {
     private void EmitStringify(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "Stringify",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.String,
-            [_types.Object]
-        );
-        runtime.Stringify = method;
+        // Signature was forward-declared by DefineRuntimeClassPhase1 so
+        // helper types that emit before $Runtime (notably $RegExp's
+        // Symbol.* protocol methods) can call us. Just emit the body on
+        // the existing MethodBuilder.
+        var method = (MethodBuilder)runtime.Stringify;
 
         var il = method.GetILGenerator();
         var nullLabel = il.DefineLabel();

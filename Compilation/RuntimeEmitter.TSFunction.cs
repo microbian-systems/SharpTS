@@ -552,11 +552,65 @@ public partial class RuntimeEmitter
         iwt.Emit(OpCodes.Newarr, _types.Object);
         iwt.Emit(OpCodes.Stloc, effectiveArgsIWT);
 
-        // effectiveArgs[0] = thisArg
+        // effectiveArgs[0] = thisArg, with a narrow fallback to _target when
+        // thisArg is null/undefined AND the method is static (a built-in
+        // helper like the RegExp Symbol.* protocol methods, NOT a display-
+        // class instance method). For static helpers, indexed-method dispatch
+        // (`re[Symbol.X](arg)` compiled as InvokeMethodValue(receiver=null,
+        // fn, [arg])) loses the receiver — the TSFunction was constructed
+        // with `_target=re` and we want to recover that. For instance methods
+        // (anon function expressions with captures), `_target` is the IL-level
+        // display-class receiver, NOT the JS `this`, so the fallback must NOT
+        // fire there — that path keeps `this` as the explicit thisArg, which
+        // for non-strict bare calls is correctly globalThis (null in our
+        // model).
+        var fallbackProbeLabel = iwt.DefineLabel();
+        var afterFallbackLabel = iwt.DefineLabel();
+
         iwt.Emit(OpCodes.Ldloc, effectiveArgsIWT);
         iwt.Emit(OpCodes.Ldc_I4_0);
+
+        // Only the static-helper case considers _target as the JS this.
+        iwt.Emit(OpCodes.Ldarg_0);
+        iwt.Emit(OpCodes.Ldfld, methodField);
+        iwt.Emit(OpCodes.Callvirt, _types.MethodInfo.GetProperty("IsStatic")!.GetGetMethod()!);
+        iwt.Emit(OpCodes.Brfalse, useThisArgDirectLabelDecl(out var useThisArgDirectLabel));
+
+        // Static method: probe thisArg → _target chain.
         iwt.Emit(OpCodes.Ldarg_1);
+        iwt.Emit(OpCodes.Brfalse, fallbackProbeLabel);
+        iwt.Emit(OpCodes.Ldarg_1);
+        iwt.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        iwt.Emit(OpCodes.Brtrue, fallbackProbeLabel);
+        // thisArg is a real Object — use it.
+        iwt.Emit(OpCodes.Ldarg_1);
+        iwt.Emit(OpCodes.Br, afterFallbackLabel);
+
+        iwt.MarkLabel(fallbackProbeLabel);
+        // _target != null → use _target; else keep the original thisArg.
+        iwt.Emit(OpCodes.Ldarg_0);
+        iwt.Emit(OpCodes.Ldfld, targetField);
+        iwt.Emit(OpCodes.Dup);
+        iwt.Emit(OpCodes.Brtrue, afterFallbackLabel);
+        iwt.Emit(OpCodes.Pop);
+        iwt.Emit(OpCodes.Ldarg_1);
+        iwt.Emit(OpCodes.Br, afterFallbackLabel);
+
+        iwt.MarkLabel(useThisArgDirectLabel);
+        // Instance method: thisArg is the JS `this` as-is.
+        iwt.Emit(OpCodes.Ldarg_1);
+
+        iwt.MarkLabel(afterFallbackLabel);
         iwt.Emit(OpCodes.Stelem_Ref);
+
+        // Local helper: declare-and-return a label so the inline IsStatic
+        // check above can short-circuit to a yet-to-be-marked target without
+        // breaking the emit-flow expression.
+        Label useThisArgDirectLabelDecl(out Label l)
+        {
+            l = iwt.DefineLabel();
+            return l;
+        }
 
         // Array.Copy(args, 0, effectiveArgs, 1, args.Length)
         iwt.Emit(OpCodes.Ldarg_2);  // source

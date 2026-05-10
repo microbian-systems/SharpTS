@@ -36,13 +36,12 @@ public partial class RuntimeEmitter
 
     private void EmitRuntimeClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
-        // Define class: public static class $Runtime
-        var typeBuilder = moduleBuilder.DefineType(
-            "$Runtime",
-            TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
-            _types.Object
-        );
-        runtime.RuntimeType = typeBuilder;
+        // $Runtime TypeBuilder + early helper-method signatures (Stringify,
+        // CreateException) were forward-declared by DefineRuntimeClassPhase1
+        // so types that emit before us — $RegExp's Symbol.* helpers in
+        // particular — could refer to them. Re-use the existing TypeBuilder
+        // here; everything below adds fields/methods to the same type.
+        var typeBuilder = (TypeBuilder)runtime.RuntimeType;
         _runtimeTypeBuilder = typeBuilder;
 
         // Cooperative cancellation flag — tripped by the Test262 runner

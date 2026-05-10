@@ -1360,13 +1360,8 @@ public partial class RuntimeEmitter
 
     private void EmitGetProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "GetProperty",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            [_types.Object, _types.String]
-        );
-        runtime.GetProperty = method;
+        // Signature forward-declared by DefineRuntimeClassPhase1.
+        var method = (MethodBuilder)runtime.GetProperty;
 
         var il = method.GetILGenerator();
         var nullLabel = il.DefineLabel();
@@ -2816,13 +2811,8 @@ public partial class RuntimeEmitter
 
     private void EmitSetProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "SetProperty",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Void,
-            [_types.Object, _types.String, _types.Object]
-        );
-        runtime.SetProperty = method;
+        // Signature forward-declared by DefineRuntimeClassPhase1.
+        var method = (MethodBuilder)runtime.SetProperty;
 
         var il = method.GetILGenerator();
         var nullLabel = il.DefineLabel();
