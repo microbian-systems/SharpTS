@@ -1819,34 +1819,21 @@ public partial class RuntimeEmitter
         runtime.TSRegExpSymSearchHelper = method;
 
         var il = method.GetILGenerator();
-        var rxLocal = il.DeclareLocal(typeBuilder);
         var sLocal = il.DeclareLocal(_types.String);
 
         // ECMA-262 §22.2.5.11 step 2: throw TypeError if `this` is not an Object.
         EmitRequireObjectArg(il, runtime, method, argIndex: 0, "RegExp.prototype[Symbol.search]");
 
-        // Fast vs slow path: if (arg0 is $RegExp) → fast.
-        var slowPathLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, typeBuilder);
-        il.Emit(OpCodes.Brfalse, slowPathLabel);
-
-        // === Fast path ===
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeBuilder);
-        il.Emit(OpCodes.Stloc, rxLocal);
-
-        EmitArgToJsString(il, runtime, argIndex: 1, sLocal);
-
-        // return (double)rx.Search(s);
-        il.Emit(OpCodes.Ldloc, rxLocal);
-        il.Emit(OpCodes.Ldloc, sLocal);
-        il.Emit(OpCodes.Call, _tsRegExpSearchMethod);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Ret);
-
-        // === Slow path: spec-aligned algorithm for any Object `this` ===
+        // Spec-aligned algorithm for any Object `this`. The previous fast
+        // path that direct-called \$RegExp.Search bypassed the spec steps
+        // around `lastIndex` save/restore + RegExpExec dispatch, which
+        // test262's builtin-coerce-lastindex.js / get-lastindex-err.js /
+        // set-lastindex-{init,restore}-* tests verify. \$Runtime.GetProperty
+        // / SetProperty now route \$RegExp's lastIndex through the typed
+        // setter with ToLength coercion, so the slow path produces the same
+        // result as the previous direct-method fast path on real regexes
+        // while picking up the spec-mandated side effects.
+        //
         // ECMA-262 §22.2.5.11 RegExp.prototype [@@search]:
         //   3. S = ToString(string)
         //   4. previousLastIndex = Get(rx, "lastIndex")
@@ -1857,7 +1844,6 @@ public partial class RuntimeEmitter
         //        Set(rx, "lastIndex", previousLastIndex)
         //   9. If result is null, return -1
         //  10. Return Get(result, "index")
-        il.MarkLabel(slowPathLabel);
         EmitArgToJsString(il, runtime, argIndex: 1, sLocal);
         EmitSymSearchSlowPath(il, runtime, sLocal);
     }
