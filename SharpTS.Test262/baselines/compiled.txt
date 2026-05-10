@@ -9278,7 +9278,7 @@ test/built-ins/RegExp/prototype/Symbol.match/exec-return-type-invalid.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/exec-return-type-valid.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/flags-tostring-error.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/g-coerce-result-err.js Fail
-test/built-ins/RegExp/prototype/Symbol.match/g-get-exec-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/g-get-exec-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-get-result-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/g-init-lastindex-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/g-init-lastindex.js Pass
@@ -9298,7 +9298,7 @@ test/built-ins/RegExp/prototype/Symbol.match/name.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/not-a-constructor.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/prop-desc.js RuntimeError
 test/built-ins/RegExp/prototype/Symbol.match/this-val-non-obj.js Pass
-test/built-ins/RegExp/prototype/Symbol.match/this-val-non-regexp.js RuntimeError
+test/built-ins/RegExp/prototype/Symbol.match/this-val-non-regexp.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/u-advance-after-empty.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/y-fail-global-return.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/y-fail-lastindex-no-write.js Fail
