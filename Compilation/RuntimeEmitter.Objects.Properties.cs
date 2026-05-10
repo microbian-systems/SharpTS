@@ -1480,6 +1480,22 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brtrue, cjsModuleGetLabel);
         }
 
+        // $RegExp — surface the built-in slots (`lastIndex`, `source`, `flags`,
+        // `global`, `ignoreCase`, `multiline`, `sticky`, `unicode`, `hasIndices`,
+        // `dotAll`, `unicodeSets`) via the typed getters / parsed-from-flags
+        // expressions. Without this branch the read falls through to
+        // GetFieldsProperty whose reflection lookup is case-sensitive ("lastIndex"
+        // vs "LastIndex") and silently returns undefined. Test262's
+        // builtin-coerce-lastindex.js + many coerce/builtin-* tests require the
+        // internal slot value to round-trip through `r.lastIndex` reads/writes.
+        var tsRegExpGetLabel = il.DefineLabel();
+        if (_features.UsesRegExp)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            il.Emit(OpCodes.Brtrue, tsRegExpGetLabel);
+        }
+
         // Task<object?> (Promise) - check for then/catch/finally
         var promiseLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -2130,6 +2146,105 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Castclass, runtime.CjsModuleType);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Callvirt, runtime.CjsModuleType.GetMethod("GetMember", [_types.String])!);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // $RegExp handler — surface built-in slots via typed getters, plus
+        // flag-string-parsed accessors (sticky/unicode/hasIndices/dotAll/
+        // unicodeSets) for the JS-spec flags that don't have dedicated
+        // .NET-side fields. Unknown property names fall through to
+        // GetFieldsProperty so user-set data (`r.foo = 1`, descriptor-
+        // installed properties) still resolves correctly.
+        if (_features.UsesRegExp)
+        {
+            il.MarkLabel(tsRegExpGetLabel);
+            var rxLocal = il.DeclareLocal(runtime.TSRegExpType);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TSRegExpType);
+            il.Emit(OpCodes.Stloc, rxLocal);
+
+            // Helper closure to emit a name-equality test + branch to a
+            // labelled body. Keeps the dispatch table readable.
+            void NameMatchBranch(string propName, System.Action emitBody)
+            {
+                var notThisName = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldstr, propName);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+                il.Emit(OpCodes.Brfalse, notThisName);
+                emitBody();
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(notThisName);
+            }
+
+            // "lastIndex" — int field, return boxed double for JS-side
+            // number identity (assignments coerce via the SetProperty arm).
+            NameMatchBranch("lastIndex", () =>
+            {
+                il.Emit(OpCodes.Ldloc, rxLocal);
+                il.Emit(OpCodes.Callvirt, runtime.TSRegExpLastIndexGetter);
+                il.Emit(OpCodes.Conv_R8);
+                il.Emit(OpCodes.Box, _types.Double);
+            });
+            // "source" / "flags" — string fields.
+            NameMatchBranch("source", () =>
+            {
+                il.Emit(OpCodes.Ldloc, rxLocal);
+                il.Emit(OpCodes.Callvirt, runtime.TSRegExpSourceGetter);
+            });
+            NameMatchBranch("flags", () =>
+            {
+                il.Emit(OpCodes.Ldloc, rxLocal);
+                il.Emit(OpCodes.Callvirt, runtime.TSRegExpFlagsGetter);
+            });
+            // "global" / "ignoreCase" / "multiline" — boolean fields.
+            NameMatchBranch("global", () =>
+            {
+                il.Emit(OpCodes.Ldloc, rxLocal);
+                il.Emit(OpCodes.Callvirt, runtime.TSRegExpGlobalGetter);
+                il.Emit(OpCodes.Box, _types.Boolean);
+            });
+            NameMatchBranch("ignoreCase", () =>
+            {
+                il.Emit(OpCodes.Ldloc, rxLocal);
+                il.Emit(OpCodes.Callvirt, runtime.TSRegExpIgnoreCaseGetter);
+                il.Emit(OpCodes.Box, _types.Boolean);
+            });
+            NameMatchBranch("multiline", () =>
+            {
+                il.Emit(OpCodes.Ldloc, rxLocal);
+                il.Emit(OpCodes.Callvirt, runtime.TSRegExpMultilineGetter);
+                il.Emit(OpCodes.Box, _types.Boolean);
+            });
+
+            // "sticky" / "unicode" / "hasIndices" / "dotAll" / "unicodeSets"
+            // — parsed from the flags string. There's no dedicated field for
+            // these, so we Contains-check the appropriate char (per ECMA-262
+            // §22.2.5.3 flags-string assembly).
+            void FlagCharBranch(string propName, char ch)
+            {
+                NameMatchBranch(propName, () =>
+                {
+                    il.Emit(OpCodes.Ldloc, rxLocal);
+                    il.Emit(OpCodes.Callvirt, runtime.TSRegExpFlagsGetter);
+                    // s.Contains(ch) – use Contains(char) overload to dodge
+                    // string-literal allocation for the single-char arg.
+                    il.Emit(OpCodes.Ldc_I4, (int)ch);
+                    il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Contains", _types.Char));
+                    il.Emit(OpCodes.Box, _types.Boolean);
+                });
+            }
+            FlagCharBranch("sticky", 'y');
+            FlagCharBranch("unicode", 'u');
+            FlagCharBranch("hasIndices", 'd');
+            FlagCharBranch("dotAll", 's');
+            FlagCharBranch("unicodeSets", 'v');
+
+            // Other property names fall through to GetFieldsProperty so
+            // user-set data (`r.foo = 1`) and prototype walks still resolve.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.GetFieldsProperty);
             il.Emit(OpCodes.Ret);
         }
 
@@ -2871,6 +2986,21 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brtrue, cjsModuleSetLabel);
         }
 
+        // $RegExp — `r.lastIndex = value` must coerce `value` via JS
+        // ToLength (string "1.9" → 1, NaN → 0, etc.) and write the internal
+        // int32 slot. Without the special case the assignment falls through
+        // to SetFieldsProperty which stores the boxed value on a generic
+        // PDS bag — subsequent built-in matchers ignore it and use the
+        // stale internal slot. Test262 builtin-coerce-lastindex.js etc.
+        // require coerce+round-trip.
+        var tsRegExpSetLabel = il.DefineLabel();
+        if (_features.UsesRegExp)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            il.Emit(OpCodes.Brtrue, tsRegExpSetLabel);
+        }
+
         // System.Type (class reference used as value, e.g. `Scalar.PLAIN = 'x'`). JS allows
         // arbitrary static property assignment on classes; we store them in PropertyDescriptorStore.
         var typeSetLabel = il.DefineLabel();
@@ -2884,6 +3014,36 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetFieldsProperty);
         il.Emit(OpCodes.Ret);
+
+        // $RegExp handler: route `r.lastIndex = value` to the typed setter
+        // with JS ToLength coercion. Other property writes fall through to
+        // SetFieldsProperty so user data-property assignments
+        // (`Object.defineProperty(r, 'foo', {writable:true}); r.foo = ...`)
+        // still hit the user-property bag.
+        if (_features.UsesRegExp)
+        {
+            il.MarkLabel(tsRegExpSetLabel);
+            var notLastIndexLabel = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "lastIndex");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, notLastIndexLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TSRegExpType);
+            il.Emit(OpCodes.Ldarg_2);
+            EmitToLengthBoxed(il, runtime);
+            il.Emit(OpCodes.Callvirt, runtime.TSRegExpLastIndexSetter);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(notLastIndexLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Call, runtime.SetFieldsProperty);
+            il.Emit(OpCodes.Ret);
+        }
 
         // System.Type handler: store as data descriptor in PropertyDescriptorStore.
         // Read path (EmitGetProperty) looks it up before falling through to .NET member
@@ -3120,6 +3280,141 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits inline IL that coerces the boxed-object value at the top of the
+    /// stack to int32 via the JS ToLength algorithm: null/undefined/NaN → 0,
+    /// false → 0, true → 1, double via truncate (clamped to int32), int via
+    /// pass-through, string via TryParse → double-path (or 0 on parse
+    /// failure), other types → 0. Used by SetProperty's $RegExp arm so
+    /// `r.lastIndex = '1.9'` stores 1.
+    /// </summary>
+    private void EmitToLengthBoxed(ILGenerator il, EmittedRuntime runtime)
+    {
+        var localVal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, localVal);
+
+        var nullLabel = il.DefineLabel();
+        var undefinedLabel = il.DefineLabel();
+        var doubleLabel = il.DefineLabel();
+        var intLabel = il.DefineLabel();
+        var boolLabel = il.DefineLabel();
+        var stringLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldloc, localVal);
+        il.Emit(OpCodes.Brfalse, nullLabel);
+
+        il.Emit(OpCodes.Ldloc, localVal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, undefinedLabel);
+
+        il.Emit(OpCodes.Ldloc, localVal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, doubleLabel);
+
+        il.Emit(OpCodes.Ldloc, localVal);
+        il.Emit(OpCodes.Isinst, _types.Int32);
+        il.Emit(OpCodes.Brtrue, intLabel);
+
+        il.Emit(OpCodes.Ldloc, localVal);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, boolLabel);
+
+        il.Emit(OpCodes.Ldloc, localVal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, stringLabel);
+
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(nullLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(undefinedLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(doubleLabel);
+        var dTmp = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldloc, localVal);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Stloc, dTmp);
+
+        // NaN check: (d == d) is false iff d is NaN.
+        var dNonNanLabel = il.DefineLabel();
+        var dPositiveLabel = il.DefineLabel();
+        var dClampLabel = il.DefineLabel();
+        var dInRangeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, dTmp);
+        il.Emit(OpCodes.Ldloc, dTmp);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brtrue, dNonNanLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(dNonNanLabel);
+        il.Emit(OpCodes.Ldloc, dTmp);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Bgt, dPositiveLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(dPositiveLabel);
+        il.Emit(OpCodes.Ldloc, dTmp);
+        il.Emit(OpCodes.Ldc_R8, (double)int.MaxValue);
+        il.Emit(OpCodes.Blt, dInRangeLabel);
+        il.Emit(OpCodes.Ldc_I4, int.MaxValue);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(dInRangeLabel);
+        il.Emit(OpCodes.Ldloc, dTmp);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(intLabel);
+        il.Emit(OpCodes.Ldloc, localVal);
+        il.Emit(OpCodes.Unbox_Any, _types.Int32);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(boolLabel);
+        il.Emit(OpCodes.Ldloc, localVal);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(stringLabel);
+        var sTmp = il.DeclareLocal(_types.Double);
+        var parseFailLabel = il.DefineLabel();
+        var sPosLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, localVal);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Globalization.NumberStyles.Float);
+        il.Emit(OpCodes.Call, _types.GetProperty(typeof(System.Globalization.CultureInfo), "InvariantCulture").GetGetMethod()!);
+        il.Emit(OpCodes.Ldloca, sTmp);
+        il.Emit(OpCodes.Call, typeof(double).GetMethod("TryParse",
+            [_types.String, typeof(System.Globalization.NumberStyles), typeof(IFormatProvider), typeof(double).MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, parseFailLabel);
+        il.Emit(OpCodes.Ldloc, sTmp);
+        il.Emit(OpCodes.Ldloc, sTmp);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Brfalse, parseFailLabel);
+        il.Emit(OpCodes.Ldloc, sTmp);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Bgt, sPosLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(sPosLabel);
+        il.Emit(OpCodes.Ldloc, sTmp);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(parseFailLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+
+        il.MarkLabel(doneLabel);
     }
 
     /// <summary>
