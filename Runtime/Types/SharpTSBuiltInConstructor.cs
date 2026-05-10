@@ -33,8 +33,14 @@ public sealed class SharpTSBuiltInConstructor : ISharpTSCallable
         // five well-known-symbol-keyed protocol methods (@@match, @@matchAll,
         // @@replace, @@search, @@split). Surfacing it lets bracket access like
         // `RegExp.prototype[Symbol.match]` resolve to the callable.
-        if (name == "prototype" && Name == BuiltInNames.RegExp)
-            return RegExpBuiltIns.Prototype;
+        // RegExp.prototype lookup intentionally falls through to the caller
+        // here — the receiver-aware path in Interpreter.EvaluateGetOnFallback
+        // returns the per-Interpreter prototype because this constructor is
+        // a process-wide singleton (Interpreter._globalConstants is static
+        // readonly), so storing prototype state here would leak realm-local
+        // mutations (delete / defineProperty) across all interpreters in
+        // the process. RegExpBuiltIns.BuildPrototype() is still the source
+        // of the per-realm object the Interpreter caches.
 
         return BuiltInRegistry.Instance.GetStaticMethod(Name, name);
     }

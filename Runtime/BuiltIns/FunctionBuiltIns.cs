@@ -32,22 +32,29 @@ public static class FunctionBuiltIns
     /// </summary>
     public static object? GetMember(ISharpTSCallable receiver, string name)
     {
-        return name switch
+        switch (name)
         {
-            "bind" => _bind.Bind(receiver),
-            "call" => _call.Bind(receiver),
-            "apply" => _apply.Bind(receiver),
+            case "bind": return _bind.Bind(receiver);
+            case "call": return _call.Bind(receiver);
+            case "apply": return _apply.Bind(receiver);
             // BuiltInMethod carries an explicit ECMA-262 spec length distinct
             // from MinArity (variadic methods like Array.prototype.slice have
             // MinArity 0 but spec length 2). Other callables fall back to
             // their Arity() — typically the parameter count of a user-defined
             // function, which already matches the spec.
-            "length" => receiver is BuiltInMethod bim
-                ? (double)bim.SpecLength
-                : (double)receiver.Arity(),
-            "name" => GetFunctionName(receiver),
-            _ => null
-        };
+            case "length":
+                return receiver is BuiltInMethod bim
+                    ? (double)bim.SpecLength
+                    : (double)receiver.Arity();
+            case "name": return GetFunctionName(receiver);
+        }
+        // Functions inherit Object.prototype — propertyHelper.js's verifyXxx
+        // helpers call `fn.hasOwnProperty('length')` directly. Resolve those
+        // through the Object.prototype unbound methods, rebound to `receiver`.
+        var protoMember = Runtime.Types.SharpTSObjectPrototype.Instance.GetMember(name);
+        if (protoMember is Runtime.Types.SharpTSObjectUnboundMethod ub)
+            return ub.BindTo(receiver);
+        return null;
     }
 
     private static string GetFunctionName(ISharpTSCallable callable)

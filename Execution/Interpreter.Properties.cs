@@ -963,6 +963,13 @@ public partial class Interpreter
         // Resolve static methods via the constructor's own GetMember.
         if (obj is SharpTSBuiltInConstructor ctor)
         {
+            // RegExp.prototype is realm-local: route through the Interpreter's
+            // own prototype object so `delete RegExp.prototype[Symbol.split]`
+            // and `Object.defineProperty(RegExp.prototype, …)` don't leak
+            // across Interpreter instances (the constructor is held in a
+            // process-wide static FrozenDictionary).
+            if (memberName == "prototype" && ctor.Name == BuiltInNames.RegExp)
+                return GetRegExpPrototype();
             return ctor.GetMember(memberName) ?? SharpTSUndefined.Instance;
         }
 
@@ -1004,6 +1011,24 @@ public partial class Interpreter
             {
                 return SharpTSUndefined.Instance;
             }
+        }
+
+        // Generic callable fallback: ISharpTSCallable values that aren't
+        // covered by a specific arm (e.g. raw `BuiltInMethod` reached as the
+        // value of `RegExp.prototype.exec`) inherit Function.prototype + the
+        // Object.prototype chain. propertyHelper.js's verifyNotWritable etc.
+        // call `.hasOwnProperty('length')` on these callables, so resolve
+        // call/apply/bind/length/name/toString here, plus the relevant
+        // Object.prototype methods, before throwing.
+        if (obj is ISharpTSCallable callable)
+        {
+            var fnMember = FunctionBuiltIns.GetMember(callable, memberName);
+            if (fnMember != null) return fnMember;
+            var protoMember = Runtime.Types.SharpTSObjectPrototype.Instance.GetMember(memberName);
+            if (protoMember is Runtime.Types.SharpTSObjectUnboundMethod ub)
+                return ub.BindTo(obj);
+            if (protoMember != null) return protoMember;
+            return SharpTSUndefined.Instance;
         }
 
         throw new InterpreterException("Only instances and objects have properties.");

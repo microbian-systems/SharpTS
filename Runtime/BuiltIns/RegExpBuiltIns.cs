@@ -142,15 +142,16 @@ public static class RegExpBuiltIns
         new BuiltInMethod("[Symbol.split]", 0, int.MaxValue, SymbolSplitImpl).WithSpecLength(2);
 
     /// <summary>
-    /// Singleton SharpTSObject standing in for RegExp.prototype. Holds the
-    /// five well-known-symbol-keyed methods so they're reachable via
-    /// `RegExp.prototype[Symbol.match]` etc., with proper property descriptors
-    /// (writable, !enumerable, configurable) provided by SharpTSObject's
-    /// symbol-storage layer.
+    /// Builds a fresh per-realm RegExp.prototype object. Each Interpreter
+    /// holds its own copy so realm-local mutations like
+    /// `delete RegExp.prototype[Symbol.split]` (test262 propertyHelper's
+    /// verifyProperty) and `Object.defineProperty(RegExp.prototype, …)` don't
+    /// leak across Interpreter instances. Holds the five well-known-symbol
+    /// protocol methods plus the named instance methods (`exec`, `test`,
+    /// `toString`) that ECMA-262 §22.2.5 declares introspectable on the
+    /// prototype itself.
     /// </summary>
-    public static readonly SharpTSObject Prototype = BuildPrototype();
-
-    private static SharpTSObject BuildPrototype()
+    public static SharpTSObject BuildPrototype()
     {
         var proto = new SharpTSObject(new Dictionary<string, object?>());
         proto.SetBySymbol(SharpTSSymbol.Match, _symbolMatch);
@@ -158,8 +159,44 @@ public static class RegExpBuiltIns
         proto.SetBySymbol(SharpTSSymbol.Replace, _symbolReplace);
         proto.SetBySymbol(SharpTSSymbol.Search, _symbolSearch);
         proto.SetBySymbol(SharpTSSymbol.Split, _symbolSplit);
+        // ECMA-262 §22.2.5: instance-method slots that are introspectable on
+        // the prototype itself (`RegExp.prototype.exec`, `.test`, `.toString`)
+        // — propertyHelper.js's verifyNotWritable runs against them, and
+        // `Function.prototype.call.bind(RegExp.prototype.exec)` is a real
+        // pattern. These are the unbound prototype methods; user code rebinds
+        // via `.call(re, str)` which routes through `BuiltInMethod.Bind`.
+        proto.SetProperty("exec", _protoExec);
+        proto.SetProperty("test", _protoTest);
+        proto.SetProperty("toString", _protoToString);
         return proto;
     }
+
+    private static readonly BuiltInMethod _protoExec =
+        new BuiltInMethod("exec", 1, (_, recv, args) =>
+        {
+            if (recv is not SharpTSRegExp regex)
+                throw new ThrowException(new SharpTSTypeError(
+                    "RegExp.prototype.exec called on non-RegExp"));
+            return regex.Exec(args.Count > 0 ? args[0]?.ToString() ?? "undefined" : "undefined");
+        }).WithSpecLength(1);
+
+    private static readonly BuiltInMethod _protoTest =
+        new BuiltInMethod("test", 1, (_, recv, args) =>
+        {
+            if (recv is not SharpTSRegExp regex)
+                throw new ThrowException(new SharpTSTypeError(
+                    "RegExp.prototype.test called on non-RegExp"));
+            return regex.Test(args.Count > 0 ? args[0]?.ToString() ?? "undefined" : "undefined");
+        }).WithSpecLength(1);
+
+    private static readonly BuiltInMethod _protoToString =
+        new BuiltInMethod("toString", 0, (_, recv, _) =>
+        {
+            if (recv is not SharpTSRegExp regex)
+                throw new ThrowException(new SharpTSTypeError(
+                    "RegExp.prototype.toString called on non-RegExp"));
+            return regex.ToString();
+        }).WithSpecLength(0);
 
     /// <summary>
     /// Resolves a well-known symbol on the RegExp prototype to the corresponding

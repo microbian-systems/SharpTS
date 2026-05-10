@@ -421,15 +421,25 @@ public static class ObjectBuiltIns
         SharpTSPropertyDescriptor descriptor = SharpTSPropertyDescriptor.FromAnyObject(descriptorArg);
 
         // Handle Symbol-keyed property definition — route through Symbol storage.
+        // Per ECMA-262 §10.1.6 / §6.2.5.6, a descriptor that omits `value` (only
+        // sets writable/enumerable/configurable) preserves the existing value.
+        // SharpTSPropertyDescriptor flattens "omitted" and "value: null/undefined"
+        // into the same Value=null state, so we recognise an attribute-only
+        // descriptor by absence of `value` AND `get`/`set` keys on the source
+        // descriptor object — propertyHelper.js's verifyProperty hits exactly
+        // this path against RegExp.prototype[Symbol.split].
         if (args[1] is SharpTSSymbol symKey)
         {
+            bool descriptorHasValue = DescriptorHasValueOrAccessor(descriptorArg);
             switch (target)
             {
                 case SharpTSObject symObj:
-                    symObj.SetBySymbol(symKey, descriptor.Value);
+                    if (descriptorHasValue)
+                        symObj.SetBySymbol(symKey, descriptor.Value);
                     return target;
                 case SharpTSInstance symInst:
-                    symInst.SetBySymbol(symKey, descriptor.Value);
+                    if (descriptorHasValue)
+                        symInst.SetBySymbol(symKey, descriptor.Value);
                     return target;
                 default:
                     break;
@@ -499,6 +509,41 @@ public static class ObjectBuiltIns
         }
 
         return target;
+    }
+
+    /// <summary>
+    /// Returns true if the descriptor object explicitly contains a `value`,
+    /// `get`, or `set` key — i.e. it is a data or accessor descriptor, not an
+    /// attribute-only descriptor. ECMA-262 §6.2.5.6 distinguishes "field
+    /// absent" (preserve existing) from "field present" (overwrite). The
+    /// flattened SharpTSPropertyDescriptor record loses that distinction, so
+    /// we re-derive it from the source descriptor object's own keys.
+    /// </summary>
+    private static bool DescriptorHasValueOrAccessor(object descriptorArg)
+    {
+        switch (descriptorArg)
+        {
+            case SharpTSObject so:
+                return so.HasProperty("value") || so.HasProperty("get") || so.HasProperty("set");
+            case Dictionary<string, object?> d:
+                return d.ContainsKey("value") || d.ContainsKey("get") || d.ContainsKey("set");
+            case System.Collections.IDictionary id:
+                return id.Contains("value") || id.Contains("get") || id.Contains("set");
+            default:
+                // Compiled $Object: probe via reflection on HasProperty(string).
+                var t = descriptorArg.GetType();
+                var has = t.GetMethod("HasProperty",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+                    null, [typeof(string)], null);
+                if (has != null)
+                {
+                    bool Has(string n) => has.Invoke(descriptorArg, [n]) is bool b && b;
+                    return Has("value") || Has("get") || Has("set");
+                }
+                // Conservative fallback: assume value-bearing so we don't
+                // silently drop user descriptors on unknown types.
+                return true;
+        }
     }
 
     /// <summary>

@@ -239,6 +239,15 @@ public partial class Interpreter : IDisposable
         _asyncContext = new AsyncEvaluationContext(this);
     }
 
+    // Per-realm RegExp.prototype. Held on the Interpreter (not on the
+    // process-wide SharpTSBuiltInConstructor singleton) so user mutations
+    // — `delete RegExp.prototype[Symbol.split]`, `Object.defineProperty`,
+    // etc. — stay scoped to this realm. Lazily populated on first read of
+    // `RegExp.prototype`.
+    private Runtime.Types.SharpTSObject? _regExpPrototype;
+    internal Runtime.Types.SharpTSObject GetRegExpPrototype()
+        => _regExpPrototype ??= Runtime.BuiltIns.RegExpBuiltIns.BuildPrototype();
+
     // Module support
     private readonly Dictionary<string, ModuleInstance> _loadedModules = [];
     private ModuleResolver? _moduleResolver;
