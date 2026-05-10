@@ -505,6 +505,19 @@ public partial class Interpreter
         if (obj is SharpTSAsyncArrowFunction asyncArrowFn && asyncArrowFn.TryGetProperty(memberName, out var asyncArrowProp))
             return RuntimeValue.FromBoxed(asyncArrowProp);
 
+        // RegExp instance: user-installed accessor (Object.defineProperty)
+        // wins over the built-in slot. ECMA-262 §22.2 declares
+        // flags/global/unicode/lastIndex configurable, so a throwing getter
+        // must fire and propagate. Has to live above the category-handler
+        // dispatch because the registered handler's `(obj, name) => member`
+        // shape can't reach the interpreter to invoke the user callable.
+        if (obj is SharpTSRegExp regex
+            && regex.TryGetAccessor(memberName, out var rxGetter, out _)
+            && rxGetter != null)
+        {
+            return RuntimeValue.FromBoxed(rxGetter.Call(this, []));
+        }
+
         var member = BuiltInRegistry.Instance.GetMemberByCategory(category, obj, memberName);
         if (member != null)
             return RuntimeValue.FromBoxed(BindBuiltInMember(member, obj));
@@ -1076,6 +1089,15 @@ public partial class Interpreter
                 return EvaluateSetOnRecord(set, obj!, memberName, value, strictMode);
 
             case TypeCategory.RegExp when obj is SharpTSRegExp regex:
+                // User-installed accessor (Object.defineProperty path) wins
+                // over the built-in slot — ECMA-262 declares lastIndex et al
+                // configurable, so a throwing setter MUST fire and propagate.
+                if (regex.TryGetAccessor(memberName, out _, out var userSetter)
+                    && userSetter != null)
+                {
+                    userSetter.Call(this, [value]);
+                    return value;
+                }
                 if (memberName == "lastIndex")
                 {
                     // Route through RegExpBuiltIns.SetMember so the setter does

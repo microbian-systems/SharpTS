@@ -471,6 +471,24 @@ public static class ObjectBuiltIns
                 }
                 success = true;
                 break;
+            case SharpTSRegExp rx:
+                // RegExp instances are objects; ECMA-262 §22.2 declares
+                // `flags`/`global`/`unicode`/`lastIndex` as configurable
+                // accessors that user code can override via
+                // Object.defineProperty. Without this branch the descriptor
+                // is silently dropped on the floor, so test262 patterns that
+                // install throwing getters (.../coerce-global.js, etc.)
+                // never see the override fire.
+                if (descriptor.Get != null || descriptor.Set != null)
+                {
+                    rx.DefineAccessor(propertyKey, descriptor.Get, descriptor.Set);
+                }
+                else
+                {
+                    rx.SetProperty(propertyKey, descriptor.Value);
+                }
+                success = true;
+                break;
             default:
                 throw new Exception("TypeError: Object.defineProperty called on non-object");
         }

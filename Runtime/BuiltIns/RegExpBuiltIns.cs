@@ -12,9 +12,25 @@ public static class RegExpBuiltIns
 {
     /// <summary>
     /// Gets an instance member (property or method) for a RegExp object.
+    /// Pass <paramref name="interpreter"/> when the caller has one available
+    /// — it's required to invoke user-installed accessor getters
+    /// (Object.defineProperty path, ECMA-262 §22.2). Without it, the legacy
+    /// path returns the bound built-in slot.
     /// </summary>
-    public static object? GetMember(SharpTSRegExp receiver, string name)
+    public static object? GetMember(SharpTSRegExp receiver, string name, Interpreter? interpreter = null)
     {
+        // User-installed accessor wins over the built-in slot — ECMA-262
+        // declares flags/global/unicode/lastIndex as configurable, so a
+        // throwing getter installed via defineProperty MUST fire and
+        // propagate. Without an interpreter we can't invoke it; legacy
+        // call sites without the parameter fall through to the built-in.
+        if (interpreter != null
+            && receiver.TryGetAccessor(name, out var userGetter, out _)
+            && userGetter != null)
+        {
+            return userGetter.Call(interpreter, []);
+        }
+
         // User-set properties shadow nothing built-in but are returned when no
         // builtin matches (JS: RegExp instances are ordinary objects).
         var builtIn = name switch

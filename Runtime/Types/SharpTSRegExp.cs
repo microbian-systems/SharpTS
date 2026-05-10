@@ -47,6 +47,14 @@ public class SharpTSRegExp : ITypeCategorized
     // internal: emitted $RegExp has its own storage; runtime↔emitted parity
     // tests track public methods only (see RuntimeTypeSyncTests).
     private Dictionary<string, object?>? _properties;
+    // ECMA-262 §22.2 defines `flags`/`global`/`unicode`/`lastIndex` as
+    // configurable getters on RegExp.prototype — user code can override them
+    // via `Object.defineProperty(rx, "flags", {get: ...})`. Without per-
+    // instance accessor storage the override is silently ignored: tests that
+    // install throwing getters (test262 .../coerce-global.js,
+    // .../get-flags-throws.js, etc.) bypass the user code entirely. Stored
+    // here as a tuple so a single dictionary lookup retrieves both halves.
+    private Dictionary<string, (ISharpTSCallable? Getter, ISharpTSCallable? Setter)>? _accessors;
 
     internal bool TryGetProperty(string name, out object? value)
     {
@@ -60,6 +68,35 @@ public class SharpTSRegExp : ITypeCategorized
     {
         _properties ??= [];
         _properties[name] = value;
+    }
+
+    /// <summary>
+    /// Registers an accessor pair from <c>Object.defineProperty</c>. Either
+    /// half may be null (one-sided accessor). A subsequent definition on
+    /// the same key replaces the previous one — JS allows redefining
+    /// configurable accessors, and §22.2 leaves these slots configurable.
+    /// </summary>
+    public void DefineAccessor(string name, ISharpTSCallable? getter, ISharpTSCallable? setter)
+    {
+        _accessors ??= [];
+        _accessors[name] = (getter, setter);
+    }
+
+    /// <summary>
+    /// Looks up a user-installed accessor for <paramref name="name"/>.
+    /// Returns true and the (getter, setter) pair when one is registered.
+    /// </summary>
+    public bool TryGetAccessor(string name, out ISharpTSCallable? getter, out ISharpTSCallable? setter)
+    {
+        if (_accessors != null && _accessors.TryGetValue(name, out var pair))
+        {
+            getter = pair.Getter;
+            setter = pair.Setter;
+            return true;
+        }
+        getter = null;
+        setter = null;
+        return false;
     }
 
     /// <summary>
