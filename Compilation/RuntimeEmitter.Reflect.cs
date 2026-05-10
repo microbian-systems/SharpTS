@@ -451,14 +451,41 @@ public partial class RuntimeEmitter
         var dtNullLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, dtLocal);
         il.Emit(OpCodes.Brfalse, dtNullLabel);
-        // dt.Name == "$Runtime"
+        // Compare dt.Name against the set of emitted-runtime helper class
+        // names. Built-in protocol methods (e.g. RegExp.prototype[Symbol.split]
+        // lives on $RegExp; Array.prototype.* on $Array) are NOT constructors
+        // per ECMA-262. Test262's not-a-constructor.js harness probes via
+        // `isConstructor(RegExp.prototype[Symbol.split])` → must be false.
+        // User code lives on $Program / $Module / $DC* / class types and
+        // must remain constructable, so we don't use a `$`-prefix shortcut.
+        var dtNameLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldloc, dtLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(System.Reflection.MemberInfo), "Name").GetGetMethod()!);
-        il.Emit(OpCodes.Ldstr, "$Runtime");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Stloc, dtNameLocal);
+
         var notRuntimeLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, notRuntimeLabel);
-        // declaring type is $Runtime → built-in helper, NOT constructable
+        var stringEqMethod = _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String);
+        string[] runtimeHelperClasses =
+        [
+            "$Runtime", "$RegExp", "$Array", "$Object", "$Promise", "$TSPromise",
+            "$Date", "$Map", "$Set", "$WeakMap", "$WeakSet", "$WeakRef",
+            "$Error", "$TypeError", "$RangeError", "$ReferenceError",
+            "$SyntaxError", "$URIError", "$EvalError", "$AggregateError",
+            "$Buffer", "$Headers", "$Hash", "$Hmac", "$NodeError",
+            "$FinalizationRegistry", "$DataView", "$ArrayBuffer",
+        ];
+        var declaringTypeIsRuntimeLabel = il.DefineLabel();
+        foreach (var name in runtimeHelperClasses)
+        {
+            il.Emit(OpCodes.Ldloc, dtNameLocal);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, stringEqMethod);
+            il.Emit(OpCodes.Brtrue, declaringTypeIsRuntimeLabel);
+        }
+        il.Emit(OpCodes.Br, notRuntimeLabel);
+
+        il.MarkLabel(declaringTypeIsRuntimeLabel);
+        // declaring type is an emitted-runtime helper class → not constructable
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notRuntimeLabel);
