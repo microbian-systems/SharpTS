@@ -173,16 +173,10 @@ public partial class RuntimeEmitter
             FieldAttributes.Public | FieldAttributes.Static);
         runtime.FunctionPrototypeField = functionPrototypeField;
 
-        // RegExp.prototype singleton — a Dictionary host whose ConditionalWeak-
-        // Table symbol-dict slot carries the 5 well-known-symbol-keyed methods
-        // (@@match/@@matchAll/@@replace/@@search/@@split, ECMA-262 §22.2.5),
-        // reachable via `RegExp.prototype[Symbol.X]`. Returned by
-        // GetFieldsProperty's Type-receiver branch when receiver is typeof($RegExp).
-        var regexpPrototypeField = typeBuilder.DefineField(
-            "_regexpPrototype",
-            _types.DictionaryStringObject,
-            FieldAttributes.Public | FieldAttributes.Static);
-        runtime.RegExpPrototypeField = regexpPrototypeField;
+        // RegExp.prototype field forward-declared by DefineRuntimeClassPhase1 —
+        // $RegExp's emission depends on the field token so the prototype's
+        // proto-accessor helpers can compare against it. Reuse here.
+        var regexpPrototypeField = runtime.RegExpPrototypeField;
 
         // CheckCancellation(): if (_cancelRequested) throw new
         //   OperationCanceledException("Compiled execution cancelled.");

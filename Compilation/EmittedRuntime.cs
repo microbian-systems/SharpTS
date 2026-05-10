@@ -978,6 +978,20 @@ public class EmittedRuntime
     public MethodBuilder TSRegExpMultilineGetter { get; set; } = null!;
     public MethodBuilder TSRegExpLastIndexGetter { get; set; } = null!;
     public MethodBuilder TSRegExpLastIndexSetter { get; set; } = null!;
+
+    // RegExp.prototype accessor-descriptor getters (ECMA-262 §22.2.5.{3-12}).
+    // Each is a static helper on $RegExp wrapped by RegExpPrototypePopulate
+    // into an accessor descriptor via PDSDefineProperty.
+    public MethodBuilder TSRegExpProtoGetSource { get; set; } = null!;
+    public MethodBuilder TSRegExpProtoGetFlags { get; set; } = null!;
+    public MethodBuilder TSRegExpProtoGetGlobal { get; set; } = null!;
+    public MethodBuilder TSRegExpProtoGetIgnoreCase { get; set; } = null!;
+    public MethodBuilder TSRegExpProtoGetMultiline { get; set; } = null!;
+    public MethodBuilder TSRegExpProtoGetSticky { get; set; } = null!;
+    public MethodBuilder TSRegExpProtoGetUnicode { get; set; } = null!;
+    public MethodBuilder TSRegExpProtoGetDotAll { get; set; } = null!;
+    public MethodBuilder TSRegExpProtoGetHasIndices { get; set; } = null!;
+    public MethodBuilder TSRegExpProtoGetUnicodeSets { get; set; } = null!;
     public MethodBuilder TSRegExpTestMethod { get; set; } = null!;
     public MethodBuilder TSRegExpExecMethod { get; set; } = null!;
     public MethodBuilder TSRegExpToStringMethod { get; set; } = null!;

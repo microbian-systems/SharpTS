@@ -59,5 +59,16 @@ public partial class RuntimeEmitter
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Void,
             [_types.Object, _types.String, _types.Object]);
+
+        // Reserve the RegExp.prototype dictionary field. $RegExp emits
+        // before EmitRuntimeClass and its accessor helpers
+        // (TSRegExpProtoGet*) need to compare `__this` against this field
+        // to detect the "called on RegExp.prototype itself" spec case.
+        // Cctor in EmitRuntimeClass initializes it to a fresh Dictionary;
+        // RegExpPrototypePopulate fills the per-process singleton lazily.
+        runtime.RegExpPrototypeField = typeBuilder.DefineField(
+            "_regexpPrototype",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
     }
 }

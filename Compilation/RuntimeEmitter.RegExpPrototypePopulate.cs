@@ -95,6 +95,54 @@ public partial class RuntimeEmitter
         WireSymbol(runtime.SymbolSearch,   runtime.TSRegExpSymSearchHelper,   "[Symbol.search]",   1);
         WireSymbol(runtime.SymbolSplit,    runtime.TSRegExpSymSplitHelper,    "[Symbol.split]",    2);
 
+        // ECMA-262 §22.2.5.{3-12} accessor descriptors. Each spec accessor
+        // (source/flags/global/ignoreCase/multiline/sticky/unicode/dotAll/
+        // hasIndices/unicodeSets) lives on RegExp.prototype as a real
+        // accessor with a getter that throws TypeError on non-RegExp
+        // `this`. test262's prototype/<flag>/this-val-non-obj.js and
+        // this-val-regexp-prototype.js depend on these being real
+        // descriptors retrievable via Object.getOwnPropertyDescriptor.
+        var protoDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+
+        void InstallAccessor(string jsName, MethodBuilder helper, int jsLength)
+        {
+            // var fn = new $TSFunction(null, helper.MethodInfo, jsName, jsLength);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldtoken, helper);
+            il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+                _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Ldstr, "get " + jsName);
+            il.Emit(OpCodes.Ldc_I4, jsLength);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+            // descriptor = new $CompiledPropertyDescriptor { Getter = fn };
+            var fnLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Stloc, fnLocal);
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, protoDescLocal);
+            il.Emit(OpCodes.Ldloc, protoDescLocal);
+            il.Emit(OpCodes.Ldloc, fnLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetSetMethod()!);
+            // PDSDefineProperty(RegExp.prototype, jsName, descriptor);
+            il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, protoDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+        }
+
+        InstallAccessor("source",       runtime.TSRegExpProtoGetSource,      0);
+        InstallAccessor("flags",        runtime.TSRegExpProtoGetFlags,       0);
+        InstallAccessor("global",       runtime.TSRegExpProtoGetGlobal,      0);
+        InstallAccessor("ignoreCase",   runtime.TSRegExpProtoGetIgnoreCase,  0);
+        InstallAccessor("multiline",    runtime.TSRegExpProtoGetMultiline,   0);
+        InstallAccessor("sticky",       runtime.TSRegExpProtoGetSticky,      0);
+        InstallAccessor("unicode",      runtime.TSRegExpProtoGetUnicode,     0);
+        InstallAccessor("dotAll",       runtime.TSRegExpProtoGetDotAll,      0);
+        InstallAccessor("hasIndices",   runtime.TSRegExpProtoGetHasIndices,  0);
+        InstallAccessor("unicodeSets",  runtime.TSRegExpProtoGetUnicodeSets, 0);
+
         // RegExp.prototype's [[Prototype]] is %Object.prototype% per
         // ECMA-262 §22.2.6.
         il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
