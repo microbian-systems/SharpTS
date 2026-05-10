@@ -303,6 +303,50 @@ public partial class RuntimeEmitter
         // Dictionary case - format as "{ key1: value1, key2: value2, ... }"
         il.MarkLabel(dictLabel);
 
+        // ECMA-262 §7.1.17 ToString of an object goes through ToPrimitive,
+        // which (hint "string") tries the object's own toString method first.
+        // If the user installed a callable `toString` on the dictionary
+        // (`{toString: () => 'foo'}`), invoke it and return the result.
+        // This is the path test262's coerce-string.js exercises.
+        var dictHasUserToString = il.DeclareLocal(_types.Object);
+        var skipUserToStringLabel = il.DefineLabel();
+        var castDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, castDictLocal);
+
+        // Try TryGetValue(d, "toString", out userToString).
+        var tryGetValueResult = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldloc, castDictLocal);
+        il.Emit(OpCodes.Ldstr, "toString");
+        il.Emit(OpCodes.Ldloca, dictHasUserToString);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue", _types.String, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, skipUserToStringLabel);
+
+        // If the value is a $TSFunction, invoke it with the dict as `this`
+        // and (if it returns a string-coercible value) return the result.
+        il.Emit(OpCodes.Ldloc, dictHasUserToString);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, skipUserToStringLabel);
+
+        // result = userToString.InvokeWithThis(dict, []);
+        var userToStringResult = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, dictHasUserToString);
+        il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+        il.Emit(OpCodes.Ldloc, castDictLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(typeof(Array), "Empty").MakeGenericMethod(_types.Object));
+        il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
+        il.Emit(OpCodes.Stloc, userToStringResult);
+
+        // Recursively Stringify the result so non-string returns coerce
+        // properly (e.g. number → "42"). The result is normally a string
+        // already, so this is a fast path through Stringify's string branch.
+        il.Emit(OpCodes.Ldloc, userToStringResult);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(skipUserToStringLabel);
+
         // Use StringBuilder to build the result
         var dictSbLocal = il.DeclareLocal(_types.StringBuilder);
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, _types.EmptyTypes));
