@@ -72,7 +72,7 @@ test/built-ins/Array/from/iter-map-fn-this-strict.js Pass
 test/built-ins/Array/from/iter-set-elem-prop-err.js Pass
 test/built-ins/Array/from/iter-set-elem-prop-non-writable.js Pass
 test/built-ins/Array/from/iter-set-elem-prop.js Pass
-test/built-ins/Array/from/iter-set-length-err.js RuntimeError
+test/built-ins/Array/from/iter-set-length-err.js Pass
 test/built-ins/Array/from/iter-set-length.js Pass
 test/built-ins/Array/from/mapfn-is-not-callable-typeerror.js Pass
 test/built-ins/Array/from/mapfn-is-symbol-throws.js Pass
@@ -6205,7 +6205,7 @@ test/built-ins/Object/entries/function-property-descriptor.js Pass
 test/built-ins/Object/entries/getter-adding-key.js Pass
 test/built-ins/Object/entries/getter-making-future-key-nonenumerable.js Pass
 test/built-ins/Object/entries/getter-removing-future-key.js Pass
-test/built-ins/Object/entries/inherited-properties-omitted.js RuntimeError
+test/built-ins/Object/entries/inherited-properties-omitted.js Pass
 test/built-ins/Object/entries/not-a-constructor.js Pass
 test/built-ins/Object/entries/observable-operations.js RuntimeError
 test/built-ins/Object/entries/order-after-define-property-with-function.js RuntimeError
@@ -6610,7 +6610,7 @@ test/built-ins/Object/getOwnPropertyDescriptors/exception-not-object-coercible.j
 test/built-ins/Object/getOwnPropertyDescriptors/function-length.js Pass
 test/built-ins/Object/getOwnPropertyDescriptors/function-name.js Pass
 test/built-ins/Object/getOwnPropertyDescriptors/function-property-descriptor.js Pass
-test/built-ins/Object/getOwnPropertyDescriptors/inherited-properties-omitted.js RuntimeError
+test/built-ins/Object/getOwnPropertyDescriptors/inherited-properties-omitted.js Pass
 test/built-ins/Object/getOwnPropertyDescriptors/normal-object.js Pass
 test/built-ins/Object/getOwnPropertyDescriptors/not-a-constructor.js Pass
 test/built-ins/Object/getOwnPropertyDescriptors/observable-operations.js Pass
@@ -7420,7 +7420,7 @@ test/built-ins/Object/values/function-property-descriptor.js Pass
 test/built-ins/Object/values/getter-adding-key.js Pass
 test/built-ins/Object/values/getter-making-future-key-nonenumerable.js Pass
 test/built-ins/Object/values/getter-removing-future-key.js Pass
-test/built-ins/Object/values/inherited-properties-omitted.js RuntimeError
+test/built-ins/Object/values/inherited-properties-omitted.js Pass
 test/built-ins/Object/values/not-a-constructor.js Pass
 test/built-ins/Object/values/observable-operations.js RuntimeError
 test/built-ins/Object/values/order-after-define-property.js Pass

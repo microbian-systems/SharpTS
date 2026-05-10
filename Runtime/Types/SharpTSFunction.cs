@@ -622,8 +622,23 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
     /// <returns>A new SharpTSArrowFunction with 'this' bound.</returns>
     public SharpTSArrowFunction Bind(object thisObject)
     {
-        return new SharpTSArrowFunction(_declaration, _closure, hasOwnThis: true,
-                                         boundThis: thisObject, hasBoundThis: true);
+        var bound = new SharpTSArrowFunction(_declaration, _closure, hasOwnThis: true,
+                                             boundThis: thisObject, hasBoundThis: true);
+        // Share user-property storage so `obj.fn[k] = v` round-trips across
+        // multiple `obj.fn` reads (each read produces a fresh bound copy via
+        // EvaluateGetOnRecordRV's Bind-on-read for method-call binding;
+        // SpeciesConstructor and similar protocols depend on
+        // `re.constructor[Symbol.species]` surviving from set to subsequent
+        // get). Eagerly materialize so a later mutation on either copy lands
+        // in the same dict instead of branching into a private one via the
+        // lazy `??=` init.
+        _properties ??= [];
+        _symbolProperties ??= [];
+        _accessors ??= [];
+        bound._properties = _properties;
+        bound._symbolProperties = _symbolProperties;
+        bound._accessors = _accessors;
+        return bound;
     }
 
     public override string ToString()

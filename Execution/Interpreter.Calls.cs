@@ -713,6 +713,36 @@ public partial class Interpreter
     /// matches the target class name.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/narrowing.html#instanceof-narrowing">TypeScript instanceof Narrowing</seealso>
+    /// <summary>
+    /// ECMA-262 §7.3.21 OrdinaryHasInstance — walks <paramref name="left"/>'s
+    /// __proto__ chain looking for a link === <paramref name="ctor"/>.prototype.
+    /// Capped at depth 64 to prevent runaway loops on cyclic chains. Used by
+    /// both the SharpTSFunction and SharpTSArrowFunction instanceof arms.
+    /// </summary>
+    private static bool InstanceOfByPrototype(object? left, ISharpTSCallable ctor)
+    {
+        object? protoObj = ctor switch
+        {
+            SharpTSFunction fn when fn.TryGetProperty("prototype", out var p) => p,
+            SharpTSArrowFunction af when af.TryGetProperty("prototype", out var p2) => p2,
+            _ => null,
+        };
+        if (protoObj is null) return false;
+        object? current = left;
+        for (int i = 0; i < 64 && current is SharpTSObject curObj; i++)
+        {
+            if (curObj.HasProperty("__proto__")
+                && curObj.GetProperty("__proto__") is var p
+                && ReferenceEquals(p, protoObj))
+            {
+                return true;
+            }
+            current = curObj.HasProperty("__proto__") ? curObj.GetProperty("__proto__") : null;
+            if (ReferenceEquals(current, curObj)) break;
+        }
+        return false;
+    }
+
     private object EvaluateInstanceof(object? left, object? right)
     {
         // Built-in constructor instanceof: val instanceof Map, val instanceof Set, etc.
@@ -751,24 +781,13 @@ public partial class Interpreter
         // An object is `instanceof Func` when any link in its prototype
         // chain === Func.prototype.
         if (right is SharpTSFunction ctorFn)
-        {
-            if (!ctorFn.TryGetProperty("prototype", out var protoObj))
-                return false;
-            object? current = left;
-            // Walk __proto__ chain; cap at a sensible depth to avoid cycles.
-            for (int i = 0; i < 64 && current is SharpTSObject curObj; i++)
-            {
-                if (curObj.HasProperty("__proto__")
-                    && curObj.GetProperty("__proto__") is var p
-                    && ReferenceEquals(p, protoObj))
-                {
-                    return true;
-                }
-                current = curObj.HasProperty("__proto__") ? curObj.GetProperty("__proto__") : null;
-                if (ReferenceEquals(current, curObj)) break;
-            }
-            return false;
-        }
+            return InstanceOfByPrototype(left, ctorFn);
+        // Function expressions (SharpTSArrowFunction with HasOwnThis) work
+        // the same way — the test262 RegExp Symbol.split species-* tests
+        // install function expressions as their species, and their
+        // [[Construct]] result is checked via `instanceof species`.
+        if (right is SharpTSArrowFunction arrCtor && arrCtor.HasOwnThis)
+            return InstanceOfByPrototype(left, arrCtor);
 
         if (right is not SharpTSClass targetClass)
             return false;

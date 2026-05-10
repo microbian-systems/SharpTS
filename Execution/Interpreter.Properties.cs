@@ -563,6 +563,18 @@ public partial class Interpreter
                 return RuntimeValue.FromBoxed(getter.Call(this, []));
             if (arrowFn.TryGetProperty(memberName, out var arrowProp))
                 return RuntimeValue.FromBoxed(arrowProp);
+            // Lazy-init `fn.prototype` for function expressions (HasOwnThis).
+            // Arrow functions (() => ...) don't get one per spec, but
+            // function expressions (`function(){}`) do — and `instanceof`
+            // walks the prototype chain looking for ctor.prototype, so
+            // without this lazy init `obj instanceof FnExpr` always
+            // returns false.
+            if (memberName == "prototype" && arrowFn.HasOwnThis)
+            {
+                var proto = new SharpTSObject(new Dictionary<string, object?>());
+                arrowFn.SetProperty("prototype", proto);
+                return RuntimeValue.FromBoxed(proto);
+            }
         }
         if (obj is SharpTSAsyncFunction asyncFn && asyncFn.TryGetProperty(memberName, out var asyncProp))
             return RuntimeValue.FromBoxed(asyncProp);
