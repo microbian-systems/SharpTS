@@ -632,16 +632,15 @@ public abstract partial class ExpressionEmitterBase
 
     private void EmitNewRegExpConstructor(List<Expr> arguments)
     {
-        // ECMA-262 22.2.3.1: undefined pattern/flags is treated as empty string
-        // — `new RegExp(undefined) === /(?:)/`, `new RegExp("a", undefined)`
-        // applies pattern with no flags. Stringify(undefined) → "undefined"
-        // would otherwise build the literal /undefined/ pattern.
-        void EmitArgAsStringSpec(Expr arg)
-        {
-            EmitExpression(arg);
-            EnsureBoxed();
-            IL.Emit(OpCodes.Call, Ctx.Runtime!.RegExpCoerceArg);
-        }
+        // ECMA-262 §22.2.4.1: new RegExp(pattern, flags)
+        //   - If pattern is a RegExp object: P = pattern.[[OriginalSource]];
+        //     if flags is undefined, F = pattern.[[OriginalFlags]] else ToString(flags).
+        //   - Else: P = pattern undefined ? "" : ToString(pattern).
+        //   - F = flags undefined ? "" : ToString(flags).
+        // Route both args through a single helper that does the RegExp-copy
+        // branch correctly — passing a $RegExp to Stringify would have built
+        // `/source/flags` and the constructor would then treat that string as
+        // the new source.
 
         switch (arguments.Count)
         {
@@ -651,13 +650,17 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateRegExpWithFlags);
                 break;
             case 1:
-                EmitArgAsStringSpec(arguments[0]);
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateRegExp);
+                EmitExpression(arguments[0]);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Ldnull);          // flags = undefined / not supplied
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.RegExpFromArgs);
                 break;
             default:
-                EmitArgAsStringSpec(arguments[0]);
-                EmitArgAsStringSpec(arguments[1]);
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateRegExpWithFlags);
+                EmitExpression(arguments[0]);
+                EnsureBoxed();
+                EmitExpression(arguments[1]);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.RegExpFromArgs);
                 break;
         }
         SetStackUnknown();

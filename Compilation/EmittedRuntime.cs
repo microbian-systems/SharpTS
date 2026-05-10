@@ -946,6 +946,7 @@ public class EmittedRuntime
     public MethodBuilder RegExpCoerceArg { get; set; } = null!;
     public MethodBuilder CreateRegExp { get; set; } = null!;
     public MethodBuilder CreateRegExpWithFlags { get; set; } = null!;
+    public MethodBuilder RegExpFromArgs { get; set; } = null!;
     public MethodBuilder RegExpTest { get; set; } = null!;
     public MethodBuilder RegExpExec { get; set; } = null!;
     public MethodBuilder RegExpToString { get; set; } = null!;

@@ -15,6 +15,7 @@ public partial class RuntimeEmitter
         EmitRegExpCoerceArg(typeBuilder, runtime);
         EmitCreateRegExp(typeBuilder, runtime);
         EmitCreateRegExpWithFlags(typeBuilder, runtime);
+        EmitRegExpFromArgs(typeBuilder, runtime);
         EmitRegExpTest(typeBuilder, runtime);
         EmitRegExpExec(typeBuilder, runtime);
         EmitRegExpToString(typeBuilder, runtime);
@@ -232,6 +233,95 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Newobj, runtime.TSRegExpCtorPatternFlags);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// ECMA-262 §22.2.4.1 RegExp(pattern, flags) — boxed-arg entry point.
+    /// Handles the spec branch where pattern is itself a RegExp:
+    /// <list type="bullet">
+    /// <item>pattern is $RegExp + flags undefined → copy source AND flags.</item>
+    /// <item>pattern is $RegExp + flags supplied → copy source, ToString(flags).</item>
+    /// <item>pattern is undefined/null → P = ""; F = ToString(flags) or "".</item>
+    /// <item>otherwise → P = ToString(pattern); F = ToString(flags) or "".</item>
+    /// </list>
+    /// The previous EmitNewRegExpConstructor stringified the pattern first
+    /// (so `new RegExp(otherRegex)` produced source="/otherSource/" instead
+    /// of copying the source slot), which test262's S15.10.4.1_A1_T4.js
+    /// caught once \$RegExp surface slots started returning real values.
+    /// </summary>
+    private void EmitRegExpFromArgs(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "RegExpFromArgs",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]);
+        runtime.RegExpFromArgs = method;
+
+        var il = method.GetILGenerator();
+        var srcLocal = il.DeclareLocal(_types.String);
+        var flagsLocal = il.DeclareLocal(_types.String);
+        var rxLocal = il.DeclareLocal(runtime.TSRegExpType);
+
+        var patternIsRegExpLabel = il.DefineLabel();
+        var patternNotRegExpLabel = il.DefineLabel();
+        var flagsResolvedLabel = il.DefineLabel();
+
+        // var rx = pattern as $RegExp
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+        il.Emit(OpCodes.Stloc, rxLocal);
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Brtrue, patternIsRegExpLabel);
+
+        // Non-RegExp: src = RegExpCoerceArg(pattern)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.RegExpCoerceArg);
+        il.Emit(OpCodes.Stloc, srcLocal);
+        il.Emit(OpCodes.Br, patternNotRegExpLabel);
+
+        il.MarkLabel(patternIsRegExpLabel);
+        // src = rx.Source
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSRegExpSourceGetter);
+        il.Emit(OpCodes.Stloc, srcLocal);
+
+        // If flags arg is null/undefined: use rx.Flags
+        il.Emit(OpCodes.Ldarg_1);
+        var hasFlagsArgLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, useRxFlagsLabelDecl(out var useRxFlagsLabel));
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, useRxFlagsLabel);
+        // Flags supplied — ToString
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.RegExpCoerceArg);
+        il.Emit(OpCodes.Stloc, flagsLocal);
+        il.Emit(OpCodes.Br, flagsResolvedLabel);
+
+        il.MarkLabel(useRxFlagsLabel);
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSRegExpFlagsGetter);
+        il.Emit(OpCodes.Stloc, flagsLocal);
+        il.Emit(OpCodes.Br, flagsResolvedLabel);
+
+        il.MarkLabel(patternNotRegExpLabel);
+        // flags = RegExpCoerceArg(arg1)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.RegExpCoerceArg);
+        il.Emit(OpCodes.Stloc, flagsLocal);
+
+        il.MarkLabel(flagsResolvedLabel);
+        il.Emit(OpCodes.Ldloc, srcLocal);
+        il.Emit(OpCodes.Ldloc, flagsLocal);
+        il.Emit(OpCodes.Call, runtime.CreateRegExpWithFlags);
+        il.Emit(OpCodes.Ret);
+
+        Label useRxFlagsLabelDecl(out Label l)
+        {
+            l = il.DefineLabel();
+            return l;
+        }
     }
 
     private void EmitRegExpTest(TypeBuilder typeBuilder, EmittedRuntime runtime)
