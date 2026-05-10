@@ -587,11 +587,16 @@ public partial class Interpreter
         // must fire and propagate. Has to live above the category-handler
         // dispatch because the registered handler's `(obj, name) => member`
         // shape can't reach the interpreter to invoke the user callable.
-        if (obj is SharpTSRegExp regex
-            && regex.TryGetAccessor(memberName, out var rxGetter, out _)
-            && rxGetter != null)
+        // Same channel handles `flags`, which by spec dynamically reads
+        // each individual flag accessor via Get — we route through the
+        // interpreter-aware overload of GetMember so user data-property
+        // overrides (`r.global = false`) propagate.
+        if (obj is SharpTSRegExp regex)
         {
-            return RuntimeValue.FromBoxed(rxGetter.Call(this, []));
+            if (regex.TryGetAccessor(memberName, out var rxGetter, out _) && rxGetter != null)
+                return RuntimeValue.FromBoxed(rxGetter.Call(this, []));
+            if (memberName == "flags")
+                return RuntimeValue.FromBoxed(Runtime.BuiltIns.RegExpBuiltIns.GetMember(regex, memberName, this));
         }
 
         var member = BuiltInRegistry.Instance.GetMemberByCategory(category, obj, memberName);

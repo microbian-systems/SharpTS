@@ -766,9 +766,18 @@ public partial class Interpreter
         {
             // Symbol-keyed bracket access (`fn[Symbol.species]`) routes
             // through the per-instance symbol map. Set via the matching
-            // symbol-keyed branch in EvaluateSetIndex.
-            if (index is SharpTSSymbol fnSym && fn.TryGetSymbolProperty(fnSym, out var symVal))
-                return RuntimeValue.FromBoxed(symVal ?? SharpTSUndefined.Instance);
+            // symbol-keyed branch in EvaluateSetIndex. Symbol-keyed
+            // accessors (`Object.defineProperty(fn, sym, {get, set})`)
+            // win over data values — test262's
+            // species-ctor-species-get-err.js installs a throwing getter
+            // here that SpeciesConstructor must propagate.
+            if (index is SharpTSSymbol fnSym)
+            {
+                if (fn.TryGetSymbolAccessor(fnSym, out var symGetter, out _) && symGetter != null)
+                    return RuntimeValue.FromBoxed(symGetter.Call(this, []));
+                if (fn.TryGetSymbolProperty(fnSym, out var symVal))
+                    return RuntimeValue.FromBoxed(symVal ?? SharpTSUndefined.Instance);
+            }
             string fnKey = index?.ToString() ?? "";
             if (fn.TryGetProperty(fnKey, out var propVal))
                 return RuntimeValue.FromBoxed(propVal);
@@ -777,8 +786,13 @@ public partial class Interpreter
         // Same for arrow functions / function expressions.
         if (obj is SharpTSArrowFunction afn)
         {
-            if (index is SharpTSSymbol arrSym && afn.TryGetSymbolProperty(arrSym, out var arrSymVal))
-                return RuntimeValue.FromBoxed(arrSymVal ?? SharpTSUndefined.Instance);
+            if (index is SharpTSSymbol arrSym)
+            {
+                if (afn.TryGetSymbolAccessor(arrSym, out var arrGetter, out _) && arrGetter != null)
+                    return RuntimeValue.FromBoxed(arrGetter.Call(this, []));
+                if (afn.TryGetSymbolProperty(arrSym, out var arrSymVal))
+                    return RuntimeValue.FromBoxed(arrSymVal ?? SharpTSUndefined.Instance);
+            }
             string arrKey = index?.ToString() ?? "";
             if (afn.TryGetProperty(arrKey, out var arrPropVal))
                 return RuntimeValue.FromBoxed(arrPropVal);

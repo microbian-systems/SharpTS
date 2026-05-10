@@ -31,8 +31,34 @@ public static class RegExpBuiltIns
             return userGetter.Call(interpreter, []);
         }
 
-        // User-set properties shadow nothing built-in but are returned when no
-        // builtin matches (JS: RegExp instances are ordinary objects).
+        // User-set DATA properties (set via `r.foo = x` after
+        // `Object.defineProperty(r, 'foo', {writable:true})`, or via
+        // `Object.defineProperty(r, 'foo', {value:x})`) shadow the
+        // configurable built-in accessor slots — that's the path test262's
+        // coerce-global.js / Symbol.replace coerce-flags.js etc. exercise.
+        // Without this, redefining `r.global = false` is silently ignored
+        // and replace/match/etc. still see the original 'g' flag.
+        // Object.prototype unbound methods stored as user values
+        // (`__re.toString = Object.prototype.toString`) need to be rebound
+        // to the receiver so the subsequent `__re.toString()` call sees
+        // `__re` as `this` — the interpreter's call dispatch doesn't bind
+        // `this` for plain method-call syntax on user-stored callables.
+        if (receiver.TryGetProperty(name, out var userOwnVal))
+        {
+            if (userOwnVal is SharpTSObjectUnboundMethod ub)
+                return ub.BindTo(receiver);
+            return userOwnVal;
+        }
+
+        // ECMA-262 §22.2.5.3 `flags` is a dynamic getter that ToBooleans each
+        // individual flag property (Get(R, "global"), Get(R, "ignoreCase"), …)
+        // and concatenates the chars in canonical order. User code can shadow
+        // any single flag with a data property, and `flags` must reflect
+        // that. With an Interpreter we can dispatch via Get; without it we
+        // fall back to the internal slot.
+        if (name == "flags" && interpreter != null)
+            return BuildFlagsString(interpreter, receiver);
+
         var builtIn = name switch
         {
             // ========== Properties ==========
@@ -63,8 +89,7 @@ public static class RegExpBuiltIns
 
             _ => null
         };
-        if (builtIn != null) return builtIn;
-        return receiver.TryGetProperty(name, out var userVal) ? userVal : null;
+        return builtIn;
     }
 
     /// <summary>
@@ -287,6 +312,26 @@ public static class RegExpBuiltIns
     /// </summary>
     private static string ToStr(Interpreter interp, object? value)
         => value is null ? "undefined" : interp.Stringify(value);
+
+    /// <summary>
+    /// ECMA-262 §22.2.5.3 RegExp.prototype.get flags: build the canonical
+    /// flags string by ToBoolean'ing each per-flag property via Get. Routes
+    /// through the user-overridable property pipeline so that
+    /// <c>r.global = false</c> after a writable redefine drops 'g', etc.
+    /// </summary>
+    private static string BuildFlagsString(Interpreter interp, SharpTSRegExp receiver)
+    {
+        var sb = new System.Text.StringBuilder(8);
+        if (Compilation.RuntimeTypes.IsTruthy(interp.GetProperty(receiver, "hasIndices"))) sb.Append('d');
+        if (Compilation.RuntimeTypes.IsTruthy(interp.GetProperty(receiver, "global"))) sb.Append('g');
+        if (Compilation.RuntimeTypes.IsTruthy(interp.GetProperty(receiver, "ignoreCase"))) sb.Append('i');
+        if (Compilation.RuntimeTypes.IsTruthy(interp.GetProperty(receiver, "multiline"))) sb.Append('m');
+        if (Compilation.RuntimeTypes.IsTruthy(interp.GetProperty(receiver, "dotAll"))) sb.Append('s');
+        if (Compilation.RuntimeTypes.IsTruthy(interp.GetProperty(receiver, "unicode"))) sb.Append('u');
+        if (Compilation.RuntimeTypes.IsTruthy(interp.GetProperty(receiver, "unicodeSets"))) sb.Append('v');
+        if (Compilation.RuntimeTypes.IsTruthy(interp.GetProperty(receiver, "sticky"))) sb.Append('y');
+        return sb.ToString();
+    }
 
     /// <summary>
     /// ECMA-262 §7.1.20 ToLength as int. NaN/negative → 0; clamped to int.MaxValue.
@@ -605,13 +650,16 @@ public static class RegExpBuiltIns
         // Step 5: Let S be ? Get(C, @@species).
         // For symbol-keyed lookup we go through the symbol-dict mechanism on
         // the constructor object; SharpTSObject / Function / etc. expose
-        // GetBySymbol or accept defineProperty for symbol keys.
+        // GetBySymbol or accept defineProperty for symbol keys. Symbol-keyed
+        // accessors (`Object.defineProperty(fn, Symbol.species, {get: ...})`)
+        // win over data values — test262's species-ctor-species-get-err.js
+        // installs a throwing getter that this lookup must propagate.
         var species = c switch
         {
             SharpTSObject sObj => sObj.GetBySymbol(SharpTSSymbol.Species),
             SharpTSInstance inst => inst.GetBySymbol(SharpTSSymbol.Species),
-            SharpTSFunction fn => GetSymbolPropertyFromCallable(fn, SharpTSSymbol.Species),
-            SharpTSArrowFunction arr => GetSymbolPropertyFromCallable(arr, SharpTSSymbol.Species),
+            SharpTSFunction fn => GetSymbolPropertyFromCallable(interp, fn, SharpTSSymbol.Species),
+            SharpTSArrowFunction arr => GetSymbolPropertyFromCallable(interp, arr, SharpTSSymbol.Species),
             _ => null
         };
 
@@ -627,23 +675,25 @@ public static class RegExpBuiltIns
     }
 
     /// <summary>
-    /// Reads a symbol-keyed property from a callable that supports user
-    /// property assignment (Object.defineProperty path). SharpTSFunction has
-    /// per-instance symbol storage; arrow functions follow the same pattern.
+    /// Reads a symbol-keyed property from a callable, honoring accessors
+    /// installed via <c>Object.defineProperty(fn, sym, {get, set})</c>.
+    /// Throwing getters propagate back to the caller (test262
+    /// species-ctor-species-get-err.js depends on this).
     /// </summary>
-    private static object? GetSymbolPropertyFromCallable(object obj, SharpTSSymbol symbol)
+    private static object? GetSymbolPropertyFromCallable(Interpreter interp, object obj, SharpTSSymbol symbol)
     {
-        // Both SharpTSFunction and SharpTSArrowFunction expose user property
-        // storage via TryGetProperty; symbols are stored alongside string
-        // properties for our purposes here. Real spec storage would route
-        // through dedicated symbol slots, but the test262 species patterns
-        // set the property via `fn[Symbol.species] = ...` which our
-        // SetIndex path already routes through symbol storage on the
-        // function instance.
-        if (obj is SharpTSFunction fn && fn.TryGetSymbolProperty(symbol, out var v))
-            return v;
-        if (obj is SharpTSArrowFunction arr && arr.TryGetSymbolProperty(symbol, out var v2))
-            return v2;
+        if (obj is SharpTSFunction fn)
+        {
+            if (fn.TryGetSymbolAccessor(symbol, out var getter, out _) && getter != null)
+                return getter.Call(interp, []);
+            if (fn.TryGetSymbolProperty(symbol, out var v)) return v;
+        }
+        if (obj is SharpTSArrowFunction arr)
+        {
+            if (arr.TryGetSymbolAccessor(symbol, out var arrGetter, out _) && arrGetter != null)
+                return arrGetter.Call(interp, []);
+            if (arr.TryGetSymbolProperty(symbol, out var v2)) return v2;
+        }
         return null;
     }
 
@@ -667,16 +717,35 @@ public static class RegExpBuiltIns
         if (flags.Contains('g'))
             interp.SetProperty(recv, "lastIndex", 0.0);
 
+        // Detect the underlying-regex/global mismatch: if `flags` claims
+        // 'g' but the actual SharpTSRegExp's internal [[Global]] bit is
+        // false (e.g. user did `Object.defineProperty(re, 'flags',
+        // {value:'g'})` on `/\w/`), our exec ignores lastIndex so we'd loop
+        // forever on the same match. In that case we re-implement the loop
+        // in terms of string-slicing rather than lastIndex, which exec is
+        // required to respect by spec but our internal matcher does not
+        // when its construction-time [[Global]] is false.
+        bool flagsClaimsGlobal = flags.Contains('g');
+        bool underlyingGlobal = recv is SharpTSRegExp recvRx && recvRx.Global;
+        bool slicePath = flagsClaimsGlobal && !underlyingGlobal;
+
         var results = new List<object?>();
+        int sliceOffset = 0;
         while (true)
         {
-            var match = RegExpExec(interp, recv, s);
+            string searchStr = slicePath ? s.Substring(sliceOffset) : s;
+            var match = RegExpExec(interp, recv, searchStr);
             if (match is null) break;
+
+            if (slicePath)
+            {
+                // Adjust match.index from slice-relative to absolute.
+                var localIdx = ToLengthAsInt(interp.GetProperty(match, "index"));
+                interp.SetProperty(match, "index", (double)(localIdx + sliceOffset));
+            }
             results.Add(match);
 
-            // Non-global RegExpExec doesn't advance lastIndex on its own —
-            // exit after the first match to avoid infinite loop.
-            if (!flags.Contains('g')) break;
+            if (!flagsClaimsGlobal) break;
 
             var matchStr = ToStr(interp, interp.GetProperty(match, "0"));
             if (matchStr.Length == 0)
@@ -684,6 +753,15 @@ public static class RegExpBuiltIns
                 var thisIndex = ToLengthAsInt(interp.GetProperty(recv, "lastIndex"));
                 int nextIndex = AdvanceStringIndex(s, thisIndex, fullUnicode);
                 interp.SetProperty(recv, "lastIndex", (double)nextIndex);
+                if (slicePath) sliceOffset = nextIndex;
+            }
+            else if (slicePath)
+            {
+                var absIdx = ToLengthAsInt(interp.GetProperty(match, "index"));
+                int matchEnd = absIdx + matchStr.Length;
+                if (matchEnd <= sliceOffset) break;
+                sliceOffset = matchEnd;
+                interp.SetProperty(recv, "lastIndex", (double)matchEnd);
             }
         }
         return new SharpTSArray(results);

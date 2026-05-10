@@ -431,6 +431,7 @@ public static class ObjectBuiltIns
         if (args[1] is SharpTSSymbol symKey)
         {
             bool descriptorHasValue = DescriptorHasValueOrAccessor(descriptorArg);
+            bool isAccessor = descriptor.Get != null || descriptor.Set != null;
             switch (target)
             {
                 case SharpTSObject symObj:
@@ -440,6 +441,18 @@ public static class ObjectBuiltIns
                 case SharpTSInstance symInst:
                     if (descriptorHasValue)
                         symInst.SetBySymbol(symKey, descriptor.Value);
+                    return target;
+                case SharpTSFunction symFn:
+                    if (isAccessor)
+                        symFn.DefineSymbolAccessor(symKey, descriptor.Get, descriptor.Set);
+                    else if (descriptorHasValue)
+                        symFn.SetBySymbol(symKey, descriptor.Value);
+                    return target;
+                case SharpTSArrowFunction symArrow:
+                    if (isAccessor)
+                        symArrow.DefineSymbolAccessor(symKey, descriptor.Get, descriptor.Set);
+                    else if (descriptorHasValue)
+                        symArrow.SetBySymbol(symKey, descriptor.Value);
                     return target;
                 default:
                     break;
@@ -470,12 +483,14 @@ public static class ObjectBuiltIns
                 break;
             case SharpTSFunction fn:
                 // JS functions are objects — store accessor (get/set) or value
-                // descriptors directly on the function.
+                // descriptors directly on the function. Attribute-only
+                // descriptors (no value/get/set) preserve the existing value
+                // per ECMA-262 §10.1.6.3.
                 if (descriptor.Get != null || descriptor.Set != null)
                 {
                     fn.DefineAccessor(propertyKey, descriptor.Get, descriptor.Set);
                 }
-                else
+                else if (DescriptorHasValueOrAccessor(descriptorArg))
                 {
                     fn.SetProperty(propertyKey, descriptor.Value);
                 }
@@ -488,12 +503,17 @@ public static class ObjectBuiltIns
                 // Object.defineProperty. Without this branch the descriptor
                 // is silently dropped on the floor, so test262 patterns that
                 // install throwing getters (.../coerce-global.js, etc.)
-                // never see the override fire.
+                // never see the override fire. Per ECMA-262 §10.1.6.3, an
+                // attribute-only descriptor (just writable/enumerable/etc.,
+                // no value/get/set) preserves the existing value — we mirror
+                // that for the user-property dictionary so
+                // `Object.defineProperty(r, 'global', {writable:true})`
+                // followed by `r.global = false` reads back `false`, not null.
                 if (descriptor.Get != null || descriptor.Set != null)
                 {
                     rx.DefineAccessor(propertyKey, descriptor.Get, descriptor.Set);
                 }
-                else
+                else if (DescriptorHasValueOrAccessor(descriptorArg))
                 {
                     rx.SetProperty(propertyKey, descriptor.Value);
                 }

@@ -148,6 +148,49 @@ public class SmokeTest
     /// it's a runner-state issue or a code-path bug.
     /// </summary>
     [Fact]
+    public void Diagnostic_SpeciesGetErr()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var path = Path.Combine(Test262Paths.TestDir(root),
+            "built-ins", "RegExp", "prototype", "Symbol.split", "species-ctor-species-get-err.js");
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var result = runner.RunOne(path, Test262ExecutionMode.Interpreted);
+        _output.WriteLine($"{result.Outcome}: {result.Message}");
+    }
+
+    [Fact]
+    public void Diagnostic_RegExpRegressions()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var paths = new[]
+        {
+            Path.Combine(Test262Paths.TestDir(root), "built-ins", "RegExp", "S15.10.4.1_A6_T1.js"),
+            Path.Combine(Test262Paths.TestDir(root), "built-ins", "RegExp", "prototype", "Symbol.match", "g-coerce-result-err.js"),
+            Path.Combine(Test262Paths.TestDir(root), "built-ins", "RegExp", "prototype", "Symbol.matchAll", "this-get-flags.js"),
+        };
+        foreach (var path in paths)
+        {
+            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+            var result = runner.RunOne(path, Test262ExecutionMode.Interpreted);
+            _output.WriteLine($"{Path.GetFileName(path)} → {result.Outcome}: {result.Message}");
+        }
+    }
+
+    [Fact]
+    public void Diagnostic_CoerceGlobal()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var path = Path.Combine(Test262Paths.TestDir(root),
+            "built-ins", "RegExp", "prototype", "Symbol.replace", "coerce-global.js");
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var result = runner.RunOne(path, Test262ExecutionMode.Interpreted);
+        _output.WriteLine($"{result.Outcome}: {result.Message}");
+    }
+
+    [Fact]
     public void Diagnostic_RegExpExecRegression()
     {
         var root = Test262Paths.TryFindRoot();

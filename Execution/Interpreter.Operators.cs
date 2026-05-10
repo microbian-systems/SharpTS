@@ -705,6 +705,23 @@ public partial class Interpreter
 
         if (obj is SharpTSObject sharpObj)
         {
+            // ECMA-262 §7.1.17 ToString of an object goes through ToPrimitive,
+            // which (for hint "string") tries the object's own toString
+            // method first. The previous shortcut returned "[object Object]"
+            // unconditionally, which silently swallowed throwing user
+            // toStrings — test262 patterns like
+            // `{toString: () => { throw }}` rely on the abrupt completion
+            // propagating up. Only invoke the user-installed toString;
+            // skip the prototype to preserve the cheap default for plain
+            // records (which would otherwise spin up a call frame for
+            // every Stringify).
+            if (sharpObj.HasProperty("toString")
+                && sharpObj.GetProperty("toString") is ISharpTSCallable userToString)
+            {
+                var coerced = FunctionBuiltIns.CallWithThis(this, userToString, sharpObj, []);
+                if (coerced is string strRes) return strRes;
+                return Stringify(coerced);
+            }
             return "[object Object]";
         }
 

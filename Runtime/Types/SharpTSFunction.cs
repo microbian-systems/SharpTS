@@ -111,6 +111,33 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
         return false;
     }
 
+    // Symbol-keyed accessor pairs from `Object.defineProperty(fn, sym, {get, set})`.
+    // Test262 RegExp Symbol.split/.../species-ctor-species-get-err.js installs a
+    // throwing getter on Symbol.species via this path; the spec-driven
+    // SpeciesConstructor lookup must invoke that getter and propagate the throw.
+    private Dictionary<SharpTSSymbol, (ISharpTSCallable? Get, ISharpTSCallable? Set)>? _symbolAccessors;
+
+    /// <summary>Installs a symbol-keyed accessor pair from defineProperty.</summary>
+    public void DefineSymbolAccessor(SharpTSSymbol key, ISharpTSCallable? getter, ISharpTSCallable? setter)
+    {
+        _symbolAccessors ??= [];
+        _symbolAccessors[key] = (getter, setter);
+    }
+
+    /// <summary>Returns the accessor pair for the symbol if defined.</summary>
+    public bool TryGetSymbolAccessor(SharpTSSymbol key, out ISharpTSCallable? getter, out ISharpTSCallable? setter)
+    {
+        if (_symbolAccessors != null && _symbolAccessors.TryGetValue(key, out var pair))
+        {
+            getter = pair.Get;
+            setter = pair.Set;
+            return true;
+        }
+        getter = null;
+        setter = null;
+        return false;
+    }
+
     /// <summary>Removes a JS-object property from this function.</summary>
     public bool DeleteProperty(string name)
     {
@@ -401,6 +428,30 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
         if (_symbolProperties != null && _symbolProperties.TryGetValue(key, out value))
             return true;
         value = null;
+        return false;
+    }
+
+    // Symbol-keyed accessor pairs (mirrors SharpTSFunction).
+    private Dictionary<SharpTSSymbol, (ISharpTSCallable? Get, ISharpTSCallable? Set)>? _symbolAccessors;
+
+    /// <summary>Installs a symbol-keyed accessor pair from defineProperty.</summary>
+    public void DefineSymbolAccessor(SharpTSSymbol key, ISharpTSCallable? getter, ISharpTSCallable? setter)
+    {
+        _symbolAccessors ??= [];
+        _symbolAccessors[key] = (getter, setter);
+    }
+
+    /// <summary>Returns the accessor pair for the symbol if defined.</summary>
+    public bool TryGetSymbolAccessor(SharpTSSymbol key, out ISharpTSCallable? getter, out ISharpTSCallable? setter)
+    {
+        if (_symbolAccessors != null && _symbolAccessors.TryGetValue(key, out var pair))
+        {
+            getter = pair.Get;
+            setter = pair.Set;
+            return true;
+        }
+        getter = null;
+        setter = null;
         return false;
     }
 

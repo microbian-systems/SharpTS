@@ -52,6 +52,12 @@ public sealed class Test262HarnessAssembler
         // assert.throws and the runner classifier both rely on.
         sb.Append("Test262Error.prototype.name = \"Test262Error\";\n");
         sb.Append("Test262Error.prototype.constructor = Test262Error;\n");
+        // SpiderMonkey/D8/JSC harness: tests sometimes alias `print` (an
+        // engine-provided global) to a property — coerce-global.js does
+        // `Array.print = print;`. The assignment side-effect alone is what
+        // matters; map it to console.log so it's defined and still produces
+        // sensible output if a downstream test ever invokes it.
+        sb.Append("var print = function () { console.log.apply(console, arguments); };\n");
         foreach (var include in metadata.Includes)
         {
             AppendHarnessFile(sb, include);

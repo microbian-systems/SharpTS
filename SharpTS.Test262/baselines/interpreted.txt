@@ -9442,7 +9442,7 @@ test/built-ins/RegExp/prototype/Symbol.split/species-ctor-ctor-get-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/species-ctor-ctor-non-obj.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/species-ctor-ctor-undef.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/species-ctor-err.js Pass
-test/built-ins/RegExp/prototype/Symbol.split/species-ctor-species-get-err.js RuntimeError
+test/built-ins/RegExp/prototype/Symbol.split/species-ctor-species-get-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/species-ctor-species-non-ctor.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/species-ctor-species-undef.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/species-ctor-y.js Pass
