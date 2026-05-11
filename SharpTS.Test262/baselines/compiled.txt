@@ -9390,7 +9390,7 @@ test/built-ins/RegExp/prototype/Symbol.replace/result-get-length-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/result-get-matched-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/subst-after.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/subst-before.js Pass
-test/built-ins/RegExp/prototype/Symbol.replace/subst-capture-idx-1.js Fail
+test/built-ins/RegExp/prototype/Symbol.replace/subst-capture-idx-1.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/subst-capture-idx-2.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/subst-dollar.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/subst-matched.js Pass
