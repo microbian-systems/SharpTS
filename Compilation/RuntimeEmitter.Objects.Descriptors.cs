@@ -295,12 +295,226 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(setDescriptorDoneLabel);
 
+        // ECMA-262 §10.1.6.3 ValidateAndApplyPropertyDescriptor: when an
+        // existing non-configurable descriptor is being redefined, reject
+        // incompatible changes. Covers Object/defineProperty/15.2.3.6-4-*
+        // family (~50 tests) plus most defineProperties spec-validation tests.
+        var existingDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, existingDescLocal);
+
+        var validationEndLabel = il.DefineLabel();
+        // No existing descriptor → skip validation (new property add).
+        il.Emit(OpCodes.Ldloc, existingDescLocal);
+        il.Emit(OpCodes.Brfalse, validationEndLabel);
+        // Existing is configurable → all changes allowed.
+        il.Emit(OpCodes.Ldloc, existingDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, validationEndLabel);
+
+        // Existing is non-configurable. Examine new descriptor for forbidden
+        // changes. Re-consult the input dict for "was field X specified"
+        // (the parsed descriptor already has all fields normalized).
+        var throwRedefineLabel = il.DefineLabel();
+
+        // We only run this block when the input was a dict (dictLocal non-null).
+        // For non-dict descriptor sources we fall through to the apply step.
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, validationEndLabel);
+
+        // Rule (a): if new specifies configurable=true → throw.
+        var configKeyLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "configurable");
+        il.Emit(OpCodes.Ldloca, configKeyLocal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        var checkEnumerableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, checkEnumerableLabel);
+        il.Emit(OpCodes.Ldloc, configKeyLocal);
+        il.Emit(OpCodes.Call, runtime.IsTruthy);
+        il.Emit(OpCodes.Brtrue, throwRedefineLabel);
+        il.MarkLabel(checkEnumerableLabel);
+
+        // Rule (b): if new specifies enumerable AND it differs from existing → throw.
+        var enumKeyLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "enumerable");
+        il.Emit(OpCodes.Ldloca, enumKeyLocal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        var checkTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, checkTypeLabel);
+        il.Emit(OpCodes.Ldloc, enumKeyLocal);
+        il.Emit(OpCodes.Call, runtime.IsTruthy);
+        il.Emit(OpCodes.Ldloc, existingDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Bne_Un, throwRedefineLabel);
+        il.MarkLabel(checkTypeLabel);
+
+        // Rule (c): accessor↔data type swap. Existing is accessor if Getter
+        // OR Setter is non-null. New is accessor if it specifies "get" or "set".
+        var existingIsAccessor = il.DeclareLocal(_types.Boolean);
+        var notExistingAccessor = il.DefineLabel();
+        var setExistingAccessor = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, existingDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, setExistingAccessor);
+        il.Emit(OpCodes.Ldloc, existingDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, notExistingAccessor);
+        il.MarkLabel(setExistingAccessor);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, existingIsAccessor);
+        var afterExistingAccessor = il.DefineLabel();
+        il.Emit(OpCodes.Br, afterExistingAccessor);
+        il.MarkLabel(notExistingAccessor);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, existingIsAccessor);
+        il.MarkLabel(afterExistingAccessor);
+
+        var newIsAccessor = il.DeclareLocal(_types.Boolean);
+        var newIsData = il.DeclareLocal(_types.Boolean);
+        var setNewAccessor = il.DefineLabel();
+        var afterNewAccessor = il.DefineLabel();
+        var tmpVal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "get");
+        il.Emit(OpCodes.Ldloca, tmpVal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        il.Emit(OpCodes.Brtrue, setNewAccessor);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "set");
+        il.Emit(OpCodes.Ldloca, tmpVal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        il.Emit(OpCodes.Brfalse, afterNewAccessor);
+        il.MarkLabel(setNewAccessor);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, newIsAccessor);
+        il.MarkLabel(afterNewAccessor);
+
+        var setNewData = il.DefineLabel();
+        var afterNewData = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldloca, tmpVal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        il.Emit(OpCodes.Brtrue, setNewData);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "writable");
+        il.Emit(OpCodes.Ldloca, tmpVal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        il.Emit(OpCodes.Brfalse, afterNewData);
+        il.MarkLabel(setNewData);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, newIsData);
+        il.MarkLabel(afterNewData);
+
+        // Type swap: existing accessor + new data → throw. Existing data + new
+        // accessor → throw. (Same descriptor type required when configurable=false.)
+        var typeSwapDoneLabel = il.DefineLabel();
+        var existingIsDataLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, existingIsAccessor);
+        il.Emit(OpCodes.Brfalse, existingIsDataLabel);
+        // existing accessor: new data forbids it.
+        il.Emit(OpCodes.Ldloc, newIsData);
+        il.Emit(OpCodes.Brtrue, throwRedefineLabel);
+        il.Emit(OpCodes.Br, typeSwapDoneLabel);
+        il.MarkLabel(existingIsDataLabel);
+        // existing data: new accessor forbids it.
+        il.Emit(OpCodes.Ldloc, newIsAccessor);
+        il.Emit(OpCodes.Brtrue, throwRedefineLabel);
+        il.MarkLabel(typeSwapDoneLabel);
+
+        // Rule (d): data with existing.writable=false: cannot set writable=true.
+        // (writable: false → true is forbidden when configurable=false.)
+        // Existing is data when existingIsAccessor=false.
+        var skipWritableCheck = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, existingIsAccessor);
+        il.Emit(OpCodes.Brtrue, skipWritableCheck);
+        // existing data. Check writable.
+        il.Emit(OpCodes.Ldloc, existingDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, skipWritableCheck); // existing.writable=true → all OK
+        // existing.writable=false. New specifies writable=true → throw.
+        var writableKeyLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "writable");
+        il.Emit(OpCodes.Ldloca, writableKeyLocal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        var checkValueChange = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, checkValueChange);
+        il.Emit(OpCodes.Ldloc, writableKeyLocal);
+        il.Emit(OpCodes.Call, runtime.IsTruthy);
+        il.Emit(OpCodes.Brtrue, throwRedefineLabel);
+        il.MarkLabel(checkValueChange);
+        // New specifies value != existing.value → throw (data with writable=false).
+        var valueKeyLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldloca, valueKeyLocal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        il.Emit(OpCodes.Brfalse, skipWritableCheck);
+        il.Emit(OpCodes.Ldloc, valueKeyLocal);
+        il.Emit(OpCodes.Ldloc, existingDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
+        il.Emit(OpCodes.Brfalse, throwRedefineLabel);
+        il.MarkLabel(skipWritableCheck);
+
+        // Validation passed.
+        il.Emit(OpCodes.Br, validationEndLabel);
+
+        il.MarkLabel(throwRedefineLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot redefine property");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(validationEndLabel);
+
+        // ECMA-262 §10.1.6.3 step 6: when modifying an existing descriptor,
+        // unspecified fields keep their existing values (don't overwrite to
+        // defaults). Merge existing's values into descriptorLocal for any
+        // field NOT specified in the new dict.
+        var skipMergeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, existingDescLocal);
+        il.Emit(OpCodes.Brfalse, skipMergeLabel);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, skipMergeLabel);
+
+        void MergeIfMissing(string fieldName, PropertyInfo prop, bool isBool)
+        {
+            var skipLabel = il.DefineLabel();
+            var tmpKey = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldloc, dictLocal);
+            il.Emit(OpCodes.Ldstr, fieldName);
+            il.Emit(OpCodes.Ldloca, tmpKey);
+            il.Emit(OpCodes.Callvirt, dictTryGetValue);
+            il.Emit(OpCodes.Brtrue, skipLabel);   // already specified — skip merge
+            // Copy from existing
+            il.Emit(OpCodes.Ldloc, descriptorLocal);
+            il.Emit(OpCodes.Ldloc, existingDescLocal);
+            il.Emit(OpCodes.Callvirt, prop.GetGetMethod()!);
+            il.Emit(OpCodes.Callvirt, prop.GetSetMethod()!);
+            il.MarkLabel(skipLabel);
+        }
+        MergeIfMissing("value", runtime.CompiledPropertyDescriptorValue, false);
+        MergeIfMissing("writable", runtime.CompiledPropertyDescriptorWritable, true);
+        MergeIfMissing("get", runtime.CompiledPropertyDescriptorGetter, false);
+        MergeIfMissing("set", runtime.CompiledPropertyDescriptorSetter, false);
+        MergeIfMissing("enumerable", runtime.CompiledPropertyDescriptorEnumerable, true);
+        MergeIfMissing("configurable", runtime.CompiledPropertyDescriptorConfigurable, true);
+
+        il.MarkLabel(skipMergeLabel);
+
         // Call $PropertyDescriptorStore.DefineProperty(obj, propName, descriptor)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, propNameLocal);
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
         il.Emit(OpCodes.Pop);  // Discard bool result
+
 
         // Also set the value on the object if it's a data property (has value, not getter)
         // if (descriptor has "value" && obj is Dictionary)
