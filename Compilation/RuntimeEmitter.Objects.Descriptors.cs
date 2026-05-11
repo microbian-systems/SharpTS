@@ -367,11 +367,22 @@ public partial class RuntimeEmitter
         var hasDescriptorLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
+        // ECMA-262 §7.3.5 + §19.1.2.4: when the property key is a Symbol,
+        // look it up in the per-object symbol dict (same one that handles
+        // `obj[Symbol.x]` index access). Required for prop-desc.js tests
+        // that probe Symbol.match/matchAll/replace/search/split on
+        // RegExp.prototype. Without this the ToJsString below throws
+        // TypeError on every Symbol-keyed gOPD call.
+        var notSymbolKeyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brfalse, notSymbolKeyLabel);
+        EmitSymbolKeyDescriptorLookup(il, runtime);
+        il.MarkLabel(notSymbolKeyLabel);
+
         // propName = $Runtime.ToJsString(prop) — spec ECMA-262 ToString. Honors
         // Array.prototype.toString (so `gOPD(obj, [1])` looks up "1", not "[1]"),
-        // and avoids the prop.ToString() NRE for null. Symbol input throws
-        // TypeError per spec — matches existing behavior since GOPD doesn't
-        // currently consult the symbol-dict in compiled mode anyway.
+        // and avoids the prop.ToString() NRE for null.
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, propNameLocal);
@@ -800,6 +811,52 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
 
         il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Stack-effect: pops 0, returns from the enclosing method when the
+    /// arg1 prop key is a Symbol. Reads <c>GetSymbolDict(arg0)</c> and, if
+    /// the symbol resolves, builds a JS descriptor dict with
+    /// <c>{value, writable:true, enumerable:false, configurable:true}</c>
+    /// (the ECMA-262 §17 default for built-in data slots — matches
+    /// RegExp.prototype's well-known-symbol-keyed methods). Returns
+    /// undefined if the symbol isn't present in the dict — same semantics
+    /// as the string-keyed PDS miss path below the call site.
+    /// </summary>
+    private void EmitSymbolKeyDescriptorLookup(ILGenerator il, EmittedRuntime runtime)
+    {
+        var symDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        var valueLocal = il.DeclareLocal(_types.Object);
+        var resultDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Stloc, symDictLocal);
+
+        var foundLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, symDictLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+        il.Emit(OpCodes.Brtrue, foundLabel);
+
+        // Not in user symbol-dict — return undefined.
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(foundLabel);
+        // Build descriptor dict: { value, writable:true, enumerable:false, configurable:true }
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, resultDictLocal);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        EmitDescriptorBoolField(il, resultDictLocal, "writable", true);
+        EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ret);
     }
 
