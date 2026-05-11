@@ -9262,7 +9262,7 @@ test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-y-set-lastindex-err
 test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-y-set-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-infer-unicode.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/builtin-success-g-set-lastindex-err.js Pass
-test/built-ins/RegExp/prototype/Symbol.match/builtin-success-g-set-lastindex.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/builtin-success-g-set-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-success-return-val-groups.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-success-return-val.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-success-u-return-val-groups.js Fail
@@ -9271,7 +9271,7 @@ test/built-ins/RegExp/prototype/Symbol.match/builtin-success-y-set-lastindex.js 
 test/built-ins/RegExp/prototype/Symbol.match/builtin-y-coerce-lastindex-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/coerce-arg-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/coerce-arg.js Pass
-test/built-ins/RegExp/prototype/Symbol.match/coerce-global.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/coerce-global.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/exec-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/exec-invocation.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/exec-return-type-invalid.js Pass
@@ -9291,8 +9291,8 @@ test/built-ins/RegExp/prototype/Symbol.match/g-success-return-val.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-zero-matches.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/get-exec-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/get-flags-err.js Pass
-test/built-ins/RegExp/prototype/Symbol.match/get-global-err.js Fail
-test/built-ins/RegExp/prototype/Symbol.match/get-unicode-error.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/get-global-err.js Pass
+test/built-ins/RegExp/prototype/Symbol.match/get-unicode-error.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/length.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/name.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/not-a-constructor.js Pass
@@ -9356,8 +9356,8 @@ test/built-ins/RegExp/prototype/Symbol.replace/g-pos-decrement.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/g-pos-increment.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/get-exec-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/get-flags-err.js Pass
-test/built-ins/RegExp/prototype/Symbol.replace/get-global-err.js Fail
-test/built-ins/RegExp/prototype/Symbol.replace/get-unicode-error.js Fail
+test/built-ins/RegExp/prototype/Symbol.replace/get-global-err.js Pass
+test/built-ins/RegExp/prototype/Symbol.replace/get-unicode-error.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/length.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/match-failure.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/name.js Pass
