@@ -30,6 +30,7 @@ public partial class RuntimeEmitter
     private MethodBuilder _tsRegExpHasNamedGroupsMethod = null!;
     private FieldBuilder _tsRegExpCompileCacheField = null!;
     private MethodBuilder _tsRegExpGetCachedRegexMethod = null!;
+    private MethodBuilder _tsRegExpSetLastIndexStrictMethod = null!;
 
     private void EmitTSRegExpClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
@@ -89,6 +90,10 @@ public partial class RuntimeEmitter
         EmitTSRegExpBuildNamedGroups(typeBuilder, runtime);
 
         // Instance methods
+        // Strict-Set helper for lastIndex resets — emitted before Exec which
+        // calls it. Throws TypeError when PDS has data descriptor with
+        // writable=false (Object.defineProperty(r, 'lastIndex', {writable:false})).
+        EmitTSRegExpSetLastIndexStrict(typeBuilder, runtime);
         EmitTSRegExpTest(typeBuilder, runtime);
         EmitTSRegExpExec(typeBuilder, runtime);
         EmitTSRegExpToStringMethod(typeBuilder, runtime);
@@ -808,6 +813,67 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits internal void SetLastIndexStrict(int newValue) on $RegExp.
+    /// Spec ECMA-262 §22.2.5.2.2 RegExpBuiltinExec writes lastIndex with
+    /// Throw=true on global/sticky resets. When the user installed a
+    /// non-writable PDS data descriptor on `lastIndex`, the write must
+    /// throw TypeError. Otherwise falls through to a direct Stfld of
+    /// the typed `_lastIndex` field.
+    /// </summary>
+    private void EmitTSRegExpSetLastIndexStrict(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "SetLastIndexStrict",
+            MethodAttributes.Assembly,
+            _types.Void,
+            [_types.Int32]
+        );
+        _tsRegExpSetLastIndexStrictMethod = method;
+
+        var il = method.GetILGenerator();
+        var pdsLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        var doWriteLabel = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+
+        // pds = PDSGetPropertyDescriptor(this, "lastIndex")
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "lastIndex");
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, pdsLocal);
+        il.Emit(OpCodes.Ldloc, pdsLocal);
+        il.Emit(OpCodes.Brfalse, doWriteLabel);
+
+        // If accessor (getter or setter present): for now skip typed-slot
+        // write — full setter dispatch is a separate refactor. Stfld would
+        // bypass user accessor entirely, which is no worse than today.
+        var notAccessorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, pdsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, doWriteLabel);
+        il.Emit(OpCodes.Ldloc, pdsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, doWriteLabel);
+        il.MarkLabel(notAccessorLabel);
+
+        // Data descriptor — writable=false → throw TypeError.
+        il.Emit(OpCodes.Ldloc, pdsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, doWriteLabel);
+
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot assign to read only property 'lastIndex'");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(doWriteLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, _tsRegExpLastIndexField);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitTSRegExpExec(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // public object? Exec(string input) - returns $Object or null
@@ -867,7 +933,9 @@ public partial class RuntimeEmitter
         // Global path
         il.MarkLabel(globalMatchLabel);
 
-        // if (LastIndex > input.Length) { LastIndex = 0; return null; }
+        // if (LastIndex > input.Length) { SetLastIndexStrict(0); return null; }
+        // Strict write so non-writable PDS lastIndex (y-fail-lastindex-no-write
+        // family) throws TypeError per ECMA-262 §22.2.5.2.2 step 4.b.
         var continueGlobalLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpLastIndexField);
@@ -877,7 +945,7 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stfld, _tsRegExpLastIndexField);
+        il.Emit(OpCodes.Call, _tsRegExpSetLastIndexStrictMethod);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
@@ -938,9 +1006,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsRegExpStickyField);
         il.Emit(OpCodes.Brfalse, skipResetLabel);
         il.MarkLabel(stickyResetLabel);
+        // SetLastIndexStrict(0) — ECMA-262 §22.2.5.2.2 step 15.c.i.1 Set
+        // (R, "lastIndex", 0, true). Non-writable PDS data descriptor
+        // surfaces TypeError (y-fail-lastindex-no-write.js).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stfld, _tsRegExpLastIndexField);
+        il.Emit(OpCodes.Call, _tsRegExpSetLastIndexStrictMethod);
         il.MarkLabel(skipResetLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
@@ -948,7 +1019,7 @@ public partial class RuntimeEmitter
         // Match success
         il.MarkLabel(matchSuccessLabel);
 
-        // if (_global || _sticky) LastIndex = match.Index + match.Length
+        // if (_global || _sticky) SetLastIndexStrict(match.Index + match.Length)
         var skipUpdateLabel = il.DefineLabel();
         var doUpdateLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -964,7 +1035,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, matchLocal);
         il.Emit(OpCodes.Callvirt, typeof(Capture).GetProperty("Length")!.GetGetMethod()!);
         il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stfld, _tsRegExpLastIndexField);
+        il.Emit(OpCodes.Call, _tsRegExpSetLastIndexStrictMethod);
         il.MarkLabel(skipUpdateLabel);
 
         // ECMA-262 22.2.5.6.6: the exec result is an Array exotic object —
@@ -2521,6 +2592,7 @@ public partial class RuntimeEmitter
     {
         var pdsLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
         var skipLabel = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldloc, rxObjLocal);
         il.Emit(OpCodes.Ldstr, propName);
@@ -2529,20 +2601,35 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, pdsLocal);
         il.Emit(OpCodes.Brfalse, skipLabel);
 
-        // Accessor descriptors don't have a meaningful writable bit — skip.
+        // Accessor descriptor: setter null → throw (getter-only is unwritable
+        // under Throw=true per ECMA-262 §10.1.5.3 ValidateAndApplyPropertyDescriptor);
+        // setter present → defer to the setter invocation in SetProperty (which
+        // may itself throw).
+        var notAccessorLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, pdsLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
-        il.Emit(OpCodes.Brtrue, skipLabel);
+        var hasGetterLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, hasGetterLabel);
+        il.Emit(OpCodes.Ldloc, pdsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, notAccessorLabel);
+        // Has setter, no getter — accessor: let SetProperty fire the setter.
+        il.Emit(OpCodes.Br, skipLabel);
+        il.MarkLabel(hasGetterLabel);
         il.Emit(OpCodes.Ldloc, pdsLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
         il.Emit(OpCodes.Brtrue, skipLabel);
+        // Getter present, no setter → throw.
+        il.Emit(OpCodes.Br, throwLabel);
 
+        il.MarkLabel(notAccessorLabel);
         // Data descriptor — check writable.
         il.Emit(OpCodes.Ldloc, pdsLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
         il.Emit(OpCodes.Brtrue, skipLabel);
 
-        // writable=false → throw TypeError.
+        // writable=false (data) OR getter-only (accessor) → throw TypeError.
+        il.MarkLabel(throwLabel);
         il.Emit(OpCodes.Ldstr, "Cannot assign to read only property '" + propName + "'");
         il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
         il.Emit(OpCodes.Call, runtime.CreateException);
