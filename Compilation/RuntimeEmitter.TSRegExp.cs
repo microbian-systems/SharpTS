@@ -832,13 +832,16 @@ public partial class RuntimeEmitter
         var iLocal = il.DeclareLocal(_types.Int32);
         var groupLocal = il.DeclareLocal(typeof(Group));
 
-        // ECMA-262 §22.2.6.2 step 3: S = ? ToString(string). Missing arg
-        // (compiler passes null when called as `regex.exec()`) coerces to
-        // "undefined". S15.10.6.2_A1_T16 / _A12 verify this.
+        // ECMA-262 §22.2.6.2 step 3: S = ? ToString(string). All call sites
+        // (RegExpEmitter, ProtoExec via EmitArgToJsString) Stringify before
+        // invoking Exec, so the `input` parameter is already a real string by
+        // the time we get here — null shouldn't occur. Defensive null-check
+        // routes a stray null to "null" (ECMA ToString(null)) so .NET Regex
+        // doesn't NRE on bare borrowed-method paths.
         var inputOkLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brtrue, inputOkLabel);
-        il.Emit(OpCodes.Ldstr, "undefined");
+        il.Emit(OpCodes.Ldstr, "null");
         il.Emit(OpCodes.Starg_S, (byte)1);
         il.MarkLabel(inputOkLabel);
 
@@ -2439,18 +2442,12 @@ public partial class RuntimeEmitter
 
     private void EmitArgToJsString(ILGenerator il, EmittedRuntime runtime, int argIndex, LocalBuilder local)
     {
-        var nullLabel = il.DefineLabel();
-        var doneLabel = il.DefineLabel();
-
-        il.Emit(OpCodes.Ldarg, argIndex);
-        il.Emit(OpCodes.Brfalse, nullLabel);
-
-        // ECMA-262 7.1.17 ToString: Symbol primitives throw TypeError.
-        // Each Symbol.* protocol method begins with S = ? ToString(string);
-        // calls like `/./[Symbol.search](Symbol.iterator)` must surface
-        // that TypeError up. $RegExp emits before $Runtime so the global
-        // ToJsString helper isn't yet bound — inline the brand-check +
-        // TypeError throw with the forward-declared CreateException.
+        // ECMA-262 7.1.17 ToString: Symbol primitives throw TypeError. Each
+        // Symbol.* protocol method begins with S = ? ToString(string), so
+        // calls like `/./[Symbol.search](Symbol.iterator)` must surface that
+        // TypeError up. $RegExp emits before $Runtime so the global ToJsString
+        // helper isn't yet bound — inline the brand-check + TypeError throw
+        // with the forward-declared CreateException.
         var notSymbolLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg, argIndex);
         il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
@@ -2461,20 +2458,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(notSymbolLabel);
 
-        // Route through $Runtime.Stringify so user-installed toString
-        // (and dict literals' Number/Array/etc. cases) coerce per spec
-        // instead of returning the C# Object.ToString fallback. Forward-
-        // declared in DefineRuntimeClassPhase1 so we can call it here.
+        // Route through $Runtime.Stringify which correctly distinguishes
+        // C# null (→ "null") from \$Undefined.Instance (→ "undefined") and
+        // honors user-installed toString. Forward-declared in
+        // DefineRuntimeClassPhase1 so we can call it here.
         il.Emit(OpCodes.Ldarg, argIndex);
         il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Stloc, local);
-        il.Emit(OpCodes.Br, doneLabel);
-
-        il.MarkLabel(nullLabel);
-        il.Emit(OpCodes.Ldstr, "undefined");
-        il.Emit(OpCodes.Stloc, local);
-
-        il.MarkLabel(doneLabel);
     }
 
     /// <summary>
