@@ -124,6 +124,12 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, protoDescLocal);
             il.Emit(OpCodes.Ldloc, fnLocal);
             il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetSetMethod()!);
+            // ECMA-262 §22.2.6 accessor descriptors are { enumerable:false,
+            // configurable:true } — $CompiledPropertyDescriptor's ctor defaults
+            // Enumerable=true so override it. prop-desc.js tests verify both.
+            il.Emit(OpCodes.Ldloc, protoDescLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
             // PDSDefineProperty(RegExp.prototype, jsName, descriptor);
             il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
             il.Emit(OpCodes.Ldstr, jsName);
