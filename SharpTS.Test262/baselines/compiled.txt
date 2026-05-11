@@ -4899,7 +4899,7 @@ test/built-ins/Object/defineProperties/15.2.3.7-6-a-246.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-247.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-248.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-249.js Fail
-test/built-ins/Object/defineProperties/15.2.3.7-6-a-25.js Fail
+test/built-ins/Object/defineProperties/15.2.3.7-6-a-25.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-250.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-251.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-252.js Fail
@@ -5438,7 +5438,7 @@ test/built-ins/Object/defineProperty/15.2.3.6-3-96-1.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-96.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-98.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-99.js Pass
-test/built-ins/Object/defineProperty/15.2.3.6-4-1.js Fail
+test/built-ins/Object/defineProperty/15.2.3.6-4-1.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-4-10.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-4-100.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-4-101.js Fail
@@ -6175,8 +6175,8 @@ test/built-ins/Object/defineProperty/15.2.3.6-4-98.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-4-99.js Fail
 test/built-ins/Object/defineProperty/8.12.9-9-b-i_1.js Fail
 test/built-ins/Object/defineProperty/8.12.9-9-b-i_2.js Fail
-test/built-ins/Object/defineProperty/8.12.9-9-c-i_1.js Fail
-test/built-ins/Object/defineProperty/8.12.9-9-c-i_2.js Fail
+test/built-ins/Object/defineProperty/8.12.9-9-c-i_1.js RuntimeError
+test/built-ins/Object/defineProperty/8.12.9-9-c-i_2.js RuntimeError
 test/built-ins/Object/defineProperty/S15.2.3.6_A1.js Pass
 test/built-ins/Object/defineProperty/S15.2.3.6_A2.js Pass
 test/built-ins/Object/defineProperty/coerced-P-grow.js RuntimeError
@@ -7042,7 +7042,7 @@ test/built-ins/Object/preventExtensions/15.2.3.10-3-24.js Pass
 test/built-ins/Object/preventExtensions/15.2.3.10-3-3.js Fail
 test/built-ins/Object/preventExtensions/15.2.3.10-3-4.js RuntimeError
 test/built-ins/Object/preventExtensions/15.2.3.10-3-5-1.js Fail
-test/built-ins/Object/preventExtensions/15.2.3.10-3-5.js Fail
+test/built-ins/Object/preventExtensions/15.2.3.10-3-5.js Pass
 test/built-ins/Object/preventExtensions/15.2.3.10-3-6.js Fail
 test/built-ins/Object/preventExtensions/15.2.3.10-3-7.js Fail
 test/built-ins/Object/preventExtensions/15.2.3.10-3-8.js Pass
