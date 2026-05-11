@@ -1171,8 +1171,144 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    private MethodBuilder _tsRegExpEscapeJsReplacementMethod = null!;
+
+    /// <summary>
+    /// Emits the JS→.NET replacement-string preprocessor. ECMA-262
+    /// §22.2.5.10.2 GetSubstitution: \`$0\` is NOT recognized as a substitution
+    /// in JS (treated as the literal two-character "$0"), but .NET's
+    /// <see cref="System.Text.RegularExpressions.Regex.Replace(string,string)"/>
+    /// substitutes \`$0\` with the entire match. Translate \`$0\` → \`$$0\`
+    /// (.NET-literal) without touching \`$$\` escape sequences.
+    /// </summary>
+    private void EmitTSRegExpEscapeJsReplacement(TypeBuilder typeBuilder)
+    {
+        // static string EscapeJsReplacement(string s)
+        var method = typeBuilder.DefineMethod(
+            "EscapeJsReplacement",
+            MethodAttributes.Assembly | MethodAttributes.Static,
+            _types.String,
+            [_types.String]
+        );
+        _tsRegExpEscapeJsReplacementMethod = method;
+
+        var il = method.GetILGenerator();
+        var sbLocal = il.DeclareLocal(_types.StringBuilder);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var lenLocal = il.DeclareLocal(_types.Int32);
+        var chLocal = il.DeclareLocal(_types.Char);
+        var loopTopLabel = il.DefineLabel();
+        var loopEndLabel = il.DefineLabel();
+        var fastReturnLabel = il.DefineLabel();
+
+        // Quick path: if input doesn't contain '$', return as-is.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, (int)'$');
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Contains", [_types.Char])!);
+        il.Emit(OpCodes.Brfalse, fastReturnLabel);
+
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, Type.EmptyTypes));
+        il.Emit(OpCodes.Stloc, sbLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.String.GetProperty("Length")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(loopTopLabel);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, loopEndLabel);
+
+        // ch = s[i]
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Stloc, chLocal);
+
+        // if (ch == '$' && i+1 < lenLocal):
+        //   next = s[i+1]
+        //   if (next == '$'): sb.Append("$$"); i += 2; continue
+        //   if (next == '0'): sb.Append("$$0"); i += 2; continue
+        // sb.Append(ch); i++; continue
+        var notDollarLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, chLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'$');
+        il.Emit(OpCodes.Bne_Un, notDollarLabel);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, notDollarLabel);
+
+        // peek next char
+        var nextCh = il.DeclareLocal(_types.Char);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Stloc, nextCh);
+
+        // if (next == '$'): sb.Append('$').Append('$'); skip both
+        var notDoubleDollarLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, nextCh);
+        il.Emit(OpCodes.Ldc_I4, (int)'$');
+        il.Emit(OpCodes.Bne_Un, notDoubleDollarLabel);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, "$$");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopTopLabel);
+        il.MarkLabel(notDoubleDollarLabel);
+
+        // if (next == '0'): sb.Append("$$0"); skip both
+        var notDollarZeroLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, nextCh);
+        il.Emit(OpCodes.Ldc_I4, (int)'0');
+        il.Emit(OpCodes.Bne_Un, notDollarZeroLabel);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, "$$0");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopTopLabel);
+        il.MarkLabel(notDollarZeroLabel);
+
+        il.MarkLabel(notDollarLabel);
+        // sb.Append(ch); i++
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloc, chLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.Char));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopTopLabel);
+
+        il.MarkLabel(loopEndLabel);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(fastReturnLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitTSRegExpReplace(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Emit the substitution-escape helper first so Replace can call it.
+        EmitTSRegExpEscapeJsReplacement(typeBuilder);
+
         // internal string Replace(string input, string replacement)
         var method = typeBuilder.DefineMethod(
             "Replace",
@@ -1186,6 +1322,13 @@ public partial class RuntimeEmitter
         var globalLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
+        // Preprocess replacement string to escape $0 (JS keeps it literal,
+        // .NET expands to full match) before passing to Regex.Replace.
+        var escapedLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, _tsRegExpEscapeJsReplacementMethod);
+        il.Emit(OpCodes.Stloc, escapedLocal);
+
         // if (_global)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpGlobalField);
@@ -1195,7 +1338,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpRegexField);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldloc, escapedLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Callvirt, typeof(Regex).GetMethod("Replace", [_types.String, _types.String, _types.Int32])!);
         il.Emit(OpCodes.Ret);
@@ -1205,7 +1348,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpRegexField);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldloc, escapedLocal);
         il.Emit(OpCodes.Callvirt, typeof(Regex).GetMethod("Replace", [_types.String, _types.String])!);
         il.Emit(OpCodes.Ret);
     }
