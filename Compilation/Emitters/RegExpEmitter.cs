@@ -101,7 +101,11 @@ public sealed class RegExpEmitter : ITypeEmitterStrategy
     #region Helper Methods
 
     /// <summary>
-    /// Emits the first argument as a string, or empty string if no arguments.
+    /// Emits the first argument as a string, or <c>"undefined"</c> when no
+    /// arguments are supplied. ECMA-262 §22.2.6.{2,8} test/exec begin with
+    /// <c>S = ? ToString(string)</c>; passing no string yields
+    /// <c>ToString(undefined) === "undefined"</c>. Test262 patterns like
+    /// <c>/undefined/.exec()</c> rely on that coercion.
     /// </summary>
     private static void EmitStringArgOrEmpty(IEmitterContext emitter, List<Expr> arguments)
     {
@@ -116,7 +120,7 @@ public sealed class RegExpEmitter : ITypeEmitterStrategy
         }
         else
         {
-            il.Emit(OpCodes.Ldstr, "");
+            il.Emit(OpCodes.Ldstr, "undefined");
         }
     }
 

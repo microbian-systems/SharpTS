@@ -832,6 +832,16 @@ public partial class RuntimeEmitter
         var iLocal = il.DeclareLocal(_types.Int32);
         var groupLocal = il.DeclareLocal(typeof(Group));
 
+        // ECMA-262 §22.2.6.2 step 3: S = ? ToString(string). Missing arg
+        // (compiler passes null when called as `regex.exec()`) coerces to
+        // "undefined". S15.10.6.2_A1_T16 / _A12 verify this.
+        var inputOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brtrue, inputOkLabel);
+        il.Emit(OpCodes.Ldstr, "undefined");
+        il.Emit(OpCodes.Starg_S, (byte)1);
+        il.MarkLabel(inputOkLabel);
+
         // ECMA-262 §22.2.5.2.2 RegExpBuiltinExec: when global OR sticky,
         // use lastIndex as the match start. Sticky additionally enforces
         // the match must begin exactly at lastIndex (we verify after the

@@ -387,9 +387,13 @@ public static class BuiltInTypes
             "multiline" => BooleanType,
             "lastIndex" => NumberType,
 
-            // Methods
-            "test" => new TypeInfo.Function([StringType], BooleanType),
-            "exec" => new TypeInfo.Function([StringType], AnyType),
+            // Methods. ECMA-262 §22.2.6.{2,8,16} — test/exec coerce the
+            // string arg via ToString, so calling without args produces
+            // "undefined". The TS signature historically required the arg;
+            // tests like S15.10.6.2_A1_T16 (/undefined/.exec()) and A12
+            // (new RegExp('(.|\\r|\\n)*','').exec()) rely on the coercion.
+            "test" => new TypeInfo.Function([StringType], BooleanType, RequiredParams: 0),
+            "exec" => new TypeInfo.Function([StringType], AnyType, RequiredParams: 0),
             "toString" => new TypeInfo.Function([], StringType),
 
             _ => null
