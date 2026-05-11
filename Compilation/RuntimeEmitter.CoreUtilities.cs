@@ -1839,14 +1839,10 @@ public partial class RuntimeEmitter
     // that take an object argument (search/indexOf/etc.).
     private void EmitToJsString(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "ToJsString",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.String,
-            [_types.Object]
-        );
-        runtime.ToJsString = method;
-
+        // Signature forward-declared by DefineRuntimeClassPhase1 so $RegExp's
+        // Symbol.* helpers (which emit before $Runtime's body) can bind to
+        // it. Just fill the body on the existing MethodBuilder.
+        var method = (MethodBuilder)runtime.ToJsString;
         var il = method.GetILGenerator();
         var fallbackLabel = il.DefineLabel();
 

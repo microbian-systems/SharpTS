@@ -69,6 +69,17 @@ public partial class RuntimeEmitter
             _types.Double,
             [_types.Object]);
 
+        // Reserve ToJsString(object) → string. Stringify (which $RegExp's
+        // Symbol.* helpers currently call) doesn't run @@toPrimitive on
+        // objects; ToJsString does (ECMA-262 §7.1.1). Forward-declared so
+        // Symbol.{replace,split,matchAll}'s flags coercion can route through
+        // the spec-aligned ToString chain.
+        runtime.ToJsString = typeBuilder.DefineMethod(
+            "ToJsString",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]);
+
         // Reserve the RegExp.prototype dictionary field. $RegExp emits
         // before EmitRuntimeClass and its accessor helpers
         // (TSRegExpProtoGet*) need to compare `__this` against this field

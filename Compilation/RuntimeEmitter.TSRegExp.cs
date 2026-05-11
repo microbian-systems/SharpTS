@@ -1543,11 +1543,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Stloc, rxObjLocal);
 
-        // flags = ToString(Get(rx, "flags"))
+        // flags = ToString(Get(rx, "flags")) — use ToJsString so @@toPrimitive
+        // on user-installed flags-returning objects fires per ECMA-262 §7.1.1.
         il.Emit(OpCodes.Ldloc, rxObjLocal);
         il.Emit(OpCodes.Ldstr, "flags");
         il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, flagsLocal);
 
         // if (!flags.Contains('g')) return RegExpExec(rx, S);
@@ -1723,7 +1724,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "flags");
         il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, matchAllFlagsLocal);
 
         // Narrow to $RegExp; non-$RegExp throws TypeError.
@@ -1804,7 +1805,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "flags");
         il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, replaceFlagsLocal);
 
         // Narrow to $RegExp after side effects observed. Non-$RegExp `this`
@@ -2100,7 +2101,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "flags");
         il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, sideEffectsFlagsLocal);
 
         // Coerce `limit` via ToNumber when not undefined. Symbol → TypeError,
