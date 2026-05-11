@@ -305,6 +305,51 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
         il.Emit(OpCodes.Stloc, existingDescLocal);
 
+        // Classify new descriptor type ahead of both validation and merge:
+        // accessor if dict has "get"/"set", data if it has "value"/"writable".
+        var newIsAccessorOuter = il.DeclareLocal(_types.Boolean);
+        var newIsDataOuter = il.DeclareLocal(_types.Boolean);
+        var tmpClassifyVal = il.DeclareLocal(_types.Object);
+        var skipClassifyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, skipClassifyLabel);
+
+        var setNewAccessorOuter = il.DefineLabel();
+        var afterNewAccessorOuter = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "get");
+        il.Emit(OpCodes.Ldloca, tmpClassifyVal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        il.Emit(OpCodes.Brtrue, setNewAccessorOuter);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "set");
+        il.Emit(OpCodes.Ldloca, tmpClassifyVal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        il.Emit(OpCodes.Brfalse, afterNewAccessorOuter);
+        il.MarkLabel(setNewAccessorOuter);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, newIsAccessorOuter);
+        il.MarkLabel(afterNewAccessorOuter);
+
+        var setNewDataOuter = il.DefineLabel();
+        var afterNewDataOuter = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldloca, tmpClassifyVal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        il.Emit(OpCodes.Brtrue, setNewDataOuter);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "writable");
+        il.Emit(OpCodes.Ldloca, tmpClassifyVal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        il.Emit(OpCodes.Brfalse, afterNewDataOuter);
+        il.MarkLabel(setNewDataOuter);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, newIsDataOuter);
+        il.MarkLabel(afterNewDataOuter);
+
+        il.MarkLabel(skipClassifyLabel);
+
         var validationEndLabel = il.DefineLabel();
         // No existing descriptor → skip validation (new property add).
         il.Emit(OpCodes.Ldloc, existingDescLocal);
@@ -494,9 +539,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Brfalse, skipMergeLabel);
 
-        void MergeIfMissing(string fieldName, PropertyInfo prop, bool isBool)
+        void MergeIfMissing(string fieldName, PropertyInfo prop, LocalBuilder? skipWhenLocal = null)
         {
             var skipLabel = il.DefineLabel();
+            // Skip if cross-type redefine: don't carry data fields into a new
+            // accessor descriptor (or vice versa). \`skipWhenLocal\` is the
+            // boolean that, when true, indicates an incompatible new-desc type.
+            if (skipWhenLocal != null)
+            {
+                il.Emit(OpCodes.Ldloc, skipWhenLocal);
+                il.Emit(OpCodes.Brtrue, skipLabel);
+            }
             var tmpKey = il.DeclareLocal(_types.Object);
             il.Emit(OpCodes.Ldloc, dictLocal);
             il.Emit(OpCodes.Ldstr, fieldName);
@@ -510,12 +563,16 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, prop.GetSetMethod()!);
             il.MarkLabel(skipLabel);
         }
-        MergeIfMissing("value", runtime.CompiledPropertyDescriptorValue, false);
-        MergeIfMissing("writable", runtime.CompiledPropertyDescriptorWritable, true);
-        MergeIfMissing("get", runtime.CompiledPropertyDescriptorGetter, false);
-        MergeIfMissing("set", runtime.CompiledPropertyDescriptorSetter, false);
-        MergeIfMissing("enumerable", runtime.CompiledPropertyDescriptorEnumerable, true);
-        MergeIfMissing("configurable", runtime.CompiledPropertyDescriptorConfigurable, true);
+        // Cross-type merge guards: new is data → don't carry get/set from
+        // existing accessor; new is accessor → don't carry value/writable
+        // from existing data. Use the OUTER (always-computed) classifiers
+        // so the guard fires regardless of whether validation ran.
+        MergeIfMissing("value", runtime.CompiledPropertyDescriptorValue, newIsAccessorOuter);
+        MergeIfMissing("writable", runtime.CompiledPropertyDescriptorWritable, newIsAccessorOuter);
+        MergeIfMissing("get", runtime.CompiledPropertyDescriptorGetter, newIsDataOuter);
+        MergeIfMissing("set", runtime.CompiledPropertyDescriptorSetter, newIsDataOuter);
+        MergeIfMissing("enumerable", runtime.CompiledPropertyDescriptorEnumerable);
+        MergeIfMissing("configurable", runtime.CompiledPropertyDescriptorConfigurable);
 
         il.MarkLabel(skipMergeLabel);
 
