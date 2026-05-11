@@ -1370,12 +1370,17 @@ public partial class RuntimeEmitter
         // Emit the substitution-escape helper first so Replace can call it.
         EmitTSRegExpEscapeJsReplacement(typeBuilder);
 
-        // internal string Replace(string input, string replacement)
+        // internal string Replace(string input, string replacement, bool isGlobal).
+        // `isGlobal` is passed explicitly so callers that read the user-overridable
+        // `global` property (Symbol.replace's spec-aligned chain) can drive
+        // the looping decision per ECMA-262 §22.2.5.10. The String.prototype.replace
+        // path passes `rx._global` to preserve typed-slot fast-path semantics
+        // (no user PDS override expected through the String wrapper).
         var method = typeBuilder.DefineMethod(
             "Replace",
             MethodAttributes.Assembly,
             _types.String,
-            [_types.String, _types.String]
+            [_types.String, _types.String, _types.Boolean]
         );
         _tsRegExpReplaceMethod = method;
 
@@ -1400,9 +1405,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _tsRegExpEscapeJsReplacementMethod);
         il.Emit(OpCodes.Stloc, escapedLocal);
 
-        // if (_global)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, _tsRegExpGlobalField);
+        // if (isGlobal)
+        il.Emit(OpCodes.Ldarg_3);
         il.Emit(OpCodes.Brtrue, globalLabel);
 
         // Non-global: return _regex.Replace(input, replacement, 1)
@@ -1434,12 +1438,15 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitTSRegExpReplaceWithFn(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // internal string ReplaceWithFn(string input, $TSFunction fn)
+        // internal string ReplaceWithFn(string input, $TSFunction fn, bool isGlobal).
+        // `isGlobal` is passed in from Symbol.replace's spec-aligned chain (ECMA-262
+        // §22.2.5.10 step 8) so user `Object.defineProperty(r, 'global', {…})`
+        // overrides drive the loop. Old typed `_global` field read replaced.
         var method = typeBuilder.DefineMethod(
             "ReplaceWithFn",
             MethodAttributes.Assembly,
             _types.String,
-            [_types.String, runtime.TSFunctionType]
+            [_types.String, runtime.TSFunctionType, _types.Boolean]
         );
         _tsRegExpReplaceWithFnMethod = method;
 
@@ -1596,9 +1603,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Stloc, lastEndLocal);
 
-        // if (!_global) break
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, _tsRegExpGlobalField);
+        // if (!isGlobal) break — caller passes spec-aligned `global`.
+        il.Emit(OpCodes.Ldarg_3);
         il.Emit(OpCodes.Brfalse, loopEndLabel);
 
         // Advance past zero-width matches so we don't infinite-loop.
@@ -2240,6 +2246,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(rxOkLabel);
 
+        // Spec-aligned global: assembled-flags-string controls looping per
+        // ECMA-262 §22.2.5.10 step 8 (`global = ToBoolean(Get(rx, "global"))`).
+        // Bool persists across both functional and string-replace dispatch.
+        var isGlobalLocal = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldloc, replaceFlagsLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'g');
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Contains", _types.Char));
+        il.Emit(OpCodes.Stloc, isGlobalLocal);
+
         // If functional, dispatch to ReplaceWithFn. Else use string Replace.
         var stringReplaceLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, fnReplaceLocal);
@@ -2247,14 +2262,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, rxLocal);
         il.Emit(OpCodes.Ldloc, sLocal);
         il.Emit(OpCodes.Ldloc, fnReplaceLocal);
+        il.Emit(OpCodes.Ldloc, isGlobalLocal);
         il.Emit(OpCodes.Call, _tsRegExpReplaceWithFnMethod);
         il.Emit(OpCodes.Ret);
 
-        // return rx.Replace(s, r);
+        // return rx.Replace(s, r, isGlobal);
         il.MarkLabel(stringReplaceLabel);
         il.Emit(OpCodes.Ldloc, rxLocal);
         il.Emit(OpCodes.Ldloc, sLocal);
         il.Emit(OpCodes.Ldloc, rLocal);
+        il.Emit(OpCodes.Ldloc, isGlobalLocal);
         il.Emit(OpCodes.Call, _tsRegExpReplaceMethod);
         il.Emit(OpCodes.Ret);
     }

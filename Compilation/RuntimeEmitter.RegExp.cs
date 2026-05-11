@@ -111,12 +111,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, regexpLocal);
         il.Emit(OpCodes.Brfalse, stringPathLabel);
 
-        // return regexp.Replace(str, replacement) — Replace already walks all
-        // matches for global regexes (spec requires the RegExp be global, but
-        // enforcement is in the interpreter; the IL helper accepts any regex).
+        // return regexp.Replace(str, replacement, regexp._global) — Replace
+        // walks all matches for global regexes. String.prototype.replace
+        // doesn't go through Symbol.replace's spec-aligned flags chain, so
+        // pass the typed `_global` field directly (no user PDS override
+        // expected through this path).
         il.Emit(OpCodes.Ldloc, regexpLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldloc, regexpLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSRegExpGlobalGetter);
         il.Emit(OpCodes.Call, _tsRegExpReplaceMethod);
         il.Emit(OpCodes.Ret);
 
@@ -1054,6 +1058,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, isStringPatternLabel);
 
         // RegExp pattern: ToJsString the replacement, then call regexp.Replace.
+        // Pass typed `_global` directly — String.prototype.replace doesn't
+        // observe user PDS overrides on `r.global`.
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, replacementLocal);
@@ -1061,6 +1067,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, regexpLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, replacementLocal);
+        il.Emit(OpCodes.Ldloc, regexpLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSRegExpGlobalGetter);
         il.Emit(OpCodes.Call, _tsRegExpReplaceMethod);
         il.Emit(OpCodes.Ret);
 
