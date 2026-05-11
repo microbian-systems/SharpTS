@@ -1216,7 +1216,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, arrayProtoValLocal);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(arrayProtoFallbackLabel);
-        il.Emit(OpCodes.Ldnull);
+        // Missing-property reads should return JS undefined, not C# null —
+        // tests assert \`arr.foo === undefined\` not \`arr.foo === null\`.
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
 
         // length case: return (double)list.Count — except for $Arguments,
