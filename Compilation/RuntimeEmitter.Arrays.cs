@@ -296,8 +296,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Brfalse, checkListLabel);
 
-        // return dict.Keys.Select(k => (object?)k).ToList();
-        // Simplified: iterate keys and add to list
+        // return dict.Keys.Where(k => isEnumerable(obj, k)).Select(k => (object?)k).ToList();
+        // ECMA-262 §19.1.2.18 Object.keys returns OWN enumerable property keys.
+        // For each dict key, check PDSGetPropertyDescriptor — if a descriptor
+        // is installed with Enumerable=false, skip the key. Used by both
+        // Object.keys AND for-in (see StatementEmitterBase.EmitForIn → GetKeys).
+        // Without this, RegExp.prototype's built-in methods that carry
+        // PDS-installed non-enumerable descriptors still surface in Object.keys.
         il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, resultLocal);
 
@@ -309,17 +314,38 @@ public partial class RuntimeEmitter
         var keysEnumeratorLocal = il.DeclareLocal(keysEnumeratorType);
         il.Emit(OpCodes.Callvirt, keysType.GetMethod("GetEnumerator")!);
         il.Emit(OpCodes.Stloc, keysEnumeratorLocal);
+        var currentKeyLocal = il.DeclareLocal(_types.String);
+        var keyDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
 
         var keysLoopStart = il.DefineLabel();
         var keysLoopEnd = il.DefineLabel();
+        var keysLoopSkip = il.DefineLabel();
         il.MarkLabel(keysLoopStart);
         il.Emit(OpCodes.Ldloca, keysEnumeratorLocal);
         il.Emit(OpCodes.Call, keysEnumeratorType.GetMethod("MoveNext")!);
         il.Emit(OpCodes.Brfalse, keysLoopEnd);
 
-        il.Emit(OpCodes.Ldloc, resultLocal);
+        // current = enumerator.Current
         il.Emit(OpCodes.Ldloca, keysEnumeratorLocal);
         il.Emit(OpCodes.Call, keysEnumeratorType.GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, currentKeyLocal);
+
+        // descriptor = PDSGetPropertyDescriptor(dict, current)
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldloc, currentKeyLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, keyDescLocal);
+        // if (descriptor != null && !descriptor.Enumerable) skip
+        il.Emit(OpCodes.Ldloc, keyDescLocal);
+        il.Emit(OpCodes.Brfalse, /*include*/ keysLoopSkip /*placeholder, will overwrite*/);
+        // descriptor exists — check Enumerable
+        il.Emit(OpCodes.Ldloc, keyDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, keysLoopStart);  // skip non-enumerable: jump back to loop top
+        il.MarkLabel(keysLoopSkip);
+
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, currentKeyLocal);
         il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
         il.Emit(OpCodes.Br, keysLoopStart);
 

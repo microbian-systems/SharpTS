@@ -52,11 +52,28 @@ public partial class RuntimeEmitter
         il.MarkLabel(doFillLabel);
 
         // ECMA-262 §22.2.6 RegExp.prototype.constructor === RegExp.
+        // Plant in dict for fast-read + install a non-enumerable PDS descriptor
+        // so Object.keys / for-in skip it per spec (§17 built-in attrs).
         il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
         il.Emit(OpCodes.Ldstr, "constructor");
         il.Emit(OpCodes.Ldtoken, runtime.TSRegExpType);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
         il.Emit(OpCodes.Callvirt, setItem);
+        var ctorDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+        il.Emit(OpCodes.Stloc, ctorDescLocal);
+        il.Emit(OpCodes.Ldloc, ctorDescLocal);
+        il.Emit(OpCodes.Ldtoken, runtime.TSRegExpType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, ctorDescLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
+        il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Ldloc, ctorDescLocal);
+        il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+        il.Emit(OpCodes.Pop);
 
         // Populate the symbol-keyed slots. The dispatch path
         // (RuntimeEmitter.Objects.Index.cs `symbolKeyLabel`) reads from
@@ -188,11 +205,32 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
             il.Emit(OpCodes.Pop);
 
-            // dict[jsName] = fn
+            // dict[jsName] = fn (covers the property-read fast path)
             il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
             il.Emit(OpCodes.Ldstr, jsName);
             il.Emit(OpCodes.Ldloc, dataMethodFnLocal);
             il.Emit(OpCodes.Callvirt, setItem);
+
+            // Also install a PDS data descriptor on RegExp.prototype keyed by
+            // jsName with { value: fn, writable: true, enumerable: false,
+            // configurable: true } — ECMA-262 §17 built-in attrs. The dict
+            // entry handles property reads (fast path); the PDS descriptor
+            // gates Object.keys / for-in / propertyIsEnumerable / gOPD so
+            // those report enumerable=false per spec.
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, dataMethodDescLocal);
+            il.Emit(OpCodes.Ldloc, dataMethodDescLocal);
+            il.Emit(OpCodes.Ldloc, dataMethodFnLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldloc, dataMethodDescLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
+            // writable & configurable already true via ctor defaults.
+            il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, dataMethodDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
         }
 
         InstallDataMethod("exec",     runtime.TSRegExpProtoExec,     1);
