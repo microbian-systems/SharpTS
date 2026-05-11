@@ -2260,14 +2260,22 @@ public partial class RuntimeEmitter
 
         // ECMA-262 §22.2.5.10 step 12 — spec-aligned RegExpExec dispatch
         // (which honors `r.exec` overrides). For the non-functional +
-        // non-global path, do a single RegExpExec + substring substitution
-        // here so test262 `exec-invocation` etc. see the user `r.exec`
-        // call. Functional or global cases fall through to the typed
-        // Replace path (which doesn't dispatch user exec — separate
-        // architectural blocker).
+        // non-global path with a literal replacement (no '$' substitution
+        // syntax), do a single RegExpExec + substring concat here so
+        // test262 `exec-invocation` etc. see the user `r.exec` call.
+        // Functional, global, or `$`-bearing replacements fall through
+        // to the typed Replace path (which doesn't dispatch user exec —
+        // separate architectural blocker — but does honor .NET's ECMAScript
+        // substitution syntax for subst-* tests on default regexes).
         il.Emit(OpCodes.Ldloc, fnReplaceLocal);
         il.Emit(OpCodes.Brtrue, fallbackReplaceLabel);
         il.Emit(OpCodes.Ldloc, isGlobalLocal);
+        il.Emit(OpCodes.Brtrue, fallbackReplaceLabel);
+        // If replaceValue contains '$', defer to .NET's substitution
+        // machinery (typed Replace).
+        il.Emit(OpCodes.Ldloc, rLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'$');
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Contains", _types.Char));
         il.Emit(OpCodes.Brtrue, fallbackReplaceLabel);
 
         // Single-match path: call RegExpExec(rx, S). If null → return S.
