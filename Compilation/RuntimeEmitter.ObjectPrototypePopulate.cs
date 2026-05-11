@@ -77,7 +77,7 @@ public partial class RuntimeEmitter
         // toLocaleString defaults to calling toString — close-enough delegation
         // is a string return; tests typically don't probe its identity.
         Wire("toLocaleString", runtime.ObjectProtoToStringHelper, 0);
-        Wire("propertyIsEnumerable", runtime.StringPrototypeGenericStub, 1);
+        Wire("propertyIsEnumerable", runtime.PropertyIsEnumerableHelperMethod, 1);
 
         il.Emit(OpCodes.Ret);
     }

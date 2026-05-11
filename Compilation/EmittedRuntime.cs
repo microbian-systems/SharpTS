@@ -404,6 +404,8 @@ public class EmittedRuntime
     public MethodBuilder BooleanPrototypePopulateMethod { get; set; } = null!;
     /// <summary>$Runtime.HasOwnPropertyHelper(obj, name) — backs <c>obj.hasOwnProperty(name)</c> for $TSFunction / $Object / Dictionary / List receivers.</summary>
     public MethodBuilder HasOwnPropertyHelperMethod { get; set; } = null!;
+    /// <summary>$Runtime.PropertyIsEnumerableHelper(obj, name) — backs <c>obj.propertyIsEnumerable(name)</c>. Honors PDS descriptor's Enumerable bit; falls back to <c>hasOwn(name)</c> (default-enumerable for plain dict entries).</summary>
+    public MethodBuilder PropertyIsEnumerableHelperMethod { get; set; } = null!;
     /// <summary>$Runtime.IsPrototypeOfHelper(receiver, target) — backs <c>receiver.isPrototypeOf(target)</c>; walks target's prototype chain via PDS.</summary>
     public MethodBuilder IsPrototypeOfHelperMethod { get; set; } = null!;
     /// <summary>$Runtime.NewBoxedPrimitive(typeTag, value) — builds a $Object wrapper with __primitiveType + __primitiveValue marker fields, prototype-linked to Boolean/Number/String prototype.</summary>

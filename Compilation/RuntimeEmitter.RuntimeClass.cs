@@ -497,6 +497,9 @@ public partial class RuntimeEmitter
         // GetFunctionMethod so the corresponding arms can return $TSFunction
         // wrappers.
         EmitHasOwnPropertyHelper(typeBuilder, runtime);
+        // propertyIsEnumerable shares HasOwn's plumbing (PDS lookup + dict
+        // fallback) so emit it immediately after.
+        EmitPropertyIsEnumerableHelper(typeBuilder, runtime);
         // Shell ObjectGetPrototypeOf early so IsPrototypeOfHelper can call it
         // and pick up the default-fallback to Object.prototype / Array.prototype
         // for plain Dict/List receivers without explicit PDS entries.

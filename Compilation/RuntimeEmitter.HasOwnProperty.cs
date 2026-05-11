@@ -252,4 +252,77 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
     }
+
+    /// <summary>
+    /// Emits <c>$Runtime.PropertyIsEnumerableHelper(object obj, object name) -&gt; bool</c>.
+    /// ECMA-262 §19.1.3.4: returns the property's [[Enumerable]] descriptor bit
+    /// when the property is own, false otherwise. Spec defaults for built-in
+    /// data properties are enumerable=false (§17), so PDS-installed descriptors
+    /// for built-in accessors override the dict's default-true.
+    /// </summary>
+    /// <remarks>
+    /// Pre-fix this slot pointed at <c>StringPrototypeGenericStub</c> which
+    /// returned <c>Convert.ToString(receiver)</c> — i.e. a Dictionary's
+    /// type-name string instead of a bool. verifyProperty's enumerable
+    /// assertion (in propertyHelper.js) flunked every RegExp.prototype
+    /// accessor's prop-desc.js as a result.
+    /// </remarks>
+    private void EmitPropertyIsEnumerableHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "PropertyIsEnumerableHelper",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object, _types.Object]);
+        runtime.PropertyIsEnumerableHelperMethod = method;
+        method.DefineParameter(1, ParameterAttributes.None, "__this");
+        method.DefineParameter(2, ParameterAttributes.None, "name");
+
+        var il = method.GetILGenerator();
+        var nameLocal = il.DeclareLocal(_types.String);
+        var descLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        var falseLabel = il.DefineLabel();
+
+        // Null/undefined receiver → false
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, falseLabel);
+
+        // Coerce name to string. (Object.ToString — same convention as
+        // HasOwnPropertyHelper.)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Stloc, nameLocal);
+
+        // PDS descriptor lookup. When defineProperty installed a descriptor
+        // for this name we already have the spec-correct Enumerable bit.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descLocal);
+        var noPdsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Brfalse, noPdsLabel);
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(noPdsLabel);
+
+        // No PDS descriptor — fall back to HasOwnPropertyHelper. ECMA-262
+        // says only "own" properties qualify; plain dict entries with no
+        // explicit descriptor are spec-default enumerable=true, which is
+        // exactly what HasOwn returns when found.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.HasOwnPropertyHelperMethod);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(falseLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+    }
 }
