@@ -286,6 +286,7 @@ public partial class RuntimeEmitter
         EmitPDSGetPrototype(typeBuilder, runtime, prototypeStoreField, prototypeTryGet);
         EmitPDSHasPrototypeEntry(typeBuilder, runtime, prototypeStoreField, prototypeTryGet);
         EmitPDSDefineProperty(typeBuilder, runtime, descriptorsField, descriptorsGetOrCreate, descriptorsDictType, descriptorsDictSetItem);
+        EmitPDSDeleteProperty(typeBuilder, runtime, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictContainsKey);
         EmitPDSGetPropertyDescriptor(typeBuilder, runtime, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue);
 
         var type = typeBuilder.CreateType()!;
@@ -908,6 +909,56 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, descriptorsDictSetItem);
 
         // return true
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static bool DeleteProperty(object obj, string propertyKey)
+    /// Removes the property's descriptor from the per-object dict (if present).
+    /// Returns true on successful removal or when the descriptor wasn't there.
+    /// Non-configurable descriptors must be filtered by callers — this helper
+    /// is the unconditional removal step. PDS doesn't track per-property
+    /// configurability separately from the descriptor itself, so the caller
+    /// reads the descriptor first via GetPropertyDescriptor for that check.
+    /// </summary>
+    private void EmitPDSDeleteProperty(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder descriptorsField, MethodInfo descriptorsTryGet,
+        Type descriptorsDictType, MethodInfo descriptorsDictContainsKey)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DeleteProperty",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object, _types.String]
+        );
+        runtime.PDSDeleteProperty = method;
+
+        var il = method.GetILGenerator();
+        var dictLocal = il.DeclareLocal(descriptorsDictType);
+        var keyLocal = il.DeclareLocal(_types.Object);
+        EmitNormalizePDSKey(il, runtime, keyLocal);
+
+        // if (!_descriptors.TryGetValue(key, out dict)) return true (nothing to delete)
+        il.Emit(OpCodes.Ldsfld, descriptorsField);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldloca, dictLocal);
+        il.Emit(OpCodes.Callvirt, descriptorsTryGet);
+        var hasDictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, hasDictLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(hasDictLabel);
+
+        // dict.Remove(propertyKey)
+        var removeMethod = EmitterTypeHelpers.ResolveMethod(descriptorsDictType,
+            typeof(Dictionary<,>).GetMethod("Remove", [typeof(Dictionary<,>).GetGenericArguments()[0]])!);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, removeMethod);
+        // Pop the bool result; always return true (matches existing
+        // DeleteProperty contract: "true on success or absent").
+        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
     }

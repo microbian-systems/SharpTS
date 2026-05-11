@@ -3948,12 +3948,44 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
 
-        // Not frozen/sealed - do the removal
+        // Not frozen/sealed — remove from BOTH the dict (default data entries)
+        // AND the PDS descriptor store (Object.defineProperty installs). When
+        // a PDS descriptor is present and non-configurable, return false per
+        // ECMA-262 §10.1.10 without removing.
         il.MarkLabel(notSealedLabel);
+        var descLocalDel = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descLocalDel);
+        var noPdsForDelLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descLocalDel);
+        il.Emit(OpCodes.Brfalse, noPdsForDelLabel);
+        // Descriptor present — check Configurable.
+        il.Emit(OpCodes.Ldloc, descLocalDel);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+        var configurableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, configurableLabel);
+        // Non-configurable — return false without removing.
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(configurableLabel);
+        // Configurable — remove PDS entry.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSDeleteProperty);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(noPdsForDelLabel);
+
+        // Always also try to remove from the dict (the property may be a
+        // plain data entry without a PDS descriptor). Dictionary.Remove
+        // returns false when the key isn't present, which is fine.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
         // Return true (default for null and other types)

@@ -2509,6 +2509,7 @@ public class EmittedRuntime
     public MethodBuilder PDSGetPrototype { get; set; } = null!;
     public MethodBuilder PDSHasPrototypeEntry { get; set; } = null!;
     public MethodBuilder PDSDefineProperty { get; set; } = null!;
+    public MethodBuilder PDSDeleteProperty { get; set; } = null!;
     public MethodBuilder PDSGetPropertyDescriptor { get; set; } = null!;
 
     // cluster module — emitted types (no reflection to SharpTS.dll)
