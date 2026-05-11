@@ -2255,8 +2255,104 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Contains", _types.Char));
         il.Emit(OpCodes.Stloc, isGlobalLocal);
 
-        // If functional, dispatch to ReplaceWithFn. Else use string Replace.
         var stringReplaceLabel = il.DefineLabel();
+        var fallbackReplaceLabel = il.DefineLabel();
+
+        // ECMA-262 §22.2.5.10 step 12 — spec-aligned RegExpExec dispatch
+        // (which honors `r.exec` overrides). For the non-functional +
+        // non-global path, do a single RegExpExec + substring substitution
+        // here so test262 `exec-invocation` etc. see the user `r.exec`
+        // call. Functional or global cases fall through to the typed
+        // Replace path (which doesn't dispatch user exec — separate
+        // architectural blocker).
+        il.Emit(OpCodes.Ldloc, fnReplaceLocal);
+        il.Emit(OpCodes.Brtrue, fallbackReplaceLabel);
+        il.Emit(OpCodes.Ldloc, isGlobalLocal);
+        il.Emit(OpCodes.Brtrue, fallbackReplaceLabel);
+
+        // Single-match path: call RegExpExec(rx, S). If null → return S.
+        // Else extract matched + index and build S[0..index] + r + S[index+matched.Length..].
+        var rxObjLocal = il.DeclareLocal(_types.Object);
+        var execResultLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, rxObjLocal);
+        EmitRegExpExecSlow(il, runtime, rxObjLocal, sLocal, execResultLocal);
+
+        var nonNullResultLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, execResultLocal);
+        il.Emit(OpCodes.Brtrue, nonNullResultLabel);
+        // result == null → return S unchanged.
+        il.Emit(OpCodes.Ldloc, sLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(nonNullResultLabel);
+        // matched = ToJsString(Get(result, "0"))
+        var matchedLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, execResultLocal);
+        il.Emit(OpCodes.Ldstr, "0");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Stloc, matchedLocal);
+
+        // position = JsToInt32(Get(result, "index"))
+        var positionLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, execResultLocal);
+        il.Emit(OpCodes.Ldstr, "index");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Call, runtime.JsToInt32);
+        il.Emit(OpCodes.Stloc, positionLocal);
+
+        // sLen = S.Length
+        var sLenLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, sLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, sLenLocal);
+
+        // Clamp position to [0, sLen].
+        var posPosLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, positionLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bge, posPosLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, positionLocal);
+        il.MarkLabel(posPosLabel);
+        var posClampedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, positionLocal);
+        il.Emit(OpCodes.Ldloc, sLenLocal);
+        il.Emit(OpCodes.Ble, posClampedLabel);
+        il.Emit(OpCodes.Ldloc, sLenLocal);
+        il.Emit(OpCodes.Stloc, positionLocal);
+        il.MarkLabel(posClampedLabel);
+
+        // matchedEnd = min(position + matched.Length, sLen).
+        var matchedEndLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, positionLocal);
+        il.Emit(OpCodes.Ldloc, matchedLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, matchedEndLocal);
+        var endClampedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, matchedEndLocal);
+        il.Emit(OpCodes.Ldloc, sLenLocal);
+        il.Emit(OpCodes.Ble, endClampedLabel);
+        il.Emit(OpCodes.Ldloc, sLenLocal);
+        il.Emit(OpCodes.Stloc, matchedEndLocal);
+        il.MarkLabel(endClampedLabel);
+
+        // return Concat(S.Substring(0, position), rLocal, S.Substring(matchedEnd)).
+        il.Emit(OpCodes.Ldloc, sLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, positionLocal);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Substring", [_types.Int32, _types.Int32])!);
+        il.Emit(OpCodes.Ldloc, rLocal);
+        il.Emit(OpCodes.Ldloc, sLocal);
+        il.Emit(OpCodes.Ldloc, matchedEndLocal);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Substring", [_types.Int32])!);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.String, _types.String])!);
+        il.Emit(OpCodes.Ret);
+
+        // If functional, dispatch to ReplaceWithFn. Else use string Replace.
+        il.MarkLabel(fallbackReplaceLabel);
         il.Emit(OpCodes.Ldloc, fnReplaceLocal);
         il.Emit(OpCodes.Brfalse, stringReplaceLabel);
         il.Emit(OpCodes.Ldloc, rxLocal);
