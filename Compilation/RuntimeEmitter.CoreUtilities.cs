@@ -2599,13 +2599,9 @@ public partial class RuntimeEmitter
 
     private void EmitJsToInt32(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "JsToInt32",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Int32,
-            [_types.Object]
-        );
-        runtime.JsToInt32 = method;
+        // Signature forward-declared by DefineRuntimeClassPhase1 so $RegExp
+        // (which emits before $Runtime's body) can call it; reuse that slot.
+        var method = (MethodBuilder)runtime.JsToInt32;
 
         var il = method.GetILGenerator();
 
@@ -3167,13 +3163,9 @@ public partial class RuntimeEmitter
 
     private void EmitIsTruthy(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "IsTruthy",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Boolean,
-            [_types.Object]
-        );
-        runtime.IsTruthy = method;
+        // Signature forward-declared by DefineRuntimeClassPhase1 so $RegExp
+        // (which emits before $Runtime's body) can call it; reuse that slot.
+        var method = (MethodBuilder)runtime.IsTruthy;
 
         var il = method.GetILGenerator();
         var falseLabel = il.DefineLabel();

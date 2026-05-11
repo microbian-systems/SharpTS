@@ -80,6 +80,30 @@ public partial class RuntimeEmitter
             _types.String,
             [_types.Object]);
 
+        // Reserve JsToInt32(object) → int. ECMA-262 §7.1.6 ToInt32 chain
+        // (ToNumber → ToPrimitive → valueOf). Forward-declared so $RegExp's
+        // Symbol.match empty-match advance can read `lastIndex` and propagate
+        // `valueOf` throws, and so SetProperty's `r.lastIndex = obj` coerce
+        // path can route through the spec-aligned ToInt32 chain. EmitJsToInt32
+        // later fills the body.
+        runtime.JsToInt32 = typeBuilder.DefineMethod(
+            "JsToInt32",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Int32,
+            [_types.Object]);
+
+        // Reserve IsTruthy(object) → bool. ECMA-262 §7.1.2 ToBoolean.
+        // Forward-declared so $RegExp's Symbol.match can spec-align its
+        // `global`/`unicode`/`sticky` reads via `ToBoolean(? Get(rx, name))`
+        // — supports the coerce-global / coerce-sticky / coerce-unicode tests
+        // where the user overrides those properties on a $RegExp instance.
+        // EmitIsTruthy later fills the body.
+        runtime.IsTruthy = typeBuilder.DefineMethod(
+            "IsTruthy",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object]);
+
         // Reserve the RegExp.prototype dictionary field. $RegExp emits
         // before EmitRuntimeClass and its accessor helpers
         // (TSRegExpProtoGet*) need to compare `__this` against this field

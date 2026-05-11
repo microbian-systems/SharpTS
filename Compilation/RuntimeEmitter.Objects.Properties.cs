@@ -2239,10 +2239,50 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Ldloc, rxLocal);
                 il.Emit(OpCodes.Callvirt, runtime.TSRegExpSourceGetter);
             });
+            // Spec-aligned ECMA-262 §22.2.6.4 — assemble the flags string from
+            // individual property reads so user-installed `Object.defineProperty
+            // (r, 'global', {get})` overrides participate in the chain. Each
+            // Get(rx, propName) goes through this very GetProperty recursively,
+            // so PDS-first lookup on the per-flag property fires first; the
+            // typed slot fallback returns the same boxed bool we'd have read
+            // directly, keeping the assembled string identical to _flags for
+            // ordinary $RegExp without overrides. Unlocks Symbol.match/replace/
+            // split/search's get-global-err / coerce-global / get-unicode-error
+            // test262 family.
             NameMatchBranch("flags", () =>
             {
-                il.Emit(OpCodes.Ldloc, rxLocal);
-                il.Emit(OpCodes.Callvirt, runtime.TSRegExpFlagsGetter);
+                var sbLocal = il.DeclareLocal(typeof(System.Text.StringBuilder));
+                il.Emit(OpCodes.Newobj, typeof(System.Text.StringBuilder).GetConstructor(Type.EmptyTypes)!);
+                il.Emit(OpCodes.Stloc, sbLocal);
+
+                var sbAppendChar = typeof(System.Text.StringBuilder).GetMethod("Append", [typeof(char)])!;
+                void AppendIfTruthy(string propName, char ch)
+                {
+                    var skipLabel = il.DefineLabel();
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Ldstr, propName);
+                    il.Emit(OpCodes.Call, method);
+                    il.Emit(OpCodes.Call, runtime.IsTruthy);
+                    il.Emit(OpCodes.Brfalse, skipLabel);
+                    il.Emit(OpCodes.Ldloc, sbLocal);
+                    il.Emit(OpCodes.Ldc_I4, (int)ch);
+                    il.Emit(OpCodes.Callvirt, sbAppendChar);
+                    il.Emit(OpCodes.Pop);
+                    il.MarkLabel(skipLabel);
+                }
+
+                // Order per ECMA-262 §22.2.6.4.
+                AppendIfTruthy("hasIndices", 'd');
+                AppendIfTruthy("global", 'g');
+                AppendIfTruthy("ignoreCase", 'i');
+                AppendIfTruthy("multiline", 'm');
+                AppendIfTruthy("dotAll", 's');
+                AppendIfTruthy("unicode", 'u');
+                AppendIfTruthy("unicodeSets", 'v');
+                AppendIfTruthy("sticky", 'y');
+
+                il.Emit(OpCodes.Ldloc, sbLocal);
+                il.Emit(OpCodes.Callvirt, typeof(System.Text.StringBuilder).GetMethod("ToString", Type.EmptyTypes)!);
             });
             // "global" / "ignoreCase" / "multiline" — boolean fields.
             NameMatchBranch("global", () =>

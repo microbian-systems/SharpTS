@@ -1969,6 +1969,8 @@ public partial class RuntimeEmitter
 
         // flags = ToString(Get(rx, "flags")) — use ToJsString so @@toPrimitive
         // on user-installed flags-returning objects fires per ECMA-262 §7.1.1.
+        // Reading `flags` (not `global` directly) preserves get-flags-err.js
+        // which throws from the user's flags getter.
         il.Emit(OpCodes.Ldloc, rxObjLocal);
         il.Emit(OpCodes.Ldstr, "flags");
         il.Emit(OpCodes.Call, runtime.GetProperty);
@@ -2050,6 +2052,9 @@ public partial class RuntimeEmitter
 
         // lastIndex = ToInt(Get(rx, "lastIndex")) + 1; SetProperty(rx, "lastIndex", lastIndex)
         // Spec Throw=true — strict writability check via the helper.
+        // ECMA-262 §22.2.5.6 step 11.d.iii: ? ToLength(? Get(rx, "lastIndex"))
+        // — runtime.JsToInt32 invokes ToNumber → ToPrimitive → valueOf,
+        // propagating throws from user-supplied object/getter `lastIndex`.
         il.MarkLabel(emptyMatchAdvLabel);
         EmitStrictWritableCheck(il, runtime, rxObjLocal, "lastIndex");
         il.Emit(OpCodes.Ldloc, rxObjLocal);
@@ -2057,7 +2062,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, rxObjLocal);
         il.Emit(OpCodes.Ldstr, "lastIndex");
         il.Emit(OpCodes.Call, runtime.GetProperty);
-        EmitToInt32Coerce(il, runtime);
+        il.Emit(OpCodes.Call, runtime.JsToInt32);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Conv_R8);
@@ -2079,44 +2084,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, arrLocal);
         il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
         il.Emit(OpCodes.Ret);
-    }
-
-    /// <summary>
-    /// Coerces a boxed numeric value at the top of the stack to int32, with
-    /// JS semantics: null/false → 0, true → 1, double via truncate, other
-    /// types → 0. Used by the Symbol.* slow paths to read lastIndex.
-    /// </summary>
-    private void EmitToInt32Coerce(ILGenerator il, EmittedRuntime runtime)
-    {
-        // stack: object value
-        var doubleLabel = il.DefineLabel();
-        var boolLabel = il.DefineLabel();
-        var doneLabel = il.DefineLabel();
-        var localCoerce = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, localCoerce);
-
-        il.Emit(OpCodes.Ldloc, localCoerce);
-        il.Emit(OpCodes.Isinst, _types.Double);
-        il.Emit(OpCodes.Brtrue, doubleLabel);
-        il.Emit(OpCodes.Ldloc, localCoerce);
-        il.Emit(OpCodes.Isinst, _types.Boolean);
-        il.Emit(OpCodes.Brtrue, boolLabel);
-        // default: 0
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Br, doneLabel);
-
-        il.MarkLabel(doubleLabel);
-        il.Emit(OpCodes.Ldloc, localCoerce);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Br, doneLabel);
-
-        il.MarkLabel(boolLabel);
-        il.Emit(OpCodes.Ldloc, localCoerce);
-        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
-        // bool → int via Conv_I4 (true=1, false=0)
-
-        il.MarkLabel(doneLabel);
     }
 
     /// <summary>
