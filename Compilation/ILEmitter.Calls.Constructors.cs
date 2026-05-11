@@ -209,7 +209,15 @@ public partial class ILEmitter
         // true on the outer recursive call and the redirect short-circuits.
         if (_ctx.Functions.TryGetValue(_ctx.ResolveFunctionName(className), out var funcMethod))
         {
-            IL.Emit(OpCodes.Ldnull); // target (static method)
+            // Use TSFunctionGetOrCreate (rather than the bare TSFunctionCtorWithCache)
+            // so the wrapper we hand NewOnFunction is the SAME identity as the
+            // wrapper bound to the variable `funcMethod.Name`. Without this, the
+            // function-prototype's `constructor` (which auto-creates the first
+            // time the prototype is read — via whichever wrapper hits the slot)
+            // and the variable's wrapper end up as two distinct $TSFunction
+            // instances for the same MethodInfo, and `(new F()).constructor === F`
+            // is false. Affects test262 assert.throws(CustomError, fn) and any
+            // legacy `function Ctor(){}` style.
             IL.Emit(OpCodes.Ldtoken, funcMethod);
             if (_ctx.ProgramType != null)
             {
@@ -231,7 +239,7 @@ public partial class ILEmitter
             }
             IL.Emit(OpCodes.Ldstr, className);
             IL.Emit(OpCodes.Ldc_I4, arity);
-            IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSFunctionCtorWithCache);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.TSFunctionGetOrCreate);
         }
         else
         {

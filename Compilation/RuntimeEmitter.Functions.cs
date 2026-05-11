@@ -610,8 +610,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         // Create a fresh $Object and GetOrAdd it (handles races).
+        // ECMA-262 §15.2.2.1: every auto-created Function.prototype carries
+        // `constructor: theFunction` so `(new F()).constructor === F` holds.
+        // Requires that all callers reach the function-name binding through
+        // TSFunctionGetOrCreate (the cached canonical wrapper) so the
+        // identity stored here matches the variable-bound F.
         il.MarkLabel(needCreate);
+        var protoDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Stloc, protoDictLocal);
+        il.Emit(OpCodes.Ldloc, protoDictLocal);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object));
+        il.Emit(OpCodes.Ldloc, protoDictLocal);
         il.Emit(OpCodes.Newobj, runtime.TSObjectCtor);
         il.Emit(OpCodes.Stloc, newProto);
 
