@@ -9276,7 +9276,7 @@ test/built-ins/RegExp/prototype/Symbol.match/exec-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/exec-invocation.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/exec-return-type-invalid.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/exec-return-type-valid.js Pass
-test/built-ins/RegExp/prototype/Symbol.match/flags-tostring-error.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/flags-tostring-error.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-coerce-result-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-get-exec-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-get-result-err.js Pass
@@ -9342,7 +9342,7 @@ test/built-ins/RegExp/prototype/Symbol.replace/coerce-lastindex.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/coerce-unicode.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/exec-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/exec-invocation.js Fail
-test/built-ins/RegExp/prototype/Symbol.replace/flags-tostring-error.js Fail
+test/built-ins/RegExp/prototype/Symbol.replace/flags-tostring-error.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/fn-coerce-replacement-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/fn-coerce-replacement.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/fn-err.js Fail
@@ -9427,7 +9427,7 @@ test/built-ins/RegExp/prototype/Symbol.search/u-lastindex-advance.js Fail
 test/built-ins/RegExp/prototype/Symbol.search/y-fail-return.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/coerce-flags-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/coerce-flags.js RuntimeError
-test/built-ins/RegExp/prototype/Symbol.split/coerce-limit-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.split/coerce-limit-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/coerce-limit.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/coerce-string-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/coerce-string.js Pass
