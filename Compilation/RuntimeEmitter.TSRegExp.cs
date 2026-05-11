@@ -1715,11 +1715,29 @@ public partial class RuntimeEmitter
         // ECMA-262 §22.2.5.8 step 2: throw TypeError if `this` is not an Object.
         EmitRequireObjectArg(il, runtime, method, argIndex: 0, "RegExp.prototype[Symbol.matchAll]");
 
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeBuilder);
-        il.Emit(OpCodes.Stloc, rxLocal);
-
+        // Side effects before brand-narrow: ToString(string) + ToString(Get(rx,
+        // "flags")) — propagates user toString/getter throws (string-tostring.js,
+        // coerce-flags-err.js etc).
         EmitArgToJsString(il, runtime, argIndex: 1, sLocal);
+        var matchAllFlagsLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "flags");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Stloc, matchAllFlagsLocal);
+
+        // Narrow to $RegExp; non-$RegExp throws TypeError.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, typeBuilder);
+        il.Emit(OpCodes.Stloc, rxLocal);
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        var rxOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, rxOkLabel);
+        il.Emit(OpCodes.Ldstr, "RegExp.prototype[Symbol.matchAll] requires a RegExp receiver");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(rxOkLabel);
 
         // var list = rx.MatchAll(s);
         il.Emit(OpCodes.Ldloc, rxLocal);
@@ -1775,12 +1793,33 @@ public partial class RuntimeEmitter
         // ECMA-262 §22.2.5.10 step 2: throw TypeError if `this` is not an Object.
         EmitRequireObjectArg(il, runtime, method, argIndex: 0, "RegExp.prototype[Symbol.replace]");
 
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeBuilder);
-        il.Emit(OpCodes.Stloc, rxLocal);
-
+        // Spec-aligned side effects before brand-narrowing: ToString(string),
+        // ToString(replacement), and ToString(Get(rx, "flags")) all run first so
+        // user toString/getter throws propagate from coerce-string-err.js,
+        // coerce-replace-err.js, get-flags-err.js etc. Symbol arguments throw
+        // TypeError via EmitArgToJsString's Symbol-brand check.
         EmitArgToJsString(il, runtime, argIndex: 1, sLocal);
         EmitArgToJsString(il, runtime, argIndex: 2, rLocal);
+        var replaceFlagsLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "flags");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Stloc, replaceFlagsLocal);
+
+        // Narrow to $RegExp after side effects observed. Non-$RegExp `this`
+        // throws TypeError instead of InvalidCastException.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, typeBuilder);
+        il.Emit(OpCodes.Stloc, rxLocal);
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        var rxOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, rxOkLabel);
+        il.Emit(OpCodes.Ldstr, "RegExp.prototype[Symbol.replace] requires a RegExp receiver");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(rxOkLabel);
 
         // return rx.Replace(s, r);
         il.Emit(OpCodes.Ldloc, rxLocal);
@@ -2050,11 +2089,36 @@ public partial class RuntimeEmitter
         // ECMA-262 §22.2.5.13 step 2: throw TypeError if `this` is not an Object.
         EmitRequireObjectArg(il, runtime, method, argIndex: 0, "RegExp.prototype[Symbol.split]");
 
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, typeBuilder);
-        il.Emit(OpCodes.Stloc, rxLocal);
-
+        // Spec-aligned: read S = ToString(string), then flags = ToString(Get(rx, "flags")).
+        // Errors propagate naturally (user toString throws, Symbol → TypeError via
+        // EmitArgToJsString's Symbol-brand-check + Stringify chain). Run these before
+        // the Castclass so non-$RegExp `this` with poisoned flags/string getters
+        // surfaces the user's error instead of an InvalidCastException. Tests in scope:
+        //   Symbol.split/{coerce-string,coerce-flags,get-flags,coerce-limit}-err.js
         EmitArgToJsString(il, runtime, argIndex: 1, sLocal);
+        var sideEffectsFlagsLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "flags");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Stloc, sideEffectsFlagsLocal);
+
+        // Once side effects are observed, narrow to $RegExp. Non-$RegExp instances
+        // still need to throw TypeError per spec (we'd need SpeciesConstructor +
+        // a synthesized regex from the user-provided flags to do the fully spec-
+        // aligned split; defer that). The Isinst-then-throw replaces a Castclass
+        // InvalidCastException with a clean TypeError bucket.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, typeBuilder);
+        il.Emit(OpCodes.Stloc, rxLocal);
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        var rxOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, rxOkLabel);
+        il.Emit(OpCodes.Ldstr, "RegExp.prototype[Symbol.split] requires a RegExp receiver");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(rxOkLabel);
 
         // var parts = rx.Split(s);
         il.Emit(OpCodes.Ldloc, rxLocal);
