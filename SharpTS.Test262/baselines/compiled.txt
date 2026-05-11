@@ -3067,7 +3067,7 @@ test/built-ins/Array/prototype/with/index-bigger-or-eq-than-length.js Fail
 test/built-ins/Array/prototype/with/index-casted-to-number.js Pass
 test/built-ins/Array/prototype/with/index-negative.js Pass
 test/built-ins/Array/prototype/with/index-smaller-than-minus-length.js Fail
-test/built-ins/Array/prototype/with/index-throw-completion.js Fail
+test/built-ins/Array/prototype/with/index-throw-completion.js Pass
 test/built-ins/Array/prototype/with/length-decreased-while-iterating.js RuntimeError
 test/built-ins/Array/prototype/with/length-exceeding-array-length-limit.js Fail
 test/built-ins/Array/prototype/with/length-increased-while-iterating.js Pass
@@ -6279,8 +6279,8 @@ test/built-ins/Object/fromEntries/iterator-closed-for-throwing-entry-key-accesso
 test/built-ins/Object/fromEntries/iterator-closed-for-throwing-entry-key-tostring.js Fail
 test/built-ins/Object/fromEntries/iterator-closed-for-throwing-entry-value-accessor.js Fail
 test/built-ins/Object/fromEntries/iterator-not-closed-for-next-returning-non-object.js Timeout
-test/built-ins/Object/fromEntries/iterator-not-closed-for-throwing-done-accessor.js Fail
-test/built-ins/Object/fromEntries/iterator-not-closed-for-throwing-next.js Fail
+test/built-ins/Object/fromEntries/iterator-not-closed-for-throwing-done-accessor.js Pass
+test/built-ins/Object/fromEntries/iterator-not-closed-for-throwing-next.js Pass
 test/built-ins/Object/fromEntries/iterator-not-closed-for-uncallable-next.js Fail
 test/built-ins/Object/fromEntries/key-order.js Pass
 test/built-ins/Object/fromEntries/length.js Fail
@@ -9290,7 +9290,7 @@ test/built-ins/RegExp/prototype/Symbol.match/g-match-no-set-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-success-return-val.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/g-zero-matches.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/get-exec-err.js Pass
-test/built-ins/RegExp/prototype/Symbol.match/get-flags-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/get-flags-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/get-global-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/get-unicode-error.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/length.js Pass
@@ -10796,7 +10796,7 @@ test/built-ins/String/prototype/split/separator-regexp-comma-instance-is-string-
 test/built-ins/String/prototype/split/separator-regexp-limit-string-via-eval.js RuntimeError
 test/built-ins/String/prototype/split/separator-regexp.js RuntimeError
 test/built-ins/String/prototype/split/separator-string-instance-is-empty-string-object.js Pass
-test/built-ins/String/prototype/split/separator-tostring-error.js Fail
+test/built-ins/String/prototype/split/separator-tostring-error.js Pass
 test/built-ins/String/prototype/split/separator-undef-limit-custom.js Pass
 test/built-ins/String/prototype/split/separator-undef-limit-zero.js Fail
 test/built-ins/String/prototype/split/separator-undef.js Fail
