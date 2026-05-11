@@ -449,15 +449,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, throwRedefineLabel);
         il.MarkLabel(checkValueChange);
         // New specifies value != existing.value → throw (data with writable=false).
+        // Skip the equality check when existing.value is null: the prior PDS
+        // descriptor was installed without an explicit value (\`defineProperty\`
+        // with {writable:false} alone, before any value was captured). The
+        // actual current value lives on the underlying object (array length
+        // / dict entry), not in the PDS slot — comparing a non-null new value
+        // against a null existing slot would falsely report a change.
         var valueKeyLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ldstr, "value");
         il.Emit(OpCodes.Ldloca, valueKeyLocal);
         il.Emit(OpCodes.Callvirt, dictTryGetValue);
         il.Emit(OpCodes.Brfalse, skipWritableCheck);
-        il.Emit(OpCodes.Ldloc, valueKeyLocal);
+        var existingValueForCompare = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldloc, existingDescLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, existingValueForCompare);
+        il.Emit(OpCodes.Ldloc, existingValueForCompare);
+        il.Emit(OpCodes.Brfalse, skipWritableCheck);  // null existing → skip
+        il.Emit(OpCodes.Ldloc, valueKeyLocal);
+        il.Emit(OpCodes.Ldloc, existingValueForCompare);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
         il.Emit(OpCodes.Brfalse, throwRedefineLabel);
         il.MarkLabel(skipWritableCheck);
