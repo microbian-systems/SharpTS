@@ -3068,8 +3068,68 @@ public partial class RuntimeEmitter
         if (_features.UsesRegExp)
         {
             il.MarkLabel(tsRegExpSetLabel);
-            var notLastIndexLabel = il.DefineLabel();
 
+            // PDS-first: if user installed an accessor descriptor with a
+            // setter, invoke it. If a data descriptor with writable=false
+            // is present, silently swallow (non-strict; strict-mode is
+            // handled by the strict variant). Mirrors the GET-side fix
+            // for spec-aligned override semantics on $RegExp instances.
+            var setNoPdsLabel = il.DefineLabel();
+            var setPdsDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, setPdsDescLocal);
+            il.Emit(OpCodes.Ldloc, setPdsDescLocal);
+            il.Emit(OpCodes.Brfalse, setNoPdsLabel);
+
+            // Accessor setter? Setter slot non-null → InvokeWithThis(rx, value).
+            var setNoAccessorLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, setPdsDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
+            var setterValueLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Stloc, setterValueLocal);
+            il.Emit(OpCodes.Ldloc, setterValueLocal);
+            il.Emit(OpCodes.Brfalse, setNoAccessorLabel);
+            var setterFnLocal = il.DeclareLocal(runtime.TSFunctionType);
+            il.Emit(OpCodes.Ldloc, setterValueLocal);
+            il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+            il.Emit(OpCodes.Stloc, setterFnLocal);
+            il.Emit(OpCodes.Ldloc, setterFnLocal);
+            il.Emit(OpCodes.Brfalse, setNoAccessorLabel);
+            il.Emit(OpCodes.Ldloc, setterFnLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(setNoAccessorLabel);
+
+            // No setter slot — check getter. If getter present (accessor
+            // descriptor), this is getter-only → silently no-op (non-strict).
+            var setSilentlyIgnoreLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, setPdsDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
+            il.Emit(OpCodes.Brtrue, setSilentlyIgnoreLabel);
+            // No getter and no setter → data descriptor. Honor writable bit.
+            il.Emit(OpCodes.Ldloc, setPdsDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
+            il.Emit(OpCodes.Brfalse, setSilentlyIgnoreLabel);
+            il.Emit(OpCodes.Ldloc, setPdsDescLocal);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(setSilentlyIgnoreLabel);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(setNoPdsLabel);
+
+            var notLastIndexLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldstr, "lastIndex");
             il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
