@@ -9258,7 +9258,7 @@ test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-g-set-lastindex-err
 test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-g-set-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-return-val.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-y-return-val.js Pass
-test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-y-set-lastindex-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-y-set-lastindex-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-y-set-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-infer-unicode.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/builtin-success-g-set-lastindex-err.js Pass
@@ -9266,7 +9266,7 @@ test/built-ins/RegExp/prototype/Symbol.match/builtin-success-g-set-lastindex.js 
 test/built-ins/RegExp/prototype/Symbol.match/builtin-success-return-val-groups.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-success-return-val.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-success-u-return-val-groups.js Fail
-test/built-ins/RegExp/prototype/Symbol.match/builtin-success-y-set-lastindex-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/builtin-success-y-set-lastindex-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-success-y-set-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-y-coerce-lastindex-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/coerce-arg-err.js Pass
@@ -9301,7 +9301,7 @@ test/built-ins/RegExp/prototype/Symbol.match/this-val-non-obj.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/this-val-non-regexp.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/u-advance-after-empty.js Fail
 test/built-ins/RegExp/prototype/Symbol.match/y-fail-global-return.js Pass
-test/built-ins/RegExp/prototype/Symbol.match/y-fail-lastindex-no-write.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/y-fail-lastindex-no-write.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/y-fail-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/y-fail-return.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/y-init-lastindex.js Pass
@@ -9397,7 +9397,7 @@ test/built-ins/RegExp/prototype/Symbol.replace/subst-matched.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/this-val-non-obj.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/u-advance-after-empty.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/y-fail-global-return.js Fail
-test/built-ins/RegExp/prototype/Symbol.replace/y-fail-lastindex-no-write.js Fail
+test/built-ins/RegExp/prototype/Symbol.replace/y-fail-lastindex-no-write.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/y-fail-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/y-fail-return.js Pass
 test/built-ins/RegExp/prototype/Symbol.replace/y-init-lastindex.js Pass
@@ -9551,7 +9551,7 @@ test/built-ins/RegExp/prototype/exec/success-lastindex-access.js Fail
 test/built-ins/RegExp/prototype/exec/u-captured-value.js Fail
 test/built-ins/RegExp/prototype/exec/u-lastindex-adv.js Fail
 test/built-ins/RegExp/prototype/exec/u-lastindex-value.js Fail
-test/built-ins/RegExp/prototype/exec/y-fail-lastindex-no-write.js Fail
+test/built-ins/RegExp/prototype/exec/y-fail-lastindex-no-write.js Pass
 test/built-ins/RegExp/prototype/exec/y-fail-lastindex.js Pass
 test/built-ins/RegExp/prototype/exec/y-fail-return.js Pass
 test/built-ins/RegExp/prototype/exec/y-init-lastindex.js Pass
