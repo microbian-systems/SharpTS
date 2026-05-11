@@ -1175,20 +1175,25 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits the JS→.NET replacement-string preprocessor. ECMA-262
-    /// §22.2.5.10.2 GetSubstitution: \`$0\` is NOT recognized as a substitution
-    /// in JS (treated as the literal two-character "$0"), but .NET's
+    /// §22.2.5.10.2 GetSubstitution diverges from .NET's
     /// <see cref="System.Text.RegularExpressions.Regex.Replace(string,string)"/>
-    /// substitutes \`$0\` with the entire match. Translate \`$0\` → \`$$0\`
-    /// (.NET-literal) without touching \`$$\` escape sequences.
+    /// substitution syntax in two places this helper rewrites:
+    /// 1. <c>$0</c> (alone or followed by non-digit) is literal "$0" in JS but
+    ///    .NET expands it to the entire match. Translate to <c>$$0</c>.
+    /// 2. <c>$0N</c> where N is 1-9 and <em>capture N exists</em>: pass through;
+    ///    .NET resolves <c>$0N</c> as group N. When capture N does NOT exist,
+    ///    .NET under RegexOptions.ECMAScript expands <c>$0</c> to entire match
+    ///    and emits N literally — diverging from JS which leaves "$0N" literal.
+    ///    Rewrite to <c>$$0N</c> in that case (i.e. when N > captureCount).
     /// </summary>
     private void EmitTSRegExpEscapeJsReplacement(TypeBuilder typeBuilder)
     {
-        // static string EscapeJsReplacement(string s)
+        // static string EscapeJsReplacement(string s, int captureCount)
         var method = typeBuilder.DefineMethod(
             "EscapeJsReplacement",
             MethodAttributes.Assembly | MethodAttributes.Static,
             _types.String,
-            [_types.String]
+            [_types.String, _types.Int32]
         );
         _tsRegExpEscapeJsReplacementMethod = method;
 
@@ -1266,11 +1271,53 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopTopLabel);
         il.MarkLabel(notDoubleDollarLabel);
 
-        // if (next == '0'): sb.Append("$$0"); skip both
+        // if (next == '0'):
+        //   if (i+2 < len && s[i+2] in '1'..captureCount-digit): \`$0N\` is decimal
+        //     capture N — pass through; .NET resolves \`$0N\` as group N.
+        //   else: \`$0[N]\` is literal "$0[N]" in JS. Emit "$$0" to defuse .NET's
+        //     "$0 = entire match" interpretation; loop continues to emit the
+        //     subsequent digit literally on its own.
         var notDollarZeroLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, nextCh);
         il.Emit(OpCodes.Ldc_I4, (int)'0');
         il.Emit(OpCodes.Bne_Un, notDollarZeroLabel);
+
+        var dollar0LiteralLabel = il.DefineLabel();
+        var dollar0PassthroughLabel = il.DefineLabel();
+        // Bounds check: i+2 < len
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, dollar0LiteralLabel);
+        // Read s[i+2]
+        var thirdCh = il.DeclareLocal(_types.Char);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("get_Chars", [_types.Int32])!);
+        il.Emit(OpCodes.Stloc, thirdCh);
+        // thirdCh in '1'..'9'?
+        il.Emit(OpCodes.Ldloc, thirdCh);
+        il.Emit(OpCodes.Ldc_I4, (int)'1');
+        il.Emit(OpCodes.Blt, dollar0LiteralLabel);
+        il.Emit(OpCodes.Ldloc, thirdCh);
+        il.Emit(OpCodes.Ldc_I4, (int)'9');
+        il.Emit(OpCodes.Bgt, dollar0LiteralLabel);
+        // (thirdCh - '0') <= captureCount?  i.e. N <= captureCount
+        il.Emit(OpCodes.Ldloc, thirdCh);
+        il.Emit(OpCodes.Ldc_I4, (int)'0');
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Ldarg_1);  // captureCount
+        il.Emit(OpCodes.Bgt, dollar0LiteralLabel);
+        // Else: passthrough.
+        il.Emit(OpCodes.Br, dollar0PassthroughLabel);
+
+        il.MarkLabel(dollar0LiteralLabel);
+        // $0 alone, $0 followed by non-digit, or $0N with N > captureCount:
+        // emit "$$0" → .NET literal "$0", then loop continues to emit the
+        // following digit (if any) on its own.
         il.Emit(OpCodes.Ldloc, sbLocal);
         il.Emit(OpCodes.Ldstr, "$$0");
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
@@ -1280,6 +1327,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Stloc, iLocal);
         il.Emit(OpCodes.Br, loopTopLabel);
+
+        il.MarkLabel(dollar0PassthroughLabel);
+        // $0 followed by '1'-'9' AND N <= captureCount: pass "$0" through;
+        // .NET picks up the next digit on its own and resolves $0N as group N.
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldstr, "$0");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopTopLabel);
+
         il.MarkLabel(notDollarZeroLabel);
 
         il.MarkLabel(notDollarLabel);
@@ -1322,10 +1383,20 @@ public partial class RuntimeEmitter
         var globalLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
-        // Preprocess replacement string to escape $0 (JS keeps it literal,
-        // .NET expands to full match) before passing to Regex.Replace.
+        // Preprocess replacement string: \`$0\` stays literal in JS (.NET would
+        // expand to entire match) and \`$0N\` with N > captureCount is literal
+        // (.NET-ECMAScript flag expands $0 greedily). Pass captureCount =
+        // _regex.GetGroupNumbers().Length - 1 (group 0 is the match itself).
         var escapedLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldarg_2);
+        // captureCount = _regex.GetGroupNumbers().Length - 1
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpRegexField);
+        il.Emit(OpCodes.Callvirt, typeof(Regex).GetMethod("GetGroupNumbers", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
         il.Emit(OpCodes.Call, _tsRegExpEscapeJsReplacementMethod);
         il.Emit(OpCodes.Stloc, escapedLocal);
 
