@@ -1987,7 +1987,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(globalPathLabel);
-        // Set(rx, "lastIndex", 0)
+        // Set(rx, "lastIndex", 0, true) — ECMA-262 §22.2.6.8 step 8.c. The
+        // Throw=true flag means a non-writable lastIndex descriptor on rx
+        // must surface TypeError instead of silently no-op'ing. Our regular
+        // SetProperty's $RegExp arm follows non-strict semantics; inline a
+        // PDS writability check here before delegating. Test262
+        // g-init-lastindex-err / y-fail-lastindex-no-write rely on this.
+        EmitStrictWritableCheck(il, runtime, rxObjLocal, "lastIndex");
         il.Emit(OpCodes.Ldloc, rxObjLocal);
         il.Emit(OpCodes.Ldstr, "lastIndex");
         il.Emit(OpCodes.Ldc_R8, 0.0);
@@ -2043,7 +2049,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, afterEmptyAdvLabel);
 
         // lastIndex = ToInt(Get(rx, "lastIndex")) + 1; SetProperty(rx, "lastIndex", lastIndex)
+        // Spec Throw=true — strict writability check via the helper.
         il.MarkLabel(emptyMatchAdvLabel);
+        EmitStrictWritableCheck(il, runtime, rxObjLocal, "lastIndex");
         il.Emit(OpCodes.Ldloc, rxObjLocal);
         il.Emit(OpCodes.Ldstr, "lastIndex");
         il.Emit(OpCodes.Ldloc, rxObjLocal);
@@ -2354,10 +2362,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.GetProperty);
         il.Emit(OpCodes.Stloc, prevLILocal);
 
-        // If previousLastIndex is not numeric 0 → Set(rx, "lastIndex", 0)
+        // If previousLastIndex is not numeric 0 → Set(rx, "lastIndex", 0, true).
+        // The Throw=true flag in §22.2.6.10 step 5 requires TypeError when the
+        // writable bit is false on the lastIndex descriptor.
         var skipResetLabel = il.DefineLabel();
         EmitIsNumericZero(il, runtime, prevLILocal);
         il.Emit(OpCodes.Brtrue, skipResetLabel);
+        EmitStrictWritableCheck(il, runtime, rxObjLocal, "lastIndex");
         il.Emit(OpCodes.Ldloc, rxObjLocal);
         il.Emit(OpCodes.Ldstr, "lastIndex");
         il.Emit(OpCodes.Ldc_R8, 0.0);
@@ -2374,12 +2385,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.GetProperty);
         il.Emit(OpCodes.Stloc, currLILocal);
 
-        // If currentLastIndex !== previousLastIndex → restore
+        // If currentLastIndex !== previousLastIndex → restore (Throw=true).
         var skipRestoreLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, currLILocal);
         il.Emit(OpCodes.Ldloc, prevLILocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
         il.Emit(OpCodes.Brtrue, skipRestoreLabel);
+        EmitStrictWritableCheck(il, runtime, rxObjLocal, "lastIndex");
         il.Emit(OpCodes.Ldloc, rxObjLocal);
         il.Emit(OpCodes.Ldstr, "lastIndex");
         il.Emit(OpCodes.Ldloc, prevLILocal);
@@ -2410,6 +2422,47 @@ public partial class RuntimeEmitter
     /// exec is not callable (the spec fallback only covers built-in
     /// regexes which we already handled in the fast path).
     /// </summary>
+    /// <summary>
+    /// ECMA-262 strict-Set writability guard: looks up the PDS data descriptor
+    /// for <paramref name="propName"/> on <paramref name="rxObjLocal"/> and
+    /// throws TypeError when present + <c>writable=false</c>. Symbol.match /
+    /// search / replace use this before \`Set(rx, propName, ...)\` because the
+    /// spec passes Throw=true to those abstract Set invocations.
+    /// </summary>
+    private void EmitStrictWritableCheck(ILGenerator il, EmittedRuntime runtime, LocalBuilder rxObjLocal, string propName)
+    {
+        var pdsLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        var skipLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldloc, rxObjLocal);
+        il.Emit(OpCodes.Ldstr, propName);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, pdsLocal);
+        il.Emit(OpCodes.Ldloc, pdsLocal);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        // Accessor descriptors don't have a meaningful writable bit — skip.
+        il.Emit(OpCodes.Ldloc, pdsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, skipLabel);
+        il.Emit(OpCodes.Ldloc, pdsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, skipLabel);
+
+        // Data descriptor — check writable.
+        il.Emit(OpCodes.Ldloc, pdsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, skipLabel);
+
+        // writable=false → throw TypeError.
+        il.Emit(OpCodes.Ldstr, "Cannot assign to read only property '" + propName + "'");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(skipLabel);
+    }
+
     private void EmitRegExpExecSlow(ILGenerator il, EmittedRuntime runtime, LocalBuilder rxObjLocal, LocalBuilder sLocal, LocalBuilder resultLocal)
     {
         var execLocal = il.DeclareLocal(_types.Object);
