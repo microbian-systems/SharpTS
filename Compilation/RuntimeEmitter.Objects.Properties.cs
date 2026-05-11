@@ -2163,6 +2163,51 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Castclass, runtime.TSRegExpType);
             il.Emit(OpCodes.Stloc, rxLocal);
 
+            // ECMA-262 §22.2.6.* read paths go through ordinary Get, so
+            // user-installed Object.defineProperty(r, 'flags', {get}) etc.
+            // must win over the internal slot. Check PDS first for any name;
+            // when a descriptor is present, surface its value (data) or
+            // invoke its getter (accessor) before reaching the typed slot
+            // fast-paths below. Symbol.match's get-flags-err.js,
+            // builtin-coerce-lastindex.js and friends rely on the override
+            // path running before the internal-slot read.
+            var pdsDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, pdsDescLocal);
+            var noPdsDescLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, pdsDescLocal);
+            il.Emit(OpCodes.Brfalse, noPdsDescLabel);
+            // Accessor descriptor? Getter != null → invoke fn(thisArg=rx).
+            var dataDescLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, pdsDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
+            var regexpGetterLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Stloc, regexpGetterLocal);
+            il.Emit(OpCodes.Ldloc, regexpGetterLocal);
+            il.Emit(OpCodes.Brfalse, dataDescLabel);
+            // Cast getter to $TSFunction and InvokeWithThis(rx). If the
+            // descriptor's getter slot isn't a $TSFunction (shouldn't
+            // happen normally), fall through to the data path.
+            var regexpFnLocal = il.DeclareLocal(runtime.TSFunctionType);
+            il.Emit(OpCodes.Ldloc, regexpGetterLocal);
+            il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+            il.Emit(OpCodes.Stloc, regexpFnLocal);
+            il.Emit(OpCodes.Ldloc, regexpFnLocal);
+            il.Emit(OpCodes.Brfalse, dataDescLabel);
+            il.Emit(OpCodes.Ldloc, regexpFnLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, _types.GetMethod(typeof(System.Array), "Empty").MakeGenericMethod(_types.Object));
+            il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(dataDescLabel);
+            // Data descriptor — return descriptor.Value.
+            il.Emit(OpCodes.Ldloc, pdsDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(noPdsDescLabel);
+
             // Helper closure to emit a name-equality test + branch to a
             // labelled body. Keeps the dispatch table readable.
             void NameMatchBranch(string propName, System.Action emitBody)
