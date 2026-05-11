@@ -9254,7 +9254,7 @@ test/built-ins/RegExp/prototype/S15.10.6.1_A1_T2.js RuntimeError
 test/built-ins/RegExp/prototype/S15.10.6_A1_T1.js Pass
 test/built-ins/RegExp/prototype/S15.10.6_A1_T2.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-coerce-lastindex.js Pass
-test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-g-set-lastindex-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-g-set-lastindex-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-g-set-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-return-val.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/builtin-failure-y-return-val.js Pass
@@ -9280,11 +9280,11 @@ test/built-ins/RegExp/prototype/Symbol.match/flags-tostring-error.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-coerce-result-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-get-exec-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-get-result-err.js Pass
-test/built-ins/RegExp/prototype/Symbol.match/g-init-lastindex-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/g-init-lastindex-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-init-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-match-empty-advance-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-match-empty-coerce-lastindex-err.js Fail
-test/built-ins/RegExp/prototype/Symbol.match/g-match-empty-set-lastindex-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.match/g-match-empty-set-lastindex-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-match-no-coerce-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-match-no-set-lastindex.js Pass
 test/built-ins/RegExp/prototype/Symbol.match/g-success-return-val.js Pass
@@ -9417,7 +9417,7 @@ test/built-ins/RegExp/prototype/Symbol.search/prop-desc.js RuntimeError
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-init-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-init-samevalue.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-init.js Pass
-test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-restore-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-restore-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-restore-samevalue.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-restore.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/success-get-index-err.js Pass
