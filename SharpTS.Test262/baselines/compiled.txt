@@ -9402,7 +9402,7 @@ test/built-ins/RegExp/prototype/Symbol.replace/y-fail-lastindex.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/y-fail-return.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/y-init-lastindex.js Fail
 test/built-ins/RegExp/prototype/Symbol.replace/y-set-lastindex.js Fail
-test/built-ins/RegExp/prototype/Symbol.search/coerce-string-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.search/coerce-string-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/coerce-string.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/cstm-exec-return-index.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/cstm-exec-return-invalid.js Pass
@@ -9429,7 +9429,7 @@ test/built-ins/RegExp/prototype/Symbol.split/coerce-flags-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.split/coerce-flags.js RuntimeError
 test/built-ins/RegExp/prototype/Symbol.split/coerce-limit-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.split/coerce-limit.js Pass
-test/built-ins/RegExp/prototype/Symbol.split/coerce-string-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.split/coerce-string-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/coerce-string.js Pass
 test/built-ins/RegExp/prototype/Symbol.split/get-flags-err.js Fail
 test/built-ins/RegExp/prototype/Symbol.split/last-index-exceeds-str-size.js Fail
