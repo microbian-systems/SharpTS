@@ -170,13 +170,11 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notFrozenLabel);
 
-        // Check if object is sealed and property doesn't exist
-        var notSealedLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.PDSIsSealed);
-        il.Emit(OpCodes.Brfalse, notSealedLabel);
-
-        // Object is sealed - check if property already exists (can modify existing)
+        // ECMA-262 §10.1.6.3 [[DefineOwnProperty]]: throw TypeError when
+        // adding a new property to a non-extensible object. \`PDSCanAddProperty\`
+        // returns true when the object IS extensible OR the property already
+        // exists (modify-in-place is always allowed). Sealed/frozen objects
+        // are also non-extensible, so this single gate covers all three.
         var canAddLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, propNameLocal);
@@ -190,7 +188,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(canAddLabel);
-        il.MarkLabel(notSealedLabel);
 
         // Create new $CompiledPropertyDescriptor
         il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
