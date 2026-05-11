@@ -2103,6 +2103,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.Stringify);
         il.Emit(OpCodes.Stloc, sideEffectsFlagsLocal);
 
+        // Coerce `limit` via ToNumber when not undefined. Symbol → TypeError,
+        // object → ToPrimitive(valueOf) which can throw. Spec §22.2.5.13 step 7.
+        // Result re-stored over Ldarg_2 (as boxed Double) so the later Isinst
+        // Double branch picks up the coerced value.
+        var limitCoerceSkipLabel = il.DefineLabel();
+        var limitCoerced = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, limitCoerceSkipLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, limitCoerceSkipLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, limitCoerced);
+        il.Emit(OpCodes.Ldloc, limitCoerced);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Starg_S, (byte)2);
+        il.MarkLabel(limitCoerceSkipLabel);
+
         // Once side effects are observed, narrow to $RegExp. Non-$RegExp instances
         // still need to throw TypeError per spec (we'd need SpeciesConstructor +
         // a synthesized regex from the user-provided flags to do the fully spec-

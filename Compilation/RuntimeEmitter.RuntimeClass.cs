@@ -463,12 +463,9 @@ public partial class RuntimeEmitter
         // is left in place; calling here just reuses the same MethodBuilder slot.
         EmitCreateException(typeBuilder, runtime);
         EmitWrapException(typeBuilder, runtime);
-        // ToNumber/ConvertToNumber: pre-declare slots here so any later emitter
-        // can bind to them, but defer body emission until after GetProperty/
-        // InvokeMethodValue so the ToPrimitive(value, "number") chain
-        // (valueOf/toString) on Dictionary/$Object args can call those helpers.
-        // Mirrors DeclareArrayLikeMaterialize's pattern.
-        DeclareToNumber(typeBuilder, runtime);
+        // ToNumber slot is forward-declared in DefineRuntimeClassPhase1 so
+        // $RegExp's Symbol.split limit-coercion (which runs before $Runtime
+        // body emit) can bind to it. Skip the duplicate-define here.
         DeclareConvertToNumber(typeBuilder, runtime);
         EmitJsToInt32(typeBuilder, runtime);
         EmitJsLessThan(typeBuilder, runtime);

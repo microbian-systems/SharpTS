@@ -60,6 +60,15 @@ public partial class RuntimeEmitter
             _types.Void,
             [_types.Object, _types.String, _types.Object]);
 
+        // Reserve ToNumber(object) → double. Used by $RegExp's Symbol.split
+        // to coerce `limit` per ECMA-262 §22.2.5.13 step 7 (and to throw
+        // TypeError on Symbol limits). EmitToNumber later fills the body.
+        runtime.ToNumber = typeBuilder.DefineMethod(
+            "ToNumber",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.Object]);
+
         // Reserve the RegExp.prototype dictionary field. $RegExp emits
         // before EmitRuntimeClass and its accessor helpers
         // (TSRegExpProtoGet*) need to compare `__this` against this field
