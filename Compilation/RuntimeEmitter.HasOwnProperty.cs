@@ -298,6 +298,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
         il.Emit(OpCodes.Stloc, nameLocal);
 
+        // ECMA-262 §17: built-in function .name / .length are
+        // { writable:false, enumerable:false, configurable:true } — return
+        // false explicitly when the receiver is a $TSFunction and the name
+        // is one of these synthetic slots. HasOwnPropertyHelper would
+        // otherwise report true and the PropertyIsEnumerable fallback below
+        // would mistakenly inherit that as enumerable=true.
+        var notFunctionBuiltinLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notFunctionBuiltinLabel);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.MarkLabel(notFunctionBuiltinLabel);
+
         // PDS descriptor lookup. When defineProperty installed a descriptor
         // for this name we already have the spec-correct Enumerable bit.
         il.Emit(OpCodes.Ldarg_0);
