@@ -389,11 +389,11 @@ public static class BuiltInTypes
 
             // Methods. ECMA-262 §22.2.6.{2,8,16} — test/exec coerce the
             // string arg via ToString, so calling without args produces
-            // "undefined" and any value (null/number/object) coerces.
-            // S15.10.6.2_A1_T17 / _T20 specifically pass null/undefined
-            // as the arg and check ToString-coerced behavior.
-            "test" => new TypeInfo.Function([AnyType], BooleanType, RequiredParams: 0),
-            "exec" => new TypeInfo.Function([AnyType], AnyType, RequiredParams: 0),
+            // "undefined". The TS signature historically required the arg;
+            // tests like S15.10.6.2_A1_T16 (/undefined/.exec()) and A12
+            // (new RegExp('(.|\\r|\\n)*','').exec()) rely on the coercion.
+            "test" => new TypeInfo.Function([StringType], BooleanType, RequiredParams: 0),
+            "exec" => new TypeInfo.Function([StringType], AnyType, RequiredParams: 0),
             "toString" => new TypeInfo.Function([], StringType),
 
             _ => null
