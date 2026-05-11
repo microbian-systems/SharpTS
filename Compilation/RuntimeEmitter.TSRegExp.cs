@@ -18,6 +18,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsRegExpGlobalField = null!;
     private FieldBuilder _tsRegExpIgnoreCaseField = null!;
     private FieldBuilder _tsRegExpMultilineField = null!;
+    private FieldBuilder _tsRegExpStickyField = null!;
     private FieldBuilder _tsRegExpLastIndexField = null!;
 
     // $RegExp internal methods
@@ -46,6 +47,7 @@ public partial class RuntimeEmitter
         _tsRegExpGlobalField = typeBuilder.DefineField("_global", _types.Boolean, FieldAttributes.Private);
         _tsRegExpIgnoreCaseField = typeBuilder.DefineField("_ignoreCase", _types.Boolean, FieldAttributes.Private);
         _tsRegExpMultilineField = typeBuilder.DefineField("_multiline", _types.Boolean, FieldAttributes.Private);
+        _tsRegExpStickyField = typeBuilder.DefineField("_sticky", _types.Boolean, FieldAttributes.Private);
         _tsRegExpLastIndexField = typeBuilder.DefineField("_lastIndex", _types.Int32, FieldAttributes.Public);
 
         // Compile cache: shared static ConcurrentDictionary<string, Regex>
@@ -484,6 +486,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.String.GetMethod("Contains", [_types.Char])!);
         il.Emit(OpCodes.Stfld, _tsRegExpMultilineField);
 
+        // _sticky = _flags.Contains('y') — drives sticky-match semantics
+        // in Exec (use lastIndex, enforce exact-start, reset on failure).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpFlagsField);
+        il.Emit(OpCodes.Ldc_I4, (int)'y');
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Contains", [_types.Char])!);
+        il.Emit(OpCodes.Stfld, _tsRegExpStickyField);
+
         // _lastIndex = 0
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -821,9 +832,15 @@ public partial class RuntimeEmitter
         var iLocal = il.DeclareLocal(_types.Int32);
         var groupLocal = il.DeclareLocal(typeof(Group));
 
-        // if (_global)
+        // ECMA-262 §22.2.5.2.2 RegExpBuiltinExec: when global OR sticky,
+        // use lastIndex as the match start. Sticky additionally enforces
+        // the match must begin exactly at lastIndex (we verify after the
+        // engine returns).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpGlobalField);
+        il.Emit(OpCodes.Brtrue, globalMatchLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpStickyField);
         il.Emit(OpCodes.Brtrue, globalMatchLabel);
 
         // Non-global: match = _regex.Match(input)
@@ -874,16 +891,41 @@ public partial class RuntimeEmitter
         il.MarkLabel(checkSuccessLabel);
         il.Emit(OpCodes.Ldloc, matchLocal);
         il.Emit(OpCodes.Callvirt, typeof(Match).GetProperty("Success")!.GetGetMethod()!);
-        il.Emit(OpCodes.Brtrue, matchSuccessLabel);
+        il.Emit(OpCodes.Brfalse, noMatchLabel);
+
+        // Match was successful by the .NET engine — for sticky, additionally
+        // require the match to start exactly at startIndex (== _lastIndex).
+        // The .NET Regex engine doesn't enforce sticky's "exact-start" rule;
+        // it scans forward and returns the first match >= startIndex. ECMA-
+        // 262 §22.2.5.2.2 step 15.b says the algorithm fails and resets
+        // lastIndex if `lastMatchPosition !== q` (the start position).
+        var stickyOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpStickyField);
+        il.Emit(OpCodes.Brfalse, stickyOkLabel);
+        // sticky: if match.Index != startIndex, treat as fail
+        il.Emit(OpCodes.Ldloc, matchLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Capture).GetProperty("Index")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, startIndexLocal);
+        il.Emit(OpCodes.Beq, stickyOkLabel);
+        il.Emit(OpCodes.Br, noMatchLabel);
+        il.MarkLabel(stickyOkLabel);
+        il.Emit(OpCodes.Br, matchSuccessLabel);
 
         // No match
         il.MarkLabel(noMatchLabel);
 
-        // if (_global) LastIndex = 0
+        // if (_global || _sticky) LastIndex = 0 — spec-mandated reset on
+        // failure for both global and sticky regexes.
         var skipResetLabel = il.DefineLabel();
+        var stickyResetLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpGlobalField);
+        il.Emit(OpCodes.Brtrue, stickyResetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpStickyField);
         il.Emit(OpCodes.Brfalse, skipResetLabel);
+        il.MarkLabel(stickyResetLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, _tsRegExpLastIndexField);
@@ -894,11 +936,16 @@ public partial class RuntimeEmitter
         // Match success
         il.MarkLabel(matchSuccessLabel);
 
-        // if (_global) LastIndex = match.Index + match.Length
+        // if (_global || _sticky) LastIndex = match.Index + match.Length
         var skipUpdateLabel = il.DefineLabel();
+        var doUpdateLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpGlobalField);
+        il.Emit(OpCodes.Brtrue, doUpdateLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpStickyField);
         il.Emit(OpCodes.Brfalse, skipUpdateLabel);
+        il.MarkLabel(doUpdateLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, matchLocal);
         il.Emit(OpCodes.Callvirt, typeof(Capture).GetProperty("Index")!.GetGetMethod()!);

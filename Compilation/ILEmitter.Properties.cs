@@ -542,13 +542,22 @@ public partial class ILEmitter
         if (TryEmitDirectSetterCall(s.Object, objType, s.Name.Lexeme, s.Value))
             return;
 
-        // Special case: RegExp.lastIndex setter
+        // Special case: RegExp.lastIndex setter. RegExpSetLastIndex's signature
+        // is `(object regex, double value)` — when s.Value is a literal/typed
+        // number `_stackType == Double` and we must skip `Convert.ToDouble(object)`
+        // (which fails verification because the stack already has an unboxed
+        // Double). Otherwise (any/unknown) we box+unbox-through-Convert so
+        // strings like `r.lastIndex = "1.9"` coerce numerically.
         if (objType is TypeInfo.RegExp && s.Name.Lexeme == "lastIndex")
         {
             EmitExpression(s.Object);
             EmitBoxIfNeeded(s.Object);
             EmitExpression(s.Value);
-            EmitUnboxToDouble();
+            if (_stackType != StackType.Double)
+            {
+                EmitBoxIfNeeded(s.Value);
+                EmitUnboxToDouble();
+            }
             // Dup value for expression result
             IL.Emit(OpCodes.Dup);
             var valueTemp = IL.DeclareLocal(_ctx.Types.Double);

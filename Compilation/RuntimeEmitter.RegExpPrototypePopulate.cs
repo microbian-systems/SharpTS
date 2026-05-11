@@ -147,10 +147,12 @@ public partial class RuntimeEmitter
         // TypeError on non-RegExp receivers; test262's prototype/exec/
         // S15.10.6.2_A2_*.js patterns set RegExp.prototype.exec onto a
         // plain object and verify the resulting call throws.
+        var dataMethodFnLocal = il.DeclareLocal(_types.Object);
+        var dataMethodDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+
         void InstallDataMethod(string jsName, MethodBuilder helper, int jsLength)
         {
-            il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
-            il.Emit(OpCodes.Ldstr, jsName);
+            // Build fn = new $TSFunction(null, helper, jsName, jsLength) → fnLocal.
             il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ldtoken, helper);
             il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
@@ -160,6 +162,30 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldstr, jsName);
             il.Emit(OpCodes.Ldc_I4, jsLength);
             il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+            il.Emit(OpCodes.Stloc, dataMethodFnLocal);
+
+            // ECMA-262 §17 built-in functions have no `prototype` property.
+            // GetFunctionMethod would otherwise auto-create one on first read
+            // via its MethodInfo-keyed prototype cache. Pre-install a PDS
+            // data descriptor for "prototype" with value=undefined so the
+            // PDS lookup (which runs BEFORE the auto-create branch) returns
+            // undefined and prototype/exec/S15.10.6.2_A6.js's
+            // `RegExp.prototype.exec.prototype === undefined` holds.
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, dataMethodDescLocal);
+            il.Emit(OpCodes.Ldloc, dataMethodDescLocal);
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldloc, dataMethodFnLocal);
+            il.Emit(OpCodes.Ldstr, "prototype");
+            il.Emit(OpCodes.Ldloc, dataMethodDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+
+            // dict[jsName] = fn
+            il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, dataMethodFnLocal);
             il.Emit(OpCodes.Callvirt, setItem);
         }
 
