@@ -2445,6 +2445,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg, argIndex);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // ECMA-262 7.1.17 ToString: Symbol primitives throw TypeError.
+        // Each Symbol.* protocol method begins with S = ? ToString(string);
+        // calls like `/./[Symbol.search](Symbol.iterator)` must surface
+        // that TypeError up. $RegExp emits before $Runtime so the global
+        // ToJsString helper isn't yet bound — inline the brand-check +
+        // TypeError throw with the forward-declared CreateException.
+        var notSymbolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg, argIndex);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brfalse, notSymbolLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert a Symbol value to a string");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notSymbolLabel);
+
         // Route through $Runtime.Stringify so user-installed toString
         // (and dict literals' Number/Array/etc. cases) coerce per spec
         // instead of returning the C# Object.ToString fallback. Forward-
