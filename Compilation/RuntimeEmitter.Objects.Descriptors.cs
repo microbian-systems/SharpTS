@@ -276,25 +276,77 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetSetMethod()!);
         il.MarkLabel(noWritableLabel);
 
-        // Try to get "get" property (getter)
+        // Try to get "get" property (getter). ECMA-262 §6.2.5.5 step 7:
+        // if "get" is present and not callable and not undefined → throw TypeError.
+        // For undefined, we store $Undefined.Instance in the slot so the
+        // descriptor classifier (slot non-null = accessor) still treats this
+        // as an accessor descriptor (verifyProperty expects `desc.get === undefined`).
         var noGetterLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ldstr, "get");
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Callvirt, dictTryGetValue);
         il.Emit(OpCodes.Brfalse, noGetterLabel);
+        var getterStoreLabel = il.DefineLabel();
+        var getterIsUndefLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Brfalse, getterIsUndefLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, getterIsUndefLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, getterStoreLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.BoundAnyFunctionType);
+        il.Emit(OpCodes.Brtrue, getterStoreLabel);
+        il.Emit(OpCodes.Ldstr, "Property descriptor 'get' is not callable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(getterIsUndefLabel);
+        // Store $Undefined.Instance so the descriptor remains classified as
+        // accessor (slot non-null).
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetSetMethod()!);
+        il.Emit(OpCodes.Br, noGetterLabel);
+        il.MarkLabel(getterStoreLabel);
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetSetMethod()!);
         il.MarkLabel(noGetterLabel);
 
-        // Try to get "set" property (setter)
+        // Try to get "set" property (setter). Same callable check as "get".
         var noSetterLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ldstr, "set");
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Callvirt, dictTryGetValue);
         il.Emit(OpCodes.Brfalse, noSetterLabel);
+        var setterStoreLabel = il.DefineLabel();
+        var setterIsUndefLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Brfalse, setterIsUndefLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, setterIsUndefLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, setterStoreLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.BoundAnyFunctionType);
+        il.Emit(OpCodes.Brtrue, setterStoreLabel);
+        il.Emit(OpCodes.Ldstr, "Property descriptor 'set' is not callable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(setterIsUndefLabel);
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetSetMethod()!);
+        il.Emit(OpCodes.Br, noSetterLabel);
+        il.MarkLabel(setterStoreLabel);
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetSetMethod()!);
