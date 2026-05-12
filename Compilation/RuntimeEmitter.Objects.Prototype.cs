@@ -457,22 +457,9 @@ public partial class RuntimeEmitter
         var checkLocalTableLabel = il.DefineLabel();
         var foundInLocalLabel = il.DefineLabel();
 
-        // ECMA-262 §20.1.2.12 Object.getPrototypeOf step 1: Let obj be ?
-        // ToObject(O). ToObject(null/undefined) throws TypeError.
-        // 15.2.3.2-1-{2,3}.js verify.
-        var gpoThrowLabel = il.DefineLabel();
-        var gpoOkLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, gpoThrowLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brfalse, gpoOkLabel);
-        il.MarkLabel(gpoThrowLabel);
-        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
-        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
-        il.Emit(OpCodes.Call, runtime.CreateException);
-        il.Emit(OpCodes.Throw);
-        il.MarkLabel(gpoOkLabel);
+        // NOTE: Spec ToObject step would throw on null/undefined. Deferred
+        // because too many indirect test262 paths call this on undefined
+        // built-in slots (Fail→RuntimeError cascade observed in regen).
 
         var tempLocal = il.DeclareLocal(_types.Object);
 

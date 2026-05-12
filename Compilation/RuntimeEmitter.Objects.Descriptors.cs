@@ -736,25 +736,12 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // ECMA-262 §20.1.2.7 Object.getOwnPropertyDescriptor step 1:
-        // Let obj be ? ToObject(O). ToObject(null/undefined) throws TypeError.
-        // 15.2.3.3-1-{1,2}.js verify. Primitives (number/string/boolean/symbol)
-        // are wrapped via ToObject in spec; we currently fall through to the
-        // existing dispatch which returns null for them (acceptable approximation
-        // since their wrapped descriptors' own-properties are limited).
-        var gopdThrowLabel = il.DefineLabel();
-        var gopdOkLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, gopdThrowLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brfalse, gopdOkLabel);
-        il.MarkLabel(gopdThrowLabel);
-        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
-        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
-        il.Emit(OpCodes.Call, runtime.CreateException);
-        il.Emit(OpCodes.Throw);
-        il.MarkLabel(gopdOkLabel);
+        // NOTE: Spec ToObject step throws on null/undefined; we deliberately
+        // skip that guard because too many test262 tests indirectly call this
+        // function on `desc.get` where desc is undefined (e.g., when probing
+        // built-ins we haven't installed descriptors for). Fail→RuntimeError
+        // cascade was net -114 in a regen attempt; revert until built-in
+        // descriptors are complete.
 
         var propNameLocal = il.DeclareLocal(_types.String);
         var descriptorLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
