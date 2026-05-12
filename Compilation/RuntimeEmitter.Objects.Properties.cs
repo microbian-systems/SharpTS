@@ -3305,7 +3305,40 @@ public partial class RuntimeEmitter
             // named property assignment via [[DefineOwnProperty]]. Test262
             // patterns like `var arr = []; arr.foo = ...; arr.foo()` rely on
             // this. GetFieldsProperty's PDS-data-descriptor arm reads it back.
+            // Pre-fix unconditionally overwrote — Object.freeze(arr) didn't
+            // block `arr.foo = "x"` because the existing PDS descriptor's
+            // writable bit (false post-freeze via AND-mask) was ignored.
             {
+                // Honor frozen state: if Object.isFrozen(arr), silently no-op
+                // (non-strict). Strict callers use SetPropertyStrict which
+                // can throw.
+                var arrFrozenLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Call, runtime.PDSIsFrozen);
+                il.Emit(OpCodes.Brfalse, arrFrozenLabel);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(arrFrozenLabel);
+
+                // Honor existing-descriptor writable=false: if there's a PDS
+                // data descriptor for this key with writable=false, silently
+                // no-op. Accessor descriptors fall through (defining a value
+                // over an accessor is handled by PDSDefineProperty).
+                var arrNotWritableLabel = il.DefineLabel();
+                var arrExistingDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+                il.Emit(OpCodes.Stloc, arrExistingDescLocal);
+                il.Emit(OpCodes.Ldloc, arrExistingDescLocal);
+                il.Emit(OpCodes.Brfalse, arrNotWritableLabel);
+                // Has descriptor; check writable.
+                il.Emit(OpCodes.Ldloc, arrExistingDescLocal);
+                il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
+                il.Emit(OpCodes.Brtrue, arrNotWritableLabel);
+                // Not writable — silent no-op.
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(arrNotWritableLabel);
+
                 var arrFbDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
                 il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
                 il.Emit(OpCodes.Stloc, arrFbDescLocal);
@@ -4012,8 +4045,47 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
 
             il.MarkLabel(tsArrDelNonNumericLabel);
-            // Non-numeric key — JS allows it (returns true) but no storage
-            // on arrays. Matches pre-M3 fallthrough behavior.
+            // Non-numeric key. PDS-installed named property: honor frozen +
+            // descriptor.configurable (mirrors the Dict path's behavior).
+            // Pre-fix returned true unconditionally, allowing `delete arr.foo`
+            // to silently succeed even when `Object.freeze(arr)` made the
+            // property non-configurable.
+            var tsArrDelFrozenLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.PDSIsFrozen);
+            il.Emit(OpCodes.Brfalse, tsArrDelFrozenLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(tsArrDelFrozenLabel);
+            var tsArrDelSealedLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.PDSIsSealed);
+            il.Emit(OpCodes.Brfalse, tsArrDelSealedLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(tsArrDelSealedLabel);
+            // Check PDS descriptor configurable.
+            var tsArrDelDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, tsArrDelDescLocal);
+            var tsArrDelNoDescLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, tsArrDelDescLocal);
+            il.Emit(OpCodes.Brfalse, tsArrDelNoDescLabel);
+            il.Emit(OpCodes.Ldloc, tsArrDelDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+            var tsArrDelConfigurableLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brtrue, tsArrDelConfigurableLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(tsArrDelConfigurableLabel);
+            // Configurable — PDS remove + return true.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSDeleteProperty);
+            il.Emit(OpCodes.Pop);
+            il.MarkLabel(tsArrDelNoDescLabel);
             il.Emit(OpCodes.Ldc_I4_1);
             il.Emit(OpCodes.Ret);
         }
