@@ -4436,11 +4436,11 @@ test/built-ins/Object/create/properties-arg-to-object-null.js Fail
 test/built-ins/Object/create/properties-arg-to-object.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-0-1.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-0-2.js Pass
-test/built-ins/Object/defineProperties/15.2.3.7-1-1.js Fail
-test/built-ins/Object/defineProperties/15.2.3.7-1-2.js Fail
-test/built-ins/Object/defineProperties/15.2.3.7-1-3.js Fail
-test/built-ins/Object/defineProperties/15.2.3.7-1-4.js Fail
-test/built-ins/Object/defineProperties/15.2.3.7-1.js Fail
+test/built-ins/Object/defineProperties/15.2.3.7-1-1.js Pass
+test/built-ins/Object/defineProperties/15.2.3.7-1-2.js Pass
+test/built-ins/Object/defineProperties/15.2.3.7-1-3.js Pass
+test/built-ins/Object/defineProperties/15.2.3.7-1-4.js Pass
+test/built-ins/Object/defineProperties/15.2.3.7-1.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-2-1.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-2-10.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-2-11.js Fail
