@@ -736,6 +736,26 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
+        // ECMA-262 §20.1.2.7 Object.getOwnPropertyDescriptor step 1:
+        // Let obj be ? ToObject(O). ToObject(null/undefined) throws TypeError.
+        // 15.2.3.3-1-{1,2}.js verify. Primitives (number/string/boolean/symbol)
+        // are wrapped via ToObject in spec; we currently fall through to the
+        // existing dispatch which returns null for them (acceptable approximation
+        // since their wrapped descriptors' own-properties are limited).
+        var gopdThrowLabel = il.DefineLabel();
+        var gopdOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, gopdThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brfalse, gopdOkLabel);
+        il.MarkLabel(gopdThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(gopdOkLabel);
+
         var propNameLocal = il.DeclareLocal(_types.String);
         var descriptorLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
         var resultDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
@@ -1254,6 +1274,39 @@ public partial class RuntimeEmitter
         runtime.ObjectDefineProperties = method;
 
         var il = method.GetILGenerator();
+
+        // ECMA-262 §20.1.2.3 step 1: If Type(O) is not Object, throw TypeError.
+        // Covers null/undefined/primitives. 15.2.3.7-1-*.js verify.
+        var dpsThrowLabel = il.DefineLabel();
+        var dpsOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, dpsThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, dpsThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, dpsThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Int32);
+        il.Emit(OpCodes.Brtrue, dpsThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, dpsThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, dpsThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brtrue, dpsThrowLabel);
+        il.Emit(OpCodes.Br, dpsOkLabel);
+
+        il.MarkLabel(dpsThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Object.defineProperties called on non-object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(dpsOkLabel);
 
         // Cast props to Dictionary<string, object?>
         var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
