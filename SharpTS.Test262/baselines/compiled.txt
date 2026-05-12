@@ -4339,10 +4339,10 @@ test/built-ins/Object/create/15.2.3.5-4-298.js Pass
 test/built-ins/Object/create/15.2.3.5-4-3.js Fail
 test/built-ins/Object/create/15.2.3.5-4-30.js Fail
 test/built-ins/Object/create/15.2.3.5-4-300.js Fail
-test/built-ins/Object/create/15.2.3.5-4-301.js Fail
-test/built-ins/Object/create/15.2.3.5-4-302.js Fail
-test/built-ins/Object/create/15.2.3.5-4-303.js Fail
-test/built-ins/Object/create/15.2.3.5-4-304.js Fail
+test/built-ins/Object/create/15.2.3.5-4-301.js Pass
+test/built-ins/Object/create/15.2.3.5-4-302.js Pass
+test/built-ins/Object/create/15.2.3.5-4-303.js Pass
+test/built-ins/Object/create/15.2.3.5-4-304.js Pass
 test/built-ins/Object/create/15.2.3.5-4-305.js Pass
 test/built-ins/Object/create/15.2.3.5-4-306.js Pass
 test/built-ins/Object/create/15.2.3.5-4-307.js Pass
@@ -4652,10 +4652,10 @@ test/built-ins/Object/defineProperties/15.2.3.7-5-b-256.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-5-b-257.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-5-b-258.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-5-b-26.js Fail
-test/built-ins/Object/defineProperties/15.2.3.7-5-b-261.js Fail
-test/built-ins/Object/defineProperties/15.2.3.7-5-b-262.js Fail
-test/built-ins/Object/defineProperties/15.2.3.7-5-b-263.js Fail
-test/built-ins/Object/defineProperties/15.2.3.7-5-b-264.js Fail
+test/built-ins/Object/defineProperties/15.2.3.7-5-b-261.js Pass
+test/built-ins/Object/defineProperties/15.2.3.7-5-b-262.js Pass
+test/built-ins/Object/defineProperties/15.2.3.7-5-b-263.js Pass
+test/built-ins/Object/defineProperties/15.2.3.7-5-b-264.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-5-b-27.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-5-b-28.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-5-b-29.js Fail
@@ -5122,7 +5122,7 @@ test/built-ins/Object/defineProperty/15.2.3.6-2-6.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-2-7.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-2-8.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-2-9.js Pass
-test/built-ins/Object/defineProperty/15.2.3.6-3-1.js Fail
+test/built-ins/Object/defineProperty/15.2.3.6-3-1.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-10.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-100.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-101.js Pass
@@ -5251,7 +5251,7 @@ test/built-ins/Object/defineProperty/15.2.3.6-3-196.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-197.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-198.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-199.js Pass
-test/built-ins/Object/defineProperty/15.2.3.6-3-2.js Fail
+test/built-ins/Object/defineProperty/15.2.3.6-3-2.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-20.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-200.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-202.js Fail
@@ -5342,7 +5342,7 @@ test/built-ins/Object/defineProperty/15.2.3.6-3-262.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-27.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-28.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-29.js Fail
-test/built-ins/Object/defineProperty/15.2.3.6-3-3.js Fail
+test/built-ins/Object/defineProperty/15.2.3.6-3-3.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-30.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-31.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-32.js Pass
@@ -5360,7 +5360,7 @@ test/built-ins/Object/defineProperty/15.2.3.6-3-38-1.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-38.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-39-1.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-39.js Fail
-test/built-ins/Object/defineProperty/15.2.3.6-3-4.js Fail
+test/built-ins/Object/defineProperty/15.2.3.6-3-4.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-40-1.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-40.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-41-1.js Fail
