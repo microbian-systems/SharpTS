@@ -557,13 +557,31 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
 
         // if (_getters != null && _getters.ContainsKey(name)) return true
-        var checkFieldsLabel = il.DefineLabel();
+        var checkSettersLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsObjectGettersField);
-        il.Emit(OpCodes.Brfalse, checkFieldsLabel);
+        il.Emit(OpCodes.Brfalse, checkSettersLabel);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsObjectGettersField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("ContainsKey", [_types.String])!);
+        il.Emit(OpCodes.Brfalse, checkSettersLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+
+        // A setter-only accessor is still an OWN property per ECMA-262 §10.1.5
+        // (OrdinaryGetOwnProperty returns the accessor descriptor whether
+        // only get or only set is defined). Without this branch,
+        // `{set foo(x){}}` then `o.hasOwnProperty("foo")` returns false.
+        il.MarkLabel(checkSettersLabel);
+        var checkFieldsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsObjectSettersField);
+        il.Emit(OpCodes.Brfalse, checkFieldsLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsObjectSettersField);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("ContainsKey", [_types.String])!);
         il.Emit(OpCodes.Brfalse, checkFieldsLabel);
