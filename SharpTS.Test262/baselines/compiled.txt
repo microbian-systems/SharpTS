@@ -7411,7 +7411,7 @@ test/built-ins/Object/setPrototypeOf/set-failure-cycle.js Fail
 test/built-ins/Object/setPrototypeOf/set-failure-non-extensible.js Pass
 test/built-ins/Object/setPrototypeOf/success.js Pass
 test/built-ins/Object/subclass-object-arg.js RuntimeError
-test/built-ins/Object/symbol_object-returns-fresh-symbol.js Fail
+test/built-ins/Object/symbol_object-returns-fresh-symbol.js Pass
 test/built-ins/Object/values/exception-during-enumeration.js Fail
 test/built-ins/Object/values/exception-not-object-coercible.js Fail
 test/built-ins/Object/values/function-length.js Pass
