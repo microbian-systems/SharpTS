@@ -48,6 +48,39 @@ public partial class RuntimeEmitter
         var notDictLabel = il.DefineLabel();
         var setDescriptorDoneLabel = il.DefineLabel();
 
+        // ECMA-262 §20.1.2.4 step 1: If Type(O) is not Object, throw TypeError.
+        // Covers null/undefined/primitives. test262 15.2.3.6-{1-*}.js verify.
+        var primitiveThrowLabel = il.DefineLabel();
+        var skipTypeThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, primitiveThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, primitiveThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, primitiveThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Int32);
+        il.Emit(OpCodes.Brtrue, primitiveThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, primitiveThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, primitiveThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brtrue, primitiveThrowLabel);
+        il.Emit(OpCodes.Br, skipTypeThrowLabel);
+
+        il.MarkLabel(primitiveThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Object.defineProperty called on non-object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(skipTypeThrowLabel);
+
         // Symbol-keyed path: Object.defineProperty(obj, symbol, {value:X}) must store X
         // in the object's symbol dict so `obj[symbol]` can retrieve it. Without this,
         // a later `obj[symbol]` read routes through EmitGetIndex's symbol-key handler
