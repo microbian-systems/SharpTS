@@ -810,12 +810,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, skipValueSetLabel);
 
         // Set value on object if it's a dictionary
+        var notDictForValueLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Brfalse, skipValueSetLabel);
+        il.Emit(OpCodes.Brfalse, notDictForValueLabel);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(notDictForValueLabel);
+
+        // Also write the value to $Object._fields when target is $Object.
+        // Without this, Object.defineProperties iterating the props' _fields
+        // can't see the key (since defineProperty stored only in PDS). Writing
+        // here parallels the Dict write above. Reads via $Object.GetProperty
+        // also benefit (no need to consult PDS for the value).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, skipValueSetLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectFieldsGetter);
         il.Emit(OpCodes.Ldloc, propNameLocal);
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
