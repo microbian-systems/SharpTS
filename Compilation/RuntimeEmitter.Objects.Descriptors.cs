@@ -1190,8 +1190,19 @@ public partial class RuntimeEmitter
         var afterAccessorLabel = il.DefineLabel();
         il.Emit(OpCodes.Br, afterAccessorLabel);
 
-        // Data property - set value and writable
+        // Data property - set value and writable. Frozen/sealed override the
+        // descriptor's stored writable/configurable: spec says Object.freeze
+        // mutates each descriptor, but we don't mutate storage — reflect at
+        // read time to keep the storage stable across {freeze, defrost} cycles.
         il.MarkLabel(isDataLabel);
+        var pdsIsFrozenLocal = il.DeclareLocal(_types.Boolean);
+        var pdsIsSealedLocal = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsFrozen);
+        il.Emit(OpCodes.Stloc, pdsIsFrozenLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsSealed);
+        il.Emit(OpCodes.Stloc, pdsIsSealedLocal);
 
         // Set value
         il.Emit(OpCodes.Ldloc, resultDictLocal);
@@ -1200,17 +1211,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
-        // Set writable
+        // Set writable: stored value AND !frozen.
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "writable");
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, pdsIsFrozenLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);  // !frozen
+        il.Emit(OpCodes.And);
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
         il.MarkLabel(afterAccessorLabel);
 
-        // Set enumerable
+        // Set enumerable (freeze/seal preserve enumerability).
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "enumerable");
         il.Emit(OpCodes.Ldloc, descriptorLocal);
@@ -1218,11 +1233,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
-        // Set configurable
+        // Set configurable: stored value AND !(frozen OR sealed).
+        // For accessor (data path not entered), the pdsIs* locals are still
+        // computed in the data branch — when we reach here via accessor,
+        // they're default-zero (Boolean) which means the override AND yields
+        // the stored value. Compute them here for accessor independence.
+        var pdsCfgIsFrozenLocal = il.DeclareLocal(_types.Boolean);
+        var pdsCfgIsSealedLocal = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsFrozen);
+        il.Emit(OpCodes.Stloc, pdsCfgIsFrozenLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsSealed);
+        il.Emit(OpCodes.Stloc, pdsCfgIsSealedLocal);
+
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "configurable");
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, pdsCfgIsFrozenLocal);
+        il.Emit(OpCodes.Ldloc, pdsCfgIsSealedLocal);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);  // !(frozen || sealed)
+        il.Emit(OpCodes.And);
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
