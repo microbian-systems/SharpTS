@@ -492,6 +492,24 @@ public partial class RuntimeEmitter
         var namesLocal = il.DeclareLocal(_types.ListOfObject);
         var iLocal = il.DeclareLocal(_types.Int32);
 
+        // ECMA-262 §20.1.2.10 step 1: Let O be ? ToObject(obj). ToObject throws
+        // TypeError for null/undefined. Tests 15.2.3.4-1-{1,2,3} verify each.
+        var gopnTypeOkLabel = il.DefineLabel();
+        var gopnThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, gopnThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, gopnThrowLabel);
+        il.Emit(OpCodes.Br, gopnTypeOkLabel);
+
+        il.MarkLabel(gopnThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(gopnTypeOkLabel);
+
         // Proxy short-circuit (#92): if obj is SharpTSProxy, dispatch TrapOwnKeys
         // and return. A revoked proxy throws inside TrapOwnKeys.
         var notProxyLabel = il.DefineLabel();
