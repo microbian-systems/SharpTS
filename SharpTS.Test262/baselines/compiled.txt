@@ -4096,7 +4096,7 @@ test/built-ins/Object/assign/invoked-as-ctor.js Pass
 test/built-ins/Object/assign/name.js Pass
 test/built-ins/Object/assign/not-a-constructor.js Pass
 test/built-ins/Object/assign/source-get-attr-error.js Fail
-test/built-ins/Object/assign/source-non-enum.js Fail
+test/built-ins/Object/assign/source-non-enum.js Pass
 test/built-ins/Object/assign/source-own-prop-desc-missing.js Fail
 test/built-ins/Object/assign/source-own-prop-error.js Fail
 test/built-ins/Object/assign/source-own-prop-keys-error.js Fail
@@ -6610,7 +6610,7 @@ test/built-ins/Object/getOwnPropertyDescriptors/exception-not-object-coercible.j
 test/built-ins/Object/getOwnPropertyDescriptors/function-length.js Pass
 test/built-ins/Object/getOwnPropertyDescriptors/function-name.js Pass
 test/built-ins/Object/getOwnPropertyDescriptors/function-property-descriptor.js Fail
-test/built-ins/Object/getOwnPropertyDescriptors/inherited-properties-omitted.js Pass
+test/built-ins/Object/getOwnPropertyDescriptors/inherited-properties-omitted.js Fail
 test/built-ins/Object/getOwnPropertyDescriptors/normal-object.js Pass
 test/built-ins/Object/getOwnPropertyDescriptors/not-a-constructor.js Pass
 test/built-ins/Object/getOwnPropertyDescriptors/observable-operations.js Fail
@@ -6626,8 +6626,8 @@ test/built-ins/Object/getOwnPropertyDescriptors/tamper-with-global-object.js Fai
 test/built-ins/Object/getOwnPropertyDescriptors/tamper-with-object-keys.js Fail
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-0-1.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-0-2.js Pass
-test/built-ins/Object/getOwnPropertyNames/15.2.3.4-1-2.js Fail
-test/built-ins/Object/getOwnPropertyNames/15.2.3.4-1-3.js Fail
+test/built-ins/Object/getOwnPropertyNames/15.2.3.4-1-2.js Pass
+test/built-ins/Object/getOwnPropertyNames/15.2.3.4-1-3.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-1-4.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-1-5.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-1.js Pass
@@ -6636,7 +6636,7 @@ test/built-ins/Object/getOwnPropertyNames/15.2.3.4-2-2.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-2-3.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-2-4.js RuntimeError
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-3-1.js Fail
-test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-1.js Fail
+test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-1.js RuntimeError
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-2.js Fail
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-36.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-37.js Pass
@@ -6661,7 +6661,7 @@ test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-b-5.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-b-6.js Fail
 test/built-ins/Object/getOwnPropertyNames/S15.2.3.4_A1_T1.js Pass
 test/built-ins/Object/getOwnPropertyNames/name.js Pass
-test/built-ins/Object/getOwnPropertyNames/non-object-argument-invalid.js Fail
+test/built-ins/Object/getOwnPropertyNames/non-object-argument-invalid.js Pass
 test/built-ins/Object/getOwnPropertyNames/non-object-argument-valid.js RuntimeError
 test/built-ins/Object/getOwnPropertyNames/not-a-constructor.js Pass
 test/built-ins/Object/getOwnPropertyNames/order-after-define-property.js RuntimeError
@@ -6990,9 +6990,9 @@ test/built-ins/Object/keys/15.2.3.14-5-3.js Pass
 test/built-ins/Object/keys/15.2.3.14-5-4.js Pass
 test/built-ins/Object/keys/15.2.3.14-5-5.js Pass
 test/built-ins/Object/keys/15.2.3.14-5-6.js Pass
-test/built-ins/Object/keys/15.2.3.14-5-7.js Fail
+test/built-ins/Object/keys/15.2.3.14-5-7.js Pass
 test/built-ins/Object/keys/15.2.3.14-5-8.js Pass
-test/built-ins/Object/keys/15.2.3.14-5-9.js Fail
+test/built-ins/Object/keys/15.2.3.14-5-9.js Pass
 test/built-ins/Object/keys/15.2.3.14-5-a-1.js Pass
 test/built-ins/Object/keys/15.2.3.14-5-a-2.js Pass
 test/built-ins/Object/keys/15.2.3.14-5-a-3.js Pass
@@ -7521,7 +7521,7 @@ test/built-ins/Promise/all/resolve-element-function-extensible.js Pass
 test/built-ins/Promise/all/resolve-element-function-length.js Fail
 test/built-ins/Promise/all/resolve-element-function-name.js Fail
 test/built-ins/Promise/all/resolve-element-function-nonconstructor.js Pass
-test/built-ins/Promise/all/resolve-element-function-property-order.js Fail
+test/built-ins/Promise/all/resolve-element-function-property-order.js RuntimeError
 test/built-ins/Promise/all/resolve-element-function-prototype.js Fail
 test/built-ins/Promise/all/resolve-from-same-thenable.js Fail
 test/built-ins/Promise/all/resolve-ignores-late-rejection-deferred.js RuntimeError
@@ -7621,7 +7621,7 @@ test/built-ins/Promise/allSettled/reject-element-function-length.js Fail
 test/built-ins/Promise/allSettled/reject-element-function-multiple-calls.js Fail
 test/built-ins/Promise/allSettled/reject-element-function-name.js Fail
 test/built-ins/Promise/allSettled/reject-element-function-nonconstructor.js Pass
-test/built-ins/Promise/allSettled/reject-element-function-property-order.js Fail
+test/built-ins/Promise/allSettled/reject-element-function-property-order.js RuntimeError
 test/built-ins/Promise/allSettled/reject-element-function-prototype.js Fail
 test/built-ins/Promise/allSettled/reject-ignored-deferred.js RuntimeError
 test/built-ins/Promise/allSettled/reject-ignored-immed.js RuntimeError
@@ -7632,7 +7632,7 @@ test/built-ins/Promise/allSettled/resolve-element-function-extensible.js Pass
 test/built-ins/Promise/allSettled/resolve-element-function-length.js Fail
 test/built-ins/Promise/allSettled/resolve-element-function-name.js Fail
 test/built-ins/Promise/allSettled/resolve-element-function-nonconstructor.js Pass
-test/built-ins/Promise/allSettled/resolve-element-function-property-order.js Fail
+test/built-ins/Promise/allSettled/resolve-element-function-property-order.js RuntimeError
 test/built-ins/Promise/allSettled/resolve-element-function-prototype.js Fail
 test/built-ins/Promise/allSettled/resolve-from-same-thenable.js Fail
 test/built-ins/Promise/allSettled/resolve-ignores-late-rejection-deferred.js RuntimeError
@@ -7746,7 +7746,7 @@ test/built-ins/Promise/any/reject-element-function-extensible.js Pass
 test/built-ins/Promise/any/reject-element-function-length.js Fail
 test/built-ins/Promise/any/reject-element-function-name.js Fail
 test/built-ins/Promise/any/reject-element-function-nonconstructor.js Pass
-test/built-ins/Promise/any/reject-element-function-property-order.js Fail
+test/built-ins/Promise/any/reject-element-function-property-order.js RuntimeError
 test/built-ins/Promise/any/reject-element-function-prototype.js Fail
 test/built-ins/Promise/any/reject-from-same-thenable.js Fail
 test/built-ins/Promise/any/reject-ignored-deferred.js RuntimeError
@@ -7782,7 +7782,7 @@ test/built-ins/Promise/executor-function-extensible.js Pass
 test/built-ins/Promise/executor-function-length.js Fail
 test/built-ins/Promise/executor-function-name.js Fail
 test/built-ins/Promise/executor-function-not-a-constructor.js Fail
-test/built-ins/Promise/executor-function-property-order.js Fail
+test/built-ins/Promise/executor-function-property-order.js RuntimeError
 test/built-ins/Promise/executor-function-prototype.js Fail
 test/built-ins/Promise/executor-not-callable.js Fail
 test/built-ins/Promise/get-prototype-abrupt-executor-not-callable.js Pass
