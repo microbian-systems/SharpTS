@@ -13,6 +13,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsObjectFieldsField = null!;
     private FieldBuilder _tsObjectIsFrozenField = null!;
     private FieldBuilder _tsObjectIsSealedField = null!;
+    private FieldBuilder _tsObjectIsNonExtensibleField = null!;
     private FieldBuilder _tsObjectGettersField = null!;
     private FieldBuilder _tsObjectSettersField = null!;
 
@@ -33,6 +34,7 @@ public partial class RuntimeEmitter
         _tsObjectFieldsField = typeBuilder.DefineField("_fields", _types.DictionaryStringObject, FieldAttributes.Private);
         _tsObjectIsFrozenField = typeBuilder.DefineField("_isFrozen", _types.Boolean, FieldAttributes.Private);
         _tsObjectIsSealedField = typeBuilder.DefineField("_isSealed", _types.Boolean, FieldAttributes.Private);
+        _tsObjectIsNonExtensibleField = typeBuilder.DefineField("_isNonExtensible", _types.Boolean, FieldAttributes.Private);
         _tsObjectGettersField = typeBuilder.DefineField("_getters", _types.DictionaryStringObject, FieldAttributes.Private);
         _tsObjectSettersField = typeBuilder.DefineField("_setters", _types.DictionaryStringObject, FieldAttributes.Private);
 
@@ -46,9 +48,10 @@ public partial class RuntimeEmitter
         EmitTSObjectIsFrozenProperty(typeBuilder, runtime);
         EmitTSObjectIsSealedProperty(typeBuilder, runtime);
 
-        // Methods: Freeze, Seal
+        // Methods: Freeze, Seal, PreventExtensions
         EmitTSObjectFreeze(typeBuilder, runtime);
         EmitTSObjectSeal(typeBuilder, runtime);
+        EmitTSObjectPreventExtensions(typeBuilder, runtime);
 
         // Methods: GetProperty, SetProperty, SetPropertyStrict, HasProperty, DeleteProperty
         EmitTSObjectGetProperty(typeBuilder, runtime);
@@ -199,6 +202,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _tsObjectIsSealedField);
 
+        // _isNonExtensible = true (frozen implies non-extensible)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _tsObjectIsNonExtensibleField);
+
         il.Emit(OpCodes.Ret);
     }
 
@@ -218,6 +226,31 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _tsObjectIsSealedField);
+
+        // _isNonExtensible = true (sealed implies non-extensible)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _tsObjectIsNonExtensibleField);
+
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitTSObjectPreventExtensions(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "PreventExtensions",
+            MethodAttributes.Public,
+            _types.Void,
+            Type.EmptyTypes
+        );
+        runtime.TSObjectPreventExtensions = method;
+
+        var il = method.GetILGenerator();
+
+        // _isNonExtensible = true
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _tsObjectIsNonExtensibleField);
 
         il.Emit(OpCodes.Ret);
     }
@@ -353,6 +386,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notSealedOrExistsLabel);
+
+        // ECMA-262 §10.1.9 OrdinarySetWithOwnDescriptor: if the object is
+        // non-extensible and the property doesn't already exist as an own
+        // property, silently no-op (non-strict). Mirrors the _isSealed path.
+        var notNonExtOrExistsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsObjectIsNonExtensibleField);
+        il.Emit(OpCodes.Brfalse, notNonExtOrExistsLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsObjectFieldsField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("ContainsKey", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, notNonExtOrExistsLabel);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notNonExtOrExistsLabel);
 
         // _fields[name] = value
         il.Emit(OpCodes.Ldarg_0);

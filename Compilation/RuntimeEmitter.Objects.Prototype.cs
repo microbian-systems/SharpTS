@@ -231,6 +231,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnLabel);
 
+        // If obj is a $Object, set its instance _isNonExtensible flag so the
+        // instance-method SetProperty path honors non-extensibility for new
+        // properties. The PDS/CWT bookkeeping below is the cross-type record.
+        var notTSObjectLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjectLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectPreventExtensions);
+        il.MarkLabel(notTSObjectLabel);
+
         // Call $PropertyDescriptorStore.PreventExtensions(obj) - fully standalone, no reflection
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.PDSPreventExtensions);

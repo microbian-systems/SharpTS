@@ -3321,9 +3321,19 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
-        // $TSFunction handler: create data descriptor with the value, store via PDSDefineProperty
+        // $TSFunction handler: ECMA-262 §10.1.9 [[Set]] honors non-extensibility for new
+        // properties. Gate via PDSCanAddProperty so `Object.preventExtensions(fn); fn.x = v`
+        // silently no-ops (non-strict). Existing PDS entries still update.
         il.MarkLabel(tsFunctionSetLabel);
         {
+            var tsFnDoSetLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSCanAddProperty);
+            il.Emit(OpCodes.Brtrue, tsFnDoSetLabel);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(tsFnDoSetLabel);
+
             var descLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
             il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
             il.Emit(OpCodes.Stloc, descLocal);

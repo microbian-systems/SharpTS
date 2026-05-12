@@ -1160,6 +1160,7 @@ public class EmittedRuntime
     public MethodBuilder TSObjectIsSealedGetter { get; set; } = null!;
     public MethodBuilder TSObjectFreeze { get; set; } = null!;
     public MethodBuilder TSObjectSeal { get; set; } = null!;
+    public MethodBuilder TSObjectPreventExtensions { get; set; } = null!;
     public MethodBuilder TSObjectGetProperty { get; set; } = null!;
     public MethodBuilder TSObjectSetProperty { get; set; } = null!;
     public MethodBuilder TSObjectSetPropertyStrict { get; set; } = null!;
