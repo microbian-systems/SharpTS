@@ -51,6 +51,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, falseLabel);
 
+        // ECMA-262 §20.1.3.2 step 1: Let P be ? ToPropertyKey(V). For Symbol,
+        // ToPropertyKey returns the symbol itself — NOT a string. Symbol keys
+        // are stored in the per-object symbol dict (GetSymbolDict), so resolve
+        // them on that side path before falling through to the string-key
+        // helpers below.
+        var notSymbolKeyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
+        il.Emit(OpCodes.Brfalse, notSymbolKeyLabel);
+        // GetSymbolDict(obj).ContainsKey(symbol)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "ContainsKey", _types.Object));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notSymbolKeyLabel);
+
         // Coerce name to string
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, falseLabel);

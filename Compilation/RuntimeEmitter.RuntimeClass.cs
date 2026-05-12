@@ -490,6 +490,12 @@ public partial class RuntimeEmitter
         // hide name/length on a $TSFunction after `delete fn.name`. Emitted
         // before its consumers.
         EmitDeletedBuiltinsHelpers(typeBuilder, runtime);
+        // Symbol helpers — moved before HasOwnPropertyHelper so its
+        // Symbol-key arm can call IsSymbolMethod / GetSymbolDictMethod
+        // (Object.prototype.hasOwnProperty must honor Symbol keys per
+        // ECMA-262 §20.1.3.2 step 1's ToPropertyKey).
+        EmitGetSymbolDict(typeBuilder, runtime, symbolStorageField);
+        EmitIsSymbol(typeBuilder, runtime);
         // hasOwnProperty + isPrototypeOf helpers — must come before
         // GetFunctionMethod so the corresponding arms can return $TSFunction
         // wrappers.
@@ -561,11 +567,8 @@ public partial class RuntimeEmitter
         // String/Number/Boolean populate shells already defined above
         // (before cctor) so the cctor can call them eagerly.
         EmitGetProperty(typeBuilder, runtime);
-        // GetSymbolDict / IsSymbol must come BEFORE ToJsString/ToNumber so that
-        // the @@toPrimitive lookup branch can call them. Original placement was
-        // after ToNumber (line ~470).
-        EmitGetSymbolDict(typeBuilder, runtime, symbolStorageField);
-        EmitIsSymbol(typeBuilder, runtime);
+        // GetSymbolDict / IsSymbol already emitted above (moved earlier so
+        // HasOwnPropertyHelper's Symbol-key arm can call them).
         // ToJsString depends on GetProperty + InvokeMethodValue + Stringify; emit after those.
         EmitToJsString(typeBuilder, runtime);
         // Equals body — must come after ToJsString since the Object-vs-String
