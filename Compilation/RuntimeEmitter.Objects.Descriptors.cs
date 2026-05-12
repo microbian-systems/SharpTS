@@ -1538,7 +1538,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "GetEnumerator"));
         il.Emit(OpCodes.Stloc, enumeratorLocal);
 
-        // Loop
+        // Loop. ECMA-262 §20.1.2.3 step 3: For each key in OwnPropertyKeys
+        // filter by `Enumerable` before calling DefinePropertyOrThrow. We use
+        // PDSGetPropertyDescriptor to check the enumerable bit when a PDS
+        // descriptor exists (e.g. installed by a prior defineProperty with
+        // enumerable:false), and otherwise treat the dict key as enumerable
+        // (the default for object-literal own keys).
         il.MarkLabel(loopStartLabel);
         il.Emit(OpCodes.Ldloca, enumeratorLocal);
         var moveNext = typeof(Dictionary<string, object?>.Enumerator).GetMethod("MoveNext")!;
@@ -1551,13 +1556,31 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, currentProp);
         il.Emit(OpCodes.Stloc, currentLocal);
 
+        var keyGetter = typeof(KeyValuePair<string, object?>).GetProperty("Key")!.GetGetMethod()!;
+        var valueGetter = typeof(KeyValuePair<string, object?>).GetProperty("Value")!.GetGetMethod()!;
+
+        // Skip if PDS descriptor exists with Enumerable=false.
+        var enumOkLabel = il.DefineLabel();
+        var keyDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_1);  // props
+        il.Emit(OpCodes.Ldloca, currentLocal);
+        il.Emit(OpCodes.Call, keyGetter);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, keyDescLocal);
+        il.Emit(OpCodes.Ldloc, keyDescLocal);
+        il.Emit(OpCodes.Brfalse, enumOkLabel);
+        il.Emit(OpCodes.Ldloc, keyDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, enumOkLabel);
+        // Non-enumerable — skip this key.
+        il.Emit(OpCodes.Br, loopStartLabel);
+        il.MarkLabel(enumOkLabel);
+
         // Call ObjectDefineProperty(obj, key, descriptor)
         il.Emit(OpCodes.Ldarg_0);  // obj
         il.Emit(OpCodes.Ldloca, currentLocal);
-        var keyGetter = typeof(KeyValuePair<string, object?>).GetProperty("Key")!.GetGetMethod()!;
         il.Emit(OpCodes.Call, keyGetter);
         il.Emit(OpCodes.Ldloca, currentLocal);
-        var valueGetter = typeof(KeyValuePair<string, object?>).GetProperty("Value")!.GetGetMethod()!;
         il.Emit(OpCodes.Call, valueGetter);
         il.Emit(OpCodes.Call, runtime.ObjectDefineProperty);
         il.Emit(OpCodes.Pop);  // Discard return value from defineProperty
