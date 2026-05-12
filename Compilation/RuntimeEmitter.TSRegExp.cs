@@ -3022,10 +3022,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Ret);
 
-        // Prototype fallback: false.
+        // Prototype fallback: spec says `undefined` when `this` is
+        // %RegExpPrototype% (ECMA-262 §22.2.6.{5,7,9,11,13,15,17,19} step 3.a).
         il.MarkLabel(protoFallbackLabel);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
         return helper;
     }
