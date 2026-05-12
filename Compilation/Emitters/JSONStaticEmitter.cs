@@ -129,6 +129,7 @@ public sealed class JSONStaticEmitter : IStaticTypeEmitterStrategy
         };
         if (method == null) return false;
 
+        // ECMA-262 §17 built-in `name` matches the spec property name.
         var il = ctx.IL;
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldtoken, method);
@@ -136,7 +137,9 @@ public sealed class JSONStaticEmitter : IStaticTypeEmitterStrategy
         il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
             ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
         il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
-        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Ldstr, propertyName);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
         return true;
     }
 

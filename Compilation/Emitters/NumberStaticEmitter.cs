@@ -136,13 +136,18 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
         };
         if (method == null) return false;
 
+        // ECMA-262 §17 built-in `name` matches the spec property name. Cache it
+        // via TSFunctionCtorWithCache so `.name` returns "isNaN" rather than
+        // "NumberIsNaN".
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldtoken, method);
         il.Emit(OpCodes.Ldtoken, method.DeclaringType!);
         il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
             ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
         il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
-        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Ldstr, propertyName);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
         return true;
     }
 

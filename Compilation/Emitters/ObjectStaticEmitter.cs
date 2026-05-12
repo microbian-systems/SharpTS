@@ -310,6 +310,12 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
         };
         if (method == null) return false;
 
+        // ECMA-262 17: built-in function objects expose `name` matching the
+        // spec-defined property name (e.g. "preventExtensions", not the .NET
+        // method name "ObjectPreventExtensions"). Use TSFunctionCtorWithCache
+        // to pre-cache the JS name; pass -1 for length so the getter computes
+        // lazily from method.GetParameters().Length (matches spec for these
+        // entries since .NET arity == JS arity).
         var il = ctx.IL;
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldtoken, method);
@@ -317,7 +323,9 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
         il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
             ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
         il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
-        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+        il.Emit(OpCodes.Ldstr, propertyName);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
         return true;
     }
 }

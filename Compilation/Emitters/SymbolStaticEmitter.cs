@@ -136,7 +136,9 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
                     ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
                 il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
-                il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+                il.Emit(OpCodes.Ldstr, "for");
+                il.Emit(OpCodes.Ldc_I4_M1);
+                il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
                 return true;
             }
             case "keyFor":
@@ -148,7 +150,9 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
                     ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
                 il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
-                il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+                il.Emit(OpCodes.Ldstr, "keyFor");
+                il.Emit(OpCodes.Ldc_I4_M1);
+                il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
                 return true;
             }
             default:
