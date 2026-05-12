@@ -41,6 +41,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSArrayFreeze);
         il.MarkLabel(notTSArrayLabel);
 
+        // Mirror for $Object: set its internal _isFrozen/_isSealed/_isNonExtensible
+        // bits so TSObjectSetProperty's instance-method gate honors freezing.
+        // `new fn()` (constructor invocation on a $TSFunction) creates a $Object,
+        // and that's the common path for tests that freeze user objects.
+        var notTSObjectLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjectLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectFreeze);
+        il.MarkLabel(notTSObjectLabel);
+
         // Call $PropertyDescriptorStore.Freeze(obj) - fully standalone, no reflection
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.PDSFreeze);
@@ -123,6 +136,17 @@ public partial class RuntimeEmitter
         // If obj is null, just return it
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnLabel);
+
+        // Mirror for $Object: set its _isSealed/_isNonExtensible bits so
+        // TSObjectSetProperty's instance-method gate honors sealing.
+        var notTSObjectSealLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjectSealLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectSeal);
+        il.MarkLabel(notTSObjectSealLabel);
 
         // Call $PropertyDescriptorStore.Seal(obj) - fully standalone, no reflection
         il.Emit(OpCodes.Ldarg_0);

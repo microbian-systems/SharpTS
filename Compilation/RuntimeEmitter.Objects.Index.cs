@@ -911,15 +911,65 @@ public partial class RuntimeEmitter
         // Other types (arrays, strings, etc.) - cannot delete, return true
         il.Emit(OpCodes.Br, trueLabel);
 
-        // $TSFunction handler: register the deletion in _deletedBuiltins,
-        // then return true. Coerce the index to string (ToPropertyKey).
+        // $TSFunction handler: honor frozen/sealed + PDS configurability before
+        // recording the deletion. Mirrors DeleteProperty's $TSFunction path so
+        // bracket-form delete on a sealed function (verifyProperty's
+        // isConfigurable check) returns false instead of silently removing.
         il.MarkLabel(tsFunctionDeleteIdxLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-        il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ret);
+        {
+            var tsFnIdxKeyStr = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+            il.Emit(OpCodes.Stloc, tsFnIdxKeyStr);
+
+            var tsFnIdxTmp = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloca, tsFnIdxTmp);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+            var tsFnIdxNotFrozenLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, tsFnIdxNotFrozenLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(tsFnIdxNotFrozenLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.SealedObjectsField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloca, tsFnIdxTmp);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+            var tsFnIdxNotSealedLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, tsFnIdxNotSealedLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(tsFnIdxNotSealedLabel);
+            var tsFnIdxDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, tsFnIdxKeyStr);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, tsFnIdxDescLocal);
+            var tsFnIdxNoPdsLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, tsFnIdxDescLocal);
+            il.Emit(OpCodes.Brfalse, tsFnIdxNoPdsLabel);
+            il.Emit(OpCodes.Ldloc, tsFnIdxDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+            var tsFnIdxConfigurableLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brtrue, tsFnIdxConfigurableLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(tsFnIdxConfigurableLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, tsFnIdxKeyStr);
+            il.Emit(OpCodes.Call, runtime.PDSDeleteProperty);
+            il.Emit(OpCodes.Pop);
+            il.MarkLabel(tsFnIdxNoPdsLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, tsFnIdxKeyStr);
+            il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ret);
+        }
 
         // $Array handler: convert index to long, call DeleteAt, return true.
         // DeleteAt silently no-ops for frozen arrays / OOB indices (JS-spec).
@@ -1089,15 +1139,65 @@ public partial class RuntimeEmitter
         // Other types (arrays, strings, etc.) - cannot delete, return true
         il.Emit(OpCodes.Br, trueLabel);
 
-        // $TSFunction handler: register the deletion in _deletedBuiltins,
-        // then return true. Coerce the index to string (ToPropertyKey).
+        // $TSFunction handler: honor frozen/sealed + PDS configurability before
+        // recording the deletion. Mirrors DeleteProperty's $TSFunction path so
+        // bracket-form delete on a sealed function (verifyProperty's
+        // isConfigurable check) returns false instead of silently removing.
         il.MarkLabel(tsFunctionDeleteIdxLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-        il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ret);
+        {
+            var tsFnIdxKeyStr = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+            il.Emit(OpCodes.Stloc, tsFnIdxKeyStr);
+
+            var tsFnIdxTmp = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloca, tsFnIdxTmp);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+            var tsFnIdxNotFrozenLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, tsFnIdxNotFrozenLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(tsFnIdxNotFrozenLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.SealedObjectsField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloca, tsFnIdxTmp);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+            var tsFnIdxNotSealedLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, tsFnIdxNotSealedLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(tsFnIdxNotSealedLabel);
+            var tsFnIdxDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, tsFnIdxKeyStr);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, tsFnIdxDescLocal);
+            var tsFnIdxNoPdsLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, tsFnIdxDescLocal);
+            il.Emit(OpCodes.Brfalse, tsFnIdxNoPdsLabel);
+            il.Emit(OpCodes.Ldloc, tsFnIdxDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+            var tsFnIdxConfigurableLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brtrue, tsFnIdxConfigurableLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(tsFnIdxConfigurableLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, tsFnIdxKeyStr);
+            il.Emit(OpCodes.Call, runtime.PDSDeleteProperty);
+            il.Emit(OpCodes.Pop);
+            il.MarkLabel(tsFnIdxNoPdsLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, tsFnIdxKeyStr);
+            il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ret);
+        }
 
         // $Array handler: convert index to long, call DeleteAt, return true.
         // DeleteAt silently no-ops for frozen arrays / OOB indices (JS-spec).

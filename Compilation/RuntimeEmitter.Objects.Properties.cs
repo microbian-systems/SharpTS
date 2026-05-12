@@ -3929,13 +3929,68 @@ public partial class RuntimeEmitter
         // Other types - cannot delete properties, return true (JS behavior for non-configurable)
         il.Emit(OpCodes.Br, trueLabel);
 
-        // $TSFunction delete handler.
+        // $TSFunction delete handler. Honor configurability:
+        //   1. If frozen or sealed (via CWT), return false (silent no-op).
+        //   2. If a PDS descriptor exists with configurable=false, return false
+        //      without removing.
+        //   3. Otherwise: clean up PDS, then mark as deleted in the per-instance
+        //      tracker so the synthetic descriptor stops reporting and direct
+        //      property lookups return undefined.
         il.MarkLabel(tsFunctionDelLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ret);
+        {
+            // Frozen check.
+            var tsFnDelTmp = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloca, tsFnDelTmp);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+            var tsFnNotFrozenLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, tsFnNotFrozenLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+
+            // Sealed check.
+            il.MarkLabel(tsFnNotFrozenLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.SealedObjectsField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloca, tsFnDelTmp);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+            var tsFnNotSealedLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, tsFnNotSealedLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+
+            // PDS configurable check.
+            il.MarkLabel(tsFnNotSealedLabel);
+            var tsFnDelDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, tsFnDelDescLocal);
+            var tsFnNoPdsLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, tsFnDelDescLocal);
+            il.Emit(OpCodes.Brfalse, tsFnNoPdsLabel);
+            il.Emit(OpCodes.Ldloc, tsFnDelDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+            var tsFnDelConfigurableLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brtrue, tsFnDelConfigurableLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(tsFnDelConfigurableLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSDeleteProperty);
+            il.Emit(OpCodes.Pop);
+            il.MarkLabel(tsFnNoPdsLabel);
+
+            // Mark as deleted in per-instance tracker (covers synthetic
+            // name/length and any other descriptor-less data entry).
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ret);
+        }
 
         // $Array delete handler — if the key is a numeric index call
         // DeleteAt; otherwise return true (JS non-configurable behavior).
