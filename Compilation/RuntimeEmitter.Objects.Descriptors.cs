@@ -1676,9 +1676,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultLocal);
 
-        // Get keys using the existing GetKeys helper (returns List<object?>)
+        // Get OWN property names (NOT filtered by enumerable). ECMA-262
+        // §20.1.2.7 Object.getOwnPropertyDescriptors uses [[OwnPropertyKeys]]
+        // (no enumerable filter) — non-enumerable own keys must appear in
+        // the result. Pre-fix used runtime.GetKeys which post-e0577095 also
+        // filters by PDS enumerable; that regressed inherited-properties-
+        // omitted.js (a non-enumerable own key was missing from the result).
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.GetKeys);
+        il.Emit(OpCodes.Call, runtime.GetOwnPropertyNames);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Stloc, keysLocal);
 
