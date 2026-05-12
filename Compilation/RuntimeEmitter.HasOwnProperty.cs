@@ -317,12 +317,54 @@ public partial class RuntimeEmitter
         var descLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
         var falseLabel = il.DefineLabel();
 
-        // Null/undefined receiver → false
+        // ECMA-262 §20.1.3.4 step 2: Let O be ? ToObject(this value). ToObject
+        // throws TypeError for null/undefined. Tests S15.2.4.7_A12 + A13
+        // verify each. Pre-fix silently returned false.
+        var pieReceiverOkLabel = il.DefineLabel();
+        var pieReceiverThrowLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Brfalse, pieReceiverThrowLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.Emit(OpCodes.Brtrue, pieReceiverThrowLabel);
+        il.Emit(OpCodes.Br, pieReceiverOkLabel);
+
+        il.MarkLabel(pieReceiverThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(pieReceiverOkLabel);
+
+        // Symbol-keyed lookup: same routing as HasOwnPropertyHelper.
+        var pieNotSymbolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
+        il.Emit(OpCodes.Brfalse, pieNotSymbolLabel);
+        // For Symbol keys: lookup descriptor in PDS (Object.defineProperty-
+        // installed descriptors hold the Enumerable bit). If missing, fall
+        // back to whether the symbol exists in GetSymbolDict (then default
+        // enumerable=true for plain `obj[sym] = v` assignments).
+        var pieSymPdsLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        var pieSymNoPdsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, pieSymPdsLocal);
+        il.Emit(OpCodes.Ldloc, pieSymPdsLocal);
+        il.Emit(OpCodes.Brfalse, pieSymNoPdsLabel);
+        il.Emit(OpCodes.Ldloc, pieSymPdsLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(pieSymNoPdsLabel);
+        // No PDS: check symbol dict. Present → enumerable by default; absent → false.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "ContainsKey", _types.Object));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(pieNotSymbolLabel);
 
         // Coerce name to string. (Object.ToString — same convention as
         // HasOwnPropertyHelper.)
