@@ -1271,11 +1271,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, isAccessorLabel);
         il.Emit(OpCodes.Br, isDataLabel);
 
-        // Accessor property - set get and set
+        // Accessor property - set get and set. ECMA-262 §6.2.5.4
+        // FromPropertyDescriptor: an accessor descriptor result always has
+        // "get" and "set" keys even when one slot is empty (the missing slot
+        // serializes as JS undefined). Pre-fix the missing key wasn't present
+        // at all, causing `"set" in desc` to be false for getter-only
+        // accessors. Stash $Undefined.Instance when the slot is null.
         il.MarkLabel(isAccessorLabel);
 
-        // Set get property if not null
+        // Set get property
         var noGetLabel = il.DefineLabel();
+        var afterGetLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
         il.Emit(OpCodes.Brfalse, noGetLabel);
@@ -1284,10 +1290,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.Emit(OpCodes.Br, afterGetLabel);
         il.MarkLabel(noGetLabel);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "get");
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.MarkLabel(afterGetLabel);
 
-        // Set set property if not null
+        // Set set property
         var noSetLabel = il.DefineLabel();
+        var afterSetLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
         il.Emit(OpCodes.Brfalse, noSetLabel);
@@ -1296,7 +1309,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.Emit(OpCodes.Br, afterSetLabel);
         il.MarkLabel(noSetLabel);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "set");
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.MarkLabel(afterSetLabel);
 
         var afterAccessorLabel = il.DefineLabel();
         il.Emit(OpCodes.Br, afterAccessorLabel);
