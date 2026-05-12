@@ -273,31 +273,29 @@ public partial class RuntimeEmitter
         il.MarkLabel(descTypeOkLabel);
 
         // ECMA-262 §6.2.5.5 ToPropertyDescriptor reads each known descriptor
-        // field via [[Get]], which walks the prototype chain. For Dictionary
-        // descriptors, the existing TryGetValue path mimics own-property
-        // semantics correctly. For non-Dict descriptors (`new fn()` instances,
-        // object literals stored as $Object, etc.), we need to honor inherited
-        // descriptor fields. Normalize by reading each well-known field via
-        // runtime.GetProperty (which walks the prototype chain for $Object /
-        // $IHasFields receivers) and stashing into a fresh Dict.
-        var dictReadyLabel = il.DefineLabel();
+        // field via [[Get]], which walks the prototype chain AND invokes
+        // accessors. We always normalize the descriptor into a fresh Dict via
+        // runtime.GetProperty (which checks PDS accessors + walks proto chain
+        // for $Object / $IHasFields), then if the descriptor is itself a Dict,
+        // overlay explicit own keys on top — so `{value: undefined}` correctly
+        // sets value to JS undefined rather than being treated as absent.
+        var origDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Stloc, dictLocal);
-        il.Emit(OpCodes.Ldloc, dictLocal);
-        il.Emit(OpCodes.Brtrue, dictReadyLabel);
+        il.Emit(OpCodes.Stloc, origDictLocal);
 
         // synthDict = new Dictionary<string, object?>();
         var synthDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, synthDictLocal);
 
+        var synthDictSetItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object);
+        var synthDictTryGetValue = _types.GetMethod(_types.DictionaryStringObject, "TryGetValue", _types.String, _types.Object.MakeByRefType());
+
         // For each well-known descriptor field, GetProperty(descriptor, field).
-        // If result is non-null and not $Undefined, add to synthDict. We treat
-        // "undefined" as "field absent" — slight spec divergence for the rare
-        // `defineProperty(obj, key, {value: undefined})` pattern but eliminates
-        // the much more common false-positive (inherited "writable" defaulting
-        // to descriptor's prototype's value).
+        // If result is non-null and not $Undefined, add to synthDict. Treats
+        // "undefined" as "field absent" UNLESS the field is explicit in the
+        // input Dict (the overlay pass below handles that).
         void EmitGetAndStash(string field)
         {
             var skipLabel = il.DefineLabel();
@@ -314,7 +312,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, synthDictLocal);
             il.Emit(OpCodes.Ldstr, field);
             il.Emit(OpCodes.Ldloc, fieldValLocal);
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object));
+            il.Emit(OpCodes.Callvirt, synthDictSetItem);
             il.MarkLabel(skipLabel);
         }
         EmitGetAndStash("value");
@@ -324,10 +322,41 @@ public partial class RuntimeEmitter
         EmitGetAndStash("enumerable");
         EmitGetAndStash("configurable");
 
+        // Overlay: if descriptor is a Dict, copy each well-known field that
+        // is present as an OWN key in the input Dict over the synth — this
+        // preserves `{value: undefined}` (explicit own key with undefined
+        // value) while still picking up PDS accessors via the GetProperty
+        // pass above.
+        var skipOverlayLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, origDictLocal);
+        il.Emit(OpCodes.Brfalse, skipOverlayLabel);
+
+        void EmitOverlay(string field)
+        {
+            var skipLabel = il.DefineLabel();
+            var fieldValLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldloc, origDictLocal);
+            il.Emit(OpCodes.Ldstr, field);
+            il.Emit(OpCodes.Ldloca, fieldValLocal);
+            il.Emit(OpCodes.Callvirt, synthDictTryGetValue);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+            il.Emit(OpCodes.Ldloc, synthDictLocal);
+            il.Emit(OpCodes.Ldstr, field);
+            il.Emit(OpCodes.Ldloc, fieldValLocal);
+            il.Emit(OpCodes.Callvirt, synthDictSetItem);
+            il.MarkLabel(skipLabel);
+        }
+        EmitOverlay("value");
+        EmitOverlay("writable");
+        EmitOverlay("get");
+        EmitOverlay("set");
+        EmitOverlay("enumerable");
+        EmitOverlay("configurable");
+
+        il.MarkLabel(skipOverlayLabel);
+
         il.Emit(OpCodes.Ldloc, synthDictLocal);
         il.Emit(OpCodes.Stloc, dictLocal);
-
-        il.MarkLabel(dictReadyLabel);
 
         // Extract properties from descriptor dictionary
         var dictTryGetValue = _types.GetMethod(_types.DictionaryStringObject, "TryGetValue", _types.String, _types.Object.MakeByRefType());
