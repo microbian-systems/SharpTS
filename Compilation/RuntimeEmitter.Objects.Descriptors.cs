@@ -1497,6 +1497,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(dpsOkLabel);
 
+        // ECMA-262 §20.1.2.3 step 2: Let props be ? ToObject(Properties).
+        // ToObject throws TypeError for null/undefined. Tests 15.2.3.7-2-{1,2}
+        // verify each.
+        var dpsPropsOkLabel = il.DefineLabel();
+        var dpsPropsThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, dpsPropsThrowLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, dpsPropsThrowLabel);
+        il.Emit(OpCodes.Br, dpsPropsOkLabel);
+
+        il.MarkLabel(dpsPropsThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(dpsPropsOkLabel);
+
         // Cast props to Dictionary<string, object?>
         var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
         var enumeratorLocal = il.DeclareLocal(typeof(Dictionary<string, object?>.Enumerator));
