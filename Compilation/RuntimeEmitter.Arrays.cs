@@ -443,18 +443,37 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, keysEnumeratorType.GetProperty("Current")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, keyLocal);
 
-        // Only add if not already in result (skip duplicates)
+        // Skip if already in result (avoid duplicates) OR if a PDS descriptor
+        // for this key marks it non-enumerable. ECMA-262 §19.1.2.18 (Object.keys)
+        // returns OWN enumerable keys only. The e8bac219 write-through means
+        // \$Object._fields can hold a value that was installed via
+        // Object.defineProperty with enumerable:false — that key must NOT
+        // appear in Object.keys.
+        var skipKeyLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Callvirt, listType.GetMethod("Contains")!);
-        var skipDuplicateLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, skipDuplicateLabel);
+        il.Emit(OpCodes.Brtrue, skipKeyLabel);
+
+        // PDS descriptor lookup; if present AND non-enumerable, skip.
+        var fieldsKeyDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, fieldsKeyDescLocal);
+        var fieldsAddKeyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, fieldsKeyDescLocal);
+        il.Emit(OpCodes.Brfalse, fieldsAddKeyLabel);
+        il.Emit(OpCodes.Ldloc, fieldsKeyDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, skipKeyLabel);
+        il.MarkLabel(fieldsAddKeyLabel);
 
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
 
-        il.MarkLabel(skipDuplicateLabel);
+        il.MarkLabel(skipKeyLabel);
         il.Emit(OpCodes.Br, fieldsKeysLoopStart);
 
         il.MarkLabel(fieldsKeysLoopEnd);
