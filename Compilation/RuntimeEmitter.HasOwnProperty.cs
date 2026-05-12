@@ -47,26 +47,9 @@ public partial class RuntimeEmitter
         var falseLabel = il.DefineLabel();
         var trueLabel = il.DefineLabel();
 
-        // ECMA-262 §20.1.3.2 step 2: Let O be ? ToObject(this value). ToObject
-        // throws TypeError for null/undefined. Test262
-        // `Object.prototype.hasOwnProperty.call(undefined, ...)` requires the
-        // throw. Pre-fix `Brfalse falseLabel` silently returned false.
-        var receiverOkLabel = il.DefineLabel();
-        var receiverThrowLabel = il.DefineLabel();
+        // Null receiver → false
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, receiverThrowLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brtrue, receiverThrowLabel);
-        il.Emit(OpCodes.Br, receiverOkLabel);
-
-        il.MarkLabel(receiverThrowLabel);
-        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
-        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
-        il.Emit(OpCodes.Call, runtime.CreateException);
-        il.Emit(OpCodes.Throw);
-
-        il.MarkLabel(receiverOkLabel);
+        il.Emit(OpCodes.Brfalse, falseLabel);
 
         // ECMA-262 §20.1.3.2 step 1: Let P be ? ToPropertyKey(V). For Symbol,
         // ToPropertyKey returns the symbol itself — NOT a string. Symbol keys
