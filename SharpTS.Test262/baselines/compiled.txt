@@ -7150,7 +7150,7 @@ test/built-ins/Object/prototype/hasOwnProperty/8.12.1-1_18.js Pass
 test/built-ins/Object/prototype/hasOwnProperty/8.12.1-1_19.js Pass
 test/built-ins/Object/prototype/hasOwnProperty/8.12.1-1_2.js Pass
 test/built-ins/Object/prototype/hasOwnProperty/8.12.1-1_20.js Pass
-test/built-ins/Object/prototype/hasOwnProperty/8.12.1-1_21.js Fail
+test/built-ins/Object/prototype/hasOwnProperty/8.12.1-1_21.js Pass
 test/built-ins/Object/prototype/hasOwnProperty/8.12.1-1_22.js Pass
 test/built-ins/Object/prototype/hasOwnProperty/8.12.1-1_23.js Pass
 test/built-ins/Object/prototype/hasOwnProperty/8.12.1-1_24.js Pass
@@ -7195,7 +7195,7 @@ test/built-ins/Object/prototype/hasOwnProperty/S15.2.4.5_A6.js Pass
 test/built-ins/Object/prototype/hasOwnProperty/length.js Pass
 test/built-ins/Object/prototype/hasOwnProperty/name.js Pass
 test/built-ins/Object/prototype/hasOwnProperty/not-a-constructor.js Pass
-test/built-ins/Object/prototype/hasOwnProperty/symbol_own_property.js Fail
+test/built-ins/Object/prototype/hasOwnProperty/symbol_own_property.js Pass
 test/built-ins/Object/prototype/hasOwnProperty/symbol_property_toPrimitive.js Fail
 test/built-ins/Object/prototype/hasOwnProperty/symbol_property_toString.js Fail
 test/built-ins/Object/prototype/hasOwnProperty/symbol_property_valueOf.js Fail
@@ -7222,7 +7222,7 @@ test/built-ins/Object/prototype/propertyIsEnumerable/S15.2.4.7_A8.js Pass
 test/built-ins/Object/prototype/propertyIsEnumerable/S15.2.4.7_A9.js Pass
 test/built-ins/Object/prototype/propertyIsEnumerable/name.js Pass
 test/built-ins/Object/prototype/propertyIsEnumerable/not-a-constructor.js Pass
-test/built-ins/Object/prototype/propertyIsEnumerable/symbol_own_property.js Fail
+test/built-ins/Object/prototype/propertyIsEnumerable/symbol_own_property.js Pass
 test/built-ins/Object/prototype/propertyIsEnumerable/symbol_property_toPrimitive.js Fail
 test/built-ins/Object/prototype/propertyIsEnumerable/symbol_property_toString.js Fail
 test/built-ins/Object/prototype/propertyIsEnumerable/symbol_property_valueOf.js Fail
