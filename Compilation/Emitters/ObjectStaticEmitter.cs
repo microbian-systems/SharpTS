@@ -313,12 +313,22 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
         };
         if (method == null) return false;
 
-        // ECMA-262 17: built-in function objects expose `name` matching the
-        // spec-defined property name (e.g. "preventExtensions", not the .NET
-        // method name "ObjectPreventExtensions"). Use TSFunctionCtorWithCache
-        // to pre-cache the JS name; pass -1 for length so the getter computes
-        // lazily from method.GetParameters().Length (matches spec for these
-        // entries since .NET arity == JS arity).
+        // ECMA-262 §17: built-in function `name` matches the spec property name,
+        // and `length` is the spec-defined arity (not derived from CLR signature
+        // — e.g. `assign(target, ...sources)` has spec length 2 but our .NET
+        // implementation is `(object, List<object?>)` where the rest param is
+        // skipped by lazy compute, returning 1). Pass explicit length per spec.
+        int specLength = propertyName switch
+        {
+            "setPrototypeOf" => 2,
+            "defineProperty" => 3,
+            "defineProperties" => 2,
+            "getOwnPropertyDescriptor" => 2,
+            "create" => 2,
+            "assign" => 2,
+            _ => 1,
+        };
+
         var il = ctx.IL;
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldtoken, method);
@@ -327,7 +337,7 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
             ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
         il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
         il.Emit(OpCodes.Ldstr, propertyName);
-        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Ldc_I4, specLength);
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
         return true;
     }

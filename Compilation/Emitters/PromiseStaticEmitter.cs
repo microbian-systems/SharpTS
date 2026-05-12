@@ -137,7 +137,9 @@ public sealed class PromiseStaticEmitter : IStaticTypeEmitterStrategy
         };
         if (method == null) return false;
 
-        // ECMA-262 §17 built-in `name` matches the spec property name.
+        // ECMA-262 §17 built-in `name` + spec `length`. resolve/reject/all/race/
+        // allSettled/any take one arg; withResolvers takes none.
+        int specLength = propertyName == "withResolvers" ? 0 : 1;
         var il = ctx.IL;
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldtoken, method);
@@ -146,7 +148,7 @@ public sealed class PromiseStaticEmitter : IStaticTypeEmitterStrategy
             ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
         il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
         il.Emit(OpCodes.Ldstr, propertyName);
-        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Ldc_I4, specLength);
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
         return true;
     }

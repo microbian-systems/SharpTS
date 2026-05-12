@@ -129,6 +129,7 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
             // isConstructor harness sees `typeof Symbol.for === "function"`.
             case "for":
             {
+                // Symbol.for(key) — spec length 1.
                 var runtime = ctx.Runtime!;
                 il.Emit(OpCodes.Ldnull);
                 il.Emit(OpCodes.Ldtoken, runtime.SymbolFor);
@@ -137,12 +138,13 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
                     ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
                 il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
                 il.Emit(OpCodes.Ldstr, "for");
-                il.Emit(OpCodes.Ldc_I4_M1);
+                il.Emit(OpCodes.Ldc_I4_1);
                 il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
                 return true;
             }
             case "keyFor":
             {
+                // Symbol.keyFor(sym) — spec length 1.
                 var runtime = ctx.Runtime!;
                 il.Emit(OpCodes.Ldnull);
                 il.Emit(OpCodes.Ldtoken, runtime.SymbolKeyFor);
@@ -151,7 +153,7 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
                     ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
                 il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
                 il.Emit(OpCodes.Ldstr, "keyFor");
-                il.Emit(OpCodes.Ldc_I4_M1);
+                il.Emit(OpCodes.Ldc_I4_1);
                 il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
                 return true;
             }

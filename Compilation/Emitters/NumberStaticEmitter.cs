@@ -136,9 +136,9 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
         };
         if (method == null) return false;
 
-        // ECMA-262 §17 built-in `name` matches the spec property name. Cache it
-        // via TSFunctionCtorWithCache so `.name` returns "isNaN" rather than
-        // "NumberIsNaN".
+        // ECMA-262 §17 built-in `name` + spec `length`. `parseInt(string, radix)`
+        // is the only Number static with arity 2.
+        int specLength = propertyName == "parseInt" ? 2 : 1;
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldtoken, method);
         il.Emit(OpCodes.Ldtoken, method.DeclaringType!);
@@ -146,7 +146,7 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
             ctx.Types.RuntimeMethodHandle, ctx.Types.RuntimeTypeHandle));
         il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
         il.Emit(OpCodes.Ldstr, propertyName);
-        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Ldc_I4, specLength);
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
         return true;
     }
