@@ -3197,7 +3197,7 @@ test/built-ins/JSON/Symbol.toStringTag.js Fail
 test/built-ins/JSON/isRawJSON/basic.js Fail
 test/built-ins/JSON/isRawJSON/builtin.js Fail
 test/built-ins/JSON/isRawJSON/length.js Fail
-test/built-ins/JSON/isRawJSON/name.js Fail
+test/built-ins/JSON/isRawJSON/name.js Pass
 test/built-ins/JSON/isRawJSON/not-a-constructor.js Pass
 test/built-ins/JSON/isRawJSON/prop-desc.js Fail
 test/built-ins/JSON/parse/15.12.1.1-0-1.js Pass
@@ -3246,7 +3246,7 @@ test/built-ins/JSON/parse/builtin.js Fail
 test/built-ins/JSON/parse/duplicate-proto.js Pass
 test/built-ins/JSON/parse/invalid-whitespace.js Pass
 test/built-ins/JSON/parse/length.js Fail
-test/built-ins/JSON/parse/name.js Fail
+test/built-ins/JSON/parse/name.js Pass
 test/built-ins/JSON/parse/not-a-constructor.js Pass
 test/built-ins/JSON/parse/prop-desc.js Fail
 test/built-ins/JSON/parse/revived-proxy-revoked.js Fail
@@ -3284,13 +3284,13 @@ test/built-ins/JSON/rawJSON/builtin.js Fail
 test/built-ins/JSON/rawJSON/illegal-empty-and-start-end-chars.js Fail
 test/built-ins/JSON/rawJSON/invalid-JSON-text.js Fail
 test/built-ins/JSON/rawJSON/length.js Fail
-test/built-ins/JSON/rawJSON/name.js Fail
+test/built-ins/JSON/rawJSON/name.js Pass
 test/built-ins/JSON/rawJSON/not-a-constructor.js Pass
 test/built-ins/JSON/rawJSON/prop-desc.js Fail
 test/built-ins/JSON/rawJSON/returns-expected-object.js RuntimeError
 test/built-ins/JSON/stringify/builtin.js Fail
 test/built-ins/JSON/stringify/length.js Fail
-test/built-ins/JSON/stringify/name.js Fail
+test/built-ins/JSON/stringify/name.js Pass
 test/built-ins/JSON/stringify/not-a-constructor.js Pass
 test/built-ins/JSON/stringify/prop-desc.js Fail
 test/built-ins/JSON/stringify/property-order.js Fail
@@ -3780,7 +3780,7 @@ test/built-ins/Number/isFinite/arg-is-not-number.js Pass
 test/built-ins/Number/isFinite/finite-numbers.js Pass
 test/built-ins/Number/isFinite/infinity.js Pass
 test/built-ins/Number/isFinite/length.js Pass
-test/built-ins/Number/isFinite/name.js Fail
+test/built-ins/Number/isFinite/name.js Pass
 test/built-ins/Number/isFinite/nan.js Pass
 test/built-ins/Number/isFinite/not-a-constructor.js Pass
 test/built-ins/Number/isFinite/prop-desc.js Fail
@@ -3788,14 +3788,14 @@ test/built-ins/Number/isInteger/arg-is-not-number.js Pass
 test/built-ins/Number/isInteger/infinity.js Pass
 test/built-ins/Number/isInteger/integers.js Pass
 test/built-ins/Number/isInteger/length.js Pass
-test/built-ins/Number/isInteger/name.js Fail
+test/built-ins/Number/isInteger/name.js Pass
 test/built-ins/Number/isInteger/nan.js Pass
 test/built-ins/Number/isInteger/non-integers.js Pass
 test/built-ins/Number/isInteger/not-a-constructor.js Pass
 test/built-ins/Number/isInteger/prop-desc.js Fail
 test/built-ins/Number/isNaN/arg-is-not-number.js Pass
 test/built-ins/Number/isNaN/length.js Pass
-test/built-ins/Number/isNaN/name.js Fail
+test/built-ins/Number/isNaN/name.js Pass
 test/built-ins/Number/isNaN/nan.js Pass
 test/built-ins/Number/isNaN/not-a-constructor.js Pass
 test/built-ins/Number/isNaN/not-nan.js Pass
@@ -3803,7 +3803,7 @@ test/built-ins/Number/isNaN/prop-desc.js Fail
 test/built-ins/Number/isSafeInteger/arg-is-not-number.js Pass
 test/built-ins/Number/isSafeInteger/infinity.js Pass
 test/built-ins/Number/isSafeInteger/length.js Pass
-test/built-ins/Number/isSafeInteger/name.js Fail
+test/built-ins/Number/isSafeInteger/name.js Pass
 test/built-ins/Number/isSafeInteger/nan.js Pass
 test/built-ins/Number/isSafeInteger/not-a-constructor.js Pass
 test/built-ins/Number/isSafeInteger/not-integer.js Pass
@@ -4093,7 +4093,7 @@ test/built-ins/Object/assign/assign-descriptor.js Fail
 test/built-ins/Object/assign/assign-length.js Fail
 test/built-ins/Object/assign/assignment-to-readonly-property-of-target-must-throw-a-typeerror-exception.js Fail
 test/built-ins/Object/assign/invoked-as-ctor.js Pass
-test/built-ins/Object/assign/name.js Fail
+test/built-ins/Object/assign/name.js Pass
 test/built-ins/Object/assign/not-a-constructor.js Pass
 test/built-ins/Object/assign/source-get-attr-error.js Fail
 test/built-ins/Object/assign/source-non-enum.js Fail
@@ -4428,7 +4428,7 @@ test/built-ins/Object/create/15.2.3.5-4-96.js Fail
 test/built-ins/Object/create/15.2.3.5-4-97.js Fail
 test/built-ins/Object/create/15.2.3.5-4-98.js Fail
 test/built-ins/Object/create/15.2.3.5-4-99.js Pass
-test/built-ins/Object/create/name.js Fail
+test/built-ins/Object/create/name.js Pass
 test/built-ins/Object/create/not-a-constructor.js Pass
 test/built-ins/Object/create/properties-arg-to-object-bigint.js Pass
 test/built-ins/Object/create/properties-arg-to-object-non-empty-string.js Fail
@@ -5054,7 +5054,7 @@ test/built-ins/Object/defineProperties/15.2.3.7-6-a-96.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-97.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-98.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-99.js Pass
-test/built-ins/Object/defineProperties/name.js Fail
+test/built-ins/Object/defineProperties/name.js Pass
 test/built-ins/Object/defineProperties/not-a-constructor.js Pass
 test/built-ins/Object/defineProperties/property-description-must-be-an-object-not-bigint.js Fail
 test/built-ins/Object/defineProperties/property-description-must-be-an-object-not-false.js Fail
@@ -6181,7 +6181,7 @@ test/built-ins/Object/defineProperty/S15.2.3.6_A1.js Pass
 test/built-ins/Object/defineProperty/S15.2.3.6_A2.js Pass
 test/built-ins/Object/defineProperty/coerced-P-grow.js RuntimeError
 test/built-ins/Object/defineProperty/coerced-P-shrink.js RuntimeError
-test/built-ins/Object/defineProperty/name.js Fail
+test/built-ins/Object/defineProperty/name.js Pass
 test/built-ins/Object/defineProperty/not-a-constructor.js Pass
 test/built-ins/Object/defineProperty/property-description-must-be-an-object-not-bigint.js Fail
 test/built-ins/Object/defineProperty/property-description-must-be-an-object-not-false.js Fail
@@ -6200,7 +6200,7 @@ test/built-ins/Object/defineProperty/typedarray-backed-by-resizable-buffer.js Ru
 test/built-ins/Object/entries/exception-during-enumeration.js Fail
 test/built-ins/Object/entries/exception-not-object-coercible.js Fail
 test/built-ins/Object/entries/function-length.js Pass
-test/built-ins/Object/entries/function-name.js Fail
+test/built-ins/Object/entries/function-name.js Pass
 test/built-ins/Object/entries/function-property-descriptor.js Fail
 test/built-ins/Object/entries/getter-adding-key.js Fail
 test/built-ins/Object/entries/getter-making-future-key-nonenumerable.js Fail
@@ -6232,17 +6232,17 @@ test/built-ins/Object/freeze/15.2.3.9-2-4.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-a-1.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-a-10.js Fail
 test/built-ins/Object/freeze/15.2.3.9-2-a-11.js Fail
-test/built-ins/Object/freeze/15.2.3.9-2-a-12.js Fail
+test/built-ins/Object/freeze/15.2.3.9-2-a-12.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-a-13.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-a-14.js Fail
-test/built-ins/Object/freeze/15.2.3.9-2-a-2.js Fail
+test/built-ins/Object/freeze/15.2.3.9-2-a-2.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-a-3.js Fail
 test/built-ins/Object/freeze/15.2.3.9-2-a-4.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-a-5.js Fail
 test/built-ins/Object/freeze/15.2.3.9-2-a-6.js Fail
 test/built-ins/Object/freeze/15.2.3.9-2-a-7.js Fail
-test/built-ins/Object/freeze/15.2.3.9-2-a-8.js Fail
-test/built-ins/Object/freeze/15.2.3.9-2-a-9.js Fail
+test/built-ins/Object/freeze/15.2.3.9-2-a-8.js Pass
+test/built-ins/Object/freeze/15.2.3.9-2-a-9.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-b-i-1.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-b-i-2.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-c-1.js Pass
@@ -6265,7 +6265,7 @@ test/built-ins/Object/freeze/15.2.3.9-4-3.js Pass
 test/built-ins/Object/freeze/abrupt-completion.js Fail
 test/built-ins/Object/freeze/frozen-object-contains-symbol-properties-non-strict.js Fail
 test/built-ins/Object/freeze/frozen-object-contains-symbol-properties-strict.js Fail
-test/built-ins/Object/freeze/name.js Fail
+test/built-ins/Object/freeze/name.js Pass
 test/built-ins/Object/freeze/not-a-constructor.js Pass
 test/built-ins/Object/freeze/proxy-no-ownkeys-returned-keys-order.js RuntimeError
 test/built-ins/Object/freeze/proxy-with-defineProperty-handler.js Fail
@@ -6284,7 +6284,7 @@ test/built-ins/Object/fromEntries/iterator-not-closed-for-throwing-next.js Pass
 test/built-ins/Object/fromEntries/iterator-not-closed-for-uncallable-next.js Fail
 test/built-ins/Object/fromEntries/key-order.js Pass
 test/built-ins/Object/fromEntries/length.js Fail
-test/built-ins/Object/fromEntries/name.js Fail
+test/built-ins/Object/fromEntries/name.js Pass
 test/built-ins/Object/fromEntries/not-a-constructor.js Pass
 test/built-ins/Object/fromEntries/prototype.js Pass
 test/built-ins/Object/fromEntries/requires-argument.js Fail
@@ -6602,13 +6602,13 @@ test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-97.js Fail
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-98.js Fail
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-99.js Fail
 test/built-ins/Object/getOwnPropertyDescriptor/length.js Pass
-test/built-ins/Object/getOwnPropertyDescriptor/name.js Fail
+test/built-ins/Object/getOwnPropertyDescriptor/name.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/not-a-constructor.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/primitive-string.js Fail
 test/built-ins/Object/getOwnPropertyDescriptor/primitive-symbol.js Pass
 test/built-ins/Object/getOwnPropertyDescriptors/exception-not-object-coercible.js Fail
 test/built-ins/Object/getOwnPropertyDescriptors/function-length.js Pass
-test/built-ins/Object/getOwnPropertyDescriptors/function-name.js Fail
+test/built-ins/Object/getOwnPropertyDescriptors/function-name.js Pass
 test/built-ins/Object/getOwnPropertyDescriptors/function-property-descriptor.js Fail
 test/built-ins/Object/getOwnPropertyDescriptors/inherited-properties-omitted.js Fail
 test/built-ins/Object/getOwnPropertyDescriptors/normal-object.js Pass
@@ -6660,7 +6660,7 @@ test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-b-4.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-b-5.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-b-6.js Fail
 test/built-ins/Object/getOwnPropertyNames/S15.2.3.4_A1_T1.js Pass
-test/built-ins/Object/getOwnPropertyNames/name.js Fail
+test/built-ins/Object/getOwnPropertyNames/name.js Pass
 test/built-ins/Object/getOwnPropertyNames/non-object-argument-invalid.js Fail
 test/built-ins/Object/getOwnPropertyNames/non-object-argument-valid.js RuntimeError
 test/built-ins/Object/getOwnPropertyNames/not-a-constructor.js Pass
@@ -7003,7 +7003,7 @@ test/built-ins/Object/keys/15.2.3.14-6-2.js Fail
 test/built-ins/Object/keys/15.2.3.14-6-3.js Pass
 test/built-ins/Object/keys/15.2.3.14-6-4.js Fail
 test/built-ins/Object/keys/15.2.3.14-6-5.js Pass
-test/built-ins/Object/keys/name.js Fail
+test/built-ins/Object/keys/name.js Pass
 test/built-ins/Object/keys/not-a-constructor.js Pass
 test/built-ins/Object/keys/order-after-define-property-with-function.js RuntimeError
 test/built-ins/Object/keys/order-after-define-property.js RuntimeError
@@ -7048,7 +7048,7 @@ test/built-ins/Object/preventExtensions/15.2.3.10-3-7.js Pass
 test/built-ins/Object/preventExtensions/15.2.3.10-3-8.js Pass
 test/built-ins/Object/preventExtensions/15.2.3.10-3-9.js Pass
 test/built-ins/Object/preventExtensions/abrupt-completion.js Fail
-test/built-ins/Object/preventExtensions/name.js Fail
+test/built-ins/Object/preventExtensions/name.js Pass
 test/built-ins/Object/preventExtensions/not-a-constructor.js Pass
 test/built-ins/Object/preventExtensions/symbol-object-contains-symbol-properties-non-strict.js Fail
 test/built-ins/Object/preventExtensions/symbol-object-contains-symbol-properties-strict.js Fail
@@ -7308,7 +7308,7 @@ test/built-ins/Object/seal/abrupt-completion.js Fail
 test/built-ins/Object/seal/configurable-attribute-all-own-properties-set-from-true-to-false-property-are-unaltered.js Fail
 test/built-ins/Object/seal/configurable-attribute-own-accessor-property-set-from-true-to-false-property-are-unaltered.js Fail
 test/built-ins/Object/seal/length.js Pass
-test/built-ins/Object/seal/name.js Fail
+test/built-ins/Object/seal/name.js Pass
 test/built-ins/Object/seal/not-a-constructor.js Pass
 test/built-ins/Object/seal/object-seal-all-own-properties-of-o-are-already-non-configurable.js Fail
 test/built-ins/Object/seal/object-seal-configurable-attribute-of-own-data-property-of-o-is-set-from-true-to-false-and-other-attributes-of-the-property-are-unaltered.js Pass
@@ -7336,7 +7336,7 @@ test/built-ins/Object/seal/object-seal-p-is-own-data-property-that-overrides-an-
 test/built-ins/Object/seal/object-seal-p-is-own-data-property.js Pass
 test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-boolean-object-that-uses-object-s-get-own-property.js Pass
 test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-date-object-that-uses-object-s-get-own-property.js Pass
-test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-function-object-that-uses-object-s-get-own-property.js Fail
+test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-function-object-that-uses-object-s-get-own-property.js Pass
 test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-number-object-that-uses-object-s-get-own-property.js Pass
 test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-reg-exp-object-that-uses-object-s-get-own-property.js Pass
 test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-string-object-which-implements-its-own-get-own-property.js Pass
@@ -7415,7 +7415,7 @@ test/built-ins/Object/symbol_object-returns-fresh-symbol.js Pass
 test/built-ins/Object/values/exception-during-enumeration.js Fail
 test/built-ins/Object/values/exception-not-object-coercible.js Fail
 test/built-ins/Object/values/function-length.js Pass
-test/built-ins/Object/values/function-name.js Fail
+test/built-ins/Object/values/function-name.js Pass
 test/built-ins/Object/values/function-property-descriptor.js Fail
 test/built-ins/Object/values/getter-adding-key.js Fail
 test/built-ins/Object/values/getter-making-future-key-nonenumerable.js Fail
@@ -7507,7 +7507,7 @@ test/built-ins/Promise/all/iter-returns-undefined-reject.js Fail
 test/built-ins/Promise/all/iter-step-err-no-close.js RuntimeError
 test/built-ins/Promise/all/iter-step-err-reject.js Fail
 test/built-ins/Promise/all/length.js Pass
-test/built-ins/Promise/all/name.js Fail
+test/built-ins/Promise/all/name.js Pass
 test/built-ins/Promise/all/new-resolve-function.js Fail
 test/built-ins/Promise/all/not-a-constructor.js Pass
 test/built-ins/Promise/all/prop-desc.js Fail
@@ -7610,7 +7610,7 @@ test/built-ins/Promise/allSettled/iter-returns-undefined-reject.js RuntimeError
 test/built-ins/Promise/allSettled/iter-step-err-no-close.js RuntimeError
 test/built-ins/Promise/allSettled/iter-step-err-reject.js Fail
 test/built-ins/Promise/allSettled/length.js Pass
-test/built-ins/Promise/allSettled/name.js Fail
+test/built-ins/Promise/allSettled/name.js Pass
 test/built-ins/Promise/allSettled/new-reject-function.js Fail
 test/built-ins/Promise/allSettled/new-resolve-function.js Fail
 test/built-ins/Promise/allSettled/not-a-constructor.js Pass
@@ -7736,7 +7736,7 @@ test/built-ins/Promise/any/iter-returns-undefined-reject.js Fail
 test/built-ins/Promise/any/iter-step-err-no-close.js Fail
 test/built-ins/Promise/any/iter-step-err-reject.js Fail
 test/built-ins/Promise/any/length.js Pass
-test/built-ins/Promise/any/name.js Fail
+test/built-ins/Promise/any/name.js Pass
 test/built-ins/Promise/any/new-reject-function.js Fail
 test/built-ins/Promise/any/not-a-constructor.js Pass
 test/built-ins/Promise/any/prop-desc.js Fail
@@ -7983,7 +7983,7 @@ test/built-ins/Promise/race/iter-returns-undefined-reject.js Fail
 test/built-ins/Promise/race/iter-step-err-no-close.js RuntimeError
 test/built-ins/Promise/race/iter-step-err-reject.js Fail
 test/built-ins/Promise/race/length.js Pass
-test/built-ins/Promise/race/name.js Fail
+test/built-ins/Promise/race/name.js Pass
 test/built-ins/Promise/race/not-a-constructor.js Pass
 test/built-ins/Promise/race/prop-desc.js Fail
 test/built-ins/Promise/race/reject-deferred.js RuntimeError
@@ -8038,7 +8038,7 @@ test/built-ins/Promise/reject/ctx-ctor.js Fail
 test/built-ins/Promise/reject/ctx-non-ctor.js Fail
 test/built-ins/Promise/reject/ctx-non-object.js Fail
 test/built-ins/Promise/reject/length.js Pass
-test/built-ins/Promise/reject/name.js Fail
+test/built-ins/Promise/reject/name.js Pass
 test/built-ins/Promise/reject/not-a-constructor.js Pass
 test/built-ins/Promise/reject/prop-desc.js Fail
 test/built-ins/Promise/resolve-function-extensible.js Timeout
@@ -8080,7 +8080,7 @@ test/built-ins/Promise/resolve/ctx-ctor.js Fail
 test/built-ins/Promise/resolve/ctx-non-ctor.js Fail
 test/built-ins/Promise/resolve/ctx-non-object.js Fail
 test/built-ins/Promise/resolve/length.js Pass
-test/built-ins/Promise/resolve/name.js Fail
+test/built-ins/Promise/resolve/name.js Pass
 test/built-ins/Promise/resolve/not-a-constructor.js Pass
 test/built-ins/Promise/resolve/prop-desc.js Fail
 test/built-ins/Promise/resolve/resolve-from-promise-capability.js Fail
@@ -10086,7 +10086,7 @@ test/built-ins/String/fromCharCode/S9.7_A3.1_T2.js Pass
 test/built-ins/String/fromCharCode/S9.7_A3.1_T3.js Pass
 test/built-ins/String/fromCharCode/S9.7_A3.1_T4.js Pass
 test/built-ins/String/fromCharCode/S9.7_A3.2_T1.js Pass
-test/built-ins/String/fromCharCode/name.js Fail
+test/built-ins/String/fromCharCode/name.js Pass
 test/built-ins/String/fromCharCode/not-a-constructor.js Pass
 test/built-ins/String/fromCharCode/touint16-tonumber-throws-bigint.js Pass
 test/built-ins/String/fromCharCode/touint16-tonumber-throws-valueof.js Pass
@@ -10096,7 +10096,7 @@ test/built-ins/String/fromCodePoint/argument-not-coercible.js Pass
 test/built-ins/String/fromCodePoint/arguments-is-empty.js Pass
 test/built-ins/String/fromCodePoint/fromCodePoint.js Fail
 test/built-ins/String/fromCodePoint/length.js Pass
-test/built-ins/String/fromCodePoint/name.js Fail
+test/built-ins/String/fromCodePoint/name.js Pass
 test/built-ins/String/fromCodePoint/not-a-constructor.js Pass
 test/built-ins/String/fromCodePoint/number-is-out-of-range.js Pass
 test/built-ins/String/fromCodePoint/return-string-value.js Pass
@@ -11180,7 +11180,7 @@ test/built-ins/String/prototype/valueOf/not-a-constructor.js Pass
 test/built-ins/String/prototype/valueOf/string-object.js Fail
 test/built-ins/String/prototype/valueOf/string-primitive.js Pass
 test/built-ins/String/raw/length.js Pass
-test/built-ins/String/raw/name.js Fail
+test/built-ins/String/raw/name.js Pass
 test/built-ins/String/raw/nextkey-is-symbol-throws.js Pass
 test/built-ins/String/raw/not-a-constructor.js Pass
 test/built-ins/String/raw/raw.js Fail
