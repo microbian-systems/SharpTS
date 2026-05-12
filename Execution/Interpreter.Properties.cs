@@ -841,30 +841,49 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(value);
         }
 
-        // Prototype-chain fallback
+        // Prototype-chain fallback. Walks via __proto__ (which SharpTSObject
+        // maps from its Prototype property for Object.create-linked objects).
+        // Handles both SharpTSObject and SharpTSInstance prototypes — the
+        // latter is the case for `Object.create(new Point(...))`.
         object? current = simpleObj.HasProperty("__proto__") ? simpleObj.GetProperty("__proto__") : null;
-        for (int i = 0; i < 64 && current is SharpTSObject proto; i++)
+        for (int i = 0; i < 64 && current != null; i++)
         {
-            var protoGetter = proto.GetGetter(memberName);
-            if (protoGetter != null)
+            if (current is SharpTSObject proto)
             {
-                var boundProtoGetter = BindAccessorToObject(protoGetter, simpleObj);
-                if (boundProtoGetter is ISharpTSCallableV2 v2Proto)
-                    return v2Proto.CallV2(this, ReadOnlySpan<RuntimeValue>.Empty);
-                return RuntimeValue.FromBoxed(boundProtoGetter.Call(this, []));
-            }
-            if (proto.HasProperty(memberName))
-            {
-                var value = proto.GetProperty(memberName);
-                if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
+                var protoGetter = proto.GetGetter(memberName);
+                if (protoGetter != null)
                 {
-                    return RuntimeValue.FromObject(arrowFunc.Bind(simpleObj));
+                    var boundProtoGetter = BindAccessorToObject(protoGetter, simpleObj);
+                    if (boundProtoGetter is ISharpTSCallableV2 v2Proto)
+                        return v2Proto.CallV2(this, ReadOnlySpan<RuntimeValue>.Empty);
+                    return RuntimeValue.FromBoxed(boundProtoGetter.Call(this, []));
                 }
-                return RuntimeValue.FromBoxed(value);
+                if (proto.HasProperty(memberName))
+                {
+                    var value = proto.GetProperty(memberName);
+                    if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
+                    {
+                        return RuntimeValue.FromObject(arrowFunc.Bind(simpleObj));
+                    }
+                    return RuntimeValue.FromBoxed(value);
+                }
+                object? next = proto.HasProperty("__proto__") ? proto.GetProperty("__proto__") : null;
+                if (ReferenceEquals(next, proto)) break;
+                current = next;
+                continue;
             }
-            object? next = proto.HasProperty("__proto__") ? proto.GetProperty("__proto__") : null;
-            if (ReferenceEquals(next, proto)) break;
-            current = next;
+            if (current is SharpTSInstance protoInst)
+            {
+                if (protoInst.HasField(memberName))
+                {
+                    return RuntimeValue.FromBoxed(protoInst.GetRawField(memberName));
+                }
+                // Walk past the instance to its class's prototype chain.
+                // For simplicity stop here — class-method dispatch is handled
+                // elsewhere by SharpTSInstance's runtime methods.
+                break;
+            }
+            break;
         }
 
         return RuntimeValue.Undefined;

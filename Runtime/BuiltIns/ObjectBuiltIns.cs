@@ -1324,17 +1324,17 @@ public static class ObjectBuiltIns
         var proto = args[0];
         var propertiesObject = args.Count > 1 ? args[1] : null;
 
-        // Create a new empty object
+        // ECMA-262 §20.1.2.2 step 2: Let obj be OrdinaryObjectCreate(O).
+        // OrdinaryObjectCreate creates a FRESH object whose [[Prototype]] is
+        // O — it does NOT copy O's own properties. Inherited properties are
+        // reached via prototype-chain walk at property-access time.
+        // SharpTSObject.GetProperty/HasProperty map the virtual `__proto__`
+        // slot to the Prototype property so Interpreter.Properties.cs's
+        // chain walker (which queries `__proto__`) reaches the prototype
+        // without needing a real _fields entry that would leak via
+        // Object.keys.
         var result = new SharpTSObject([]);
-
-        // Store the prototype reference
         result.Prototype = proto;
-
-        // If proto is not null, copy its properties (simulating prototype inheritance)
-        if (proto != null)
-        {
-            CopyPropertiesFrom(proto, result);
-        }
 
         // If propertiesObject is provided, define properties using defineProperty semantics
         if (propertiesObject != null)

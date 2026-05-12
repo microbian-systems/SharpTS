@@ -105,6 +105,14 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
         {
             return value;
         }
+        // Map the implicit `__proto__` slot to the Prototype property so the
+        // interpreter's prototype-chain walk (Interpreter.Properties.cs) reaches
+        // inherited own properties without us mirroring Prototype into _fields
+        // (which would leak __proto__ into Object.keys / for-in).
+        if (name == "__proto__" && Prototype != null)
+        {
+            return Prototype;
+        }
         // Non-existent properties return undefined, not null (JavaScript semantics)
         return SharpTSUndefined.Instance;
     }
@@ -254,7 +262,12 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
 
     public bool HasProperty(string name)
     {
-        return _fields.ContainsKey(name) || (_getters?.ContainsKey(name) ?? false);
+        if (_fields.ContainsKey(name)) return true;
+        if (_getters?.ContainsKey(name) ?? false) return true;
+        // Treat __proto__ as a virtual own slot mirroring the Prototype
+        // property — see GetProperty for the matching read.
+        if (name == "__proto__" && Prototype != null) return true;
+        return false;
     }
 
     /// <summary>

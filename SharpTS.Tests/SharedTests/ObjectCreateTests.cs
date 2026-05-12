@@ -309,14 +309,19 @@ public class ObjectCreateTests
         var source = """
             let proto = { a: 1, b: 2 };
             let obj = Object.create(proto);
+            // ECMA-262 §20.1.2.16 Object.keys: own enumerable keys only.
+            // Object.create(proto) returns a FRESH empty object with [[Prototype]]
+            // = proto. proto's keys are reached via the prototype chain at
+            // property-access time — they are NOT own keys of the created obj.
             let keys = Object.keys(obj);
             console.log(keys.length);
-            console.log(keys.includes("a"));
-            console.log(keys.includes("b"));
+            // Inherited access still works through the prototype chain.
+            console.log(obj.a);
+            console.log(obj.b);
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("2\ntrue\ntrue\n", output);
+        Assert.Equal("0\n1\n2\n", output);
     }
 
     // Object.create with undefined second argument (same as not passing it)

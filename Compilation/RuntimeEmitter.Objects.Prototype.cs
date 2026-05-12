@@ -82,56 +82,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);  // proto
         il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
 
-        // Copy properties from prototype if it's a Dictionary (for Object.keys compatibility)
-        var protoDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
-        var protoEnumeratorLocal = il.DeclareLocal(typeof(Dictionary<string, object?>.Enumerator));
-        var protoCurrentLocal = il.DeclareLocal(typeof(KeyValuePair<string, object?>));
-        var skipProtoCopyLabel = il.DefineLabel();
-        var protoCopyLoopLabel = il.DefineLabel();
-        var protoCopyDoneLabel = il.DefineLabel();
-
-        // Check if proto is Dictionary<string, object?>
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Stloc, protoDictLocal);
-        il.Emit(OpCodes.Ldloc, protoDictLocal);
-        il.Emit(OpCodes.Brfalse, skipProtoCopyLabel);
-
-        // Copy properties from prototype to result
-        il.Emit(OpCodes.Ldloc, protoDictLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "GetEnumerator"));
-        il.Emit(OpCodes.Stloc, protoEnumeratorLocal);
-
-        il.MarkLabel(protoCopyLoopLabel);
-        il.Emit(OpCodes.Ldloca, protoEnumeratorLocal);
-        var protoMoveNext = typeof(Dictionary<string, object?>.Enumerator).GetMethod("MoveNext")!;
-        il.Emit(OpCodes.Call, protoMoveNext);
-        il.Emit(OpCodes.Brfalse, protoCopyDoneLabel);
-
-        // Get current KVP
-        il.Emit(OpCodes.Ldloca, protoEnumeratorLocal);
-        var protoCurrent = typeof(Dictionary<string, object?>.Enumerator).GetProperty("Current")!.GetGetMethod()!;
-        il.Emit(OpCodes.Call, protoCurrent);
-        il.Emit(OpCodes.Stloc, protoCurrentLocal);
-
-        // result[key] = value
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldloca, protoCurrentLocal);
-        var protoKeyGetter = typeof(KeyValuePair<string, object?>).GetProperty("Key")!.GetGetMethod()!;
-        il.Emit(OpCodes.Call, protoKeyGetter);
-        il.Emit(OpCodes.Ldloca, protoCurrentLocal);
-        var protoValueGetter = typeof(KeyValuePair<string, object?>).GetProperty("Value")!.GetGetMethod()!;
-        il.Emit(OpCodes.Call, protoValueGetter);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
-
-        il.Emit(OpCodes.Br, protoCopyLoopLabel);
-
-        il.MarkLabel(protoCopyDoneLabel);
-        il.Emit(OpCodes.Ldloca, protoEnumeratorLocal);
-        var protoDispose = typeof(Dictionary<string, object?>.Enumerator).GetMethod("Dispose")!;
-        il.Emit(OpCodes.Call, protoDispose);
-
-        il.MarkLabel(skipProtoCopyLabel);
+        // ECMA-262 §20.1.2.2 step 2: Let obj be OrdinaryObjectCreate(O).
+        // OrdinaryObjectCreate creates a FRESH object whose [[Prototype]] is O.
+        // It does NOT copy O's own properties — inherited properties are
+        // reached via the prototype chain at access time (not by copying).
+        // Pre-fix copied proto's own keys into result, which broke
+        // hasOwnProperty / Object.keys / for-in on the created obj
+        // (inherited keys leaked into "own"). PDS-installed prototype link
+        // (above) handles inheritance correctly without copying.
 
         // If propertiesObject is null, skip property definition
         il.Emit(OpCodes.Ldarg_1);
