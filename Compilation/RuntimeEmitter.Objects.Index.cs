@@ -965,32 +965,64 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
 
-        // Check if index is string
+        // Coerce key to string, then PDS-check before dict.Remove. Bracket-
+        // access delete on RegExp.prototype["dotAll"] (or similar PDS-installed
+        // accessor) needs the same configurability check + PDS+dict cleanup
+        // as `delete obj.name` (DeleteProperty); without this the dict-only
+        // Remove returns false and the PDS entry survives. ECMA-262 §10.1.10.
         il.MarkLabel(notSealedLabel);
+        var didxKeyStrLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, dictStringKeyLabel);
-        // Check if index is double (numeric key - convert to string)
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.Double);
         il.Emit(OpCodes.Brtrue, dictNumericKeyLabel);
-        // Other key types - return true
         il.Emit(OpCodes.Br, trueLabel);
 
         il.MarkLabel(dictStringKeyLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, _types.String);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Stloc, didxKeyStrLocal);
+        var didxAfterKeyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, didxAfterKeyLabel);
 
         il.MarkLabel(dictNumericKeyLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Stloc, didxKeyStrLocal);
+
+        il.MarkLabel(didxAfterKeyLabel);
+        // PDS lookup for configurability + PDS cleanup.
+        var didxDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, didxDescLocal);
+        var didxNoPdsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, didxDescLocal);
+        il.Emit(OpCodes.Brfalse, didxNoPdsLabel);
+        il.Emit(OpCodes.Ldloc, didxDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+        var didxConfigurableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, didxConfigurableLabel);
+        // Non-configurable PDS descriptor — return false without removing.
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(didxConfigurableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
+        il.Emit(OpCodes.Call, runtime.PDSDeleteProperty);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(didxNoPdsLabel);
+
+        // Always also remove from the dict (data entry without PDS).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
         // Return true (default)
@@ -1137,32 +1169,64 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
 
-        // Check if index is string
+        // Coerce key to string, then PDS-check before dict.Remove. Bracket-
+        // access delete on RegExp.prototype["dotAll"] (or similar PDS-installed
+        // accessor) needs the same configurability check + PDS+dict cleanup
+        // as `delete obj.name` (DeleteProperty); without this the dict-only
+        // Remove returns false and the PDS entry survives. ECMA-262 §10.1.10.
         il.MarkLabel(notSealedLabel);
+        var didxKeyStrLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, dictStringKeyLabel);
-        // Check if index is double (numeric key - convert to string)
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.Double);
         il.Emit(OpCodes.Brtrue, dictNumericKeyLabel);
-        // Other key types - return true
         il.Emit(OpCodes.Br, trueLabel);
 
         il.MarkLabel(dictStringKeyLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, _types.String);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Stloc, didxKeyStrLocal);
+        var didxAfterKeyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, didxAfterKeyLabel);
 
         il.MarkLabel(dictNumericKeyLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Stloc, didxKeyStrLocal);
+
+        il.MarkLabel(didxAfterKeyLabel);
+        // PDS lookup for configurability + PDS cleanup.
+        var didxDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, didxDescLocal);
+        var didxNoPdsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, didxDescLocal);
+        il.Emit(OpCodes.Brfalse, didxNoPdsLabel);
+        il.Emit(OpCodes.Ldloc, didxDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+        var didxConfigurableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, didxConfigurableLabel);
+        // Non-configurable PDS descriptor — return false without removing.
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(didxConfigurableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
+        il.Emit(OpCodes.Call, runtime.PDSDeleteProperty);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(didxNoPdsLabel);
+
+        // Always also remove from the dict (data entry without PDS).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
         // Return true (default)
