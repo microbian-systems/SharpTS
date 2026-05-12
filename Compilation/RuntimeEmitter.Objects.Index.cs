@@ -647,15 +647,62 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
 
-        // Symbol key handler: GetSymbolDict(obj)[index] = value
+        // Symbol key handler: ECMA-262 §10.1.9 OrdinarySetWithOwnDescriptor —
+        // honor non-extensibility for new symbol keys, mirror the string-key
+        // path. If frozen/sealed/non-extensible (via CWT) AND the symbol key
+        // isn't already present in the symbol dict, silently no-op (non-
+        // strict).
         il.MarkLabel(symbolKeyLabel);
-        // GetSymbolDict(obj)[index] = value
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item"));
-        il.Emit(OpCodes.Ret);
+        {
+            var symDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+            il.Emit(OpCodes.Stloc, symDictLocal);
+
+            // If already present, allow update (writable check would also
+            // apply per spec but we don't track per-symbol PDS yet).
+            var symDoSetLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, symDictLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "ContainsKey", _types.Object));
+            il.Emit(OpCodes.Brtrue, symDoSetLabel);
+
+            // Check extensibility (frozen/sealed/preventExt). On hit, no-op.
+            var symExtTmp = il.DeclareLocal(_types.Object);
+            var symNotNonExtLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldsfld, runtime.NonExtensibleObjectsField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloca, symExtTmp);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+            il.Emit(OpCodes.Brfalse, symNotNonExtLabel);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(symNotNonExtLabel);
+
+            var symNotFrozenLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloca, symExtTmp);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+            il.Emit(OpCodes.Brfalse, symNotFrozenLabel);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(symNotFrozenLabel);
+
+            var symNotSealedLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldsfld, runtime.SealedObjectsField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloca, symExtTmp);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+            il.Emit(OpCodes.Brfalse, symNotSealedLabel);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(symNotSealedLabel);
+
+            il.MarkLabel(symDoSetLabel);
+            il.Emit(OpCodes.Ldloc, symDictLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item"));
+            il.Emit(OpCodes.Ret);
+        }
 
         // TypedArray handler — skipped when typed arrays aren't emitted.
         if (_features.HasAnyTypedArray)
