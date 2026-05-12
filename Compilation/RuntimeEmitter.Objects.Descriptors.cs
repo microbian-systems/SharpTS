@@ -289,8 +289,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, noGetterLabel);
         var getterStoreLabel = il.DefineLabel();
         var getterIsUndefLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Brfalse, getterIsUndefLabel);
+        // Only JS-undefined (Isinst UndefinedType) is the accepted non-callable
+        // value per ECMA-262 §6.2.5.5 step 7. JS-null falls through to the
+        // callable-instance check (which it fails) and throws.
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, getterIsUndefLabel);
@@ -326,8 +327,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, noSetterLabel);
         var setterStoreLabel = il.DefineLabel();
         var setterIsUndefLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Brfalse, setterIsUndefLabel);
+        // Only JS-undefined accepted as non-callable per §6.2.5.5 step 8.
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, setterIsUndefLabel);
