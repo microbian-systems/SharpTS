@@ -9475,7 +9475,7 @@ test/built-ins/RegExp/prototype/dotAll/name.js Pass
 test/built-ins/RegExp/prototype/dotAll/prop-desc.js Fail
 test/built-ins/RegExp/prototype/dotAll/this-val-invalid-obj.js Pass
 test/built-ins/RegExp/prototype/dotAll/this-val-non-obj.js Pass
-test/built-ins/RegExp/prototype/dotAll/this-val-regexp-prototype.js Fail
+test/built-ins/RegExp/prototype/dotAll/this-val-regexp-prototype.js Pass
 test/built-ins/RegExp/prototype/dotAll/this-val-regexp.js Pass
 test/built-ins/RegExp/prototype/exec/15.10.6.2-9-e-1.js Pass
 test/built-ins/RegExp/prototype/exec/S15.10.6.2_A10.js Pass
@@ -9581,7 +9581,7 @@ test/built-ins/RegExp/prototype/global/length.js Pass
 test/built-ins/RegExp/prototype/global/name.js Pass
 test/built-ins/RegExp/prototype/global/this-val-invalid-obj.js Pass
 test/built-ins/RegExp/prototype/global/this-val-non-obj.js Pass
-test/built-ins/RegExp/prototype/global/this-val-regexp-prototype.js Fail
+test/built-ins/RegExp/prototype/global/this-val-regexp-prototype.js Pass
 test/built-ins/RegExp/prototype/hasIndices/cross-realm.js Skipped:skip-feature:regexp-match-indices
 test/built-ins/RegExp/prototype/hasIndices/length.js Skipped:skip-feature:regexp-match-indices
 test/built-ins/RegExp/prototype/hasIndices/name.js Skipped:skip-feature:regexp-match-indices
@@ -9599,7 +9599,7 @@ test/built-ins/RegExp/prototype/ignoreCase/length.js Pass
 test/built-ins/RegExp/prototype/ignoreCase/name.js Pass
 test/built-ins/RegExp/prototype/ignoreCase/this-val-invalid-obj.js Pass
 test/built-ins/RegExp/prototype/ignoreCase/this-val-non-obj.js Pass
-test/built-ins/RegExp/prototype/ignoreCase/this-val-regexp-prototype.js Fail
+test/built-ins/RegExp/prototype/ignoreCase/this-val-regexp-prototype.js Pass
 test/built-ins/RegExp/prototype/multiline/15.10.7.4-2.js Pass
 test/built-ins/RegExp/prototype/multiline/S15.10.7.4_A10.js Fail
 test/built-ins/RegExp/prototype/multiline/S15.10.7.4_A8.js Pass
@@ -9609,7 +9609,7 @@ test/built-ins/RegExp/prototype/multiline/length.js Pass
 test/built-ins/RegExp/prototype/multiline/name.js Pass
 test/built-ins/RegExp/prototype/multiline/this-val-invalid-obj.js Pass
 test/built-ins/RegExp/prototype/multiline/this-val-non-obj.js Pass
-test/built-ins/RegExp/prototype/multiline/this-val-regexp-prototype.js Fail
+test/built-ins/RegExp/prototype/multiline/this-val-regexp-prototype.js Pass
 test/built-ins/RegExp/prototype/no-regexp-matcher.js Pass
 test/built-ins/RegExp/prototype/source/cross-realm.js RuntimeError
 test/built-ins/RegExp/prototype/source/length.js Pass
@@ -9629,7 +9629,7 @@ test/built-ins/RegExp/prototype/sticky/name.js Pass
 test/built-ins/RegExp/prototype/sticky/prop-desc.js Pass
 test/built-ins/RegExp/prototype/sticky/this-val-invalid-obj.js Pass
 test/built-ins/RegExp/prototype/sticky/this-val-non-obj.js Pass
-test/built-ins/RegExp/prototype/sticky/this-val-regexp-prototype.js Fail
+test/built-ins/RegExp/prototype/sticky/this-val-regexp-prototype.js Pass
 test/built-ins/RegExp/prototype/sticky/this-val-regexp.js Pass
 test/built-ins/RegExp/prototype/test/S15.10.6.3_A10.js Pass
 test/built-ins/RegExp/prototype/test/S15.10.6.3_A11.js Pass
@@ -9691,7 +9691,7 @@ test/built-ins/RegExp/prototype/unicode/name.js Pass
 test/built-ins/RegExp/prototype/unicode/prop-desc.js Pass
 test/built-ins/RegExp/prototype/unicode/this-val-invalid-obj.js Pass
 test/built-ins/RegExp/prototype/unicode/this-val-non-obj.js Pass
-test/built-ins/RegExp/prototype/unicode/this-val-regexp-prototype.js Fail
+test/built-ins/RegExp/prototype/unicode/this-val-regexp-prototype.js Pass
 test/built-ins/RegExp/prototype/unicode/this-val-regexp.js Pass
 test/built-ins/RegExp/prototype/unicodeSets/breaking-change-from-u-to-v-01.js Skipped:negative-test-deferred
 test/built-ins/RegExp/prototype/unicodeSets/breaking-change-from-u-to-v-02.js Skipped:negative-test-deferred
