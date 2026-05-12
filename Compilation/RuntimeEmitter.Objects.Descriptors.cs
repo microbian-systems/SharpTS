@@ -240,6 +240,38 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetSetMethod()!);
 
+        // ECMA-262 §6.2.5.5 ToPropertyDescriptor step 1: If Type(Obj) is not
+        // Object, throw TypeError. Covers null/undefined/primitives in the
+        // descriptor slot. Tests 15.2.3.6-3-{15,16,17,...} verify each.
+        var descTypeOkLabel = il.DefineLabel();
+        var descThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, descThrowLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, descThrowLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, descThrowLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.Int32);
+        il.Emit(OpCodes.Brtrue, descThrowLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, descThrowLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, descThrowLabel);
+        il.Emit(OpCodes.Br, descTypeOkLabel);
+
+        il.MarkLabel(descThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Property description must be an object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(descTypeOkLabel);
+
         // ECMA-262 §6.2.5.5 ToPropertyDescriptor reads each known descriptor
         // field via [[Get]], which walks the prototype chain. For Dictionary
         // descriptors, the existing TryGetValue path mimics own-property
@@ -254,15 +286,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, dictLocal);
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Brtrue, dictReadyLabel);
-
-        // Non-Dict descriptor — build one from runtime.GetProperty reads.
-        // Skip entirely if descriptor is null/undefined (descriptor parsing
-        // is no-op, leaves defaults).
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Brfalse, setDescriptorDoneLabel);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brtrue, setDescriptorDoneLabel);
 
         // synthDict = new Dictionary<string, object?>();
         var synthDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
