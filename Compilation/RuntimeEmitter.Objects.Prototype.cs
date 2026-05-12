@@ -25,6 +25,41 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
+        // ECMA-262 §20.1.2.2 step 1: If Type(O) is neither Object nor Null,
+        // throw TypeError. Object.create(undefined/number/string/...) throws.
+        // null is explicitly permitted (creates a prototype-less object).
+        var protoOkLabel = il.DefineLabel();
+        var protoThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, protoOkLabel);  // null permitted
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Int32);
+        il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        il.Emit(OpCodes.Br, protoOkLabel);
+
+        il.MarkLabel(protoThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Object prototype may only be an Object or null");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(protoOkLabel);
+
         // Locals
         var resultLocal = il.DeclareLocal(_types.DictionaryStringObject);
         var propsLocal = il.DeclareLocal(_types.DictionaryStringObject);
