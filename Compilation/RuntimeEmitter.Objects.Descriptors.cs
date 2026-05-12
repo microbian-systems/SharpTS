@@ -1537,6 +1537,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(dpsPropsOkLabel);
 
+        // If props is a $Object (e.g. `new Constructor()`), unwrap to its
+        // _fields Dict so the iteration path below sees the own keys. This
+        // is the simple case for ECMA-262 §20.1.2.3 step 3 when the source
+        // is a JS object literal exposed as $Object.
+        var notTSObjectPropsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjectPropsLabel);
+        // Replace arg1 by-value with the unwrapped _fields. We can't actually
+        // overwrite Ldarg_1, so push the unwrapped value into a local that
+        // shadows for the iteration. Easiest: load fields here and stash into
+        // a local that the subsequent Isinst sees.
+        // Simpler: also overwrite the local arg by pushing arg1 = fields via
+        // Starg. (Starg modifies the argument slot.)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectFieldsGetter);
+        il.Emit(OpCodes.Starg_S, (byte)1);
+        il.MarkLabel(notTSObjectPropsLabel);
+
         // Cast props to Dictionary<string, object?>
         var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
         var enumeratorLocal = il.DeclareLocal(typeof(Dictionary<string, object?>.Enumerator));
