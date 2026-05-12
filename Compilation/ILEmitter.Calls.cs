@@ -67,6 +67,15 @@ public partial class ILEmitter
                     IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
                     SetStackUnknown();
                     return;
+                case "Object":
+                    // ECMA-262 §20.1.1.1 Object(value): non-new path routes
+                    // through ToObject. Primitives → boxed wrapper; null/
+                    // undefined → empty $Object; everything else → arg unchanged.
+                    EmitExpression(c.Arguments[0]);
+                    EmitBoxIfNeeded(c.Arguments[0]);
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.ToObjectMethod);
+                    SetStackUnknown();
+                    return;
             }
         }
 
