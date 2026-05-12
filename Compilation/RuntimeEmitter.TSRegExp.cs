@@ -2594,6 +2594,29 @@ public partial class RuntimeEmitter
         var skipLabel = il.DefineLabel();
         var throwLabel = il.DefineLabel();
 
+        // $Object object-literal accessor syntax (`{ get foo() {}, ... }`)
+        // installs the getter/setter in the typed `_getters` / `_setters`
+        // dicts, NOT in PDS. ECMA-262 §10.1.5.3 + the spec's Throw=true Set
+        // require TypeError when the property has a getter but no setter.
+        // Mirror that here before the PDS check fires.
+        var notTSObjectLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, rxObjLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjectLabel);
+        il.Emit(OpCodes.Ldloc, rxObjLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Ldstr, propName);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectHasGetter);
+        il.Emit(OpCodes.Brfalse, notTSObjectLabel);
+        // Has getter — throw unless a setter is also present.
+        il.Emit(OpCodes.Ldloc, rxObjLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Ldstr, propName);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectHasSetter);
+        il.Emit(OpCodes.Brtrue, skipLabel);
+        il.Emit(OpCodes.Br, throwLabel);
+        il.MarkLabel(notTSObjectLabel);
+
         il.Emit(OpCodes.Ldloc, rxObjLocal);
         il.Emit(OpCodes.Ldstr, propName);
         il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
