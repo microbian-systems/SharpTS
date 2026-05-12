@@ -637,11 +637,13 @@ public partial class RuntimeEmitter
         EmitObjectDefineProperty(typeBuilder, runtime);
         EmitObjectGetOwnPropertyDescriptor(typeBuilder, runtime);
         EmitObjectDefineProperties(typeBuilder, runtime);
+        // GetOwnPropertySymbols must precede gOPDs (gOPDs now also iterates
+        // symbol keys to populate symbol-keyed descriptors in the result).
+        EmitGetOwnPropertySymbols(typeBuilder, runtime);
         EmitObjectGetOwnPropertyDescriptors(typeBuilder, runtime);
         EmitObjectCreate(typeBuilder, runtime, prototypeStoreField);
         EmitObjectPreventExtensions(typeBuilder, runtime, nonExtensibleObjectsField, frozenObjectsField, sealedObjectsField);
         EmitObjectIsExtensible(typeBuilder, runtime, nonExtensibleObjectsField, frozenObjectsField, sealedObjectsField);
-        EmitGetOwnPropertySymbols(typeBuilder, runtime);
         EmitObjectGetPrototypeOf(typeBuilder, runtime, prototypeStoreField);
         EmitObjectSetPrototypeOf(typeBuilder, runtime, prototypeStoreField, nonExtensibleObjectsField);
         EmitObjectGroupBy(typeBuilder, runtime);
