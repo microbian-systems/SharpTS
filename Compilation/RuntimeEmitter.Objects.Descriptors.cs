@@ -383,6 +383,20 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(skipClassifyLabel);
 
+        // ECMA-262 §6.2.5.5 ToPropertyDescriptor step 10: an attempt to
+        // combine accessor (get/set) and data (value/writable) attributes in
+        // a single descriptor throws TypeError. test262 15.2.3.6-3-1 et al.
+        var noMixLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, newIsAccessorOuter);
+        il.Emit(OpCodes.Brfalse, noMixLabel);
+        il.Emit(OpCodes.Ldloc, newIsDataOuter);
+        il.Emit(OpCodes.Brfalse, noMixLabel);
+        il.Emit(OpCodes.Ldstr, "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(noMixLabel);
+
         var validationEndLabel = il.DefineLabel();
         // No existing descriptor → skip validation (new property add).
         il.Emit(OpCodes.Ldloc, existingDescLocal);
