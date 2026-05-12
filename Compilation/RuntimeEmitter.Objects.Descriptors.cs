@@ -1086,7 +1086,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
         il.Emit(OpCodes.Brfalse, returnNullLabel);
 
-        // Build data descriptor from the class field value
+        // Build data descriptor from the class field value. Same frozen/sealed
+        // reflection as the dict path so Object.freeze on a class instance
+        // surfaces writable=false / configurable=false.
+        var hfIsFrozenLocal = il.DeclareLocal(_types.Boolean);
+        var hfIsSealedLocal = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsFrozen);
+        il.Emit(OpCodes.Stloc, hfIsFrozenLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsSealed);
+        il.Emit(OpCodes.Stloc, hfIsSealedLocal);
+
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultDictLocal);
 
@@ -1102,24 +1113,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
-        // Set writable = true
+        // writable = !frozen.
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "writable");
-        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, hfIsFrozenLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
-        // Set enumerable = true
+        // enumerable = true.
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "enumerable");
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
-        // Set configurable = true
+        // configurable = !(frozen || sealed).
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "configurable");
-        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, hfIsFrozenLocal);
+        il.Emit(OpCodes.Ldloc, hfIsSealedLocal);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
