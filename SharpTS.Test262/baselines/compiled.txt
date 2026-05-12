@@ -4083,12 +4083,12 @@ test/built-ins/Object/assign/Source-Null-Undefined.js Pass
 test/built-ins/Object/assign/Source-Number-Boolen-Symbol.js Pass
 test/built-ins/Object/assign/Source-String.js Fail
 test/built-ins/Object/assign/Target-Boolean.js Fail
-test/built-ins/Object/assign/Target-Null.js Fail
+test/built-ins/Object/assign/Target-Null.js Pass
 test/built-ins/Object/assign/Target-Number.js Fail
 test/built-ins/Object/assign/Target-Object.js Pass
 test/built-ins/Object/assign/Target-String.js Fail
 test/built-ins/Object/assign/Target-Symbol.js Fail
-test/built-ins/Object/assign/Target-Undefined.js Fail
+test/built-ins/Object/assign/Target-Undefined.js Pass
 test/built-ins/Object/assign/assign-descriptor.js Fail
 test/built-ins/Object/assign/assign-length.js Fail
 test/built-ins/Object/assign/assignment-to-readonly-property-of-target-must-throw-a-typeerror-exception.js Fail
