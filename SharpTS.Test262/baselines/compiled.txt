@@ -9414,7 +9414,7 @@ test/built-ins/RegExp/prototype/Symbol.search/match-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/name.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/not-a-constructor.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/prop-desc.js RuntimeError
-test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-init-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-init-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-init-samevalue.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-init.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-restore-err.js Pass
