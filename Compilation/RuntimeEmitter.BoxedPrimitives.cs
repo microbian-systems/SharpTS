@@ -209,6 +209,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notNumLabel);
 
+        // Symbol → NewBoxedPrimitive("Symbol", arg). ECMA-262 §7.1.18 step 4:
+        // ToObject on a Symbol returns a fresh wrapper whose [[SymbolData]]
+        // holds the original primitive. test262's `Object(sym) !== sym`
+        // identity check verifies the wrapper is distinct.
+        if (runtime.TSSymbolType != null)
+        {
+            var notSymLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+            il.Emit(OpCodes.Brfalse, notSymLabel);
+            il.Emit(OpCodes.Ldstr, "Symbol");
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.NewBoxedPrimitiveMethod);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notSymLabel);
+        }
+
         // Otherwise (string, dict, array, $Object, etc.) — return as-is.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
