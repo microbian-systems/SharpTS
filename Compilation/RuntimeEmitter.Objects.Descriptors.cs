@@ -1003,7 +1003,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
         il.Emit(OpCodes.Brfalse, returnNullLabel);
 
-        // Property exists on dict - create default data descriptor
+        // Property exists on dict - create default data descriptor.
+        // ECMA-262 §10.1.5.1 OrdinaryGetOwnProperty + Object.freeze/seal:
+        // frozen → writable=false + configurable=false; sealed → writable
+        // preserves but configurable=false. We don't store per-property
+        // descriptors when the user wrote `obj.foo = X` directly, so we
+        // synthesize one — and reflect the object's frozen/sealed state
+        // here so verifyProperty sees the spec-mandated immutability.
+        var dictIsFrozenLocal = il.DeclareLocal(_types.Boolean);
+        var dictIsSealedLocal = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsFrozen);
+        il.Emit(OpCodes.Stloc, dictIsFrozenLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsSealed);
+        il.Emit(OpCodes.Stloc, dictIsSealedLocal);
+
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultDictLocal);
 
@@ -1020,24 +1035,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
-        // Set writable = true
+        // writable = !frozen (sealed preserves writable=true for the synth path).
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "writable");
-        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, dictIsFrozenLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);  // !frozen
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
-        // Set enumerable = true
+        // enumerable = true (freeze/seal preserve enumerability).
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "enumerable");
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
-        // Set configurable = true
+        // configurable = !(frozen || sealed).
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "configurable");
-        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, dictIsFrozenLocal);
+        il.Emit(OpCodes.Ldloc, dictIsSealedLocal);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);  // !(frozen || sealed)
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
