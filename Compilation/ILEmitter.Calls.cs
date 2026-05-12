@@ -423,6 +423,39 @@ public partial class ILEmitter
         EmitTag("[object Function]");
         IL.MarkLabel(notTSFunctionLabel);
 
+        // $Date — brand check via [[DateValue]] slot (ECMA-262 §21.4.4.42).
+        if (runtime.TSDateType != null)
+        {
+            var notTSDateLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+            IL.Emit(OpCodes.Isinst, runtime.TSDateType);
+            IL.Emit(OpCodes.Brfalse, notTSDateLabel);
+            EmitTag("[object Date]");
+            IL.MarkLabel(notTSDateLabel);
+        }
+
+        // $RegExp — brand check via [[RegExpMatcher]] slot (§22.2.6.13).
+        if (runtime.TSRegExpType != null)
+        {
+            var notTSRegExpLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+            IL.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            IL.Emit(OpCodes.Brfalse, notTSRegExpLabel);
+            EmitTag("[object RegExp]");
+            IL.MarkLabel(notTSRegExpLabel);
+        }
+
+        // $Error — brand check via [[ErrorData]] slot (§20.5.3.4).
+        if (runtime.TSErrorType != null)
+        {
+            var notTSErrorLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+            IL.Emit(OpCodes.Isinst, runtime.TSErrorType);
+            IL.Emit(OpCodes.Brfalse, notTSErrorLabel);
+            EmitTag("[object Error]");
+            IL.MarkLabel(notTSErrorLabel);
+        }
+
         // Default
         IL.Emit(OpCodes.Ldstr, "[object Object]");
 
