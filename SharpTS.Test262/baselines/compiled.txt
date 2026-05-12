@@ -7334,12 +7334,12 @@ test/built-ins/Object/seal/object-seal-p-is-own-accessor-property.js Fail
 test/built-ins/Object/seal/object-seal-p-is-own-data-property-that-overrides-an-inherited-accessor-property.js Fail
 test/built-ins/Object/seal/object-seal-p-is-own-data-property-that-overrides-an-inherited-data-property.js Fail
 test/built-ins/Object/seal/object-seal-p-is-own-data-property.js Pass
-test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-boolean-object-that-uses-object-s-get-own-property.js Fail
+test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-boolean-object-that-uses-object-s-get-own-property.js Pass
 test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-date-object-that-uses-object-s-get-own-property.js Fail
 test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-function-object-that-uses-object-s-get-own-property.js Fail
-test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-number-object-that-uses-object-s-get-own-property.js Fail
+test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-number-object-that-uses-object-s-get-own-property.js Pass
 test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-reg-exp-object-that-uses-object-s-get-own-property.js Fail
-test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-string-object-which-implements-its-own-get-own-property.js Fail
+test/built-ins/Object/seal/object-seal-p-is-own-property-of-a-string-object-which-implements-its-own-get-own-property.js Pass
 test/built-ins/Object/seal/object-seal-p-is-own-property-of-an-arguments-object-which-implements-its-own-get-own-property.js Fail
 test/built-ins/Object/seal/object-seal-p-is-own-property-of-an-array-object-that-uses-object-s-get-own-property.js Fail
 test/built-ins/Object/seal/object-seal-p-is-own-property-of-an-error-object-that-uses-object-s-get-own-property.js Fail
