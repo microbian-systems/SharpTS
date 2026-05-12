@@ -290,9 +290,14 @@ public partial class RuntimeEmitter
         var copyLoopEnd = il.DefineLabel();
         var returnLabel = il.DefineLabel();
 
-        // Check if target is null
+        // ECMA-262 §20.1.2.1 Object.assign step 1: Let to be ? ToObject(target).
+        // ToObject(null/undefined) throws TypeError. Target-Null.js / Target-
+        // Undefined.js in test262 verify.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, targetNullLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, targetNullLabel);
 
         // Check if target is Dictionary<string, object>
         il.Emit(OpCodes.Ldarg_0);
@@ -375,10 +380,11 @@ public partial class RuntimeEmitter
         il.MarkLabel(notDictLabel);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // Target is null - throw exception
+        // Target is null/undefined - throw TypeError (ECMA-262 §20.1.2.1 step 1).
         il.MarkLabel(targetNullLabel);
-        il.Emit(OpCodes.Ldstr, "Runtime Error: Object.assign() requires a target object");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         // Return target
