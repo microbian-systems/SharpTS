@@ -327,6 +327,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, sourceLocal);
         il.Emit(OpCodes.Brfalse, nextSource);
 
+        // If source is a $Object (e.g. `new Constructor()` instance), unwrap
+        // to its _fields Dict so the iteration sees its own keys. Aligns with
+        // the same unwrap in ObjectDefineProperties.
+        var notTSObjectSrcLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, sourceLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjectSrcLabel);
+        il.Emit(OpCodes.Ldloc, sourceLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectFieldsGetter);
+        il.Emit(OpCodes.Stloc, sourceLocal);
+        il.MarkLabel(notTSObjectSrcLabel);
+
         // Check if source is Dictionary<string, object>
         il.Emit(OpCodes.Ldloc, sourceLocal);
         il.Emit(OpCodes.Isinst, dictType);
@@ -339,7 +352,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, dictType.GetMethod("GetEnumerator")!);
         il.Emit(OpCodes.Stloc, enumeratorLocal);
 
-        // Copy loop
+        // Copy loop. Per ECMA-262 §20.1.2.1, only enumerable own keys propagate.
+        // Filter via PDS-descriptor check (non-enumerable → skip). Also skip
+        // `__`-prefixed internal markers from boxed-primitive wrappers.
+        var kpKey = kvpType.GetProperty("Key")!.GetGetMethod()!;
+        var kpValue = kvpType.GetProperty("Value")!.GetGetMethod()!;
         il.MarkLabel(copyLoopStart);
         il.Emit(OpCodes.Ldloca, enumeratorLocal);
         il.Emit(OpCodes.Call, typeof(Dictionary<string, object?>.Enumerator).GetMethod("MoveNext")!);
@@ -350,12 +367,40 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, typeof(Dictionary<string, object?>.Enumerator).GetProperty("Current")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, kvpLocal);
 
+        // Skip __-prefixed internal markers.
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kpKey);
+        il.Emit(OpCodes.Ldstr, "__");
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("StartsWith", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, copyLoopStart);
+
+        // Skip if PDS descriptor present with Enumerable=false. Use the
+        // ORIGINAL source object (sourceLocal) for PDS lookup, since the
+        // descriptor was installed against the wrapper, not against the
+        // unwrapped _fields dict.
+        var copyEnumOkLabel = il.DefineLabel();
+        var copyKeyDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, sourceIndexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Item")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kpKey);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, copyKeyDescLocal);
+        il.Emit(OpCodes.Ldloc, copyKeyDescLocal);
+        il.Emit(OpCodes.Brfalse, copyEnumOkLabel);
+        il.Emit(OpCodes.Ldloc, copyKeyDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, copyEnumOkLabel);
+        il.Emit(OpCodes.Br, copyLoopStart);
+        il.MarkLabel(copyEnumOkLabel);
+
         // target[kvp.Key] = kvp.Value
         il.Emit(OpCodes.Ldloc, targetDictLocal);
         il.Emit(OpCodes.Ldloca, kvpLocal);
-        il.Emit(OpCodes.Call, kvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, kpKey);
         il.Emit(OpCodes.Ldloca, kvpLocal);
-        il.Emit(OpCodes.Call, kvpType.GetProperty("Value")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, kpValue);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
 
         il.Emit(OpCodes.Br, copyLoopStart);
