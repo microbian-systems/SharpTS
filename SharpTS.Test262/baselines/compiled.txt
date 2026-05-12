@@ -7050,7 +7050,7 @@ test/built-ins/Object/preventExtensions/15.2.3.10-3-9.js Pass
 test/built-ins/Object/preventExtensions/abrupt-completion.js Fail
 test/built-ins/Object/preventExtensions/name.js Pass
 test/built-ins/Object/preventExtensions/not-a-constructor.js Pass
-test/built-ins/Object/preventExtensions/symbol-object-contains-symbol-properties-non-strict.js Fail
+test/built-ins/Object/preventExtensions/symbol-object-contains-symbol-properties-non-strict.js Pass
 test/built-ins/Object/preventExtensions/symbol-object-contains-symbol-properties-strict.js Fail
 test/built-ins/Object/preventExtensions/throws-when-false.js Fail
 test/built-ins/Object/prop-desc.js RuntimeError
