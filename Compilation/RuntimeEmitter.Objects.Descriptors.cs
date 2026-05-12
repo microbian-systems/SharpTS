@@ -1600,6 +1600,17 @@ public partial class RuntimeEmitter
         var keyGetter = typeof(KeyValuePair<string, object?>).GetProperty("Key")!.GetGetMethod()!;
         var valueGetter = typeof(KeyValuePair<string, object?>).GetProperty("Value")!.GetGetMethod()!;
 
+        // Skip internal marker keys (`__primitiveType` / `__primitiveValue` etc.)
+        // — these are CLR-level slots on boxed-primitive wrappers, NOT JS-visible
+        // own properties. Per ECMA-262 wrappers don't expose them via
+        // OwnPropertyKeys. Cheap StartsWith("__") gate matches the
+        // get_Length convention used elsewhere.
+        il.Emit(OpCodes.Ldloca, currentLocal);
+        il.Emit(OpCodes.Call, keyGetter);
+        il.Emit(OpCodes.Ldstr, "__");
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("StartsWith", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, loopStartLabel);
+
         // Skip if PDS descriptor exists with Enumerable=false.
         var enumOkLabel = il.DefineLabel();
         var keyDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
