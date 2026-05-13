@@ -706,17 +706,14 @@ public partial class RuntimeEmitter
         // New specifies value != existing.value → throw (data with writable=false).
         // Skip the equality check when existing.value is null: the prior PDS
         // descriptor was installed without an explicit value (\`defineProperty\`
-        // with {writable:false} alone, before any value was captured). The
-        // actual current value lives on the underlying object (array length
-        // / dict entry), not in the PDS slot — comparing a non-null new value
-        // against a null existing slot would falsely report a change.
-        // Also skip when existing.value is the back-filled \$Undefined.Instance
-        // sentinel: it was synthesized from a generic descriptor and doesn't
-        // represent an explicit JS undefined the user set. Same array-length-
-        // redefine pattern surfaces \$Undefined here once CompletePropertyDescriptor
-        // back-fills. Trade-off: \`defineProperty(obj,'x',{value:undefined,
-        // writable:false})\` followed by \`defineProperty(obj,'x',{value:0})\`
-        // no longer throws — corner case the +138 test262 gain outweighs.
+        // with {writable:false} alone, before any value was captured).
+        // For arrays, \`length\` is special — its value lives on the List<object?>
+        // itself, not the PDS slot. ECMA-262 §10.4.2.4 ArraySetLength compares
+        // newLen to oldLen (the current list length), so override
+        // existingValueForCompare with list.Count when target is List + "length".
+        // Without this override, the back-filled \$Undefined would either
+        // (a) skip the check (was previous fix — regressed 4-162 etc.) or
+        // (b) compare against undefined and falsely throw on same-length redefine.
         var valueKeyLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ldstr, "value");
@@ -727,11 +724,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, existingDescLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, existingValueForCompare);
+
+        // Array \`length\` special case: read list.Count for compare.
+        var afterArrayLenOverride = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        var arrayLenLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Stloc, arrayLenLocal);
+        il.Emit(OpCodes.Ldloc, arrayLenLocal);
+        il.Emit(OpCodes.Brfalse, afterArrayLenOverride);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, afterArrayLenOverride);
+        // existingValueForCompare = (double)list.Count
+        il.Emit(OpCodes.Ldloc, arrayLenLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Stloc, existingValueForCompare);
+        il.MarkLabel(afterArrayLenOverride);
+
         il.Emit(OpCodes.Ldloc, existingValueForCompare);
         il.Emit(OpCodes.Brfalse, skipWritableCheck);  // null existing → skip
-        il.Emit(OpCodes.Ldloc, existingValueForCompare);
-        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
-        il.Emit(OpCodes.Beq, skipWritableCheck);  // \$Undefined existing → skip
         il.Emit(OpCodes.Ldloc, valueKeyLocal);
         il.Emit(OpCodes.Ldloc, existingValueForCompare);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
