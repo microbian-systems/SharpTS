@@ -4023,7 +4023,7 @@ test/built-ins/Number/string-octal-literal-invald.js Pass
 test/built-ins/Number/string-octal-literal.js Pass
 test/built-ins/Object/S15.2.1.1_A1_T1.js Pass
 test/built-ins/Object/S15.2.1.1_A1_T2.js Pass
-test/built-ins/Object/S15.2.1.1_A1_T3.js Fail
+test/built-ins/Object/S15.2.1.1_A1_T3.js Pass
 test/built-ins/Object/S15.2.1.1_A1_T4.js Pass
 test/built-ins/Object/S15.2.1.1_A1_T5.js Pass
 test/built-ins/Object/S15.2.1.1_A2_T1.js Pass
@@ -4040,9 +4040,9 @@ test/built-ins/Object/S15.2.1.1_A2_T6.js Pass
 test/built-ins/Object/S15.2.1.1_A2_T7.js Pass
 test/built-ins/Object/S15.2.1.1_A2_T8.js Pass
 test/built-ins/Object/S15.2.1.1_A2_T9.js Pass
-test/built-ins/Object/S15.2.1.1_A3_T1.js Fail
-test/built-ins/Object/S15.2.1.1_A3_T2.js Fail
-test/built-ins/Object/S15.2.1.1_A3_T3.js Fail
+test/built-ins/Object/S15.2.1.1_A3_T1.js Pass
+test/built-ins/Object/S15.2.1.1_A3_T2.js Pass
+test/built-ins/Object/S15.2.1.1_A3_T3.js Pass
 test/built-ins/Object/S15.2.2.1_A1_T1.js Fail
 test/built-ins/Object/S15.2.2.1_A1_T2.js Fail
 test/built-ins/Object/S15.2.2.1_A1_T3.js Fail
@@ -6809,7 +6809,7 @@ test/built-ins/Object/is/not-a-constructor.js Fail
 test/built-ins/Object/is/not-same-value-x-y-boolean.js Pass
 test/built-ins/Object/is/not-same-value-x-y-null.js Pass
 test/built-ins/Object/is/not-same-value-x-y-number.js Pass
-test/built-ins/Object/is/not-same-value-x-y-object.js Fail
+test/built-ins/Object/is/not-same-value-x-y-object.js Pass
 test/built-ins/Object/is/not-same-value-x-y-string.js Pass
 test/built-ins/Object/is/not-same-value-x-y-symbol.js Pass
 test/built-ins/Object/is/not-same-value-x-y-type.js Pass
