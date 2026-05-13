@@ -59,12 +59,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
         il.Emit(OpCodes.Brtrue, falseLabel);
-        // null receiverProto → false (per spec ToObject(this) but we treat null as false)
+        // Step 2 reached (V is Object): ToObject(this) on null/undefined throws.
+        // Pre-fix returned false silently, failing null-this-and-object-arg-
+        // throws.js. ECMA-262 §7.1.18 mandates the TypeError.
+        var receiverNullThrowLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Brfalse, receiverNullThrowLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.Emit(OpCodes.Brtrue, receiverNullThrowLabel);
+        var afterReceiverNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, afterReceiverNullLabel);
+        il.MarkLabel(receiverNullThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(afterReceiverNullLabel);
 
         // Walk: current = PDSGetPrototype(target);
         // while (current != null) {
