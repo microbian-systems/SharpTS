@@ -509,20 +509,27 @@ public partial class RuntimeEmitter
         // defaulted unspecified fields to false, regressing the
         // writable/enumerable/configurable bits for redefined plain-set
         // properties (test262 15.2.3.6-4-100..).
+        // Restrict synth to plain Dictionary or $TSObject receivers only.
+        // Array.length, Function.name/length, Type.prototype etc. have spec-
+        // specific descriptors (often configurable:false) that this synth
+        // would falsify, mis-permitting forbidden redefines.
         var skipSynthExistingLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, existingDescLocal);
         il.Emit(OpCodes.Brtrue, skipSynthExistingLabel);
-        // Existence check via HasOwnPropertyHelper — handles every receiver
-        // type (Dict, $Object, $TSFunction, List, Type, ...). For an existing
-        // key we synthesize the default-true descriptor; for a new key we
-        // leave existingDescLocal null so the spec defaults-to-false path
-        // (set on descriptor ctor at the top) wins.
+        var receiverIsSynthableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, receiverIsSynthableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, skipSynthExistingLabel);
+        il.MarkLabel(receiverIsSynthableLabel);
+        // Existence check via HasOwnPropertyHelper.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, propNameLocal);
         il.Emit(OpCodes.Call, runtime.HasOwnPropertyHelperMethod);
         il.Emit(OpCodes.Brfalse, skipSynthExistingLabel);
-        // Synthesize: new $CompiledPropertyDescriptor() with defaults
-        // (W/E/C=true from ctor), Value = GetProperty(obj, key).
+        // Synthesize: ctor sets W/E/C=true; Value = GetProperty(obj, key).
         il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldarg_0);
