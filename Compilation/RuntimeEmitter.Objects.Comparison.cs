@@ -521,6 +521,96 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, enumeratorLocal);
         il.Emit(OpCodes.Call, typeof(Dictionary<string, object?>.Enumerator).GetMethod("Dispose")!);
 
+        // ECMA-262 §20.1.2.1 step 5.c: OwnPropertyKeys includes BOTH string
+        // keys (handled above) AND symbol keys. Iterate the source's
+        // per-object symbol dict so \`Object.assign(t, {[sym]: v})\` propagates
+        // sym → t's symbol dict. Use ORIGINAL arg1[sourceIndex] (not sourceLocal
+        // which may be the unwrapped \$Object._fields) for the symbol-dict
+        // identity. Frozen target still throws here per the spec.
+        var symbolSourceLocal = il.DeclareLocal(_types.Object);
+        var symbolDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, sourceIndexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Item")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, symbolSourceLocal);
+        var skipSymbolIterationLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, symbolSourceLocal);
+        il.Emit(OpCodes.Brfalse, skipSymbolIterationLabel);
+        il.Emit(OpCodes.Ldloc, symbolSourceLocal);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Stloc, symbolDictLocal);
+        il.Emit(OpCodes.Ldloc, symbolDictLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.DictionaryObjectObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, skipSymbolIterationLabel);
+
+        // Iterate (key, value) pairs of symbol dict. Reuse a fresh enumerator
+        // to avoid colliding with the (now-disposed) string-key one.
+        var symKvpType = typeof(KeyValuePair<object, object?>);
+        var symEnumType = typeof(Dictionary<object, object?>.Enumerator);
+        var symEnumLocal = il.DeclareLocal(symEnumType);
+        var symKvpLocal = il.DeclareLocal(symKvpType);
+        il.Emit(OpCodes.Ldloc, symbolDictLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.DictionaryObjectObject, "GetEnumerator"));
+        il.Emit(OpCodes.Stloc, symEnumLocal);
+
+        var targetSymDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Stloc, targetSymDictLocal);
+
+        var symLoopStart = il.DefineLabel();
+        var symLoopEnd = il.DefineLabel();
+        var symKpKey = symKvpType.GetProperty("Key")!.GetGetMethod()!;
+        var symKpValue = symKvpType.GetProperty("Value")!.GetGetMethod()!;
+        il.MarkLabel(symLoopStart);
+        il.Emit(OpCodes.Ldloca, symEnumLocal);
+        il.Emit(OpCodes.Call, symEnumType.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, symLoopEnd);
+        il.Emit(OpCodes.Ldloca, symEnumLocal);
+        il.Emit(OpCodes.Call, symEnumType.GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, symKvpLocal);
+
+        // Frozen target → throw (same rationale as the string-key path).
+        var skipSymFrozenThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsFrozen);
+        il.Emit(OpCodes.Brfalse, skipSymFrozenThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot assign to read only property in frozen object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(skipSymFrozenThrowLabel);
+
+        // Sealed target + new key → throw.
+        var skipSymSealedCheckLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsSealed);
+        il.Emit(OpCodes.Brfalse, skipSymSealedCheckLabel);
+        il.Emit(OpCodes.Ldloc, targetSymDictLocal);
+        il.Emit(OpCodes.Ldloca, symKvpLocal);
+        il.Emit(OpCodes.Call, symKpKey);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "ContainsKey", _types.Object));
+        il.Emit(OpCodes.Brtrue, skipSymSealedCheckLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot add property to sealed object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(skipSymSealedCheckLabel);
+
+        // targetSymDict[symKey] = symValue
+        il.Emit(OpCodes.Ldloc, targetSymDictLocal);
+        il.Emit(OpCodes.Ldloca, symKvpLocal);
+        il.Emit(OpCodes.Call, symKpKey);
+        il.Emit(OpCodes.Ldloca, symKvpLocal);
+        il.Emit(OpCodes.Call, symKpValue);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item", _types.Object, _types.Object));
+        il.Emit(OpCodes.Br, symLoopStart);
+
+        il.MarkLabel(symLoopEnd);
+        il.Emit(OpCodes.Ldloca, symEnumLocal);
+        il.Emit(OpCodes.Call, symEnumType.GetMethod("Dispose")!);
+        il.MarkLabel(skipSymbolIterationLabel);
+
         il.MarkLabel(nextSource);
         // Increment sourceIndex
         il.Emit(OpCodes.Ldloc, sourceIndexLocal);
