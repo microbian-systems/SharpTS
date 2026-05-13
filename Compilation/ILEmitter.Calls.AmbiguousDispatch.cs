@@ -92,7 +92,8 @@ public partial class ILEmitter
                 }
                 else
                 {
-                    IL.Emit(OpCodes.Ldstr, "");
+                    // ECMA-262 §22.1.3.8: ToString(undefined) = "undefined".
+                    IL.Emit(OpCodes.Ldstr, "undefined");
                 }
                 // Optional 2nd arg: fromIndex. Use the from-variant when present; otherwise
                 // the single-arg helper. Previously ignored any second arg entirely, which
@@ -121,7 +122,9 @@ public partial class ILEmitter
                 }
                 else
                 {
-                    IL.Emit(OpCodes.Ldstr, "");
+                    // ECMA-262 §22.1.3.{8,9}: ToString(undefined) = "undefined".
+                    // \`"".lastIndexOf()\` should look for "undefined" not "".
+                    IL.Emit(OpCodes.Ldstr, "undefined");
                 }
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.StringLastIndexOf);
                 IL.Emit(OpCodes.Box, _ctx.Types.Double);

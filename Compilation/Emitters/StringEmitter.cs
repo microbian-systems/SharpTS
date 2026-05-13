@@ -260,7 +260,8 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         }
         else
         {
-            il.Emit(OpCodes.Ldstr, "");
+            // ECMA-262 §22.1.3.8: ToString(undefined) = "undefined".
+            il.Emit(OpCodes.Ldstr, "undefined");
         }
 
         // JS: str.indexOf(search, fromIndex). With fromIndex, use the from-variant.
@@ -668,7 +669,8 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         }
         else
         {
-            il.Emit(OpCodes.Ldstr, "");
+            // ECMA-262 §22.1.3.9: ToString(undefined) = "undefined".
+            il.Emit(OpCodes.Ldstr, "undefined");
         }
 
         // ECMA-262 22.1.3.10 step 5: ToIntegerOrInfinity(position) is performed

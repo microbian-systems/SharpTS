@@ -274,7 +274,8 @@ public partial class ILEmitter
                 }
                 else
                 {
-                    IL.Emit(OpCodes.Ldstr, "");
+                    // ECMA-262 §22.1.3.9: ToString(undefined) = "undefined".
+                    IL.Emit(OpCodes.Ldstr, "undefined");
                 }
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.StringLastIndexOf);
                 IL.Emit(OpCodes.Box, _ctx.Types.Double);
