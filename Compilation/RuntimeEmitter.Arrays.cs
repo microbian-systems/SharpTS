@@ -523,6 +523,17 @@ public partial class RuntimeEmitter
         // Object.defineProperty with enumerable:false — that key must NOT
         // appear in Object.keys.
         var skipKeyLabel = il.DefineLabel();
+        // Filter internal boxed-primitive markers (__primitiveType / __primitiveValue).
+        // ECMA-262 String/Number/Boolean wrappers don't expose [[PrimitiveData]]
+        // via [[OwnPropertyKeys]]; the markers are our internal storage.
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveType");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, skipKeyLabel);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, skipKeyLabel);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Callvirt, listType.GetMethod("Contains")!);
@@ -552,6 +563,18 @@ public partial class RuntimeEmitter
         il.MarkLabel(fieldsKeysLoopEnd);
         il.Emit(OpCodes.Ldloca, keysEnumeratorLocal2);
         il.Emit(OpCodes.Call, keysEnumeratorType.GetMethod("Dispose")!);
+
+        // PDS extra keys (accessor-only own properties not in _fields).
+        // Same shape as the Dict path above. Pass fieldsDictLocal so the
+        // helper skips keys already iterated.
+        var pdsKeysListIH = il.DeclareLocal(listType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, fieldsDictLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetEnumerableExtraKeys);
+        il.Emit(OpCodes.Stloc, pdsKeysListIH);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, pdsKeysListIH);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("AddRange", [_types.IEnumerableOfObject])!);
 
         il.MarkLabel(returnResultLabel);
         il.Emit(OpCodes.Ldloc, resultLocal);

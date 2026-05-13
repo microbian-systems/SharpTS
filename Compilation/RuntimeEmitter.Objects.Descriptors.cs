@@ -1782,6 +1782,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(dpsPropsOkLabel);
 
+        // Save the ORIGINAL props identity for PDS lookups before the $TSObject
+        // unwrap below. PDS entries (accessor descriptors) are keyed against
+        // the $TSObject, not its inner _fields dict, so the unwrapped arg1 is
+        // useless for PDS lookups.
+        var origPropsLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stloc, origPropsLocal);
+
         // If props is a $Object (e.g. `new Constructor()`), unwrap to its
         // _fields Dict so the iteration path below sees the own keys. This
         // is the simple case for ECMA-262 §20.1.2.3 step 3 when the source
@@ -1885,6 +1893,48 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopStartLabel);
 
         il.MarkLabel(loopEndLabel);
+
+        // PDS-extras loop: iterate accessor-only own keys not in _fields/dict.
+        // For each, Get(props, key) fires the getter and yields the descriptor
+        // object to pass to ObjectDefineProperty. Per ECMA-262 §20.1.2.3 step 3,
+        // descriptor objects are obtained via Get(O, key) — accessor-only keys
+        // therefore route through the getter rather than reading dict directly.
+        var pdsExtraKeys = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Ldloc, origPropsLocal);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetEnumerableExtraKeys);
+        il.Emit(OpCodes.Stloc, pdsExtraKeys);
+        var pdsIdxLocal = il.DeclareLocal(_types.Int32);
+        var pdsLoopStartLabel = il.DefineLabel();
+        var pdsLoopEndLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, pdsIdxLocal);
+        il.MarkLabel(pdsLoopStartLabel);
+        il.Emit(OpCodes.Ldloc, pdsIdxLocal);
+        il.Emit(OpCodes.Ldloc, pdsExtraKeys);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, pdsLoopEndLabel);
+        var pdsCurKey = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, pdsExtraKeys);
+        il.Emit(OpCodes.Ldloc, pdsIdxLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, pdsCurKey);
+        // ObjectDefineProperty(obj, key, GetProperty(origProps, key))
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, pdsCurKey);
+        il.Emit(OpCodes.Ldloc, origPropsLocal);
+        il.Emit(OpCodes.Ldloc, pdsCurKey);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Call, runtime.ObjectDefineProperty);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, pdsIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, pdsIdxLocal);
+        il.Emit(OpCodes.Br, pdsLoopStartLabel);
+        il.MarkLabel(pdsLoopEndLabel);
+
         // Return obj
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
