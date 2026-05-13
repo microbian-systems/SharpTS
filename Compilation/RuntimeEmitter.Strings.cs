@@ -1005,15 +1005,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, padStringLocal);
         il.Emit(OpCodes.Br, buildPadding);
         il.MarkLabel(hasPadArg);
-        // padString = ToJsString(args[1]) — spec ECMA-262 §22.1.3.{12,13} step 5
-        // calls ToString which throws on Symbol per §7.1.17 step 2. Pre-fix
-        // Castclass-to-string raised InvalidCastException for Symbol args
-        // instead of the spec-required TypeError.
+        // padString = (args[1] is null or undefined) ? " " : ? ToString(args[1])
+        // ECMA-262 §22.1.3.{12,13} step 5: \`If fillString is undefined, let
+        // filler be the String value consisting solely of the code unit 0x0020\`.
+        // ToString throws on Symbol per §7.1.17 step 2.
+        var padArgLocal = il.DeclareLocal(_types.Object);
+        var padArgIsUndefLabel = il.DefineLabel();
+        var padArgDoneLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, padArgLocal);
+        il.Emit(OpCodes.Ldloc, padArgLocal);
+        il.Emit(OpCodes.Brfalse, padArgIsUndefLabel);
+        il.Emit(OpCodes.Ldloc, padArgLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, padArgIsUndefLabel);
+        il.Emit(OpCodes.Ldloc, padArgLocal);
         il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, padStringLocal);
+        il.Emit(OpCodes.Br, padArgDoneLabel);
+        il.MarkLabel(padArgIsUndefLabel);
+        il.Emit(OpCodes.Ldstr, " ");
+        il.Emit(OpCodes.Stloc, padStringLocal);
+        il.MarkLabel(padArgDoneLabel);
         il.MarkLabel(buildPadding);
 
         // if (padString.Length == 0) return str
@@ -1108,13 +1123,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, padStringLocal);
         il.Emit(OpCodes.Br, buildPadding);
         il.MarkLabel(hasPadArg);
-        // padString = ToJsString(args[1]) — same Symbol-throws guard as
-        // padStart per ECMA-262 §22.1.3.13 step 5.
+        // padString = (args[1] is null or undefined) ? " " : ? ToString(args[1])
+        // Same default-to-" " spec semantics as padStart per §22.1.3.13 step 5.
+        var padArgLocalEnd = il.DeclareLocal(_types.Object);
+        var padArgIsUndefLabelEnd = il.DefineLabel();
+        var padArgDoneLabelEnd = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, padArgLocalEnd);
+        il.Emit(OpCodes.Ldloc, padArgLocalEnd);
+        il.Emit(OpCodes.Brfalse, padArgIsUndefLabelEnd);
+        il.Emit(OpCodes.Ldloc, padArgLocalEnd);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, padArgIsUndefLabelEnd);
+        il.Emit(OpCodes.Ldloc, padArgLocalEnd);
         il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, padStringLocal);
+        il.Emit(OpCodes.Br, padArgDoneLabelEnd);
+        il.MarkLabel(padArgIsUndefLabelEnd);
+        il.Emit(OpCodes.Ldstr, " ");
+        il.Emit(OpCodes.Stloc, padStringLocal);
+        il.MarkLabel(padArgDoneLabelEnd);
         il.MarkLabel(buildPadding);
 
         // if (padString.Length == 0) return str
