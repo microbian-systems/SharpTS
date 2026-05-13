@@ -6816,7 +6816,7 @@ test/built-ins/Object/is/not-same-value-x-y-type.js Pass
 test/built-ins/Object/is/not-same-value-x-y-undefined.js Pass
 test/built-ins/Object/is/object-is.js Fail
 test/built-ins/Object/is/same-value-x-y-boolean.js Pass
-test/built-ins/Object/is/same-value-x-y-empty.js Fail
+test/built-ins/Object/is/same-value-x-y-empty.js Pass
 test/built-ins/Object/is/same-value-x-y-null.js Pass
 test/built-ins/Object/is/same-value-x-y-number.js Pass
 test/built-ins/Object/is/same-value-x-y-object.js Pass
@@ -10466,7 +10466,7 @@ test/built-ins/String/prototype/padEnd/exception-fill-string-symbol.js Pass
 test/built-ins/String/prototype/padEnd/exception-not-object-coercible.js Pass
 test/built-ins/String/prototype/padEnd/exception-symbol.js Pass
 test/built-ins/String/prototype/padEnd/fill-string-empty.js Pass
-test/built-ins/String/prototype/padEnd/fill-string-non-strings.js Fail
+test/built-ins/String/prototype/padEnd/fill-string-non-strings.js Pass
 test/built-ins/String/prototype/padEnd/fill-string-omitted.js Pass
 test/built-ins/String/prototype/padEnd/function-length.js Pass
 test/built-ins/String/prototype/padEnd/function-name.js Pass
@@ -10479,7 +10479,7 @@ test/built-ins/String/prototype/padStart/exception-fill-string-symbol.js Pass
 test/built-ins/String/prototype/padStart/exception-not-object-coercible.js Pass
 test/built-ins/String/prototype/padStart/exception-symbol.js Pass
 test/built-ins/String/prototype/padStart/fill-string-empty.js Pass
-test/built-ins/String/prototype/padStart/fill-string-non-strings.js Fail
+test/built-ins/String/prototype/padStart/fill-string-non-strings.js Pass
 test/built-ins/String/prototype/padStart/fill-string-omitted.js Pass
 test/built-ins/String/prototype/padStart/function-length.js Pass
 test/built-ins/String/prototype/padStart/function-name.js Pass
