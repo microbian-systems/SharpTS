@@ -340,6 +340,56 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, sourceLocal);
         il.MarkLabel(notTSObjectSrcLabel);
 
+        // If source is a string, iterate indexed chars per ECMA-262 §20.1.2.1.
+        // "abc" exposes own enumerable {0:"a", 1:"b", 2:"c"}; length is
+        // non-enumerable so excluded. Pre-fix dropped string sources entirely.
+        var notStringSrcLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, sourceLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStringSrcLabel);
+        {
+            var srcStrLocal = il.DeclareLocal(_types.String);
+            var srcIdxLocal = il.DeclareLocal(_types.Int32);
+            var srcLenLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldloc, sourceLocal);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Stloc, srcStrLocal);
+            il.Emit(OpCodes.Ldloc, srcStrLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, srcLenLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, srcIdxLocal);
+
+            var strLoopStart = il.DefineLabel();
+            var strLoopEnd = il.DefineLabel();
+            il.MarkLabel(strLoopStart);
+            il.Emit(OpCodes.Ldloc, srcIdxLocal);
+            il.Emit(OpCodes.Ldloc, srcLenLocal);
+            il.Emit(OpCodes.Bge, strLoopEnd);
+
+            // target[srcIdx.ToString()] = srcStr[srcIdx].ToString();
+            var charLocal = il.DeclareLocal(_types.Char);
+            il.Emit(OpCodes.Ldloc, targetDictLocal);
+            il.Emit(OpCodes.Ldloca, srcIdxLocal);
+            il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int32, "ToString"));
+            il.Emit(OpCodes.Ldloc, srcStrLocal);
+            il.Emit(OpCodes.Ldloc, srcIdxLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
+            il.Emit(OpCodes.Stloc, charLocal);
+            il.Emit(OpCodes.Ldloca, charLocal);
+            il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Char, "ToString"));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
+
+            il.Emit(OpCodes.Ldloc, srcIdxLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, srcIdxLocal);
+            il.Emit(OpCodes.Br, strLoopStart);
+            il.MarkLabel(strLoopEnd);
+            il.Emit(OpCodes.Br, nextSource);
+        }
+        il.MarkLabel(notStringSrcLabel);
+
         // Check if source is Dictionary<string, object>
         il.Emit(OpCodes.Ldloc, sourceLocal);
         il.Emit(OpCodes.Isinst, dictType);
