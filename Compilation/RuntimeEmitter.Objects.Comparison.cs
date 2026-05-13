@@ -418,6 +418,61 @@ public partial class RuntimeEmitter
         }
         il.MarkLabel(notStringSrcLabel);
 
+        // If source is a List<object?> (an Array per ECMA-262 §10.4.2),
+        // synthesize a Dictionary<string,object?> with indices "0".."N-1"
+        // and fall through to the dict-copy loop. "length" is non-enumerable
+        // per §10.4.2.4 so it's excluded. Pre-fix dropped Array sources
+        // entirely, missing both the assign and the spec-mandated TypeError
+        // when target is a String exotic (test262 assignment-to-readonly...).
+        var notListSrcLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, sourceLocal);
+        il.Emit(OpCodes.Isinst, listType);
+        il.Emit(OpCodes.Brfalse, notListSrcLabel);
+        {
+            var srcListLocal = il.DeclareLocal(listType);
+            var srcListLenLocal = il.DeclareLocal(_types.Int32);
+            var srcListIdxLocal = il.DeclareLocal(_types.Int32);
+            var synthDictLocal = il.DeclareLocal(dictType);
+            il.Emit(OpCodes.Ldloc, sourceLocal);
+            il.Emit(OpCodes.Castclass, listType);
+            il.Emit(OpCodes.Stloc, srcListLocal);
+            il.Emit(OpCodes.Newobj, dictType.GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Stloc, synthDictLocal);
+            il.Emit(OpCodes.Ldloc, srcListLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Count").GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, srcListLenLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, srcListIdxLocal);
+
+            var listLoopStart = il.DefineLabel();
+            var listLoopEnd = il.DefineLabel();
+            il.MarkLabel(listLoopStart);
+            il.Emit(OpCodes.Ldloc, srcListIdxLocal);
+            il.Emit(OpCodes.Ldloc, srcListLenLocal);
+            il.Emit(OpCodes.Bge, listLoopEnd);
+
+            // synthDict[idx.ToString()] = srcList[idx]
+            il.Emit(OpCodes.Ldloc, synthDictLocal);
+            il.Emit(OpCodes.Ldloca, srcListIdxLocal);
+            il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int32, "ToString"));
+            il.Emit(OpCodes.Ldloc, srcListLocal);
+            il.Emit(OpCodes.Ldloc, srcListIdxLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Item")!.GetGetMethod()!);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
+
+            il.Emit(OpCodes.Ldloc, srcListIdxLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, srcListIdxLocal);
+            il.Emit(OpCodes.Br, listLoopStart);
+            il.MarkLabel(listLoopEnd);
+
+            // Re-bind sourceLocal so the dict-copy loop below picks it up.
+            il.Emit(OpCodes.Ldloc, synthDictLocal);
+            il.Emit(OpCodes.Stloc, sourceLocal);
+        }
+        il.MarkLabel(notListSrcLabel);
+
         // Check if source is Dictionary<string, object>
         il.Emit(OpCodes.Ldloc, sourceLocal);
         il.Emit(OpCodes.Isinst, dictType);
@@ -505,6 +560,55 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
         il.MarkLabel(skipSealedCheckLabel);
+
+        // String exotic object: indexed integer keys and "length" are
+        // non-writable per ECMA-262 §10.4.3. Object.assign('a', [1]) wraps
+        // 'a' via ToObject into a String wrapper, then tries to set "0" → 1
+        // which must throw TypeError. Detect via __primitiveType="String" in
+        // the target dict (the boxed-primitive marker set by NewBoxedPrimitive).
+        var skipStringWrapperThrowLabel = il.DefineLabel();
+        var primTypeLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, targetDictLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveType");
+        il.Emit(OpCodes.Ldloca, primTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "TryGetValue", _types.String, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, skipStringWrapperThrowLabel);
+        il.Emit(OpCodes.Ldloc, primTypeLocal);
+        il.Emit(OpCodes.Ldstr, "String");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
+        il.Emit(OpCodes.Brfalse, skipStringWrapperThrowLabel);
+        // Target IS a String wrapper. Check key is integer index OR "length"
+        // (the spec's non-writable slots).
+        var stringKeyLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kpKey);
+        il.Emit(OpCodes.Stloc, stringKeyLocal);
+        // "length" key? → throw.
+        il.Emit(OpCodes.Ldloc, stringKeyLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        var throwStringWrapperLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, throwStringWrapperLabel);
+        // Integer index? Use Int32.TryParse; if parses and is in dict
+        // (covered by NewBoxedPrimitive's pre-populated chars), throw.
+        var idxParsedLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, stringKeyLocal);
+        il.Emit(OpCodes.Ldloca, idxParsedLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, skipStringWrapperThrowLabel);
+        il.Emit(OpCodes.Ldloc, idxParsedLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, skipStringWrapperThrowLabel);
+        il.Emit(OpCodes.Ldloc, targetDictLocal);
+        il.Emit(OpCodes.Ldloc, stringKeyLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "ContainsKey", _types.String));
+        il.Emit(OpCodes.Brfalse, skipStringWrapperThrowLabel);
+        il.MarkLabel(throwStringWrapperLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot assign to read only property of String exotic object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(skipStringWrapperThrowLabel);
 
         // target[kvp.Key] = kvp.Value
         il.Emit(OpCodes.Ldloc, targetDictLocal);
