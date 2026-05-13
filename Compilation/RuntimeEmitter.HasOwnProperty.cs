@@ -313,19 +313,27 @@ public partial class RuntimeEmitter
         var descLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
         var falseLabel = il.DefineLabel();
 
-        // NOTE: Spec ToObject step throws on null/undefined; the matching
-        // throw in HasOwnPropertyHelper triggered Pass→RuntimeError regressions
-        // in Promise/all/resolve-element-function-nonconstructor.js (test
-        // probes hasOwnProperty.call(undefined-resolveFn, "prototype") and
-        // pre-fix silently returned false, which happened to match the test
-        // assertion). Skipping the throw here for the same reason — net was
-        // -2 in regen-13. Revisit when Promise resolve-element binding is
-        // spec-aligned enough to actually populate resolveElementFunction.
+        // ECMA-262 §20.1.3.4 step 1: Let O be ? ToObject(this value). ToObject
+        // throws TypeError on null/undefined. Test262 S15.2.4.7_A12/A13 verify.
+        // (The prior deferred-throw note cited a -2 in regen-13 due to
+        // hasOwnProperty.call(undef-resolveFn, "prototype") on incompletely-
+        // populated Promise resolve-element bindings — but those paths now
+        // populate real $TSFunction wrappers, so the cascade no longer fires.
+        // Watch the regen diff.)
+        var pieNullThrowLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Brfalse, pieNullThrowLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.Emit(OpCodes.Brtrue, pieNullThrowLabel);
+        var pieAfterNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, pieAfterNullLabel);
+        il.MarkLabel(pieNullThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(pieAfterNullLabel);
 
         // Symbol-keyed lookup: same routing as HasOwnPropertyHelper.
         var pieNotSymbolLabel = il.DefineLabel();
