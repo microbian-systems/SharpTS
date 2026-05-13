@@ -3456,8 +3456,34 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
-        // $Object handler - call obj.SetProperty(name, value) which handles setters
+        // $Object handler. First check PDS for a setter accessor descriptor
+        // (defineProperty-installed). If present, invoke it (passing $TSObject
+        // as `this`) — TSObject.SetProperty doesn't know about PDS-stored
+        // setters. Otherwise delegate to TSObject.SetProperty for the dict /
+        // _getters / _setters fast path.
         il.MarkLabel(tsObjectLabel);
+        {
+            var tsObjPdsSetterLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloca, tsObjPdsSetterLocal);
+            il.Emit(OpCodes.Call, runtime.PDSTryGetSetter);
+            var tsObjNoPdsSetterLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, tsObjNoPdsSetterLabel);
+            // Invoke PDS setter.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, tsObjPdsSetterLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(tsObjNoPdsSetterLabel);
+        }
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSObjectType);
         il.Emit(OpCodes.Ldarg_1);
