@@ -427,9 +427,29 @@ public partial class RuntimeEmitter
         var checkLocalTableLabel = il.DefineLabel();
         var foundInLocalLabel = il.DefineLabel();
 
-        // NOTE: Spec ToObject step would throw on null/undefined. Deferred
-        // because too many indirect test262 paths call this on undefined
-        // built-in slots (Fail→RuntimeError cascade observed in regen).
+        // ECMA-262 §20.1.2.13 step 1: Let O be ? ToObject(O). ToObject throws
+        // TypeError on null/undefined. test262 15.2.3.2-1-{2,3,4} verify each.
+        // Previously deferred for fear of cascading regressions on undefined
+        // built-in slots — but Number/String prototype paths now return real
+        // prototype dicts (not undefined), so this should be safe. Watch the
+        // regen diff.
+        var notNullForGpoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, notNullForGpoLabel);
+        il.Emit(OpCodes.Ldstr, "Object.getPrototypeOf called on null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notNullForGpoLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        var notUndefForGpoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notUndefForGpoLabel);
+        il.Emit(OpCodes.Ldstr, "Object.getPrototypeOf called on null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notUndefForGpoLabel);
 
         var tempLocal = il.DeclareLocal(_types.Object);
 
