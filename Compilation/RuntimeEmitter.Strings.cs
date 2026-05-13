@@ -1005,10 +1005,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, padStringLocal);
         il.Emit(OpCodes.Br, buildPadding);
         il.MarkLabel(hasPadArg);
+        // padString = ToJsString(args[1]) — spec ECMA-262 §22.1.3.{12,13} step 5
+        // calls ToString which throws on Symbol per §7.1.17 step 2. Pre-fix
+        // Castclass-to-string raised InvalidCastException for Symbol args
+        // instead of the spec-required TypeError.
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, padStringLocal);
         il.MarkLabel(buildPadding);
 
@@ -1104,10 +1108,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, padStringLocal);
         il.Emit(OpCodes.Br, buildPadding);
         il.MarkLabel(hasPadArg);
+        // padString = ToJsString(args[1]) — same Symbol-throws guard as
+        // padStart per ECMA-262 §22.1.3.13 step 5.
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, padStringLocal);
         il.MarkLabel(buildPadding);
 
