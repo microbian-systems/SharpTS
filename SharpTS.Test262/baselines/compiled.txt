@@ -6287,7 +6287,7 @@ test/built-ins/Object/fromEntries/length.js Pass
 test/built-ins/Object/fromEntries/name.js Pass
 test/built-ins/Object/fromEntries/not-a-constructor.js Pass
 test/built-ins/Object/fromEntries/prototype.js Pass
-test/built-ins/Object/fromEntries/requires-argument.js Fail
+test/built-ins/Object/fromEntries/requires-argument.js Pass
 test/built-ins/Object/fromEntries/simple-properties.js Pass
 test/built-ins/Object/fromEntries/string-entry-object-succeeds.js RuntimeError
 test/built-ins/Object/fromEntries/string-entry-primitive-throws.js Fail
