@@ -1976,6 +1976,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, primValLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, notBoxedLabel);
+        // ECMA-262 §7.1.17 step 2: throw TypeError if the unwrapped primitive
+        // is a Symbol. The entry-point check at line ~1856 only catches raw
+        // Symbol values — Object(Symbol("x")) wraps it as $Object with
+        // __primitiveValue=sym, and the unwrap below bypasses that guard,
+        // letting Stringify run on a Symbol (returns "Symbol(x)" rather than
+        // throwing). Required by indexOf/searchstring-tostring-errors et al.
+        var unwrapNotSymLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, primValLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brfalse, unwrapNotSymLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert a Symbol value to a string");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(unwrapNotSymLabel);
         // Stringify the primitive — handles bool/double/string identically to
         // the top-level fallback path.
         il.Emit(OpCodes.Ldloc, primValLocal);
