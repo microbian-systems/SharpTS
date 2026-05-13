@@ -18,11 +18,18 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Object methods take exactly one argument
+        // Object methods take exactly one argument. The first arg is pushed
+        // by the shared prologue below. Object.is is the exception — missing
+        // arg1 should default to undefined (not null) so Object.is() returns
+        // true (SameValue(undefined, undefined)) per ECMA-262 §20.1.2.13.
         if (arguments.Count > 0)
         {
             emitter.EmitExpression(arguments[0]);
             emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else if (methodName == "is")
+        {
+            il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
         }
         else
         {

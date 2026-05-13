@@ -1005,10 +1005,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, padStringLocal);
         il.Emit(OpCodes.Br, buildPadding);
         il.MarkLabel(hasPadArg);
-        // padString = (args[1] is null or undefined) ? " " : ? ToString(args[1])
-        // ECMA-262 §22.1.3.{12,13} step 5: \`If fillString is undefined, let
-        // filler be the String value consisting solely of the code unit 0x0020\`.
-        // ToString throws on Symbol per §7.1.17 step 2.
+        // padString = (args[1] is undefined) ? " " : ? ToString(args[1])
+        // ECMA-262 §22.1.3.{12,13} step 5: only UNDEFINED takes the " " default;
+        // null and other primitives go through ToString (so `padStart(10, null)`
+        // → "null" pad, not " ").
         var padArgLocal = il.DeclareLocal(_types.Object);
         var padArgIsUndefLabel = il.DefineLabel();
         var padArgDoneLabel = il.DefineLabel();
@@ -1016,8 +1016,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stloc, padArgLocal);
-        il.Emit(OpCodes.Ldloc, padArgLocal);
-        il.Emit(OpCodes.Brfalse, padArgIsUndefLabel);
         il.Emit(OpCodes.Ldloc, padArgLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, padArgIsUndefLabel);
@@ -1123,8 +1121,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, padStringLocal);
         il.Emit(OpCodes.Br, buildPadding);
         il.MarkLabel(hasPadArg);
-        // padString = (args[1] is null or undefined) ? " " : ? ToString(args[1])
-        // Same default-to-" " spec semantics as padStart per §22.1.3.13 step 5.
+        // padString = (args[1] is undefined) ? " " : ? ToString(args[1])
+        // Per padStart — only undefined triggers the " " default.
         var padArgLocalEnd = il.DeclareLocal(_types.Object);
         var padArgIsUndefLabelEnd = il.DefineLabel();
         var padArgDoneLabelEnd = il.DefineLabel();
@@ -1132,8 +1130,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stloc, padArgLocalEnd);
-        il.Emit(OpCodes.Ldloc, padArgLocalEnd);
-        il.Emit(OpCodes.Brfalse, padArgIsUndefLabelEnd);
         il.Emit(OpCodes.Ldloc, padArgLocalEnd);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, padArgIsUndefLabelEnd);
