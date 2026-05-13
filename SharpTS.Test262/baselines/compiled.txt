@@ -10285,7 +10285,7 @@ test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T1.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T10.js RuntimeError
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T12.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T2.js Pass
-test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T4.js Fail
+test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T4.js Pass
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T5.js RuntimeError
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T6.js RuntimeError
 test/built-ins/String/prototype/indexOf/S15.5.4.7_A1_T7.js RuntimeError
@@ -10340,7 +10340,7 @@ test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T1.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T10.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T12.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T2.js Pass
-test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T4.js Fail
+test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T4.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T5.js Pass
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T6.js Fail
 test/built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T7.js Pass
