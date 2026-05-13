@@ -281,6 +281,26 @@ public partial class RuntimeEmitter
         var returnEmptyLabel = il.DefineLabel();
         var returnResultLabel = il.DefineLabel();
 
+        // ECMA-262 §20.1.2.18 step 1: Let obj be ? ToObject(O). ToObject throws
+        // TypeError on null/undefined. test262 15.2.3.14-1-{4,5} verify each.
+        var notNullForKeysLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, notNullForKeysLabel);
+        il.Emit(OpCodes.Ldstr, "Object.keys called on null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notNullForKeysLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        var notUndefForKeysLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notUndefForKeysLabel);
+        il.Emit(OpCodes.Ldstr, "Object.keys called on null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notUndefForKeysLabel);
+
         // Proxy short-circuit (#92): if obj is SharpTSProxy, dispatch TrapOwnKeys
         // and return. A revoked proxy throws inside TrapOwnKeys.
         var notProxyLabel = il.DefineLabel();

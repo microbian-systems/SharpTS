@@ -200,6 +200,26 @@ public partial class RuntimeEmitter
         var fieldsLoopStart = il.DefineLabel();
         var fieldsLoopEnd = il.DefineLabel();
 
+        // ECMA-262 §20.1.2.23 step 1: Let obj be ? ToObject(O). ToObject throws
+        // TypeError on null/undefined.
+        var notNullForValsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, notNullForValsLabel);
+        il.Emit(OpCodes.Ldstr, "Object.values called on null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notNullForValsLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        var notUndefForValsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notUndefForValsLabel);
+        il.Emit(OpCodes.Ldstr, "Object.values called on null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notUndefForValsLabel);
+
         // String primitive: ToObject wraps it as a String exotic object whose
         // OwnPropertyKeys are the indexed chars. ECMA-262 §20.1.2.23 calls
         // EnumerableOwnProperties which iterates those — so `Object.values("abc")`
@@ -419,6 +439,26 @@ public partial class RuntimeEmitter
         var returnResultLabel = il.DefineLabel();
         var fieldsLoopStart = il.DefineLabel();
         var fieldsLoopEnd = il.DefineLabel();
+
+        // ECMA-262 §20.1.2.5 step 1: Let obj be ? ToObject(O). ToObject throws
+        // TypeError on null/undefined.
+        var notNullForEntsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, notNullForEntsLabel);
+        il.Emit(OpCodes.Ldstr, "Object.entries called on null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notNullForEntsLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        var notUndefForEntsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notUndefForEntsLabel);
+        il.Emit(OpCodes.Ldstr, "Object.entries called on null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notUndefForEntsLabel);
 
         // String primitive: yields [["0","a"], ["1","b"], ...] per ECMA-262
         // §20.1.2.5 + §10.4.3 String exotic indexed-char own properties.
