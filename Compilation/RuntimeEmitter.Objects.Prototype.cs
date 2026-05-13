@@ -501,7 +501,27 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Check if object is null - if so, skip checks
+        // ECMA-262 §20.1.2.21 step 1: RequireObjectCoercible(O) — throw
+        // TypeError on null/undefined. Pre-fix the null fall-through skipped
+        // the integrity checks but also skipped the spec-mandated throw,
+        // returning the input untouched.
+        var rocThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, rocThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, rocThrowLabel);
+        var afterRocLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, afterRocLabel);
+        il.MarkLabel(rocThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Object.setPrototypeOf called on null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(afterRocLabel);
+
+        // Check if object is null - if so, skip checks (dead code now that
+        // null throws above, kept for layout symmetry).
         var nullCheckDoneLabel = il.DefineLabel();
         var notExtensibleLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
