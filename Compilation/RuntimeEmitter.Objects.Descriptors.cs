@@ -929,6 +929,32 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notDictForValueLabel);
 
+        // List<object?> (or $TSArray) + "length": call TSArraySetLength to
+        // actually truncate/extend the backing list. Pre-fix the value was
+        // stored in PDS but never applied to the list, so
+        // `Object.defineProperty(arr, "length", {value: 0})` left arr.length
+        // unchanged (test262 15.2.3.6-4-{130,131,...}). The length value was
+        // already range-validated at the top of this method.
+        var notListForLengthLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brfalse, notListForLengthLabel);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notListForLengthLabel);
+        il.Emit(OpCodes.Ldloc, wasGenericLocal);
+        il.Emit(OpCodes.Brtrue, notListForLengthLabel);
+        // Convert value to uint32. Already validated.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Ldloc, valueToWriteLocal);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Callvirt, runtime.TSArraySetLength);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(notListForLengthLabel);
+
         // Also write the value to $Object._fields when target is $Object.
         // Same generic-skip semantics as the dict path.
         il.Emit(OpCodes.Ldarg_0);
