@@ -410,6 +410,21 @@ public partial class RuntimeEmitter
         il.MarkLabel(keysLoopEnd);
         il.Emit(OpCodes.Ldloca, keysEnumeratorLocal);
         il.Emit(OpCodes.Call, keysEnumeratorType.GetMethod("Dispose")!);
+
+        // ECMA-262 §10.1.11.1 OrdinaryOwnPropertyKeys: also include accessor-only
+        // own properties (created via Object.defineProperty without writing to
+        // the backing dict). PDSGetOwnEnumerableKeys returns the list of
+        // enumerable PDS keys NOT already in dict.Keys.
+        var pdsKeysList = il.DeclareLocal(listType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetEnumerableExtraKeys);
+        il.Emit(OpCodes.Stloc, pdsKeysList);
+        // Append each element to resultLocal: resultLocal.AddRange(pdsKeysList).
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, pdsKeysList);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("AddRange", [_types.IEnumerableOfObject])!);
+
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 
