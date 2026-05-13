@@ -62,7 +62,9 @@ public partial class ILEmitter
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+                    // No Castclass — StringIncludes now takes (string, object)
+                    // so the IsRegExp guard inside the helper can fire (spec
+                    // §22.1.3.7 step 4 requires TypeError on RegExp arg).
                 }
                 else
                 {
@@ -151,7 +153,8 @@ public partial class ILEmitter
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+                    // No Castclass — StringStartsWith now takes (string, object)
+                    // so the IsRegExp guard inside the helper can fire.
                 }
                 else
                 {
@@ -166,7 +169,7 @@ public partial class ILEmitter
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+                    // No Castclass — StringEndsWith now takes (string, object).
                 }
                 else
                 {
