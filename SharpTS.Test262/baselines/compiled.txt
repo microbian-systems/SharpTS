@@ -6212,7 +6212,7 @@ test/built-ins/Object/entries/order-after-define-property-with-function.js Runti
 test/built-ins/Object/entries/order-after-define-property.js Pass
 test/built-ins/Object/entries/primitive-booleans.js Pass
 test/built-ins/Object/entries/primitive-numbers.js Pass
-test/built-ins/Object/entries/primitive-strings.js Fail
+test/built-ins/Object/entries/primitive-strings.js Pass
 test/built-ins/Object/entries/primitive-symbols.js Pass
 test/built-ins/Object/entries/return-order.js RuntimeError
 test/built-ins/Object/entries/symbols-omitted.js Pass
@@ -7426,7 +7426,7 @@ test/built-ins/Object/values/observable-operations.js Fail
 test/built-ins/Object/values/order-after-define-property.js RuntimeError
 test/built-ins/Object/values/primitive-booleans.js Pass
 test/built-ins/Object/values/primitive-numbers.js Pass
-test/built-ins/Object/values/primitive-strings.js Fail
+test/built-ins/Object/values/primitive-strings.js Pass
 test/built-ins/Object/values/primitive-symbols.js Pass
 test/built-ins/Object/values/return-order.js RuntimeError
 test/built-ins/Object/values/symbols-omitted.js Pass
