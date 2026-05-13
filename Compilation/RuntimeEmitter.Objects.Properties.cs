@@ -3489,11 +3489,18 @@ public partial class RuntimeEmitter
         var extensibleCheckLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, extensibleCheckLabel); // Not sealed, check extensibility
 
-        // Object is sealed - check if property exists
+        // Object is sealed - check if property exists (dict OR PDS). Pre-fix
+        // only checked the backing dict, so an accessor-only own property
+        // (defineProperty with get/set + configurable:false) was treated as
+        // missing and the write silently dropped — including its setter.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
+        il.Emit(OpCodes.Brtrue, doSetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
         il.Emit(OpCodes.Brfalse, nullLabel); // Property doesn't exist, silently return
         il.Emit(OpCodes.Br, doSetLabel); // Property exists on sealed object, proceed to set
 
