@@ -520,6 +520,44 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(afterRocLabel);
 
+        // ECMA-262 §20.1.2.21 step 3: throw TypeError if Type(proto) is
+        // neither Object nor Null. CLR null is fine; otherwise reject any
+        // primitive (undefined / bool / double / int / string / Symbol /
+        // BigInt). Object-like values (Dict, $Object, $IHasFields, $TSFunction,
+        // List, etc.) are not caught by any of these Isinst checks.
+        var protoOkLabel = il.DefineLabel();
+        var protoThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, protoOkLabel);  // null → OK
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Int32);
+        il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        if (runtime.TSSymbolType != null)
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+            il.Emit(OpCodes.Brtrue, protoThrowLabel);
+        }
+        il.Emit(OpCodes.Br, protoOkLabel);
+        il.MarkLabel(protoThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Object prototype may only be an Object or null");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(protoOkLabel);
+
         // Check if object is null - if so, skip checks (dead code now that
         // null throws above, kept for layout symmetry).
         var nullCheckDoneLabel = il.DefineLabel();
