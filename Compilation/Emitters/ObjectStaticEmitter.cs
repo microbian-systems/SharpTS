@@ -65,7 +65,9 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
                 return true;
             case "is":
                 // is takes 2 arguments: value1 and value2
-                // First argument is already on the stack, emit second argument
+                // First argument is already on the stack, emit second argument.
+                // ECMA-262: missing arg2 → undefined (NOT null). Object.is(null)
+                // is SameValue(null, undefined) which is false (different types).
                 if (arguments.Count > 1)
                 {
                     emitter.EmitExpression(arguments[1]);
@@ -73,7 +75,7 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
                 }
                 else
                 {
-                    il.Emit(OpCodes.Ldnull);
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
                 }
                 il.Emit(OpCodes.Call, ctx.Runtime!.ObjectIs);
                 // Box the bool result for consistency with other methods
