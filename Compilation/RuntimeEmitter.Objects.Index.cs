@@ -257,6 +257,31 @@ public partial class RuntimeEmitter
         // without this, real packages (semver, minimatch, yaml) crash when
         // `arr[i]` runs past the end during parsing.
         il.MarkLabel(tsArrayLabel);
+
+        // Non-numeric string index → route as named-property get (ECMA-262
+        // §23.1.5). Convert.ToInt64("foo") throws FormatException — pre-fix
+        // the array would crash when verifyProperty did `arr["foo"]` on a
+        // PDS-installed named property.
+        var tsArrayStringIdxLabel = il.DefineLabel();
+        var tsArrayProceedToInt64Label = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, tsArrayStringIdxLabel);
+        il.Emit(OpCodes.Br, tsArrayProceedToInt64Label);
+        il.MarkLabel(tsArrayStringIdxLabel);
+        var tsArrayStrIdxParsed = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldloca, tsArrayStrIdxParsed);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+        il.Emit(OpCodes.Brtrue, tsArrayProceedToInt64Label);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(tsArrayProceedToInt64Label);
+
         // ECMA-262 6.1.7: array indexes are uint32 < 2^32-1. Indexes ≥ 2^32-1
         // (or negative) are NOT array indexes — they're regular named
         // properties. Route those via GetProperty(arr, idx.ToString()) so
@@ -309,6 +334,34 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Castclass, listType);
             il.Emit(OpCodes.Stloc, listLocal);
+
+            // Non-numeric string index → route as named-property get (ECMA-262
+            // §23.1.5 Array exotic objects accept arbitrary named properties).
+            // Convert.ToInt32("foo") throws FormatException — pre-fix the array
+            // would crash at runtime when verifyProperty did `arr[key]` for a
+            // string-keyed prop stored via the symmetric SetIndex+PDS path.
+            var listStringIndexLabel = il.DefineLabel();
+            var listProceedWithToInt32Label = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Brtrue, listStringIndexLabel);
+            il.Emit(OpCodes.Br, listProceedWithToInt32Label);
+            il.MarkLabel(listStringIndexLabel);
+            // If string parses as an integer index, fall through to normal path;
+            // otherwise route to GetProperty(arr, name).
+            var listStrIdxParsed = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Ldloca, listStrIdxParsed);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+            il.Emit(OpCodes.Brtrue, listProceedWithToInt32Label);
+            // Non-numeric string → named-property lookup.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(listProceedWithToInt32Label);
 
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt32", _types.Object));

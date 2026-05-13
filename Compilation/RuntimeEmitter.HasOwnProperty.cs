@@ -167,7 +167,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, trueLabel);
         il.MarkLabel(notString);
 
-        // List<object> / $Array — "length" or numeric index in range
+        // List<object> / $Array — "length" or numeric index in range. Also
+        // honor PDS-installed named properties: ECMA-262 §23.1.5 allows
+        // arbitrary named properties on Array exotic objects (the SetProperty
+        // path stores `arr.foo = X` in PDS). Without the PDS fallback,
+        // verifyProperty on a frozen array's own-defined string-keyed prop
+        // would fail because hasOwn would lie.
         var notList = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
@@ -180,16 +185,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, nameLocal);
         il.Emit(OpCodes.Ldloca, listIdxLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
-        il.Emit(OpCodes.Brfalse, falseLabel);
+        var listNotIndexLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, listNotIndexLabel);
         il.Emit(OpCodes.Ldloc, listIdxLocal);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Blt, falseLabel);
+        il.Emit(OpCodes.Blt, listNotIndexLabel);
         il.Emit(OpCodes.Ldloc, listIdxLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.ListOfObject);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, falseLabel);
+        il.Emit(OpCodes.Bge, listNotIndexLabel);
         il.Emit(OpCodes.Br, trueLabel);
+        il.MarkLabel(listNotIndexLabel);
+        // PDS fallback for named properties stored via the $TSArray set path.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Br, falseLabel);
         il.MarkLabel(notList);
 
         // System.Type — check known own properties for built-in JS constructors
