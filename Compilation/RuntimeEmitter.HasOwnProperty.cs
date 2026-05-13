@@ -108,11 +108,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brfalse, notTSObject);
+        // First: HasProperty (checks _fields + _getters + _setters).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSObjectType);
         il.Emit(OpCodes.Ldloc, nameLocal);
         il.Emit(OpCodes.Callvirt, runtime.TSObjectHasProperty);
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        // Fallback: PDS check (defineProperty-installed accessors on $TSObject
+        // sit in PDS, not in TSObject._getters/_setters). Without this, hasOwn
+        // returns false even though Object.keys finds the key (via PDS extras).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Br, falseLabel);
         il.MarkLabel(notTSObject);
 
         // Dictionary<string,object> — own property is either a direct key in
