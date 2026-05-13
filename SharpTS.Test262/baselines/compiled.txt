@@ -4077,11 +4077,11 @@ test/built-ins/Object/S9.9_A5.js Pass
 test/built-ins/Object/S9.9_A6.js Pass
 test/built-ins/Object/assign/ObjectOverride-sameproperty.js Pass
 test/built-ins/Object/assign/OnlyOneArgument.js Pass
-test/built-ins/Object/assign/Override-notstringtarget.js Fail
+test/built-ins/Object/assign/Override-notstringtarget.js Pass
 test/built-ins/Object/assign/Override.js Pass
 test/built-ins/Object/assign/Source-Null-Undefined.js Pass
 test/built-ins/Object/assign/Source-Number-Boolen-Symbol.js Pass
-test/built-ins/Object/assign/Source-String.js Fail
+test/built-ins/Object/assign/Source-String.js Pass
 test/built-ins/Object/assign/Target-Boolean.js Pass
 test/built-ins/Object/assign/Target-Null.js Pass
 test/built-ins/Object/assign/Target-Number.js Pass
