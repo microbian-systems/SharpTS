@@ -832,41 +832,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, valueToWriteLocal);
         il.MarkLabel(haveValueLabel);
 
-        // Set value on object if it's a dictionary. Skip the write when the
-        // descriptor was generic (Value slot null) AND the dict already holds
-        // the key — overwriting a live value with $Undefined regresses tests
-        // like RegExp/Symbol.search/set-lastindex-restore-err.js where the
-        // RegExp algorithm sets lastIndex=0 internally and then defineProperty
-        // with `{writable:false}` (no value) was clobbering that 0 with
-        // undefined. Spec §10.1.6.3 step 4.a.iii: an absent Desc.[[Value]]
-        // leaves the existing value in place.
+        // Set value on object if it's a dictionary
         var notDictForValueLabel = il.DefineLabel();
-        var origValueWasNullLocal = il.DeclareLocal(_types.Boolean);
-        il.Emit(OpCodes.Ldloc, descriptorLocal);
-        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ceq);
-        il.Emit(OpCodes.Stloc, origValueWasNullLocal);
-
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brfalse, notDictForValueLabel);
 
-        // If generic descriptor AND dict already has this key → skip overwrite.
-        var dictLocalForCheck = il.DeclareLocal(_types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Stloc, dictLocalForCheck);
-        var dictDoWriteLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, origValueWasNullLocal);
-        il.Emit(OpCodes.Brfalse, dictDoWriteLabel);
-        il.Emit(OpCodes.Ldloc, dictLocalForCheck);
-        il.Emit(OpCodes.Ldloc, propNameLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
-        il.Emit(OpCodes.Brtrue, endLabel);
-        il.MarkLabel(dictDoWriteLabel);
-
-        il.Emit(OpCodes.Ldloc, dictLocalForCheck);
         il.Emit(OpCodes.Ldloc, propNameLocal);
         il.Emit(OpCodes.Ldloc, valueToWriteLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
@@ -875,27 +848,17 @@ public partial class RuntimeEmitter
         il.MarkLabel(notDictForValueLabel);
 
         // Also write the value to $Object._fields when target is $Object.
-        // Same skip-if-exists semantics for generic descriptors.
+        // Without this, Object.defineProperties iterating the props' _fields
+        // can't see the key (since defineProperty stored only in PDS). Writing
+        // here parallels the Dict write above. Reads via $Object.GetProperty
+        // also benefit (no need to consult PDS for the value).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brfalse, skipValueSetLabel);
 
-        var tsObjFieldsLocal = il.DeclareLocal(_types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSObjectType);
         il.Emit(OpCodes.Callvirt, runtime.TSObjectFieldsGetter);
-        il.Emit(OpCodes.Stloc, tsObjFieldsLocal);
-
-        var tsObjDoWriteLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, origValueWasNullLocal);
-        il.Emit(OpCodes.Brfalse, tsObjDoWriteLabel);
-        il.Emit(OpCodes.Ldloc, tsObjFieldsLocal);
-        il.Emit(OpCodes.Ldloc, propNameLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
-        il.Emit(OpCodes.Brtrue, endLabel);
-        il.MarkLabel(tsObjDoWriteLabel);
-
-        il.Emit(OpCodes.Ldloc, tsObjFieldsLocal);
         il.Emit(OpCodes.Ldloc, propNameLocal);
         il.Emit(OpCodes.Ldloc, valueToWriteLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
