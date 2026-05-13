@@ -577,10 +577,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, keysEnumeratorLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IEnumerator, "MoveNext"));
         il.Emit(OpCodes.Brfalse, dictLoopEnd);
-        // names.Add(enumerator.Current)
-        il.Emit(OpCodes.Ldloc, namesLocal);
+        // Skip internal marker keys (__primitiveType / __primitiveValue on boxed
+        // wrappers). Per ECMA-262, String/Number/Boolean wrappers don't expose
+        // their [[PrimitiveData]] slot via [[OwnPropertyKeys]] — but user code
+        // may legitimately use other __-prefixed keys (e.g. lodash _ utilities),
+        // so we filter exactly these two reserved names rather than "__" broadly.
+        var dictKeyLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldloc, keysEnumeratorLocal);
         il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.IEnumeratorOfString, "Current"));
+        il.Emit(OpCodes.Stloc, dictKeyLocal);
+        il.Emit(OpCodes.Ldloc, dictKeyLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveType");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, dictLoopStart);
+        il.Emit(OpCodes.Ldloc, dictKeyLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, dictLoopStart);
+        // names.Add(current)
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ldloc, dictKeyLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
         il.Emit(OpCodes.Br, dictLoopStart);
 
@@ -678,8 +694,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.IEnumeratorOfString, "Current"));
         il.Emit(OpCodes.Stloc, keyLocal);
 
-        // if (!names.Contains(key)) names.Add(key)
+        // Skip boxed-primitive markers (see dict case for rationale).
         var skipAddKeyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveType");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, skipAddKeyLabel);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, skipAddKeyLabel);
+
+        // if (!names.Contains(key)) names.Add(key)
         il.Emit(OpCodes.Ldloc, namesLocal);
         il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Contains", _types.Object));
