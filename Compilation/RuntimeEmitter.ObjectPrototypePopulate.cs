@@ -104,9 +104,9 @@ public partial class RuntimeEmitter
         // primitive back, which the materializer's ToPrimitive treats as a
         // "valueOf returned non-primitive" signal so toString fires next).
         Wire("valueOf",        runtime.ObjectProtoValueOfHelper, 0);
-        // toLocaleString defaults to calling toString — close-enough delegation
-        // is a string return; tests typically don't probe its identity.
-        Wire("toLocaleString", runtime.ObjectProtoToStringHelper, 0);
+        // toLocaleString = ToObject(this).toString — split helper enforces the
+        // spec null/undef throw before delegating to ObjectProtoToString.
+        Wire("toLocaleString", runtime.ObjectProtoToLocaleStringHelper, 0);
         Wire("propertyIsEnumerable", runtime.PropertyIsEnumerableHelperMethod, 1);
 
         il.Emit(OpCodes.Ret);

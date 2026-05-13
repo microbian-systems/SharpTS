@@ -60,6 +60,7 @@ public partial class RuntimeEmitter
         // ILEmitter.Calls.cs.
         runtime.ObjectProtoToStringHelper = EmitObjectProtoToStringHelper(typeBuilder, runtime);
         runtime.ObjectProtoValueOfHelper = EmitObjectProtoValueOfHelper(typeBuilder, runtime);
+        runtime.ObjectProtoToLocaleStringHelper = EmitObjectProtoToLocaleStringHelper(typeBuilder, runtime);
 
         // ECMA-262 23.1.3.32 Array.prototype.toString — returns the join of
         // the array elements with no separator (defaults to ","). Previously
@@ -107,13 +108,54 @@ public partial class RuntimeEmitter
         return method;
     }
 
+    private MethodBuilder EmitObjectProtoToLocaleStringHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // ECMA-262 §20.1.3.5: Object.prototype.toLocaleString does ? Invoke(O,
+        // "toString"). Step 1 in ToObject(this) throws on null/undefined. Pre-
+        // fix this delegated to ObjectProtoToString which has its own
+        // "[object Null]" / "[object Undefined]" paths (correct for toString
+        // but wrong for toLocaleString). Wrap with the null/undef throw, then
+        // fall through to toString for everything else.
+        var method = typeBuilder.DefineMethod(
+            "ObjectProtoToLocaleString",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]
+        );
+        method.DefineParameter(1, ParameterAttributes.None, "__this");
+        var il = method.GetILGenerator();
+        var passThroughLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, passThroughLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(passThroughLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        var notUndefLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notUndefLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notUndefLabel);
+        // Delegate to ObjectProtoToString for the actual conversion.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ObjectProtoToStringHelper);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
     private MethodBuilder EmitObjectProtoValueOfHelper(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // ECMA-262 19.1.3.7: returns ! ToObject(this). For our purposes we
+        // ECMA-262 §20.1.3.7: returns ! ToObject(this). For our purposes we
         // pass the receiver through unchanged — primitives stay primitive
         // (`(5).valueOf() === 5` etc.), and objects stay objects, which the
         // materializer's ToPrimitive treats as "valueOf returned non-primitive"
         // so the toString fallback fires per spec for plain objects.
+        // null/undefined receiver throws TypeError per the ToObject(this) step.
         var method = typeBuilder.DefineMethod(
             "ObjectProtoValueOf",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -122,6 +164,23 @@ public partial class RuntimeEmitter
         );
         method.DefineParameter(1, ParameterAttributes.None, "__this");
         var il = method.GetILGenerator();
+        var passThroughLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brtrue, passThroughLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(passThroughLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        var notUndefLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notUndefLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notUndefLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
         return method;

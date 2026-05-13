@@ -398,6 +398,8 @@ public class EmittedRuntime
     public MethodBuilder ObjectProtoToStringHelper { get; set; } = null!;
     /// <summary>$Runtime.ObjectProtoValueOf(this) — ECMA-262 19.1.3.7. Returns the receiver as-is (primitives stay primitive, objects stay objects). Wired into Object.prototype.valueOf so the materializer's ToPrimitive picks up the inherited method and sees a non-primitive return for plain objects (triggering the toString fallback).</summary>
     public MethodBuilder ObjectProtoValueOfHelper { get; set; } = null!;
+    /// <summary>$Runtime.ObjectProtoToLocaleString(this) — ECMA-262 20.1.3.5. Wraps ObjectProtoToString with the null/undef TypeError throw mandated by ToObject(this); other receivers delegate to ObjectProtoToString.</summary>
+    public MethodBuilder ObjectProtoToLocaleStringHelper { get; set; } = null!;
     /// <summary>$Runtime.ArrayProtoToString(this) — ECMA-262 23.1.3.32. Returns join of elements with default separator (",").</summary>
     public MethodBuilder ArrayProtoToStringHelper { get; set; } = null!;
     /// <summary>Populates <see cref="BooleanPrototypeField"/> with $TSFunction wrappers for toString/valueOf; idempotent.</summary>
