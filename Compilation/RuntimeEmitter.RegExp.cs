@@ -74,9 +74,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notUndefLabel);
 
-        // Otherwise: ECMA-262 ToString protocol.
+        // Otherwise: ECMA-262 §7.1.17 ToString. Use ToJsString (not Stringify)
+        // so boxed-primitive wrappers (new Object("gi"), Object.assign("gi"))
+        // unwrap to their __primitiveValue. Pre-fix Stringify fell through to
+        // .ToString() which on a $Object returned "[object Object]"; tests like
+        // S15.10.4.1_A8_T9 (`new RegExp(1, new Object("gi"))`) regressed when
+        // Object("gi") started returning a wrapper instead of the raw string.
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Ret);
     }
 
