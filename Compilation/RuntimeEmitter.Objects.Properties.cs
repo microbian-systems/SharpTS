@@ -1198,13 +1198,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
         il.Emit(OpCodes.Ret);
 
-        // Final fallback: walk Array.prototype singleton dict. ECMA-262 says a
-        // List receiver inherits from %Array.prototype%, so user-added entries
+        // Final fallback: walk Array.prototype, then Object.prototype singleton
+        // dicts. ECMA-262 says a List receiver inherits from %Array.prototype%
+        // which inherits from %Object.prototype%, so user-added entries
         // (`Array.prototype.foo = 1`) reach indexed-access reads as
-        // `arr.foo === 1`. Populate the prototype dict if not yet populated
-        // so `length` (set in the populate body) is included.
+        // `arr.foo === 1`, and Object.prototype methods like hasOwnProperty,
+        // toString, valueOf flow through too. Populate both prototype dicts
+        // if not yet populated.
         il.MarkLabel(reallyNullLabel);
         var arrayProtoFallbackLabel = il.DefineLabel();
+        var objectProtoFallbackLabel = il.DefineLabel();
         il.Emit(OpCodes.Call, runtime.ArrayPrototypePopulateMethod);
         var arrayProtoValLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
@@ -1216,8 +1219,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, arrayProtoValLocal);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(arrayProtoFallbackLabel);
+        // Walk to Object.prototype for shared methods like hasOwnProperty.
+        il.Emit(OpCodes.Call, runtime.ObjectPrototypePopulateMethod);
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, arrayProtoValLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue",
+            [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, objectProtoFallbackLabel);
+        il.Emit(OpCodes.Ldloc, arrayProtoValLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(objectProtoFallbackLabel);
         // Missing-property reads should return JS undefined, not C# null —
-        // tests assert \`arr.foo === undefined\` not \`arr.foo === null\`.
+        // tests assert `arr.foo === undefined` not `arr.foo === null`.
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
 
