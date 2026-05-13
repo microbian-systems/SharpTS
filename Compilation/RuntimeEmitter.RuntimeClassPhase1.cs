@@ -92,6 +92,16 @@ public partial class RuntimeEmitter
             _types.Int32,
             [_types.Object]);
 
+        // Reserve ToObject(object) → object. ECMA-262 §7.1.18 ToObject.
+        // Forward-declared so Object.assign (emitted in EmitObjectMethods
+        // before EmitToObject) can coerce its target arg via runtime.ToObjectMethod.
+        // Body filled later by EmitToObject.
+        runtime.ToObjectMethod = typeBuilder.DefineMethod(
+            "ToObject",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+
         // Reserve IsTruthy(object) → bool. ECMA-262 §7.1.2 ToBoolean.
         // Forward-declared so $RegExp's Symbol.match can spec-align its
         // `global`/`unicode`/`sticky` reads via `ToBoolean(? Get(rx, name))`

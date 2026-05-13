@@ -299,8 +299,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, targetNullLabel);
 
-        // Check if target is Dictionary<string, object>
+        // ECMA-262 §7.1.18 ToObject: coerce primitive target (string, number,
+        // bool, symbol) to a wrapper object. OnlyOneArgument.js +
+        // Target-{Boolean,Number,String,Symbol}.js verify `Object.assign(prim)`
+        // returns a wrapper. Store in a local that replaces arg0 going forward.
+        var coercedTargetLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToObjectMethod);
+        il.Emit(OpCodes.Stloc, coercedTargetLocal);
+
+        // Check if coerced target is Dictionary<string, object>
+        il.Emit(OpCodes.Ldloc, coercedTargetLocal);
         il.Emit(OpCodes.Isinst, dictType);
         il.Emit(OpCodes.Stloc, targetDictLocal);
         il.Emit(OpCodes.Ldloc, targetDictLocal);
@@ -482,9 +491,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
-        // Return target
+        // Return coerced target (wrapped if a primitive was passed).
         il.MarkLabel(returnLabel);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, coercedTargetLocal);
         il.Emit(OpCodes.Ret);
     }
 }

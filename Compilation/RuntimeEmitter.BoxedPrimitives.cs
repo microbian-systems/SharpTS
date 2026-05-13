@@ -159,13 +159,8 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitToObject(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "ToObject",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            [_types.Object]);
-        runtime.ToObjectMethod = method;
-
+        // Body fill: method signature forward-declared by DefineRuntimeClassPhase1.
+        var method = runtime.ToObjectMethod;
         var il = method.GetILGenerator();
 
         // null → empty $Object
@@ -226,7 +221,25 @@ public partial class RuntimeEmitter
             il.MarkLabel(notSymLabel);
         }
 
-        // Otherwise (string, dict, array, $Object, etc.) — return as-is.
+        // String → NewBoxedPrimitive("String", arg). ECMA-262 §7.1.18 step 5:
+        // ToObject on a string returns a String exotic object with the
+        // primitive in [[StringData]]. Required for `Object.assign("a")` +
+        // `Object("a")` to return a wrapper whose `valueOf() === "a"`. Note:
+        // many internal call sites pass already-objectified values (e.g.
+        // GetProperty receivers) and we don't double-wrap because the early
+        // `Isinst _types.String` check only matches raw .NET strings, not
+        // \$Object wrappers (which carry __primitiveValue internally).
+        var notStrLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStrLabel);
+        il.Emit(OpCodes.Ldstr, "String");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.NewBoxedPrimitiveMethod);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notStrLabel);
+
+        // Otherwise (dict, array, $Object, etc.) — return as-is.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
     }
