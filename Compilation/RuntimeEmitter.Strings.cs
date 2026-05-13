@@ -854,16 +854,21 @@ public partial class RuntimeEmitter
 
     private void EmitStringRepeat(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // StringRepeat(string str, double count) -> string
+        // StringRepeat(string str, object count) -> string. count is `object`
+        // so a Symbol or other primitive coerces through ToNumber here, which
+        // throws TypeError on Symbol per ECMA-262 §22.1.3.16 step 4. Pre-fix
+        // the signature took `double` directly, so the caller's Convert.ToDouble
+        // raised InvalidCastException instead of TypeError.
         var method = typeBuilder.DefineMethod(
             "StringRepeat",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.String,
-            [_types.String, _types.Double]
+            [_types.String, _types.Object]
         );
         runtime.StringRepeat = method;
 
         var il = method.GetILGenerator();
+        var countDoubleLocal = il.DeclareLocal(_types.Double);
         var countLocal = il.DeclareLocal(_types.Int32);
         var resultLocal = il.DeclareLocal(_types.String);
         var iLocal = il.DeclareLocal(_types.Int32);
@@ -872,6 +877,12 @@ public partial class RuntimeEmitter
         var emptyLabel = il.DefineLabel();
         var doneLabel = il.DefineLabel();
 
+        // Coerce via ToNumber (throws on Symbol / BigInt / object-with-throwing-
+        // valueOf). undefined → NaN → 0 (per ToIntegerOrInfinity step 2).
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, countDoubleLocal);
+
         // ECMA-262 21.1.3.13: validate count first.
         //   if count is NaN → ToIntegerOrInfinity returns 0 → return "" (no throw)
         //   if count < 0 (incl. -∞) → throw RangeError
@@ -879,15 +890,15 @@ public partial class RuntimeEmitter
         var nonNegLabel = il.DefineLabel();
         var throwRangeLabel = il.DefineLabel();
         // NaN check (NaN != NaN)
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, countDoubleLocal);
+        il.Emit(OpCodes.Ldloc, countDoubleLocal);
         il.Emit(OpCodes.Bne_Un, nonNegLabel); // NaN: skip throw, fall through to Conv_I4 path (will yield 0)
         // < 0 check (catches finite negatives + -Infinity)
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, countDoubleLocal);
         il.Emit(OpCodes.Ldc_R8, 0.0);
         il.Emit(OpCodes.Blt, throwRangeLabel);
         // +Infinity check
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, countDoubleLocal);
         il.Emit(OpCodes.Call, _types.Double.GetMethod("IsPositiveInfinity", [_types.Double])!);
         il.Emit(OpCodes.Brtrue, throwRangeLabel);
         il.Emit(OpCodes.Br, nonNegLabel);
@@ -900,8 +911,8 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(nonNegLabel);
 
-        // count = (int)countArg (NaN → garbage, but emptyLabel below catches via count<=0)
-        il.Emit(OpCodes.Ldarg_1);
+        // count = (int)countDouble (NaN → garbage, but emptyLabel below catches via count<=0)
+        il.Emit(OpCodes.Ldloc, countDoubleLocal);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Stloc, countLocal);
 

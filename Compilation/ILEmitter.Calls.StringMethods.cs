@@ -223,15 +223,16 @@ public partial class ILEmitter
                 break;
 
             case "repeat":
+                // StringRepeat takes (string, object); helper does ToNumber
+                // internally (throws TypeError on Symbol per ECMA-262).
                 if (arguments.Count > 0)
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    IL.Emit(OpCodes.Unbox_Any, _ctx.Types.Double);
                 }
                 else
                 {
-                    IL.Emit(OpCodes.Ldc_R8, 0.0);
+                    IL.Emit(OpCodes.Ldnull);
                 }
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.StringRepeat);
                 break;

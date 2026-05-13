@@ -544,15 +544,17 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         var ctx = emitter.Context;
         var il = ctx.IL;
 
+        // StringRepeat now takes (string, object); helper does ToNumber
+        // internally (throws TypeError on Symbol / BigInt per spec). undefined
+        // → ToNumber returns NaN → 0 repetitions.
         if (arguments.Count > 0)
         {
             emitter.EmitExpression(arguments[0]);
             emitter.EmitBoxIfNeeded(arguments[0]);
-            il.Emit(OpCodes.Unbox_Any, ctx.Types.Double);
         }
         else
         {
-            il.Emit(OpCodes.Ldc_R8, 0.0);
+            il.Emit(OpCodes.Ldnull);
         }
         il.Emit(OpCodes.Call, ctx.Runtime!.StringRepeat);
     }
