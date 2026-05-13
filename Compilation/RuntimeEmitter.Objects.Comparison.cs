@@ -473,6 +473,39 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, copyLoopStart);
         il.MarkLabel(copyEnumOkLabel);
 
+        // ECMA-262 §20.1.2.1 step 5.c.i: invoke [[Set]] which, per §10.1.9
+        // OrdinarySet, returns false (→ TypeError in this strict-mode call)
+        // when target is frozen (writable=false on existing data property) or
+        // when target is non-extensible and the key would be a new addition.
+        // Check both conditions against the original target (arg0), since the
+        // PDS lookup uses the wrapper identity, not the unwrapped _fields dict.
+        var skipFrozenThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsFrozen);
+        il.Emit(OpCodes.Brfalse, skipFrozenThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot assign to read only property in frozen object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(skipFrozenThrowLabel);
+
+        // Sealed: existing keys can be modified, new keys throw (non-extensible).
+        var skipSealedCheckLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsSealed);
+        il.Emit(OpCodes.Brfalse, skipSealedCheckLabel);
+        // If key not in targetDict, throw.
+        il.Emit(OpCodes.Ldloc, targetDictLocal);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kpKey);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "ContainsKey", _types.String));
+        il.Emit(OpCodes.Brtrue, skipSealedCheckLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot add property to sealed object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(skipSealedCheckLabel);
+
         // target[kvp.Key] = kvp.Value
         il.Emit(OpCodes.Ldloc, targetDictLocal);
         il.Emit(OpCodes.Ldloca, kvpLocal);
