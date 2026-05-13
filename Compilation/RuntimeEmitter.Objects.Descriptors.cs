@@ -794,20 +794,40 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);  // Discard bool result
 
 
-        // Also set the value on the object if it's a data property (has value, not getter)
-        // if (descriptor has "value" && obj is Dictionary)
+        // Also set the value on the object if it's a data/generic property (no
+        // accessor). ECMA-262 §6.2.5.6 CompletePropertyDescriptor: a generic
+        // descriptor like `{enumerable:true}` defaults Value to undefined.
+        // Without writing the key into the underlying dict/_fields, Object.keys
+        // and for-in iterate dict.Keys and miss the property entirely (PDS-only
+        // residency). Writing $Undefined.Instance when the slot is null gives
+        // the dict-keys path the key while keeping JS-visible value = undefined.
         var skipValueSetLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
-        // Check if descriptor has a value (not an accessor property)
-        il.Emit(OpCodes.Ldloc, descriptorLocal);
-        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, skipValueSetLabel);
-
-        // Check if getter is set (accessor property - don't set value directly)
+        // Skip if accessor: getter or setter non-null.
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
         il.Emit(OpCodes.Brtrue, skipValueSetLabel);
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, skipValueSetLabel);
+
+        // valueToWrite = descriptor.Value ?? $Undefined.Instance
+        var valueToWriteLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, valueToWriteLocal);
+        var haveValueLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valueToWriteLocal);
+        il.Emit(OpCodes.Brtrue, haveValueLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Stloc, valueToWriteLocal);
+        // Also back-fill descriptor.Value so gOPD reports `value: undefined`
+        // (not null), matching the JS-visible spec form.
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Ldloc, valueToWriteLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+        il.MarkLabel(haveValueLabel);
 
         // Set value on object if it's a dictionary
         var notDictForValueLabel = il.DefineLabel();
@@ -818,8 +838,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldloc, propNameLocal);
-        il.Emit(OpCodes.Ldloc, descriptorLocal);
-        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, valueToWriteLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
         il.Emit(OpCodes.Br, endLabel);
 
@@ -838,8 +857,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, runtime.TSObjectType);
         il.Emit(OpCodes.Callvirt, runtime.TSObjectFieldsGetter);
         il.Emit(OpCodes.Ldloc, propNameLocal);
-        il.Emit(OpCodes.Ldloc, descriptorLocal);
-        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, valueToWriteLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
         il.Emit(OpCodes.Br, endLabel);
 
