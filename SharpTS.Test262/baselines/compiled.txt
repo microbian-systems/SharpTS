@@ -4091,7 +4091,7 @@ test/built-ins/Object/assign/Target-Symbol.js Fail
 test/built-ins/Object/assign/Target-Undefined.js Pass
 test/built-ins/Object/assign/assign-descriptor.js Fail
 test/built-ins/Object/assign/assign-length.js Pass
-test/built-ins/Object/assign/assignment-to-readonly-property-of-target-must-throw-a-typeerror-exception.js Fail
+test/built-ins/Object/assign/assignment-to-readonly-property-of-target-must-throw-a-typeerror-exception.js Pass
 test/built-ins/Object/assign/invoked-as-ctor.js Pass
 test/built-ins/Object/assign/name.js Pass
 test/built-ins/Object/assign/not-a-constructor.js Pass
