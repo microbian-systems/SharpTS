@@ -308,10 +308,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.ToObjectMethod);
         il.Emit(OpCodes.Stloc, coercedTargetLocal);
 
+        // Unwrap $Object → its _fields Dict so source-iteration writes land
+        // on the wrapper's own slots (same trick ObjectDefineProperties uses
+        // for receiver+props normalization). `new Object()` returns a
+        // $Object; without this, Object.assign(newObj, "123") would skip the
+        // Dict branch entirely and lose the source iteration.
+        var notTSObjectTargetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, coercedTargetLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjectTargetLabel);
+        il.Emit(OpCodes.Ldloc, coercedTargetLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectFieldsGetter);
+        il.Emit(OpCodes.Stloc, targetDictLocal);
+        var afterTargetUnwrapLabel = il.DefineLabel();
+        il.Emit(OpCodes.Br, afterTargetUnwrapLabel);
+        il.MarkLabel(notTSObjectTargetLabel);
+
         // Check if coerced target is Dictionary<string, object>
         il.Emit(OpCodes.Ldloc, coercedTargetLocal);
         il.Emit(OpCodes.Isinst, dictType);
         il.Emit(OpCodes.Stloc, targetDictLocal);
+
+        il.MarkLabel(afterTargetUnwrapLabel);
         il.Emit(OpCodes.Ldloc, targetDictLocal);
         il.Emit(OpCodes.Brfalse, notDictLabel);
 
