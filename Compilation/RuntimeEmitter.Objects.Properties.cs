@@ -3109,12 +3109,73 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Brtrue, typeSetLabel);
 
+        // List<object?> — raw arrays from `[...]` literal / Array.prototype.concat
+        // / etc. accept arbitrary named property assignment per ECMA-262 §23.1.5
+        // [[DefineOwnProperty]]. Numeric indices are handled via SetIndex; only
+        // string keys land here. Store named-non-numeric writes in PDS as data
+        // descriptors so GetProperty / hasOwn / gOPD round-trip. Pre-fix these
+        // fell to SetFieldsProperty which silently dropped them.
+        var listSetPropLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brtrue, listSetPropLabel);
+
         // Not a dict or $Object or $TSFunction or $CJSModule or Type - try SetFieldsProperty for class instances
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.SetFieldsProperty);
         il.Emit(OpCodes.Ret);
+
+        // List<object?> handler: same shape as $TSArray's non-length path.
+        il.MarkLabel(listSetPropLabel);
+        {
+            // Skip if key is "length" or a numeric index — those write paths
+            // belong to SetIndex (numeric) / a dedicated length path. Silent
+            // no-op for "length" matches current behavior; named numeric
+            // string falls through to PDS (close enough, integer-key writes
+            // through SetProperty are rare).
+            var listSetIsLengthLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "length");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brtrue, listSetIsLengthLabel);
+            // Frozen guard.
+            var listSetNotFrozenLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.PDSIsFrozen);
+            il.Emit(OpCodes.Brfalse, listSetNotFrozenLabel);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(listSetNotFrozenLabel);
+            // Existing-descriptor writable=false guard.
+            var listSetExistingDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, listSetExistingDescLocal);
+            var listSetWritableLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, listSetExistingDescLocal);
+            il.Emit(OpCodes.Brfalse, listSetWritableLabel);
+            il.Emit(OpCodes.Ldloc, listSetExistingDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
+            il.Emit(OpCodes.Brtrue, listSetWritableLabel);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(listSetWritableLabel);
+            // Install fresh data descriptor with the value.
+            var listSetNewDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, listSetNewDescLocal);
+            il.Emit(OpCodes.Ldloc, listSetNewDescLocal);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloc, listSetNewDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+            il.MarkLabel(listSetIsLengthLabel);
+            il.Emit(OpCodes.Ret);
+        }
 
         // $RegExp handler: route `r.lastIndex = value` to the typed setter
         // with JS ToLength coercion. Other property writes fall through to
