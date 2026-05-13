@@ -49,18 +49,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ble, noArgsLabel);
 
-        // message = args[0]?.ToString()
+        // message = (args[0] === undefined or null) ? null : ? ToString(args[0])
+        // ECMA-262 §20.5.1.1 Error step 3: only ToString when message is not
+        // undefined. ToJsString throws TypeError on Symbol per §7.1.17 step 2
+        // — required by Error/error-message-tostring-symbol.js +
+        // error-message-tostring-toprimitive.js. Store args[0] in a local so
+        // the dup/branch dance doesn't leak stack into afterMessageLabel.
+        var arg0Local = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
-        var argNotNull = il.DefineLabel();
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Brtrue, argNotNull);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, arg0Local);
+
+        var argNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, arg0Local);
+        il.Emit(OpCodes.Brfalse, argNullLabel);
+        il.Emit(OpCodes.Ldloc, arg0Local);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, argNullLabel);
+        // Non-null, non-undefined: ToJsString (throws TypeError for Symbol).
+        il.Emit(OpCodes.Ldloc, arg0Local);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Br, afterMessageLabel);
-        il.MarkLabel(argNotNull);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.MarkLabel(argNullLabel);
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Br, afterMessageLabel);
 
         il.MarkLabel(noArgsLabel);
