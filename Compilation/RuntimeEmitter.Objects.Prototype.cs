@@ -348,6 +348,23 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
+        // ECMA-262 §20.1.2.11 step 1: Let obj be ? ToObject(O). ToObject throws
+        // TypeError on null/undefined.
+        var gOPSTypeOkLabel = il.DefineLabel();
+        var gOPSThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, gOPSThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, gOPSThrowLabel);
+        il.Emit(OpCodes.Br, gOPSTypeOkLabel);
+        il.MarkLabel(gOPSThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(gOPSTypeOkLabel);
+
         // Create the result list
         // var result = new List<object?>();
         var resultLocal = il.DeclareLocal(_types.ListOfObjectNullable);
