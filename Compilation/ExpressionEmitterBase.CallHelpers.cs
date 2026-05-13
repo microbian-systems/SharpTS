@@ -1213,10 +1213,13 @@ public abstract partial class ExpressionEmitterBase
         switch (methodName)
         {
             case "includes":
-                // No Castclass — StringIncludes takes (string, object) and
-                // handles the IsRegExp guard + ToJsString internally.
+                // StringIncludes takes (string, object, object): self,
+                // searchString, position. Helper handles IsRegExp / ToJsString
+                // / JsToInt32 internally.
                 if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); }
                 else { IL.Emit(OpCodes.Ldstr, ""); }
+                if (arguments.Count > 1) { EmitExpression(arguments[1]); EnsureBoxed(); }
+                else { IL.Emit(OpCodes.Ldnull); }
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.StringIncludes);
                 IL.Emit(OpCodes.Box, typeof(bool));
                 break;

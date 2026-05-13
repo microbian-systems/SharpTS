@@ -64,9 +64,12 @@ public static class BuiltInTypes
             "replace" => new TypeInfo.Function([AnyType, AnyType], StringType),
             // split accepts string | RegExp for the separator.
             "split" => new TypeInfo.Function([AnyType, NumberType], new TypeInfo.Array(StringType), RequiredParams: 1), // limit is optional
-            "includes" => new TypeInfo.Function([StringType], BooleanType),
-            "startsWith" => new TypeInfo.Function([StringType], BooleanType),
-            "endsWith" => new TypeInfo.Function([StringType], BooleanType),
+            // ECMA-262 §22.1.3.{7,20,6} String.prototype.{includes,startsWith,
+            // endsWith}(searchString, position?). position defaults to 0
+            // (includes/startsWith) or length (endsWith).
+            "includes" => new TypeInfo.Function([StringType, NumberType], BooleanType, RequiredParams: 1),
+            "startsWith" => new TypeInfo.Function([StringType, NumberType], BooleanType, RequiredParams: 1),
+            "endsWith" => new TypeInfo.Function([StringType, NumberType], BooleanType, RequiredParams: 1),
             "slice" => new TypeInfo.Function([NumberType, NumberType], StringType, RequiredParams: 1), // end is optional
             "substr" => new TypeInfo.Function([NumberType, NumberType], StringType, RequiredParams: 1), // length is optional (legacy, Annex B)
             "repeat" => new TypeInfo.Function([NumberType], StringType),

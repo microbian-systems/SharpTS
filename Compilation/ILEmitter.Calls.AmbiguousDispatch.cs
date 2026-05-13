@@ -58,17 +58,26 @@ public partial class ILEmitter
         switch (methodName)
         {
             case "includes":
+                // StringIncludes now takes (string, object, object) where the
+                // 3rd arg is the position. Helper handles IsRegExp, ToJsString,
+                // JsToInt32 internally.
                 if (arguments.Count > 0)
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    // No Castclass — StringIncludes now takes (string, object)
-                    // so the IsRegExp guard inside the helper can fire (spec
-                    // §22.1.3.7 step 4 requires TypeError on RegExp arg).
                 }
                 else
                 {
                     IL.Emit(OpCodes.Ldstr, "");
+                }
+                if (arguments.Count > 1)
+                {
+                    EmitExpression(arguments[1]);
+                    EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldnull);
                 }
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.StringIncludes);
                 IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
@@ -153,12 +162,19 @@ public partial class ILEmitter
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    // No Castclass — StringStartsWith now takes (string, object)
-                    // so the IsRegExp guard inside the helper can fire.
                 }
                 else
                 {
                     IL.Emit(OpCodes.Ldstr, "");
+                }
+                if (arguments.Count > 1)
+                {
+                    EmitExpression(arguments[1]);
+                    EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldnull);
                 }
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.StringStartsWith);
                 IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
@@ -169,11 +185,19 @@ public partial class ILEmitter
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    // No Castclass — StringEndsWith now takes (string, object).
                 }
                 else
                 {
                     IL.Emit(OpCodes.Ldstr, "");
+                }
+                if (arguments.Count > 1)
+                {
+                    EmitExpression(arguments[1]);
+                    EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldnull);
                 }
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.StringEndsWith);
                 IL.Emit(OpCodes.Box, _ctx.Types.Boolean);

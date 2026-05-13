@@ -560,11 +560,15 @@ public partial class RuntimeEmitter
         string methodName, string clrMethodName, string jsMethodName,
         Action<MethodBuilder> assign)
     {
+        // Signature: (string self, object searchString, object position) → bool.
+        // The 3rd param is required so the call site can always push the
+        // position (or null/undefined if not supplied). undefined → 0
+        // (or len for endsWith); Symbol throws via JsToInt32.
         var method = typeBuilder.DefineMethod(
             methodName,
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Boolean,
-            [_types.String, _types.Object]
+            [_types.String, _types.Object, _types.Object]
         );
         assign(method);
 
@@ -586,12 +590,141 @@ public partial class RuntimeEmitter
             il.MarkLabel(notRegExpLabel);
         }
 
-        // Coerce arg1 to string via ToJsString (handles non-string args).
-        il.Emit(OpCodes.Ldarg_0);
+        // Coerce searchString via ToJsString (handles non-string, throws on Symbol).
+        var searchStrLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.ToJsString);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, clrMethodName, _types.String));
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Stloc, searchStrLocal);
+
+        // Coerce position via JsToInt32 (throws TypeError on Symbol). null /
+        // undefined → 0 (startsWith/includes) or len (endsWith — caller treats
+        // undef as "use length"). The helper materializes 0 here; endsWith
+        // semantics are handled inside the per-method branch below.
+        var posLocal = il.DeclareLocal(_types.Int32);
+        var posUndefLabel = il.DefineLabel();
+        var posDoneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, posUndefLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, posUndefLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.JsToInt32);
+        il.Emit(OpCodes.Stloc, posLocal);
+        il.Emit(OpCodes.Br, posDoneLabel);
+        il.MarkLabel(posUndefLabel);
+        il.Emit(OpCodes.Ldc_I4_M1);  // sentinel for "position not supplied"
+        il.Emit(OpCodes.Stloc, posLocal);
+        il.MarkLabel(posDoneLabel);
+
+        // len = arg0.Length; searchLen = searchStr.Length.
+        var lenLocal = il.DeclareLocal(_types.Int32);
+        var searchLenLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocal);
+        il.Emit(OpCodes.Ldloc, searchStrLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, searchLenLocal);
+
+        if (clrMethodName == "EndsWith")
+        {
+            // endsWith: endPos = (pos == -1) ? len : clamp(pos, 0, len).
+            //           start = endPos - searchLen. If start < 0 → false.
+            //           else: arg0.IndexOf(searchStr, start) == start.
+            var startLocal = il.DeclareLocal(_types.Int32);
+            var bailFalseLabel = il.DefineLabel();
+            var posSupplied = il.DefineLabel();
+            var endComputed = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, posLocal);
+            il.Emit(OpCodes.Ldc_I4_M1);
+            il.Emit(OpCodes.Bne_Un, posSupplied);
+            il.Emit(OpCodes.Ldloc, lenLocal);
+            il.Emit(OpCodes.Br, endComputed);
+            il.MarkLabel(posSupplied);
+            il.Emit(OpCodes.Ldloc, posLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Max", _types.Int32, _types.Int32));
+            il.Emit(OpCodes.Ldloc, lenLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Min", _types.Int32, _types.Int32));
+            il.MarkLabel(endComputed);
+            il.Emit(OpCodes.Ldloc, searchLenLocal);
+            il.Emit(OpCodes.Sub);
+            il.Emit(OpCodes.Stloc, startLocal);
+            // start < 0 → false.
+            il.Emit(OpCodes.Ldloc, startLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Blt, bailFalseLabel);
+            // arg0.IndexOf(searchStr, start) == start.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, searchStrLocal);
+            il.Emit(OpCodes.Ldloc, startLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "IndexOf", _types.String, _types.Int32));
+            il.Emit(OpCodes.Ldloc, startLocal);
+            il.Emit(OpCodes.Ceq);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(bailFalseLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ret);
+        }
+        else
+        {
+            // startsWith / includes: start = clamp(max(pos, 0), 0, len). When
+            // pos was undef (-1 sentinel), default to 0.
+            var startLocal = il.DeclareLocal(_types.Int32);
+            var posSupplied = il.DefineLabel();
+            var startComputed = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, posLocal);
+            il.Emit(OpCodes.Ldc_I4_M1);
+            il.Emit(OpCodes.Bne_Un, posSupplied);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Br, startComputed);
+            il.MarkLabel(posSupplied);
+            il.Emit(OpCodes.Ldloc, posLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Max", _types.Int32, _types.Int32));
+            il.Emit(OpCodes.Ldloc, lenLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Min", _types.Int32, _types.Int32));
+            il.MarkLabel(startComputed);
+            il.Emit(OpCodes.Stloc, startLocal);
+
+            if (clrMethodName == "StartsWith")
+            {
+                // start + searchLen > len → false. Else: arg0.IndexOf(searchStr, start) == start.
+                var bailFalseLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, startLocal);
+                il.Emit(OpCodes.Ldloc, searchLenLocal);
+                il.Emit(OpCodes.Add);
+                il.Emit(OpCodes.Ldloc, lenLocal);
+                il.Emit(OpCodes.Bgt, bailFalseLabel);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldloc, searchStrLocal);
+                il.Emit(OpCodes.Ldloc, startLocal);
+                il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "IndexOf", _types.String, _types.Int32));
+                il.Emit(OpCodes.Ldloc, startLocal);
+                il.Emit(OpCodes.Ceq);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(bailFalseLabel);
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Ret);
+            }
+            else  // Contains (includes)
+            {
+                // arg0.IndexOf(searchStr, start) >= 0.
+                var trueLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldloc, searchStrLocal);
+                il.Emit(OpCodes.Ldloc, startLocal);
+                il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "IndexOf", _types.String, _types.Int32));
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Bge, trueLabel);
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(trueLabel);
+                il.Emit(OpCodes.Ldc_I4_1);
+                il.Emit(OpCodes.Ret);
+            }
+        }
     }
 
     private void EmitStringSlice(TypeBuilder typeBuilder, EmittedRuntime runtime)
