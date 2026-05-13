@@ -130,6 +130,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, throwLabel);
+        // Symbol (TSSymbol). ECMA-262 §20.5.3.4 step 2 brand check rejects all
+        // primitives including Symbol; the dispatch above only catches the
+        // common five. invalid-receiver.js iterates Symbol() alongside the
+        // others.
+        if (runtime.TSSymbolType != null)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+            il.Emit(OpCodes.Brtrue, throwLabel);
+        }
 
         il.Emit(OpCodes.Br, passLabel);
 
