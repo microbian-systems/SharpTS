@@ -564,12 +564,21 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, runtime.InvokeValue);
             il.Emit(OpCodes.Br, endLabel);
 
-            // isTSFunctionLabel: call $TSFunction.Invoke
+            // isTSFunctionLabel: call $TSFunction.InvokeWithThis(null, args).
+            // Function expressions compile with __this as first parameter
+            // (HasOwnThis=true). Plain Invoke(args) would map args[0] to __this
+            // and pad the user's first param with null. InvokeWithThis prepends
+            // the explicit thisArg (null = JS undefined) for __this so callbacks
+            // see their declared params at the right indices. Arrow functions
+            // are unaffected: InvokeWithThis's !expectsThis branch routes back
+            // through Invoke(args) and sets the thread-local this.
+            // Per ECMA-262 §27.2.1 PromiseReactionJob: thisArgument = undefined.
             il.MarkLabel(isTSFunctionLabel);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+            il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ldloc, argsLocal);
-            il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+            il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
             il.Emit(OpCodes.Br, endLabel);
 
             // isBoundLabel: call $BoundTSFunction.Invoke
@@ -630,12 +639,21 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, runtime.InvokeValue);
             il.Emit(OpCodes.Br, endLabel);
 
-            // isTSFunctionLabel: call $TSFunction.Invoke
+            // isTSFunctionLabel: call $TSFunction.InvokeWithThis(null, args).
+            // Function expressions compile with __this as first parameter
+            // (HasOwnThis=true). Plain Invoke(args) would map args[0] to __this
+            // and pad the user's first param with null. InvokeWithThis prepends
+            // the explicit thisArg (null = JS undefined) for __this so callbacks
+            // see their declared params at the right indices. Arrow functions
+            // are unaffected: InvokeWithThis's !expectsThis branch routes back
+            // through Invoke(args) and sets the thread-local this.
+            // Per ECMA-262 §27.2.1 PromiseReactionJob: thisArgument = undefined.
             il.MarkLabel(isTSFunctionLabel);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+            il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ldloc, argsLocal);
-            il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+            il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvokeWithThis);
             il.Emit(OpCodes.Br, endLabel);
 
             // isBoundLabel: call $BoundTSFunction.Invoke
