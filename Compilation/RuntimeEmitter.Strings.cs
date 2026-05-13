@@ -533,52 +533,64 @@ public partial class RuntimeEmitter
 
     private void EmitStringIncludes(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "StringIncludes",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Boolean,
-            [_types.String, _types.String]
-        );
-        runtime.StringIncludes = method;
-
-        var il = method.GetILGenerator();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Contains", _types.String));
-        il.Emit(OpCodes.Ret);
+        EmitStringSearchHelper(typeBuilder, runtime, "StringIncludes", "Contains", "includes",
+            m => runtime.StringIncludes = m);
     }
 
     private void EmitStringStartsWith(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "StringStartsWith",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Boolean,
-            [_types.String, _types.String]
-        );
-        runtime.StringStartsWith = method;
-
-        var il = method.GetILGenerator();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "StartsWith", _types.String));
-        il.Emit(OpCodes.Ret);
+        EmitStringSearchHelper(typeBuilder, runtime, "StringStartsWith", "StartsWith", "startsWith",
+            m => runtime.StringStartsWith = m);
     }
 
     private void EmitStringEndsWith(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        EmitStringSearchHelper(typeBuilder, runtime, "StringEndsWith", "EndsWith", "endsWith",
+            m => runtime.StringEndsWith = m);
+    }
+
+    /// <summary>
+    /// Emits a string search helper (Contains/StartsWith/EndsWith) that
+    /// throws TypeError if the search argument is a RegExp per ECMA-262
+    /// §22.1.3.{7,20,6} step 4. Without the check the prototype-dispatch
+    /// path silently casts RegExp to string via Castclass, throwing an
+    /// InvalidCastException instead of a spec TypeError.
+    /// </summary>
+    private void EmitStringSearchHelper(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        string methodName, string clrMethodName, string jsMethodName,
+        Action<MethodBuilder> assign)
+    {
         var method = typeBuilder.DefineMethod(
-            "StringEndsWith",
+            methodName,
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Boolean,
-            [_types.String, _types.String]
+            [_types.String, _types.Object]
         );
-        runtime.StringEndsWith = method;
+        assign(method);
 
         var il = method.GetILGenerator();
+        // arg1 is object so the dynamic-dispatch path can pass a RegExp
+        // unchanged; check IsRegExp and throw before any coercion. Gated on
+        // UsesRegExp — when no RegExp is emitted (TSRegExpType=null), no value
+        // can be a RegExp at runtime so the check would be unreachable IL.
+        if (runtime.TSRegExpType != null)
+        {
+            var notRegExpLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            il.Emit(OpCodes.Brfalse, notRegExpLabel);
+            il.Emit(OpCodes.Ldstr, "First argument to String.prototype." + jsMethodName + " must not be a regular expression");
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(notRegExpLabel);
+        }
+
+        // Coerce arg1 to string via ToJsString (handles non-string args).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "EndsWith", _types.String));
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, clrMethodName, _types.String));
         il.Emit(OpCodes.Ret);
     }
 

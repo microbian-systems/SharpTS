@@ -542,10 +542,12 @@ public sealed class StringEmitter : ITypeEmitterStrategy
     /// <summary>
     /// Emits an IsRegExp guard that throws TypeError if the top-of-stack value
     /// is a $RegExp. ECMA-262 §22.1.3.{6,20,7} (endsWith/startsWith/includes)
-    /// step 4 require this check before any ToString coercion.
+    /// step 4 require this check before any ToString coercion. Gated on
+    /// UsesRegExp — when no RegExp is emitted, no value can be a RegExp.
     /// </summary>
     private static void EmitThrowIfRegExp(CompilationContext ctx, ILGenerator il, string methodName)
     {
+        if (ctx.Runtime!.TSRegExpType == null) return;
         var notRegExpLabel = il.DefineLabel();
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Isinst, ctx.Runtime!.TSRegExpType);
