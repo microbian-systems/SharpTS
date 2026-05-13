@@ -1029,8 +1029,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
-        // Symbol key handler: GetSymbolDict(obj).Remove(key)
+        // Symbol key handler: honor frozen/sealed (same rationale as the
+        // string-key dict path) before falling through to GetSymbolDict.Remove.
+        // ECMA-262 §10.1.10 OrdinaryDelete: a non-configurable own property
+        // refuses [[Delete]] — Object.seal/freeze mark every own descriptor
+        // non-configurable, so symbol-keyed entries on a sealed/frozen object
+        // must also reject delete. Pre-fix `delete obj[sym]` returned true
+        // for sealed objects with symbol props.
         il.MarkLabel(symbolKeyLabel);
+        var symDelObjLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symDelObjLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+        var symDelNotFrozenLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, symDelNotFrozenLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symDelNotFrozenLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.SealedObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symDelObjLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+        var symDelNotSealedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, symDelNotSealedLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symDelNotSealedLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
         il.Emit(OpCodes.Ldarg_1);
@@ -1257,8 +1282,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
-        // Symbol key handler: GetSymbolDict(obj).Remove(key)
+        // Symbol key handler: honor frozen/sealed (same rationale as the
+        // string-key dict path) before falling through to GetSymbolDict.Remove.
+        // ECMA-262 §10.1.10 OrdinaryDelete: a non-configurable own property
+        // refuses [[Delete]] — Object.seal/freeze mark every own descriptor
+        // non-configurable, so symbol-keyed entries on a sealed/frozen object
+        // must also reject delete. Pre-fix `delete obj[sym]` returned true
+        // for sealed objects with symbol props.
         il.MarkLabel(symbolKeyLabel);
+        var symDelObjLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symDelObjLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+        var symDelNotFrozenLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, symDelNotFrozenLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symDelNotFrozenLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.SealedObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symDelObjLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+        var symDelNotSealedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, symDelNotSealedLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symDelNotSealedLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
         il.Emit(OpCodes.Ldarg_1);
