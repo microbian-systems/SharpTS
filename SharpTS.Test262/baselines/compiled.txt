@@ -7395,7 +7395,7 @@ test/built-ins/Object/seal/seal-urierror.js Pass
 test/built-ins/Object/seal/seal-weakmap.js Pass
 test/built-ins/Object/seal/seal-weakref.js Pass
 test/built-ins/Object/seal/seal-weakset.js Pass
-test/built-ins/Object/seal/symbol-object-contains-symbol-properties-non-strict.js Fail
+test/built-ins/Object/seal/symbol-object-contains-symbol-properties-non-strict.js Pass
 test/built-ins/Object/seal/symbol-object-contains-symbol-properties-strict.js Fail
 test/built-ins/Object/seal/throws-when-false.js Fail
 test/built-ins/Object/setPrototypeOf/bigint.js Pass
