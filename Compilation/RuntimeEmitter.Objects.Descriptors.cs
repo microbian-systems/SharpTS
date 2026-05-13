@@ -1437,51 +1437,7 @@ public partial class RuntimeEmitter
         var symDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
         var valueLocal = il.DeclareLocal(_types.Object);
         var resultDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
-        var symPdsDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
 
-        // Check PDS first: Object.defineProperty(obj, sym, descriptor) stores
-        // the full descriptor (including the user-specified enumerable bit).
-        // If a PDS descriptor exists for this symbol key, use its attributes
-        // verbatim; otherwise synthesize defaults for `obj[sym] = v`-style
-        // assignments.
-        var noPdsForSymLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
-        il.Emit(OpCodes.Stloc, symPdsDescLocal);
-        il.Emit(OpCodes.Ldloc, symPdsDescLocal);
-        il.Emit(OpCodes.Brfalse, noPdsForSymLabel);
-
-        // PDS descriptor present — synthesize result dict from stored attrs.
-        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
-        il.Emit(OpCodes.Stloc, resultDictLocal);
-        il.Emit(OpCodes.Ldloc, resultDictLocal);
-        il.Emit(OpCodes.Ldstr, "value");
-        il.Emit(OpCodes.Ldloc, symPdsDescLocal);
-        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
-        il.Emit(OpCodes.Ldloc, resultDictLocal);
-        il.Emit(OpCodes.Ldstr, "writable");
-        il.Emit(OpCodes.Ldloc, symPdsDescLocal);
-        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
-        il.Emit(OpCodes.Box, _types.Boolean);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
-        il.Emit(OpCodes.Ldloc, resultDictLocal);
-        il.Emit(OpCodes.Ldstr, "enumerable");
-        il.Emit(OpCodes.Ldloc, symPdsDescLocal);
-        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
-        il.Emit(OpCodes.Box, _types.Boolean);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
-        il.Emit(OpCodes.Ldloc, resultDictLocal);
-        il.Emit(OpCodes.Ldstr, "configurable");
-        il.Emit(OpCodes.Ldloc, symPdsDescLocal);
-        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
-        il.Emit(OpCodes.Box, _types.Boolean);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
-        il.Emit(OpCodes.Ldloc, resultDictLocal);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(noPdsForSymLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
         il.Emit(OpCodes.Stloc, symDictLocal);
@@ -1498,12 +1454,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(foundLabel);
-        // Build descriptor dict for user-set symbol keys without PDS — default
-        // attributes match `obj[sym] = v`-style assignment:
-        // { value, writable:true, enumerable:true, configurable:true }
-        // Pre-fix used enumerable:false to match RegExp.prototype's well-
-        // known-symbol-keyed methods, but those are installed via
-        // defineProperty and now flow through the PDS branch above.
+        // Build descriptor dict — default attributes for symbol-keyed entries
+        // match the spec-standard built-in default {writable:true,
+        // enumerable:false, configurable:true} (ECMA-262 §17). RegExp.prototype
+        // installs Symbol.match/matchAll/replace/search/split this way; user-
+        // installed `defineProperty(obj, sym, {enumerable:true})` semantics
+        // would need a symbol-key PDS store, deferred.
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultDictLocal);
         il.Emit(OpCodes.Ldloc, resultDictLocal);
@@ -1511,7 +1467,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
         EmitDescriptorBoolField(il, resultDictLocal, "writable", true);
-        EmitDescriptorBoolField(il, resultDictLocal, "enumerable", true);
+        EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
         EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ret);
