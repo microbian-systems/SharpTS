@@ -4799,7 +4799,7 @@ test/built-ins/Object/defineProperties/15.2.3.7-6-a-155.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-156.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-157.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-158.js Pass
-test/built-ins/Object/defineProperties/15.2.3.7-6-a-159.js RuntimeError
+test/built-ins/Object/defineProperties/15.2.3.7-6-a-159.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-16.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-160.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-6-a-161.js Fail
@@ -5163,7 +5163,7 @@ test/built-ins/Object/defineProperty/15.2.3.6-3-134.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-135.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-136.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-137.js Pass
-test/built-ins/Object/defineProperty/15.2.3.6-3-138.js Pass
+test/built-ins/Object/defineProperty/15.2.3.6-3-138.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-139-1.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-3-139.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-3-14.js Pass
@@ -5508,7 +5508,7 @@ test/built-ins/Object/defineProperty/15.2.3.6-4-16.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-4-160.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-4-161.js Fail
 test/built-ins/Object/defineProperty/15.2.3.6-4-162.js Pass
-test/built-ins/Object/defineProperty/15.2.3.6-4-163.js RuntimeError
+test/built-ins/Object/defineProperty/15.2.3.6-4-163.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-4-164.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-4-165.js Pass
 test/built-ins/Object/defineProperty/15.2.3.6-4-166.js Pass
@@ -9417,7 +9417,7 @@ test/built-ins/RegExp/prototype/Symbol.search/prop-desc.js RuntimeError
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-init-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-init-samevalue.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-init.js Pass
-test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-restore-err.js Fail
+test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-restore-err.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-restore-samevalue.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/set-lastindex-restore.js Pass
 test/built-ins/RegExp/prototype/Symbol.search/success-get-index-err.js Pass
