@@ -62,8 +62,10 @@ public static class BuiltInTypes
             // Use Any for both to cover every JS overload the interpreter and
             // compiler already support at runtime.
             "replace" => new TypeInfo.Function([AnyType, AnyType], StringType),
-            // split accepts string | RegExp for the separator.
-            "split" => new TypeInfo.Function([AnyType, NumberType], new TypeInfo.Array(StringType), RequiredParams: 1), // limit is optional
+            // split(separator?, limit?) — both args optional. With no args
+            // returns [self] (per ECMA-262 §22.1.3.21 ToString(undefined) = "" but
+            // separator=undefined produces a single-element array).
+            "split" => new TypeInfo.Function([AnyType, NumberType], new TypeInfo.Array(StringType), RequiredParams: 0),
             // ECMA-262 §22.1.3.{7,20,6} String.prototype.{includes,startsWith,
             // endsWith}(searchString, position?). position defaults to 0
             // (includes/startsWith) or length (endsWith).
