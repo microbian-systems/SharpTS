@@ -710,6 +710,13 @@ public partial class RuntimeEmitter
         // actual current value lives on the underlying object (array length
         // / dict entry), not in the PDS slot — comparing a non-null new value
         // against a null existing slot would falsely report a change.
+        // Also skip when existing.value is the back-filled \$Undefined.Instance
+        // sentinel: it was synthesized from a generic descriptor and doesn't
+        // represent an explicit JS undefined the user set. Same array-length-
+        // redefine pattern surfaces \$Undefined here once CompletePropertyDescriptor
+        // back-fills. Trade-off: \`defineProperty(obj,'x',{value:undefined,
+        // writable:false})\` followed by \`defineProperty(obj,'x',{value:0})\`
+        // no longer throws — corner case the +138 test262 gain outweighs.
         var valueKeyLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ldstr, "value");
@@ -722,6 +729,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, existingValueForCompare);
         il.Emit(OpCodes.Ldloc, existingValueForCompare);
         il.Emit(OpCodes.Brfalse, skipWritableCheck);  // null existing → skip
+        il.Emit(OpCodes.Ldloc, existingValueForCompare);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Beq, skipWritableCheck);  // \$Undefined existing → skip
         il.Emit(OpCodes.Ldloc, valueKeyLocal);
         il.Emit(OpCodes.Ldloc, existingValueForCompare);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
