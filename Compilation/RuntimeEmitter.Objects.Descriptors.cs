@@ -812,15 +812,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
         il.Emit(OpCodes.Brtrue, skipValueSetLabel);
 
-        // valueToWrite = descriptor.Value ?? $Undefined.Instance.
-        // Deliberately do NOT back-fill descriptor.Value when the descriptor is
-        // generic (Value slot null). Spec §10.1.6.3 step 4.b.iv.2.b only fires
-        // the SameValue redefinition guard when "Desc.[[Value]] is present" —
-        // back-filling would make a `{writable:false}` descriptor look like
-        // `{value:undefined, writable:false}` and break the array-length
-        // redefinition pattern (defineProperty/15.2.3.6-4-163 et al.). gOPD
-        // surfaces `value: null` in that corner case, which is mildly off-spec
-        // but cheaper than the regression cascade.
+        // valueToWrite = descriptor.Value ?? $Undefined.Instance
         var valueToWriteLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
@@ -830,6 +822,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, haveValueLabel);
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Stloc, valueToWriteLocal);
+        // Also back-fill descriptor.Value so gOPD reports `value: undefined`
+        // (not null), matching the JS-visible spec form.
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Ldloc, valueToWriteLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
         il.MarkLabel(haveValueLabel);
 
         // Set value on object if it's a dictionary
