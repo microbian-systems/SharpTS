@@ -501,6 +501,37 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
         il.Emit(OpCodes.Stloc, existingDescLocal);
 
+        // If PDS has no descriptor but the property exists on the object
+        // (set via plain `obj.foo = X` before defineProperty), synthesize a
+        // default data descriptor with the spec defaults for ordinary writes:
+        // writable=true, enumerable=true, configurable=true (Value = current
+        // slot). Pre-fix the merge step below was skipped and defineProperty
+        // defaulted unspecified fields to false, regressing the
+        // writable/enumerable/configurable bits for redefined plain-set
+        // properties (test262 15.2.3.6-4-100..).
+        var skipSynthExistingLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, existingDescLocal);
+        il.Emit(OpCodes.Brtrue, skipSynthExistingLabel);
+        // Existence check via HasOwnPropertyHelper — handles every receiver
+        // type (Dict, $Object, $TSFunction, List, Type, ...). For an existing
+        // key we synthesize the default-true descriptor; for a new key we
+        // leave existingDescLocal null so the spec defaults-to-false path
+        // (set on descriptor ctor at the top) wins.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Call, runtime.HasOwnPropertyHelperMethod);
+        il.Emit(OpCodes.Brfalse, skipSynthExistingLabel);
+        // Synthesize: new $CompiledPropertyDescriptor() with defaults
+        // (W/E/C=true from ctor), Value = GetProperty(obj, key).
+        il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+        il.Emit(OpCodes.Stloc, existingDescLocal);
+        il.MarkLabel(skipSynthExistingLabel);
+
         // Classify new descriptor type ahead of both validation and merge:
         // accessor if dict has "get"/"set", data if it has "value"/"writable".
         var newIsAccessorOuter = il.DeclareLocal(_types.Boolean);
