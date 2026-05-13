@@ -1073,7 +1073,29 @@ public partial class RuntimeEmitter
 
         // $Array handler: convert index to long, call DeleteAt, return true.
         // DeleteAt silently no-ops for frozen arrays / OOB indices (JS-spec).
+        // Non-numeric string keys route to DeleteProperty for PDS-stored named
+        // properties — pre-fix Convert.ToInt64("foo") threw FormatException,
+        // crashing propertyHelper.js's isConfigurable check on frozen arrays.
         il.MarkLabel(tsArrayDeleteIdxLabel);
+        {
+            var tsArrDelStrLabel = il.DefineLabel();
+            var tsArrDelProceedLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Brfalse, tsArrDelProceedLabel);
+            var tsArrDelStrParsed = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Ldloca, tsArrDelStrParsed);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+            il.Emit(OpCodes.Brtrue, tsArrDelProceedLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Call, runtime.DeleteProperty);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(tsArrDelProceedLabel);
+        }
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSArrayType);
         il.Emit(OpCodes.Ldarg_1);
@@ -1326,7 +1348,29 @@ public partial class RuntimeEmitter
 
         // $Array handler: convert index to long, call DeleteAt, return true.
         // DeleteAt silently no-ops for frozen arrays / OOB indices (JS-spec).
+        // Non-numeric string keys route to DeleteProperty for PDS-stored named
+        // properties — pre-fix Convert.ToInt64("foo") threw FormatException,
+        // crashing propertyHelper.js's isConfigurable check on frozen arrays.
         il.MarkLabel(tsArrayDeleteIdxLabel);
+        {
+            var tsArrDelStrLabel = il.DefineLabel();
+            var tsArrDelProceedLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Brfalse, tsArrDelProceedLabel);
+            var tsArrDelStrParsed = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Ldloca, tsArrDelStrParsed);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+            il.Emit(OpCodes.Brtrue, tsArrDelProceedLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Call, runtime.DeleteProperty);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(tsArrDelProceedLabel);
+        }
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSArrayType);
         il.Emit(OpCodes.Ldarg_1);
