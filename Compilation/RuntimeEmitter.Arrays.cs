@@ -289,6 +289,44 @@ public partial class RuntimeEmitter
         EmitProxyOwnKeysCheck(il, () => il.Emit(OpCodes.Ldarg_0), notProxyLabel);
         il.MarkLabel(notProxyLabel);
 
+        // String primitive: indexed-char keys "0", "1", ... per ECMA-262
+        // §10.4.3 String exotic objects. `Object.keys("abc")` returns ["0","1","2"].
+        var notStrKeysLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStrKeysLabel);
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        {
+            var strLenLocal = il.DeclareLocal(_types.Int32);
+            var strIdxLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, strLenLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, strIdxLocal);
+            var sLoop = il.DefineLabel();
+            var sEnd = il.DefineLabel();
+            il.MarkLabel(sLoop);
+            il.Emit(OpCodes.Ldloc, strIdxLocal);
+            il.Emit(OpCodes.Ldloc, strLenLocal);
+            il.Emit(OpCodes.Bge, sEnd);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloca, strIdxLocal);
+            il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int32, "ToString"));
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
+            il.Emit(OpCodes.Ldloc, strIdxLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, strIdxLocal);
+            il.Emit(OpCodes.Br, sLoop);
+            il.MarkLabel(sEnd);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ret);
+        }
+        il.MarkLabel(notStrKeysLabel);
+
         // if (obj is Dictionary<string, object?> dict)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, dictType);

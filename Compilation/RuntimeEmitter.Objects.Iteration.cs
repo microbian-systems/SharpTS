@@ -200,6 +200,54 @@ public partial class RuntimeEmitter
         var fieldsLoopStart = il.DefineLabel();
         var fieldsLoopEnd = il.DefineLabel();
 
+        // String primitive: ToObject wraps it as a String exotic object whose
+        // OwnPropertyKeys are the indexed chars. ECMA-262 §20.1.2.23 calls
+        // EnumerableOwnProperties which iterates those — so `Object.values("abc")`
+        // returns ["a","b","c"].
+        var notStrLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStrLabel);
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        {
+            var strLocal = il.DeclareLocal(_types.String);
+            var sIdxLocal = il.DeclareLocal(_types.Int32);
+            var sLenLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Stloc, strLocal);
+            il.Emit(OpCodes.Ldloc, strLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, sLenLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, sIdxLocal);
+            var sLoop = il.DefineLabel();
+            var sLoopEnd = il.DefineLabel();
+            il.MarkLabel(sLoop);
+            il.Emit(OpCodes.Ldloc, sIdxLocal);
+            il.Emit(OpCodes.Ldloc, sLenLocal);
+            il.Emit(OpCodes.Bge, sLoopEnd);
+            var cLocal = il.DeclareLocal(_types.Char);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, strLocal);
+            il.Emit(OpCodes.Ldloc, sIdxLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
+            il.Emit(OpCodes.Stloc, cLocal);
+            il.Emit(OpCodes.Ldloca, cLocal);
+            il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Char, "ToString"));
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
+            il.Emit(OpCodes.Ldloc, sIdxLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, sIdxLocal);
+            il.Emit(OpCodes.Br, sLoop);
+            il.MarkLabel(sLoopEnd);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ret);
+        }
+        il.MarkLabel(notStrLabel);
+
         // if (obj is Dictionary<string, object?> dict)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, dictType);
@@ -371,6 +419,66 @@ public partial class RuntimeEmitter
         var returnResultLabel = il.DefineLabel();
         var fieldsLoopStart = il.DefineLabel();
         var fieldsLoopEnd = il.DefineLabel();
+
+        // String primitive: yields [["0","a"], ["1","b"], ...] per ECMA-262
+        // §20.1.2.5 + §10.4.3 String exotic indexed-char own properties.
+        var notStrLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStrLabel);
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        {
+            var strLocal = il.DeclareLocal(_types.String);
+            var sIdxLocal = il.DeclareLocal(_types.Int32);
+            var sLenLocal = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Stloc, strLocal);
+            il.Emit(OpCodes.Ldloc, strLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length").GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, sLenLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, sIdxLocal);
+            var sLoop = il.DefineLabel();
+            var sLoopEnd = il.DefineLabel();
+            il.MarkLabel(sLoop);
+            il.Emit(OpCodes.Ldloc, sIdxLocal);
+            il.Emit(OpCodes.Ldloc, sLenLocal);
+            il.Emit(OpCodes.Bge, sLoopEnd);
+            // entry = new List<object?>()
+            var sEntry = il.DeclareLocal(listType);
+            il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Stloc, sEntry);
+            // entry.Add(idx.ToString())
+            il.Emit(OpCodes.Ldloc, sEntry);
+            il.Emit(OpCodes.Ldloca, sIdxLocal);
+            il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int32, "ToString"));
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
+            // entry.Add(str[idx].ToString())
+            var sChar = il.DeclareLocal(_types.Char);
+            il.Emit(OpCodes.Ldloc, sEntry);
+            il.Emit(OpCodes.Ldloc, strLocal);
+            il.Emit(OpCodes.Ldloc, sIdxLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
+            il.Emit(OpCodes.Stloc, sChar);
+            il.Emit(OpCodes.Ldloca, sChar);
+            il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Char, "ToString"));
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
+            // result.Add(entry)
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, sEntry);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
+            il.Emit(OpCodes.Ldloc, sIdxLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, sIdxLocal);
+            il.Emit(OpCodes.Br, sLoop);
+            il.MarkLabel(sLoopEnd);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ret);
+        }
+        il.MarkLabel(notStrLabel);
 
         // if (obj is Dictionary<string, object?> dict)
         il.Emit(OpCodes.Ldarg_0);
