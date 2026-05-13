@@ -1060,6 +1060,107 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, returnNullLabel);
         il.MarkLabel(notTSFunctionForDescLabel);
 
+        // System.Type — synthesize descriptor for built-in constructor's own
+        // static properties. ECMA-262 §17 + §22.x: "prototype" is { value: X,
+        // writable:false, enumerable:false, configurable:false }; static
+        // constants (Number.MAX_VALUE etc.) likewise non-{writable,enumerable,
+        // configurable}. Static methods are { writable:true, enumerable:false,
+        // configurable:true }. verifyNotConfigurable / verifyProperty read
+        // these descriptors via Object.getOwnPropertyDescriptor.
+        var notTypeForDescLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brfalse, notTypeForDescLabel);
+        // "prototype" — non-configurable data descriptor.
+        var typeIsPrototypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, typeIsPrototypeLabel);
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, resultDictLocal);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        EmitDescriptorBoolField(il, resultDictLocal, "writable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "configurable", false);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(typeIsPrototypeLabel);
+        // "name" — configurable data descriptor.
+        var typeIsNameLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, typeIsNameLabel);
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, resultDictLocal);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        EmitDescriptorBoolField(il, resultDictLocal, "writable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(typeIsNameLabel);
+        // "length" — configurable data descriptor.
+        var typeIsLengthLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, typeIsLengthLabel);
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, resultDictLocal);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        EmitDescriptorBoolField(il, resultDictLocal, "writable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(typeIsLengthLabel);
+        // Probe GetProperty: if it returns a non-undefined value, the property
+        // is reachable through our static dispatch — synthesize a descriptor.
+        // This catches JS-named constants (Number.MAX_VALUE → System.Double.
+        // MaxValue) where reflection on the Type by JS name would miss.
+        // Skip null returns since `GetProperty` returns null for unresolved.
+        var typeProbeValueLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, typeProbeValueLocal);
+        // Reject null and Undefined sentinel (property unknown).
+        il.Emit(OpCodes.Ldloc, typeProbeValueLocal);
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+        il.Emit(OpCodes.Ldloc, typeProbeValueLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, returnNullLabel);
+        // Has a value — synthesize non-configurable data descriptor.
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, resultDictLocal);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldloc, typeProbeValueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        EmitDescriptorBoolField(il, resultDictLocal, "writable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "configurable", false);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(notTypeForDescLabel);
+
         // No descriptor - check if it's an array first
         var notListLabel = il.DefineLabel();
         var notTSArrayLabel = il.DefineLabel();

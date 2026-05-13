@@ -3973,6 +3973,75 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
+        // System.Type — `delete String.prototype` / `delete Number.MAX_VALUE`.
+        // Per ECMA-262 §17 + §22.x: built-in constructor's "prototype" data
+        // property is { writable:false, enumerable:false, configurable:false };
+        // static constants likewise non-configurable. [[Delete]] returns false
+        // on non-configurable. Test262 S15.5.3.1_A3 verifies. PDS check first
+        // for user-installed override-descriptors with configurable=true.
+        var notTypeForDelLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brfalse, notTypeForDelLabel);
+        var typeDelDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, typeDelDescLocal);
+        var typeNoPdsDescLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, typeDelDescLocal);
+        il.Emit(OpCodes.Brfalse, typeNoPdsDescLabel);
+        il.Emit(OpCodes.Ldloc, typeDelDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+        var typeConfigurableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, typeConfigurableLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(typeConfigurableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSDeleteProperty);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(typeNoPdsDescLabel);
+        // "prototype"/"name"/"length" are non-configurable on every built-in.
+        var typeBuiltinNameTrueLabel = il.DefineLabel();
+        void EmitTypeBuiltinNameCheck(string n)
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brtrue, typeBuiltinNameTrueLabel);
+        }
+        EmitTypeBuiltinNameCheck("prototype");
+        EmitTypeBuiltinNameCheck("name");
+        EmitTypeBuiltinNameCheck("length");
+        // Reflection: any static field/property on the Type → built-in own.
+        const System.Reflection.BindingFlags typeDelStaticPub =
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
+        var typeDelLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.Type);
+        il.Emit(OpCodes.Stloc, typeDelLocal);
+        il.Emit(OpCodes.Ldloc, typeDelLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4, (int)typeDelStaticPub);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetField", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Brtrue, typeBuiltinNameTrueLabel);
+        il.Emit(OpCodes.Ldloc, typeDelLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4, (int)typeDelStaticPub);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Brtrue, typeBuiltinNameTrueLabel);
+        // Not a built-in own property — return true (delete-missing = success).
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(typeBuiltinNameTrueLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTypeForDelLabel);
+
         // Other types - cannot delete properties, return true (JS behavior for non-configurable)
         il.Emit(OpCodes.Br, trueLabel);
 
