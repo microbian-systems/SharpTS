@@ -736,13 +736,22 @@ public partial class RuntimeEmitter
         var notNullLabel = il.DefineLabel();
         var throwLabel = il.DefineLabel();
 
-        // Check for null input
+        // ECMA-262 §20.1.2.7 Object.fromEntries step 1:
+        // RequireObjectCoercible — throws TypeError on null/undefined.
+        // Use TSTypeError + CreateException so __tsValue carries through to
+        // catch/then handlers as a real TypeError instance.
+        var requireOcThrowLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Brfalse, requireOcThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, requireOcThrowLabel);
+        il.Emit(OpCodes.Br, notNullLabel);
 
-        // Input is null - throw exception
-        il.Emit(OpCodes.Ldstr, "Runtime Error: Object.fromEntries() requires an iterable argument");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.MarkLabel(requireOcThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Object.fromEntries: argument must not be null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(notNullLabel);
