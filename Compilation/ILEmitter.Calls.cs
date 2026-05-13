@@ -78,6 +78,30 @@ public partial class ILEmitter
                     return;
             }
         }
+        // ECMA-262 §20.1.1.1 Object(...args): only args[0] is consulted;
+        // remaining args are ignored. Zero args → empty $Object (mirroring
+        // new Object()). Multi-arg `Object(1, 2, 3)` must coerce just the
+        // 1 via ToObject, matching the 1-arg case above. Without this multi-
+        // arg fallthrough, the general call dispatch fails to resolve Object
+        // and returns null (test262 S15.2.1.1_A3_T1/_T2/_T3 + S15.2.2.1_A1*).
+        if (c.Callee is Expr.Variable objVar && objVar.Name.Lexeme == "Object")
+        {
+            if (c.Arguments.Count == 0)
+            {
+                IL.Emit(OpCodes.Newobj, _ctx.Types.GetDefaultConstructor(_ctx.Types.DictionaryStringObject));
+                IL.Emit(OpCodes.Newobj, _ctx.Runtime!.TSObjectCtor);
+                SetStackUnknown();
+                return;
+            }
+            if (c.Arguments.Count > 1)
+            {
+                EmitExpression(c.Arguments[0]);
+                EmitBoxIfNeeded(c.Arguments[0]);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.ToObjectMethod);
+                SetStackUnknown();
+                return;
+            }
+        }
 
         // ECMA-262 non-callable singletons: JSON, Math, Reflect, Atomics
         // are objects without [[Call]] internal method. Calling them must
