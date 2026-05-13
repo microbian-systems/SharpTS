@@ -475,8 +475,11 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         {
             emitter.EmitExpression(arguments[0]);
             emitter.EmitBoxIfNeeded(arguments[0]);
-            // ECMA-262: argument coerced via ToString protocol — handles objects
-            // with custom toString/valueOf and avoids InvalidCastException for
+            // ECMA-262 §22.1.3.7 step 4: throw TypeError if searchString is a
+            // RegExp. Symmetric with startsWith/endsWith.
+            EmitThrowIfRegExp(ctx, il, "includes");
+            // Argument coerced via ToString protocol — handles objects with
+            // custom toString/valueOf and avoids InvalidCastException for
             // non-string args (e.g. `"abc".indexOf({toString: () => "b"})`).
             il.Emit(OpCodes.Call, ctx.Runtime!.ToJsString);
         }
@@ -497,8 +500,12 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         {
             emitter.EmitExpression(arguments[0]);
             emitter.EmitBoxIfNeeded(arguments[0]);
-            // ECMA-262: argument coerced via ToString protocol — handles objects
-            // with custom toString/valueOf and avoids InvalidCastException for
+            // ECMA-262 §22.1.3.20 step 4: throw TypeError if searchString is a
+            // RegExp. Check before ToJsString since ToJsString would silently
+            // stringify the RegExp's source.
+            EmitThrowIfRegExp(ctx, il, "startsWith");
+            // Argument coerced via ToString protocol — handles objects with
+            // custom toString/valueOf and avoids InvalidCastException for
             // non-string args (e.g. `"abc".indexOf({toString: () => "b"})`).
             il.Emit(OpCodes.Call, ctx.Runtime!.ToJsString);
         }
@@ -519,9 +526,9 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         {
             emitter.EmitExpression(arguments[0]);
             emitter.EmitBoxIfNeeded(arguments[0]);
-            // ECMA-262: argument coerced via ToString protocol — handles objects
-            // with custom toString/valueOf and avoids InvalidCastException for
-            // non-string args (e.g. `"abc".indexOf({toString: () => "b"})`).
+            // ECMA-262 §22.1.3.6 step 4: throw TypeError if searchString is a
+            // RegExp. Same as startsWith — symmetric handling.
+            EmitThrowIfRegExp(ctx, il, "endsWith");
             il.Emit(OpCodes.Call, ctx.Runtime!.ToJsString);
         }
         else
@@ -530,6 +537,25 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         }
         il.Emit(OpCodes.Call, ctx.Runtime!.StringEndsWith);
         il.Emit(OpCodes.Box, ctx.Types.Boolean);
+    }
+
+    /// <summary>
+    /// Emits an IsRegExp guard that throws TypeError if the top-of-stack value
+    /// is a $RegExp. ECMA-262 §22.1.3.{6,20,7} (endsWith/startsWith/includes)
+    /// step 4 require this check before any ToString coercion.
+    /// </summary>
+    private static void EmitThrowIfRegExp(CompilationContext ctx, ILGenerator il, string methodName)
+    {
+        var notRegExpLabel = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Isinst, ctx.Runtime!.TSRegExpType);
+        il.Emit(OpCodes.Brfalse, notRegExpLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "First argument to String.prototype." + methodName + " must not be a regular expression");
+        il.Emit(OpCodes.Newobj, ctx.Runtime!.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, ctx.Runtime!.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notRegExpLabel);
     }
 
     private static void EmitSlice(IEmitterContext emitter, List<Expr> arguments)
