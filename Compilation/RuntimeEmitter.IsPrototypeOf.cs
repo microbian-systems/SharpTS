@@ -34,12 +34,37 @@ public partial class RuntimeEmitter
         var falseLabel = il.DefineLabel();
         var trueLabel = il.DefineLabel();
 
-        // null/undefined target → false
+        // ECMA-262 §20.1.3.4 step 1: If Type(V) is not Object, return false.
+        // The Type(V) check predates the ToObject(this value) step (step 2),
+        // so this returns false even when `this` is undefined/null/primitive.
+        // Without the order-preserving guard, ObjectGetPrototypeOf below now
+        // throws TypeError on undefined V (post the gpo null-throw fix).
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Int32);
+        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brtrue, falseLabel);
         // null receiverProto → false (per spec ToObject(this) but we treat null as false)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, falseLabel);
 
         // Walk: current = PDSGetPrototype(target);
         // while (current != null) {
