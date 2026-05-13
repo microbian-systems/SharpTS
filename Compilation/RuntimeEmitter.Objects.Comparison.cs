@@ -544,22 +544,62 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(skipFrozenThrowLabel);
 
-        // Sealed: existing keys can be modified, new keys throw (non-extensible).
+        // Non-extensible target: existing keys can still be modified, but new
+        // keys throw per ECMA-262 OrdinarySet → ValidateAndApplyPropertyDescriptor
+        // (current undefined + extensible false → return false → strict-mode Set
+        // throws TypeError). Covers both Object.seal AND Object.preventExtensions
+        // (sealed implies non-extensible).
         var skipSealedCheckLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.PDSIsSealed);
-        il.Emit(OpCodes.Brfalse, skipSealedCheckLabel);
+        il.Emit(OpCodes.Call, runtime.PDSIsExtensible);
+        il.Emit(OpCodes.Brtrue, skipSealedCheckLabel);
         // If key not in targetDict, throw.
         il.Emit(OpCodes.Ldloc, targetDictLocal);
         il.Emit(OpCodes.Ldloca, kvpLocal);
         il.Emit(OpCodes.Call, kpKey);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "ContainsKey", _types.String));
         il.Emit(OpCodes.Brtrue, skipSealedCheckLabel);
-        il.Emit(OpCodes.Ldstr, "Cannot add property to sealed object");
+        il.Emit(OpCodes.Ldstr, "Cannot add property to non-extensible object");
         il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
         il.MarkLabel(skipSealedCheckLabel);
+
+        // Per-key writable=false on target: ECMA-262 OrdinarySetWithOwnDescriptor
+        // step 3.b — if existing descriptor on TARGET is a data property with
+        // Writable=false, the [[Set]] returns false → strict-mode Set throws
+        // TypeError. Catches Object.defineProperty(target, k, {writable:false})
+        // followed by Object.assign(target, {k: v}). Frozen objects (whole-
+        // object writable=false) already threw above; this catches per-key.
+        // Must distinguish data from accessor descriptors: accessor descriptors
+        // (Getter or Setter set) don't have writable semantics — calling the
+        // setter is a separate path. Use Getter==null && Setter==null as the
+        // data-descriptor guard.
+        var skipNotWritableLabel = il.DefineLabel();
+        var targetKeyDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kpKey);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, targetKeyDescLocal);
+        il.Emit(OpCodes.Ldloc, targetKeyDescLocal);
+        il.Emit(OpCodes.Brfalse, skipNotWritableLabel);
+        // Has descriptor — skip if accessor (Getter or Setter set).
+        il.Emit(OpCodes.Ldloc, targetKeyDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, skipNotWritableLabel);
+        il.Emit(OpCodes.Ldloc, targetKeyDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, skipNotWritableLabel);
+        // Data descriptor — check Writable.
+        il.Emit(OpCodes.Ldloc, targetKeyDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, skipNotWritableLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot assign to read only property");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(skipNotWritableLabel);
 
         // String exotic object: indexed integer keys and "length" are
         // non-writable per ECMA-262 §10.4.3. Object.assign('a', [1]) wraps
