@@ -544,21 +544,56 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(skipFrozenThrowLabel);
 
+        // Load target's PDS descriptor for the current key once — used by
+        // both the non-extensible "is key truly new?" check and the per-key
+        // writable=false check below. An accessor-only property won't be in
+        // the dict but will have a PDS descriptor, so this lookup is needed
+        // to distinguish "new property" from "existing accessor".
+        var targetKeyDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kpKey);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, targetKeyDescLocal);
+
         // Non-extensible target: existing keys can still be modified, but new
         // keys throw per ECMA-262 OrdinarySet → ValidateAndApplyPropertyDescriptor
         // (current undefined + extensible false → return false → strict-mode Set
         // throws TypeError). Covers both Object.seal AND Object.preventExtensions
-        // (sealed implies non-extensible).
+        // (sealed implies non-extensible). "Key exists" means in dict OR has a
+        // PDS descriptor OR is a $TSObject literal accessor (object literal
+        // getters/setters live in $TSObject's _getters/_setters, not dict/PDS).
         var skipSealedCheckLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.PDSIsExtensible);
         il.Emit(OpCodes.Brtrue, skipSealedCheckLabel);
-        // If key not in targetDict, throw.
+        // If key in targetDict, existing → skip throw.
         il.Emit(OpCodes.Ldloc, targetDictLocal);
         il.Emit(OpCodes.Ldloca, kvpLocal);
         il.Emit(OpCodes.Call, kpKey);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "ContainsKey", _types.String));
         il.Emit(OpCodes.Brtrue, skipSealedCheckLabel);
+        // If PDS descriptor present, existing → skip throw.
+        il.Emit(OpCodes.Ldloc, targetKeyDescLocal);
+        il.Emit(OpCodes.Brtrue, skipSealedCheckLabel);
+        // If target is $TSObject with literal getter/setter for key, existing → skip throw.
+        var notTSObjectForAccessorCheckLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjectForAccessorCheckLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kpKey);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectHasGetter);
+        il.Emit(OpCodes.Brtrue, skipSealedCheckLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, kpKey);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectHasSetter);
+        il.Emit(OpCodes.Brtrue, skipSealedCheckLabel);
+        il.MarkLabel(notTSObjectForAccessorCheckLabel);
         il.Emit(OpCodes.Ldstr, "Cannot add property to non-extensible object");
         il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
         il.Emit(OpCodes.Call, runtime.CreateException);
@@ -576,12 +611,6 @@ public partial class RuntimeEmitter
         // setter is a separate path. Use Getter==null && Setter==null as the
         // data-descriptor guard.
         var skipNotWritableLabel = il.DefineLabel();
-        var targetKeyDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloca, kvpLocal);
-        il.Emit(OpCodes.Call, kpKey);
-        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
-        il.Emit(OpCodes.Stloc, targetKeyDescLocal);
         il.Emit(OpCodes.Ldloc, targetKeyDescLocal);
         il.Emit(OpCodes.Brfalse, skipNotWritableLabel);
         // Has descriptor — skip if accessor (Getter or Setter set).
