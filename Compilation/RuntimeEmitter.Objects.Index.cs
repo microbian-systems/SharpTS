@@ -957,6 +957,38 @@ public partial class RuntimeEmitter
         }
 
         il.MarkLabel(dictLabel);
+        // Math singleton: silently no-op writes to non-writable spec
+        // constants (E/LN10/LN2/LOG10E/LOG2E/PI/SQRT1_2/SQRT2 per
+        // ECMA-262 §21.3.1 — W:F,E:F,C:F). Without this guard the
+        // bracket-write stores in the dict and subsequent reads return
+        // the mutated value, breaking propertyHelper's isWritable check.
+        var dictSkipMathConstLabel = il.DefineLabel();
+        var dictNotMathLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
+        il.Emit(OpCodes.Bne_Un, dictNotMathLabel);
+        // Argument 1 must be a string key matching a constant name.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        var mathKeyLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Stloc, mathKeyLocal);
+        il.Emit(OpCodes.Ldloc, mathKeyLocal);
+        il.Emit(OpCodes.Brfalse, dictNotMathLabel);
+        var strEq = _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String);
+        void SkipIfMathConst(string n)
+        {
+            il.Emit(OpCodes.Ldloc, mathKeyLocal);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, strEq);
+            il.Emit(OpCodes.Brtrue, dictSkipMathConstLabel);
+        }
+        SkipIfMathConst("E"); SkipIfMathConst("LN10"); SkipIfMathConst("LN2");
+        SkipIfMathConst("LOG10E"); SkipIfMathConst("LOG2E"); SkipIfMathConst("PI");
+        SkipIfMathConst("SQRT1_2"); SkipIfMathConst("SQRT2");
+        il.Emit(OpCodes.Br, dictNotMathLabel);
+        il.MarkLabel(dictSkipMathConstLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(dictNotMathLabel);
         // Route through SetProperty so PDS setter accessors fire. Pre-fix,
         // this branch wrote directly to dict._fields, bypassing any
         // Object.defineProperty(obj, k, {set: ...}) accessor — `obj[1] = v`
