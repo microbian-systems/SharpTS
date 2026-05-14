@@ -1304,6 +1304,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
         il.Emit(OpCodes.Pop);
+        // Math singleton: reject delete on non-configurable spec constants
+        // (E/LN10/.../SQRT2 per ECMA-262 §21.3.1 — C:F).
+        var didxNotMathConstLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
+        il.Emit(OpCodes.Bne_Un, didxNotMathConstLabel);
+        var didxFalseRetLabel = il.DefineLabel();
+        void DidxRejectIfMathConst(string n)
+        {
+            il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brtrue, didxFalseRetLabel);
+        }
+        DidxRejectIfMathConst("E"); DidxRejectIfMathConst("LN10"); DidxRejectIfMathConst("LN2");
+        DidxRejectIfMathConst("LOG10E"); DidxRejectIfMathConst("LOG2E"); DidxRejectIfMathConst("PI");
+        DidxRejectIfMathConst("SQRT1_2"); DidxRejectIfMathConst("SQRT2");
+        il.MarkLabel(didxNotMathConstLabel);
+
         // Math/JSON singleton: also mark the deletion in the per-receiver
         // tracker so HasOwnPropertyHelper's synth-name check stops reporting
         // the property as own (the dicts are empty; the static names are
@@ -1323,6 +1342,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
         il.MarkLabel(didxAfterMarkLabel);
         il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(didxFalseRetLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
 
         // Return true (default)
@@ -1641,6 +1663,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
         il.Emit(OpCodes.Pop);
+        // Math singleton: reject delete on non-configurable spec constants
+        // (E/LN10/.../SQRT2 per ECMA-262 §21.3.1 — C:F).
+        var didxNotMathConstLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
+        il.Emit(OpCodes.Bne_Un, didxNotMathConstLabel);
+        var didxFalseRetLabel = il.DefineLabel();
+        void DidxRejectIfMathConst(string n)
+        {
+            il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brtrue, didxFalseRetLabel);
+        }
+        DidxRejectIfMathConst("E"); DidxRejectIfMathConst("LN10"); DidxRejectIfMathConst("LN2");
+        DidxRejectIfMathConst("LOG10E"); DidxRejectIfMathConst("LOG2E"); DidxRejectIfMathConst("PI");
+        DidxRejectIfMathConst("SQRT1_2"); DidxRejectIfMathConst("SQRT2");
+        il.MarkLabel(didxNotMathConstLabel);
+
         // Math/JSON singleton: also mark the deletion in the per-receiver
         // tracker so HasOwnPropertyHelper's synth-name check stops reporting
         // the property as own (the dicts are empty; the static names are
@@ -1660,6 +1701,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
         il.MarkLabel(didxAfterMarkLabel);
         il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(didxFalseRetLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
 
         // Return true (default)
