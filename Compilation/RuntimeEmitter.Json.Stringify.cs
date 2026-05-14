@@ -776,14 +776,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsInfinity", [_types.Double]));
         il.Emit(OpCodes.Brtrue, isNanLabel);
 
-        // Check if integer
+        // Check if integer AND fits in Int64. Math.Floor(v) == v can be true for
+        // values like Number.MAX_VALUE (~1.8e308) since those doubles have no
+        // fractional bits, but Conv_I8 would overflow to Int64.MaxValue. Limit
+        // the Int64 path to |v| < ~9.22e18 (Int64.MaxValue as double).
         il.Emit(OpCodes.Ldloc, local);
         il.Emit(OpCodes.Ldloc, local);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Floor", [_types.Double]));
         il.Emit(OpCodes.Ceq);
-        il.Emit(OpCodes.Brtrue, isIntLabel);
+        var floatFormatLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, floatFormatLabel);
+        il.Emit(OpCodes.Ldloc, local);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Abs", [_types.Double]));
+        il.Emit(OpCodes.Ldc_R8, 9.2233720368547758E18);
+        il.Emit(OpCodes.Bge_Un, floatFormatLabel);
+        il.Emit(OpCodes.Br, isIntLabel);
 
         // Float format
+        il.MarkLabel(floatFormatLabel);
         il.Emit(OpCodes.Ldloca, local);
         il.Emit(OpCodes.Ldstr, "G15");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "ToString", [_types.String]));
