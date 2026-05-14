@@ -1272,6 +1272,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
         il.Emit(OpCodes.Pop);
+        // Math/JSON singleton: also mark the deletion in the per-receiver
+        // tracker so HasOwnPropertyHelper's synth-name check stops reporting
+        // the property as own (the dicts are empty; the static names are
+        // what makes them "own").
+        var didxMarkDelLabel = il.DefineLabel();
+        var didxAfterMarkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
+        il.Emit(OpCodes.Beq, didxMarkDelLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.JsonSingletonField);
+        il.Emit(OpCodes.Beq, didxMarkDelLabel);
+        il.Emit(OpCodes.Br, didxAfterMarkLabel);
+        il.MarkLabel(didxMarkDelLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
+        il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
+        il.MarkLabel(didxAfterMarkLabel);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
@@ -1591,6 +1609,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
         il.Emit(OpCodes.Pop);
+        // Math/JSON singleton: also mark the deletion in the per-receiver
+        // tracker so HasOwnPropertyHelper's synth-name check stops reporting
+        // the property as own (the dicts are empty; the static names are
+        // what makes them "own").
+        var didxMarkDelLabel = il.DefineLabel();
+        var didxAfterMarkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
+        il.Emit(OpCodes.Beq, didxMarkDelLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.JsonSingletonField);
+        il.Emit(OpCodes.Beq, didxMarkDelLabel);
+        il.Emit(OpCodes.Br, didxAfterMarkLabel);
+        il.MarkLabel(didxMarkDelLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, didxKeyStrLocal);
+        il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
+        il.MarkLabel(didxAfterMarkLabel);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
