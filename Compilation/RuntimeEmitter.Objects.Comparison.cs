@@ -8,6 +8,10 @@ public partial class RuntimeEmitter
 {
     /// <summary>
     /// Emits Object.hasOwn(obj, key) - checks if object has own property.
+    /// Per ECMA-262 §20.1.2.13 step 1: ToObject(O) throws on null/undefined.
+    /// Delegates to HasOwnPropertyHelper which handles all the receiver types
+    /// (Dict, $TSObject, $TSFunction, List, String, System.Type, PDS extras),
+    /// keeping the two helpers in sync.
     /// </summary>
     private void EmitObjectHasOwn(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -20,74 +24,27 @@ public partial class RuntimeEmitter
         runtime.ObjectHasOwn = method;
 
         var il = method.GetILGenerator();
-        var dictType = _types.DictionaryStringObject;
 
-        var checkClassLabel = il.DefineLabel();
-        var returnFalseLabel = il.DefineLabel();
-        var endLabel = il.DefineLabel();
-        var keyStringLocal = il.DeclareLocal(_types.String);
-        var keyPascalLocal = il.DeclareLocal(_types.String);
+        // ToObject(O) throws on null/undefined per spec.
+        var ohoOkLabel = il.DefineLabel();
+        var ohoThrowLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, ohoThrowLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, ohoThrowLabel);
+        il.Emit(OpCodes.Br, ohoOkLabel);
+        il.MarkLabel(ohoThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(ohoOkLabel);
 
-        // Convert key to string: key?.ToString() ?? ""
+        // Delegate to HasOwnPropertyHelper(receiver, name).
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        var keyNullLabel = il.DefineLabel();
-        var keyDoneLabel = il.DefineLabel();
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Brfalse, keyNullLabel);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-        il.Emit(OpCodes.Br, keyDoneLabel);
-        il.MarkLabel(keyNullLabel);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ldstr, "");
-        il.MarkLabel(keyDoneLabel);
-        il.Emit(OpCodes.Stloc, keyStringLocal);
-
-        // Convert key to PascalCase for backing field lookup
-        il.Emit(OpCodes.Ldloc, keyStringLocal);
-        il.Emit(OpCodes.Call, runtime.ToPascalCase);
-        il.Emit(OpCodes.Stloc, keyPascalLocal);
-
-        // Check if obj is null
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, returnFalseLabel);
-
-        // Check if obj is Dictionary<string, object>
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, dictType);
-        il.Emit(OpCodes.Brfalse, checkClassLabel);
-
-        // It's a dictionary - call ContainsKey
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, dictType);
-        il.Emit(OpCodes.Ldloc, keyStringLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "ContainsKey", _types.String));
-        il.Emit(OpCodes.Br, endLabel);
-
-        // Check class instance via $IHasFields
-        il.MarkLabel(checkClassLabel);
-        var fieldsDictLocal = il.DeclareLocal(dictType);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
-        il.Emit(OpCodes.Brfalse, returnFalseLabel);
-
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
-        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsFieldsGetter);
-        il.Emit(OpCodes.Stloc, fieldsDictLocal);
-        il.Emit(OpCodes.Ldloc, fieldsDictLocal);
-        il.Emit(OpCodes.Brfalse, returnFalseLabel);
-
-        // Check if _fields contains key (using original key)
-        il.Emit(OpCodes.Ldloc, fieldsDictLocal);
-        il.Emit(OpCodes.Ldloc, keyStringLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "ContainsKey", _types.String));
-        il.Emit(OpCodes.Br, endLabel);
-
-        // Return false
-        il.MarkLabel(returnFalseLabel);
-        il.Emit(OpCodes.Ldc_I4_0);
-
-        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Call, runtime.HasOwnPropertyHelperMethod);
         il.Emit(OpCodes.Ret);
     }
 

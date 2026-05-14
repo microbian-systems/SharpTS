@@ -256,6 +256,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Bne_Un, notStringTypeLabel);
         NameEq("fromCharCode"); NameEq("fromCodePoint"); NameEq("raw");
         il.MarkLabel(notStringTypeLabel);
+
+        // System.Object → JS Object constructor's static names. Reflection on
+        // System.Object can't find them (they're SharpTS-intercepted). List the
+        // ECMA-262 §20.1 static methods explicitly so hasOwn(Object, "keys")
+        // / Object.hasOwn round-trip.
+        var notObjectTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, notObjectTypeLabel);
+        NameEq("assign"); NameEq("create"); NameEq("defineProperties");
+        NameEq("defineProperty"); NameEq("entries"); NameEq("freeze");
+        NameEq("fromEntries"); NameEq("getOwnPropertyDescriptor");
+        NameEq("getOwnPropertyDescriptors"); NameEq("getOwnPropertyNames");
+        NameEq("getOwnPropertySymbols"); NameEq("getPrototypeOf");
+        NameEq("groupBy"); NameEq("hasOwn"); NameEq("is"); NameEq("isExtensible");
+        NameEq("isFrozen"); NameEq("isSealed"); NameEq("keys"); NameEq("preventExtensions");
+        NameEq("seal"); NameEq("setPrototypeOf"); NameEq("values");
+        il.MarkLabel(notObjectTypeLabel);
         // Reflection: type.GetField(name, Public|Static) ?? type.GetMethod(name, Public|Static)
         const System.Reflection.BindingFlags staticPub = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
         var typeLocal2 = il.DeclareLocal(_types.Type);
