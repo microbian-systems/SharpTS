@@ -21,6 +21,19 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
+        // ECMA-262 §20.1.2.7 step 2: If IsCallable(callbackfn) is false,
+        // throw TypeError. Pre-fix Object.groupBy([], non-callable) silently
+        // did nothing and returned an empty object.
+        var gbCallableOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, gbCallableOkLabel);
+        il.Emit(OpCodes.Ldstr, "Object.groupBy: callback is not callable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(gbCallableOkLabel);
+
         // Locals
         var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);     // groups dict
         var listLocal = il.DeclareLocal(_types.ListOfObject);               // array elements
