@@ -955,6 +955,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, endLabel);
         il.MarkLabel(notListForLengthLabel);
 
+        // $TSArray + numeric index property name: store value at the index,
+        // extending the list as needed. Required for
+        // `Object.defineProperty(arr, "5", {value:3})` to set arr[5] and
+        // update arr.length. Spec ECMA-262 §10.4.2.1 ArrayDefineOwnProperty.
+        // Skip when the descriptor had no value slot (wasGeneric=true) —
+        // e.g. `defineProperty(arr, "0", {configurable:false})` mutates
+        // attributes without overwriting the existing element.
+        var notArrayIdxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brfalse, notArrayIdxLabel);
+        il.Emit(OpCodes.Ldloc, wasGenericLocal);
+        il.Emit(OpCodes.Brtrue, notArrayIdxLabel);
+        var arrIdxLocal = il.DeclareLocal(_types.UInt32);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldloca, arrIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.UInt32, "TryParse", _types.String, _types.UInt32.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, notArrayIdxLabel);
+        // SetIndex(obj, idx, value) auto-extends. SetIndex is void so the
+        // expression isn't on the stack after the call — just continue to end.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, arrIdxLocal);
+        il.Emit(OpCodes.Box, _types.UInt32);
+        il.Emit(OpCodes.Ldloc, valueToWriteLocal);
+        il.Emit(OpCodes.Call, runtime.SetIndex);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(notArrayIdxLabel);
+
         // Also write the value to $Object._fields when target is $Object.
         // Same generic-skip semantics as the dict path.
         il.Emit(OpCodes.Ldarg_0);
