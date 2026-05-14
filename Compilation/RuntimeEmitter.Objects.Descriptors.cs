@@ -1195,6 +1195,66 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Br, endLabel);
         il.MarkLabel(typeIsLengthLabel);
+
+        // System.Object: explicit JS-spec static names list since static
+        // dispatch is syntactic (compile-time) and runtime.GetProperty doesn't
+        // resolve them via reflection. Synthesize spec-aligned method descriptors
+        // for the known names. Mirrors HasOwnPropertyHelper's Object Type
+        // names list.
+        var objTypeIsObjectLabel = il.DefineLabel();
+        var objTypeNotObjectLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, objTypeNotObjectLabel);
+        void EmitObjectMethodNameCheck(string n)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, propNameLocal);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, skipLabel);
+            // Build descriptor { value: <placeholder $Undefined>, W:true, E:false, C:true }.
+            // verifyProperty's spec-check shape for built-in methods doesn't
+            // compare value, only the writable/enumerable/configurable bits.
+            il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+            il.Emit(OpCodes.Stloc, resultDictLocal);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Ldstr, "value");
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+            EmitDescriptorBoolField(il, resultDictLocal, "writable", true);
+            EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+            EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+        EmitObjectMethodNameCheck("assign");
+        EmitObjectMethodNameCheck("create");
+        EmitObjectMethodNameCheck("defineProperties");
+        EmitObjectMethodNameCheck("defineProperty");
+        EmitObjectMethodNameCheck("entries");
+        EmitObjectMethodNameCheck("freeze");
+        EmitObjectMethodNameCheck("fromEntries");
+        EmitObjectMethodNameCheck("getOwnPropertyDescriptor");
+        EmitObjectMethodNameCheck("getOwnPropertyDescriptors");
+        EmitObjectMethodNameCheck("getOwnPropertyNames");
+        EmitObjectMethodNameCheck("getOwnPropertySymbols");
+        EmitObjectMethodNameCheck("getPrototypeOf");
+        EmitObjectMethodNameCheck("groupBy");
+        EmitObjectMethodNameCheck("hasOwn");
+        EmitObjectMethodNameCheck("is");
+        EmitObjectMethodNameCheck("isExtensible");
+        EmitObjectMethodNameCheck("isFrozen");
+        EmitObjectMethodNameCheck("isSealed");
+        EmitObjectMethodNameCheck("keys");
+        EmitObjectMethodNameCheck("preventExtensions");
+        EmitObjectMethodNameCheck("seal");
+        EmitObjectMethodNameCheck("setPrototypeOf");
+        EmitObjectMethodNameCheck("values");
+        il.MarkLabel(objTypeNotObjectLabel);
+
         // Probe GetProperty: if it returns a non-undefined value, the property
         // is reachable through our static dispatch — synthesize a descriptor.
         // This catches JS-named constants (Number.MAX_VALUE → System.Double.
@@ -1211,16 +1271,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, typeProbeValueLocal);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, returnNullLabel);
-        // Has a value — synthesize non-configurable data descriptor.
+        // Has a value — synthesize descriptor. Per ECMA-262 §17, built-in
+        // METHODS are { writable:true, enumerable:false, configurable:true };
+        // built-in CONSTANTS (Number.MAX_VALUE etc.) are { writable:false,
+        // enumerable:false, configurable:false }. Distinguish via $TSFunction
+        // marker on the probed value.
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultDictLocal);
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "value");
         il.Emit(OpCodes.Ldloc, typeProbeValueLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        // Branch on $TSFunction (method) vs other (constant).
+        var typeProbeIsFnLabel = il.DefineLabel();
+        var typeProbeAfterAttrsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, typeProbeValueLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, typeProbeIsFnLabel);
+        // Constant: W=false, E=false, C=false.
         EmitDescriptorBoolField(il, resultDictLocal, "writable", false);
         EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
         EmitDescriptorBoolField(il, resultDictLocal, "configurable", false);
+        il.Emit(OpCodes.Br, typeProbeAfterAttrsLabel);
+        il.MarkLabel(typeProbeIsFnLabel);
+        // Method: W=true, E=false, C=true.
+        EmitDescriptorBoolField(il, resultDictLocal, "writable", true);
+        EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+        EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
+        il.MarkLabel(typeProbeAfterAttrsLabel);
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Br, endLabel);
         il.MarkLabel(notTypeForDescLabel);
