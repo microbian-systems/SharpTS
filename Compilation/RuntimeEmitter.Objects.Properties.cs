@@ -1395,11 +1395,31 @@ public partial class RuntimeEmitter
         // accessor lives on Object.prototype, but intercepting here avoids
         // replicating the dispatch in every object-specific branch. Without
         // this, `{}.__proto__` returns undefined and breaks spec idioms.
+        //
+        // CAVEAT: ECMA-262 also allows defining an own "__proto__" data
+        // property that shadows the inherited accessor. JSON.parse creates
+        // such own data properties (CreateDataProperty). For Dict receivers,
+        // check ContainsKey first and fall through to the regular dict path
+        // when the key is present — preserves JSON.parse semantics for the
+        // `{"__proto__":...}` corner.
         var notProtoNameTopLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldstr, "__proto__");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, notProtoNameTopLabel);
+        // Dict + ContainsKey("__proto__") → skip intercept.
+        var protoDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, protoDictLocal);
+        var noOwnProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, protoDictLocal);
+        il.Emit(OpCodes.Brfalse, noOwnProtoLabel);
+        il.Emit(OpCodes.Ldloc, protoDictLocal);
+        il.Emit(OpCodes.Ldstr, "__proto__");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
+        il.Emit(OpCodes.Brtrue, notProtoNameTopLabel);
+        il.MarkLabel(noOwnProtoLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.ObjectGetPrototypeOf);
         il.Emit(OpCodes.Ret);
