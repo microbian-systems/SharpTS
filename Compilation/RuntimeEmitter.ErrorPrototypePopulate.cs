@@ -65,8 +65,7 @@ public partial class RuntimeEmitter
         // borrowed (`obj.toString = Error.prototype.toString; obj.toString()`).
         try { errorToStringSpec.DefineParameter(1, ParameterAttributes.None, "__this"); }
         catch { /* already named — ignore */ }
-        il.Emit(OpCodes.Ldsfld, runtime.ErrorPrototypeField);
-        il.Emit(OpCodes.Ldstr, "toString");
+        var errToStringWrapperLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldtoken, errorToStringSpec);
         il.Emit(OpCodes.Ldtoken, errorToStringSpec.DeclaringType!);
@@ -76,7 +75,40 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "toString");
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+        il.Emit(OpCodes.Stloc, errToStringWrapperLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.ErrorPrototypeField);
+        il.Emit(OpCodes.Ldstr, "toString");
+        il.Emit(OpCodes.Ldloc, errToStringWrapperLocal);
         il.Emit(OpCodes.Callvirt, setItem);
+
+        // Install non-enumerable PDS descriptors for constructor/name/message/
+        // toString per ECMA-262 §20.5.3 + §17 (built-in data properties are
+        // W:T,E:F,C:T).
+        var errDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        void InstallNonEnumerableErr(string jsName, System.Action emitValue)
+        {
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, errDescLocal);
+            il.Emit(OpCodes.Ldloc, errDescLocal);
+            emitValue();
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldloc, errDescLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
+            il.Emit(OpCodes.Ldsfld, runtime.ErrorPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, errDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+        }
+        InstallNonEnumerableErr("constructor", () =>
+        {
+            il.Emit(OpCodes.Ldtoken, runtime.TSErrorType);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        });
+        InstallNonEnumerableErr("name", () => il.Emit(OpCodes.Ldstr, "Error"));
+        InstallNonEnumerableErr("message", () => il.Emit(OpCodes.Ldstr, ""));
+        InstallNonEnumerableErr("toString", () => il.Emit(OpCodes.Ldloc, errToStringWrapperLocal));
 
         // Per ECMA-262 §20.5.3 Error.prototype's [[Prototype]] is %Object.prototype%.
         il.Emit(OpCodes.Ldsfld, runtime.ErrorPrototypeField);

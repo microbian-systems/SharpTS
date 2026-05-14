@@ -53,13 +53,30 @@ public partial class RuntimeEmitter
         // Wire with explicit JS-spec name + length per ECMA-262.
         // Boolean.prototype.{toString,valueOf} take (thisBooleanValue) — name
         // first param "__this" so $TSFunction.InvokeWithThis prepends the receiver.
+        // Built-in §17 attrs: W:T, E:F, C:T. Install a PDS data descriptor.
+        var boolDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        void InstallNonEnumerableBool(string jsName, System.Action emitValue)
+        {
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, boolDescLocal);
+            il.Emit(OpCodes.Ldloc, boolDescLocal);
+            emitValue();
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldloc, boolDescLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
+            il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, boolDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+        }
         void Wire(string jsName, MethodBuilder? helper, int jsLength)
         {
             if (helper is null) return;
             try { helper.DefineParameter(1, System.Reflection.ParameterAttributes.None, "__this"); }
             catch { /* already named — ignore */ }
-            il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
-            il.Emit(OpCodes.Ldstr, jsName);
+            var boolWrapperLocal = il.DeclareLocal(_types.Object);
             il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ldtoken, helper);
             il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
@@ -69,7 +86,12 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldstr, jsName);
             il.Emit(OpCodes.Ldc_I4, jsLength);
             il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+            il.Emit(OpCodes.Stloc, boolWrapperLocal);
+            il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, boolWrapperLocal);
             il.Emit(OpCodes.Callvirt, setItem);
+            InstallNonEnumerableBool(jsName, () => il.Emit(OpCodes.Ldloc, boolWrapperLocal));
         }
 
         Wire("toString", booleanToStringHelper, 0);
