@@ -61,19 +61,31 @@ public partial class RuntimeEmitter
         // = 2, even though the underlying StringSubstring takes 3 .NET params
         // because the receiver is the first arg). Without this cache, Test262
         // `String.prototype.substring.length === 2` returns 3.
+        // Built-in §17 attrs: W:T, E:F, C:T. Install a PDS data descriptor
+        // alongside the dict store so gOPD reports the spec attributes.
+        var strDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        void InstallNonEnumerableStr(string jsName, System.Action emitValue)
+        {
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, strDescLocal);
+            il.Emit(OpCodes.Ldloc, strDescLocal);
+            emitValue();
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldloc, strDescLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
+            il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, strDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+        }
         void Wire(string jsName, MethodBuilder? helper, int jsLength)
         {
             if (helper is null) return;
-            // Name the first parameter "__this" so $TSFunction.InvokeWithThis
-            // prepends the call-site receiver when this helper is invoked via
-            // a borrowed prototype method (`obj.charAt = String.prototype.charAt;
-            // obj.charAt(0)`). DefineParameter is idempotent when called multiple
-            // times for the same position; safe even if some helpers already
-            // named their first param.
             try { helper.DefineParameter(1, System.Reflection.ParameterAttributes.None, "__this"); }
             catch { /* parameter already defined elsewhere — ignore */ }
-            il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
-            il.Emit(OpCodes.Ldstr, jsName);
+            var strWrapperLocal = il.DeclareLocal(_types.Object);
             il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ldtoken, helper);
             il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
@@ -83,7 +95,12 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldstr, jsName);
             il.Emit(OpCodes.Ldc_I4, jsLength);
             il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+            il.Emit(OpCodes.Stloc, strWrapperLocal);
+            il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, strWrapperLocal);
             il.Emit(OpCodes.Callvirt, setItem);
+            InstallNonEnumerableStr(jsName, () => il.Emit(OpCodes.Ldloc, strWrapperLocal));
         }
 
         Wire("charAt",         runtime.StringCharAt,         1);

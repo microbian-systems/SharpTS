@@ -81,6 +81,25 @@ public partial class RuntimeEmitter
 
         // Wire with explicit JS-spec name + length per ECMA-262.
         // Length is the user-callable arg count (the receiver is implicit).
+        // Also install a non-enumerable PDS descriptor (built-in §17 attrs)
+        // so `gOPD(Array.prototype, "push").enumerable === false` per spec.
+        var arrDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        void InstallNonEnumerableArr(string jsName, System.Action emitValue)
+        {
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, arrDescLocal);
+            il.Emit(OpCodes.Ldloc, arrDescLocal);
+            emitValue();
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldloc, arrDescLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
+            il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, arrDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+        }
         void Wire(string jsName, MethodBuilder? helper, int jsLength)
         {
             if (helper is null) return;
@@ -92,9 +111,7 @@ public partial class RuntimeEmitter
             // (`obj.map = Array.prototype.map; obj.map(cb)`).
             try { helper.DefineParameter(1, System.Reflection.ParameterAttributes.None, "__this"); }
             catch { /* already named — ignore */ }
-            il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
-            il.Emit(OpCodes.Ldstr, jsName);
-            // new $TSFunction(null, helper, jsName, jsLength)
+            var arrWrapperLocal = il.DeclareLocal(_types.Object);
             il.Emit(OpCodes.Ldnull); // target
             il.Emit(OpCodes.Ldtoken, helper);
             il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
@@ -104,7 +121,14 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldstr, jsName);
             il.Emit(OpCodes.Ldc_I4, jsLength);
             il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+            il.Emit(OpCodes.Stloc, arrWrapperLocal);
+            // Fast-path dict store
+            il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, arrWrapperLocal);
             il.Emit(OpCodes.Callvirt, setItem);
+            // Non-enumerable PDS descriptor
+            InstallNonEnumerableArr(jsName, () => il.Emit(OpCodes.Ldloc, arrWrapperLocal));
         }
 
         Wire("map",            runtime.ArrayMap,            1);
