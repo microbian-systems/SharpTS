@@ -531,6 +531,39 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notTSFnForProtoLabel);
 
+        // Primitive coercions per ECMA-262 §20.1.2.13 step 1 (ToObject):
+        // Object.getPrototypeOf(0) → Number.prototype,
+        // Object.getPrototypeOf(true) → Boolean.prototype,
+        // Object.getPrototypeOf("") → String.prototype.
+        var notDoubleForProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, notDoubleForProtoLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notDoubleForProtoLabel);
+        var notInt32ForProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Int32);
+        il.Emit(OpCodes.Brfalse, notInt32ForProtoLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notInt32ForProtoLabel);
+        var notBoolForProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, notBoolForProtoLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.BooleanPrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBoolForProtoLabel);
+        var notStrForProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notStrForProtoLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notStrForProtoLabel);
+
         // Not found in either: return null
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
