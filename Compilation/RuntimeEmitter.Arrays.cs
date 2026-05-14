@@ -482,6 +482,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnEmptyLabel);
 
+        // $TSFunction: function objects can carry user-installed properties
+        // (`fn.x = 1`) tracked in PDS. Object.keys must surface those even
+        // though $TSFunction has no _fields dict. Mirror the dict-path
+        // PDSGetEnumerableExtraKeys append.
+        var notTSFnForKeysLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notTSFnForKeysLabel);
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Call, runtime.PDSGetEnumerableExtraKeys);
+        var fnPdsKeysLocal = il.DeclareLocal(listType);
+        il.Emit(OpCodes.Stloc, fnPdsKeysLocal);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, fnPdsKeysLocal);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("AddRange", [_types.IEnumerableOfObject])!);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSFnForKeysLabel);
+
         il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, resultLocal);
         // if (!(obj is $IHasFields)) return empty list

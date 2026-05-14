@@ -399,6 +399,51 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notListLabel);
+
+        // $TSFunction: user-installed properties (`fn.x = 1`) tracked in PDS.
+        // Mirror the EmitGetKeys $TSFunction branch — iterate PDS extras and
+        // emit the corresponding values via GetProperty.
+        var notTSFnForValuesLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notTSFnForValuesLabel);
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Call, runtime.PDSGetEnumerableExtraKeys);
+        var fnValsKeysLocal = il.DeclareLocal(listType);
+        il.Emit(OpCodes.Stloc, fnValsKeysLocal);
+        {
+            var iLocal2 = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, iLocal2);
+            var loopStart2 = il.DefineLabel();
+            var loopEnd2 = il.DefineLabel();
+            il.MarkLabel(loopStart2);
+            il.Emit(OpCodes.Ldloc, iLocal2);
+            il.Emit(OpCodes.Ldloc, fnValsKeysLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Count")!);
+            il.Emit(OpCodes.Bge, loopEnd2);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, fnValsKeysLocal);
+            il.Emit(OpCodes.Ldloc, iLocal2);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Item", [_types.Int32])!);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+            il.Emit(OpCodes.Ldloc, iLocal2);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, iLocal2);
+            il.Emit(OpCodes.Br, loopStart2);
+            il.MarkLabel(loopEnd2);
+        }
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSFnForValuesLabel);
+
         il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, resultLocal);
         // $IHasFields supports class-instance key/value storage.
@@ -834,6 +879,60 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notListLabel);
+
+        // $TSFunction: emit [key, GetProperty(fn, key)] for each PDS extra.
+        var notTSFnForEntriesLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notTSFnForEntriesLabel);
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Call, runtime.PDSGetEnumerableExtraKeys);
+        var fnEntKeysLocal = il.DeclareLocal(listType);
+        il.Emit(OpCodes.Stloc, fnEntKeysLocal);
+        {
+            var iLocal2 = il.DeclareLocal(_types.Int32);
+            var keyLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, iLocal2);
+            var loopStart2 = il.DefineLabel();
+            var loopEnd2 = il.DefineLabel();
+            il.MarkLabel(loopStart2);
+            il.Emit(OpCodes.Ldloc, iLocal2);
+            il.Emit(OpCodes.Ldloc, fnEntKeysLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Count")!);
+            il.Emit(OpCodes.Bge, loopEnd2);
+            il.Emit(OpCodes.Ldloc, fnEntKeysLocal);
+            il.Emit(OpCodes.Ldloc, iLocal2);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Item", [_types.Int32])!);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Stloc, keyLocal);
+            il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Stloc, entryLocal);
+            il.Emit(OpCodes.Ldloc, entryLocal);
+            il.Emit(OpCodes.Ldloc, keyLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+            il.Emit(OpCodes.Ldloc, entryLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, keyLocal);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, entryLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+            il.Emit(OpCodes.Ldloc, iLocal2);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, iLocal2);
+            il.Emit(OpCodes.Br, loopStart2);
+            il.MarkLabel(loopEnd2);
+        }
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSFnForEntriesLabel);
+
         il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, resultLocal);
         il.Emit(OpCodes.Ldarg_0);
