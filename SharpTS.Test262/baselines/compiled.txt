@@ -6725,7 +6725,7 @@ test/built-ins/Object/groupBy/callback-throws.js Pass
 test/built-ins/Object/groupBy/emptyList.js Pass
 test/built-ins/Object/groupBy/evenOdd.js Pass
 test/built-ins/Object/groupBy/groupLength.js RuntimeError
-test/built-ins/Object/groupBy/invalid-callback.js Fail
+test/built-ins/Object/groupBy/invalid-callback.js Pass
 test/built-ins/Object/groupBy/invalid-iterable.js Fail
 test/built-ins/Object/groupBy/invalid-property-key.js Fail
 test/built-ins/Object/groupBy/iterator-next-throws.js Fail
