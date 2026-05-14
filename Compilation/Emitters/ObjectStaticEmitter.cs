@@ -327,6 +327,7 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
             "assign"               => runtime.ObjectAssign,
             "is"                   => runtime.ObjectIs,
             "hasOwn"               => runtime.ObjectHasOwn,
+            "groupBy"              => runtime.ObjectGroupBy,
             _ => null
         };
         if (method == null) return false;
@@ -346,6 +347,7 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
             "assign" => 2,
             "is" => 2,
             "hasOwn" => 2,
+            "groupBy" => 2,
             _ => 1,
         };
 
