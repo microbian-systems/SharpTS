@@ -129,9 +129,8 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
             // isConstructor harness sees `typeof Symbol.for === "function"`.
             case "for":
             {
-                // Symbol.for(key) — spec length 1.
+                // Symbol.for(key) — spec length 1. Identity via GetOrCreate.
                 var runtime = ctx.Runtime!;
-                il.Emit(OpCodes.Ldnull);
                 il.Emit(OpCodes.Ldtoken, runtime.SymbolFor);
                 il.Emit(OpCodes.Ldtoken, runtime.SymbolFor.DeclaringType!);
                 il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
@@ -139,14 +138,13 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
                 il.Emit(OpCodes.Ldstr, "for");
                 il.Emit(OpCodes.Ldc_I4_1);
-                il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+                il.Emit(OpCodes.Call, runtime.TSFunctionGetOrCreate);
                 return true;
             }
             case "keyFor":
             {
                 // Symbol.keyFor(sym) — spec length 1.
                 var runtime = ctx.Runtime!;
-                il.Emit(OpCodes.Ldnull);
                 il.Emit(OpCodes.Ldtoken, runtime.SymbolKeyFor);
                 il.Emit(OpCodes.Ldtoken, runtime.SymbolKeyFor.DeclaringType!);
                 il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
@@ -154,7 +152,7 @@ public sealed class SymbolStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
                 il.Emit(OpCodes.Ldstr, "keyFor");
                 il.Emit(OpCodes.Ldc_I4_1);
-                il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+                il.Emit(OpCodes.Call, runtime.TSFunctionGetOrCreate);
                 return true;
             }
             default:

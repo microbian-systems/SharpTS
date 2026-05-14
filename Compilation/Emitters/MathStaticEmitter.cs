@@ -491,9 +491,9 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
         };
         if (info.adapter == null) return false;
 
-        // new $TSFunction(null, MethodInfo_of(adapter), name, length) — uses
-        // the WithCache ctor so .name reports the JS spec name.
-        il.Emit(OpCodes.Ldnull);
+        // $TSFunction.GetOrCreate(MethodInfo, name, length) — cached identity
+        // (Math.abs === Math.abs) so delete-and-readd round-trips on the
+        // same instance.
         il.Emit(OpCodes.Ldtoken, info.adapter);
         il.Emit(OpCodes.Ldtoken, info.adapter.DeclaringType!);
         il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
@@ -501,7 +501,7 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
         il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
         il.Emit(OpCodes.Ldstr, propertyName);
         il.Emit(OpCodes.Ldc_I4, info.len);
-        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+        il.Emit(OpCodes.Call, runtime.TSFunctionGetOrCreate);
         return true;
     }
 

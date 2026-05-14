@@ -139,7 +139,6 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
         // ECMA-262 §17 built-in `name` + spec `length`. `parseInt(string, radix)`
         // is the only Number static with arity 2.
         int specLength = propertyName == "parseInt" ? 2 : 1;
-        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldtoken, method);
         il.Emit(OpCodes.Ldtoken, method.DeclaringType!);
         il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
@@ -147,7 +146,7 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
         il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
         il.Emit(OpCodes.Ldstr, propertyName);
         il.Emit(OpCodes.Ldc_I4, specLength);
-        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+        il.Emit(OpCodes.Call, runtime.TSFunctionGetOrCreate);
         return true;
     }
 

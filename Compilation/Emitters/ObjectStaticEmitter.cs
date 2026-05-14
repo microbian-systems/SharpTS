@@ -351,8 +351,12 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
             _ => 1,
         };
 
+        // Use the GetOrCreate factory (not the ctor directly) so repeated
+        // access to the same Object.X returns the SAME $TSFunction instance.
+        // Without identity, `Object.is === Object.is` would be false and any
+        // `delete fn.length` mark wouldn't survive — propertyHelper's
+        // isConfigurable check fails because the second instance is fresh.
         var il = ctx.IL;
-        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldtoken, method);
         il.Emit(OpCodes.Ldtoken, method.DeclaringType!);
         il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.MethodBase, "GetMethodFromHandle",
@@ -360,7 +364,7 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
         il.Emit(OpCodes.Castclass, ctx.Types.MethodInfo);
         il.Emit(OpCodes.Ldstr, propertyName);
         il.Emit(OpCodes.Ldc_I4, specLength);
-        il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+        il.Emit(OpCodes.Call, runtime.TSFunctionGetOrCreate);
         return true;
     }
 
