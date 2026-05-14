@@ -1557,11 +1557,11 @@ test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-4-9.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-1.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-10.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-11.js Pass
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-12.js Pass
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-12.js Timeout
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-13.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-14.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-15.js Pass
-test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-16.js Pass
+test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-16.js Timeout
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-17.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-18.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-5-19.js Pass
@@ -7926,7 +7926,7 @@ test/built-ins/Promise/race/S25.4.4.3_A3.1_T1.js Pass
 test/built-ins/Promise/race/S25.4.4.3_A3.1_T2.js Pass
 test/built-ins/Promise/race/S25.4.4.3_A4.1_T1.js RuntimeError
 test/built-ins/Promise/race/S25.4.4.3_A4.1_T2.js RuntimeError
-test/built-ins/Promise/race/S25.4.4.3_A5.1_T1.js Timeout
+test/built-ins/Promise/race/S25.4.4.3_A5.1_T1.js Fail
 test/built-ins/Promise/race/S25.4.4.3_A6.1_T1.js Fail
 test/built-ins/Promise/race/S25.4.4.3_A6.2_T1.js Fail
 test/built-ins/Promise/race/S25.4.4.3_A7.1_T1.js Fail
@@ -7935,7 +7935,7 @@ test/built-ins/Promise/race/S25.4.4.3_A7.1_T3.js Fail
 test/built-ins/Promise/race/S25.4.4.3_A7.2_T1.js Fail
 test/built-ins/Promise/race/S25.4.4.3_A7.3_T1.js Pass
 test/built-ins/Promise/race/S25.4.4.3_A7.3_T2.js Timeout
-test/built-ins/Promise/race/capability-executor-called-twice.js Pass
+test/built-ins/Promise/race/capability-executor-called-twice.js RuntimeError
 test/built-ins/Promise/race/capability-executor-not-callable.js Pass
 test/built-ins/Promise/race/ctx-ctor-throws.js Pass
 test/built-ins/Promise/race/ctx-ctor.js RuntimeError
@@ -8010,7 +8010,7 @@ test/built-ins/Promise/race/resolved-sequence.js Fail
 test/built-ins/Promise/race/resolved-then-catch-finally.js Pass
 test/built-ins/Promise/race/same-reject-function.js Pass
 test/built-ins/Promise/race/same-resolve-function.js Pass
-test/built-ins/Promise/race/species-get-error.js Pass
+test/built-ins/Promise/race/species-get-error.js RuntimeError
 test/built-ins/Promise/reject-function-extensible.js Timeout
 test/built-ins/Promise/reject-function-length.js Timeout
 test/built-ins/Promise/reject-function-name.js Timeout
