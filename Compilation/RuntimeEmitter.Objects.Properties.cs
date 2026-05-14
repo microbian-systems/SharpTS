@@ -4146,6 +4146,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.PDSDeleteProperty);
         il.Emit(OpCodes.Pop);
+        // Also mark in the per-Type deletion tracker so the static-names list
+        // check in HasOwnPropertyHelper / gOPD doesn't resurrect this name.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(typeNoPdsDescLabel);
@@ -4188,6 +4193,43 @@ public partial class RuntimeEmitter
         EmitNumberConstNameCheck("MIN_SAFE_INTEGER");
         EmitNumberConstNameCheck("EPSILON");
         il.MarkLabel(notNumberTypeForDelLabel);
+        // Object/Array/String constructor static method names: per ECMA-262
+        // §17, every other data property has configurable:true. Mark the
+        // deletion in the per-Type tracker so subsequent gOPD/hasOwn report
+        // the property as absent, then return true. (prototype/name/length
+        // and Number constants caught above are non-configurable.)
+        var objTypeDelLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, objTypeDelLabel);
+        void EmitObjectMethodDelCheck(string n)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, skipLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.MarkBuiltinDeletedMethod);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(skipLabel);
+        }
+        EmitObjectMethodDelCheck("assign"); EmitObjectMethodDelCheck("create");
+        EmitObjectMethodDelCheck("defineProperties"); EmitObjectMethodDelCheck("defineProperty");
+        EmitObjectMethodDelCheck("entries"); EmitObjectMethodDelCheck("freeze");
+        EmitObjectMethodDelCheck("fromEntries"); EmitObjectMethodDelCheck("getOwnPropertyDescriptor");
+        EmitObjectMethodDelCheck("getOwnPropertyDescriptors"); EmitObjectMethodDelCheck("getOwnPropertyNames");
+        EmitObjectMethodDelCheck("getOwnPropertySymbols"); EmitObjectMethodDelCheck("getPrototypeOf");
+        EmitObjectMethodDelCheck("groupBy"); EmitObjectMethodDelCheck("hasOwn"); EmitObjectMethodDelCheck("is");
+        EmitObjectMethodDelCheck("isExtensible"); EmitObjectMethodDelCheck("isFrozen");
+        EmitObjectMethodDelCheck("isSealed"); EmitObjectMethodDelCheck("keys");
+        EmitObjectMethodDelCheck("preventExtensions"); EmitObjectMethodDelCheck("seal");
+        EmitObjectMethodDelCheck("setPrototypeOf"); EmitObjectMethodDelCheck("values");
+        il.MarkLabel(objTypeDelLabel);
+
         // Reflection: any static field/property on the Type → built-in own.
         const System.Reflection.BindingFlags typeDelStaticPub =
             System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;

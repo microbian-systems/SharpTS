@@ -221,6 +221,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Brfalse, notTypeLabel);
+        // Skip if the (Type, name) pair was deleted via the per-Type tracker
+        // (e.g. `delete Object.assign` marks Object Type + "assign" as deleted).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, runtime.IsBuiltinDeletedMethod);
+        il.Emit(OpCodes.Brtrue, falseLabel);
         // "prototype" / "name" / "length" → true for any Type
         void NameEq(string n)
         {
@@ -302,6 +308,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, nameLocal);
         il.Emit(OpCodes.Ldc_I4, (int)staticPub);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String, typeof(System.Reflection.BindingFlags)));
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        // PDS check — user-set static properties (e.g. `Object.assign = X`,
+        // verifyProperty's isConfigurable round-trip via delete+hasOwn).
+        // Without this, propertyHelper sees configurable:true but isConfigurable
+        // returns false because the bracket set didn't surface.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
         il.Emit(OpCodes.Brtrue, trueLabel);
         il.Emit(OpCodes.Br, falseLabel);
         il.MarkLabel(notTypeLabel);

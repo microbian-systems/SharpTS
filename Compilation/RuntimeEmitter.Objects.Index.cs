@@ -647,6 +647,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
+        // System.Type indexed set: route to SetProperty so PDS-backed storage
+        // handles `Object["foo"] = X` patterns. Required for propertyHelper.js's
+        // isWritable/isConfigurable round-trip via bracket-access set+read on
+        // built-in constructors (verifyProperty Object.assign etc.).
+        var typeIdxSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, typeIdxSetLabel);
+
         // $Object indexed set: route to $Runtime.SetProperty so the value lands
         // in the same _fields store as named property writes. Pre-fix, indexed
         // writes silently dropped on $Object instances (e.g. `new Foo()[0] = 11`).
@@ -678,6 +687,16 @@ public partial class RuntimeEmitter
 
         // Fallthrough: return (ignore)
         il.MarkLabel(nullLabel);
+        il.Emit(OpCodes.Ret);
+
+        // System.Type indexed set handler — coerce key via Stringify and route
+        // to SetProperty (PDS-backed storage on Type receivers).
+        il.MarkLabel(typeIdxSetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.SetProperty);
         il.Emit(OpCodes.Ret);
 
         // $Object indexed set handler: SetProperty(obj, Stringify(index), value).
@@ -1024,8 +1043,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
+        // System.Type - route to DeleteProperty so Type-specific configurability
+        // rules (non-configurable prototype/name/length + Number constants vs
+        // configurable static methods) and the per-Type deletion tracker apply.
+        // Required for bracket-delete on built-in constructors (propertyHelper's
+        // isConfigurable round-trip via `delete obj[name]`).
+        var typeDelIdxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, typeDelIdxLabel);
+
         // Other types (arrays, strings, etc.) - cannot delete, return true
         il.Emit(OpCodes.Br, trueLabel);
+
+        // Type delete handler — coerce key via Stringify and call DeleteProperty.
+        il.MarkLabel(typeDelIdxLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Call, runtime.DeleteProperty);
+        il.Emit(OpCodes.Ret);
 
         // $TSFunction handler: honor frozen/sealed + PDS configurability before
         // recording the deletion. Mirrors DeleteProperty's $TSFunction path so
@@ -1299,8 +1336,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
+        // System.Type - route to DeleteProperty so Type-specific configurability
+        // rules (non-configurable prototype/name/length + Number constants vs
+        // configurable static methods) and the per-Type deletion tracker apply.
+        // Required for bracket-delete on built-in constructors (propertyHelper's
+        // isConfigurable round-trip via `delete obj[name]`).
+        var typeDelIdxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, typeDelIdxLabel);
+
         // Other types (arrays, strings, etc.) - cannot delete, return true
         il.Emit(OpCodes.Br, trueLabel);
+
+        // Type delete handler — coerce key via Stringify and call DeleteProperty.
+        il.MarkLabel(typeDelIdxLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Call, runtime.DeleteProperty);
+        il.Emit(OpCodes.Ret);
 
         // $TSFunction handler: honor frozen/sealed + PDS configurability before
         // recording the deletion. Mirrors DeleteProperty's $TSFunction path so
