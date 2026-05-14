@@ -1611,6 +1611,59 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notTSArrayLabel);
 
+        // Math singleton dict — synthesize spec descriptors for its known
+        // methods (W:T,E:F,C:T) and constants (W:F,E:F,C:F). The singleton
+        // is otherwise empty; static dispatch handles Math.abs() etc., but
+        // gOPD(Math, "abs") needs to report the spec descriptor.
+        var notMathSingletonLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
+        il.Emit(OpCodes.Bne_Un, notMathSingletonLabel);
+        void EmitMathNameDesc(string n, bool isMethod, double? constValue = null)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, propNameLocal);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, skipLabel);
+            il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+            il.Emit(OpCodes.Stloc, resultDictLocal);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Ldstr, "value");
+            if (constValue.HasValue)
+            {
+                il.Emit(OpCodes.Ldc_R8, constValue.Value);
+                il.Emit(OpCodes.Box, _types.Double);
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            }
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+            EmitDescriptorBoolField(il, resultDictLocal, "writable", isMethod);
+            EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+            EmitDescriptorBoolField(il, resultDictLocal, "configurable", isMethod);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+        // Methods (W:T, E:F, C:T)
+        foreach (var m in new[] { "abs", "acos", "acosh", "asin", "asinh", "atan", "atan2",
+            "atanh", "cbrt", "ceil", "clz32", "cos", "cosh", "exp", "expm1", "floor",
+            "fround", "hypot", "imul", "log", "log10", "log1p", "log2", "max", "min",
+            "pow", "random", "round", "sign", "sin", "sinh", "sqrt", "tan", "tanh", "trunc" })
+            EmitMathNameDesc(m, isMethod: true);
+        // Constants (W:F, E:F, C:F) with embedded literal values.
+        EmitMathNameDesc("E", isMethod: false, constValue: System.Math.E);
+        EmitMathNameDesc("LN10", isMethod: false, constValue: System.Math.Log(10));
+        EmitMathNameDesc("LN2", isMethod: false, constValue: System.Math.Log(2));
+        EmitMathNameDesc("LOG10E", isMethod: false, constValue: 1.0 / System.Math.Log(10));
+        EmitMathNameDesc("LOG2E", isMethod: false, constValue: 1.0 / System.Math.Log(2));
+        EmitMathNameDesc("PI", isMethod: false, constValue: System.Math.PI);
+        EmitMathNameDesc("SQRT1_2", isMethod: false, constValue: System.Math.Sqrt(0.5));
+        EmitMathNameDesc("SQRT2", isMethod: false, constValue: System.Math.Sqrt(2));
+        il.MarkLabel(notMathSingletonLabel);
+
         // No descriptor - check if property exists on the object directly (Dictionary case)
         var notDictLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
