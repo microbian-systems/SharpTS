@@ -1390,6 +1390,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // __proto__ accessor (ECMA-262 Annex B.2.2.1): obj.__proto__ delegates
+        // to Object.getPrototypeOf(obj). All object types support this — the
+        // accessor lives on Object.prototype, but intercepting here avoids
+        // replicating the dispatch in every object-specific branch. Without
+        // this, `{}.__proto__` returns undefined and breaks spec idioms.
+        var notProtoNameTopLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "__proto__");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notProtoNameTopLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ObjectGetPrototypeOf);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notProtoNameTopLabel);
+
         // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
         var notProxyLabel = il.DefineLabel();
         EmitProxyGetPropertyCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), notProxyLabel);
