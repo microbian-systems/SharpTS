@@ -906,6 +906,97 @@ public partial class RuntimeEmitter
         il.MarkLabel(objectLabel);
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, Type.EmptyTypes));
         il.Emit(OpCodes.Stloc, namesLocal);
+
+        // System.Object Type → return the spec-known static names for the
+        // JS Object constructor. ECMA-262 §20.1.2 lists prototype/name/length
+        // and all the static methods. Mirrors the HasOwnProperty + gOPD names
+        // lists below.
+        var notObjectTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, notObjectTypeLabel);
+        var addToList = _types.ListOfObject.GetMethod("Add", [_types.Object])!;
+        void AddName(string name)
+        {
+            il.Emit(OpCodes.Ldloc, namesLocal);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Callvirt, addToList);
+        }
+        AddName("length");
+        AddName("name");
+        AddName("prototype");
+        AddName("assign");
+        AddName("create");
+        AddName("defineProperties");
+        AddName("defineProperty");
+        AddName("entries");
+        AddName("freeze");
+        AddName("fromEntries");
+        AddName("getOwnPropertyDescriptor");
+        AddName("getOwnPropertyDescriptors");
+        AddName("getOwnPropertyNames");
+        AddName("getOwnPropertySymbols");
+        AddName("getPrototypeOf");
+        AddName("groupBy");
+        AddName("hasOwn");
+        AddName("is");
+        AddName("isExtensible");
+        AddName("isFrozen");
+        AddName("isSealed");
+        AddName("keys");
+        AddName("preventExtensions");
+        AddName("seal");
+        AddName("setPrototypeOf");
+        AddName("values");
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notObjectTypeLabel);
+
+        // IList<object> Type → JS Array constructor own static names.
+        var notArrayTypeForNamesLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, notArrayTypeForNamesLabel);
+        AddName("length");
+        AddName("name");
+        AddName("prototype");
+        AddName("from");
+        AddName("fromAsync");
+        AddName("isArray");
+        AddName("of");
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notArrayTypeForNamesLabel);
+
+        // System.Double Type → JS Number constructor own static names.
+        var notNumberTypeForNamesLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Double);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, notNumberTypeForNamesLabel);
+        AddName("length");
+        AddName("name");
+        AddName("prototype");
+        AddName("MAX_VALUE");
+        AddName("MIN_VALUE");
+        AddName("NaN");
+        AddName("NEGATIVE_INFINITY");
+        AddName("POSITIVE_INFINITY");
+        AddName("MAX_SAFE_INTEGER");
+        AddName("MIN_SAFE_INTEGER");
+        AddName("EPSILON");
+        AddName("isFinite");
+        AddName("isInteger");
+        AddName("isNaN");
+        AddName("isSafeInteger");
+        AddName("parseFloat");
+        AddName("parseInt");
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNumberTypeForNamesLabel);
+
         var noFieldsDictLabel = il.DefineLabel();
         var fieldsDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_0);
