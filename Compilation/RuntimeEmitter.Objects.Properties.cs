@@ -3307,6 +3307,39 @@ public partial class RuntimeEmitter
         // resolution, so writes become visible as reads.
         il.MarkLabel(typeSetLabel);
         {
+            // Per ECMA-262 §17, constructor static "prototype"/"name"/"length"
+            // are non-writable; non-strict writes silently no-op. Same for
+            // Number constants (MAX_VALUE etc.) which are W:F,E:F,C:F.
+            var typeSetSkipLabel = il.DefineLabel();
+            void EmitTypeSetSkipName(string n)
+            {
+                var notNameLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldstr, n);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+                il.Emit(OpCodes.Brfalse, notNameLabel);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(notNameLabel);
+            }
+            EmitTypeSetSkipName("prototype");
+            EmitTypeSetSkipName("name");
+            EmitTypeSetSkipName("length");
+            // Number constants — non-writable on the Number constructor.
+            var notNumberTypeForSetLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldtoken, _types.Double);
+            il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+            il.Emit(OpCodes.Bne_Un, notNumberTypeForSetLabel);
+            EmitTypeSetSkipName("MAX_VALUE");
+            EmitTypeSetSkipName("MIN_VALUE");
+            EmitTypeSetSkipName("NaN");
+            EmitTypeSetSkipName("POSITIVE_INFINITY");
+            EmitTypeSetSkipName("NEGATIVE_INFINITY");
+            EmitTypeSetSkipName("MAX_SAFE_INTEGER");
+            EmitTypeSetSkipName("MIN_SAFE_INTEGER");
+            EmitTypeSetSkipName("EPSILON");
+            il.MarkLabel(notNumberTypeForSetLabel);
+
             var typeDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
             il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
             il.Emit(OpCodes.Stloc, typeDescLocal);
