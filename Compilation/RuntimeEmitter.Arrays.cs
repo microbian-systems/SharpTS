@@ -911,6 +911,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, namesLocal);
         il.Emit(OpCodes.Ldstr, "length");
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+        // Append PDS extras (named props installed via `arr.foo = X` or
+        // Object.defineProperty(arr, "foo", ...)). Required for Test262
+        // 15.2.3.4-4-47 (gOPN on array with own named data property).
+        var listPdsNamesLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Call, runtime.PDSGetAllExtraKeys);
+        il.Emit(OpCodes.Stloc, listPdsNamesLocal);
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ldloc, listPdsNamesLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("AddRange", [_types.IEnumerableOfObject])!);
+
         il.Emit(OpCodes.Ldloc, namesLocal);
         il.Emit(OpCodes.Ret);
 
